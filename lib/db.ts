@@ -72,6 +72,9 @@ export function init(db: Database.Database) {
       started     INTEGER NOT NULL DEFAULT 0,
       running     INTEGER NOT NULL DEFAULT 0,
       awaiting_input INTEGER NOT NULL DEFAULT 0,
+      -- Opt-in pipeline behavior: 1 = start this task's first turn automatically
+      -- the moment its last unfinished blocker is marked done (lib/autoStart.ts).
+      auto_start  INTEGER NOT NULL DEFAULT 0,
       position    INTEGER NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
@@ -334,6 +337,9 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
   // GitHub PR opened from this task's branch via "Create PR" ("" = none yet).
   if (!taskCols.includes("pr_url")) db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''");
+  // Per-task auto-start opt-in: launch the first turn when the last blocker is
+  // marked done (default off preserves the old never-auto-start behavior).
+  if (!taskCols.includes("auto_start")) db.exec("ALTER TABLE tasks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0");
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

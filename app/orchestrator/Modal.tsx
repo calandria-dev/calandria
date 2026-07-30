@@ -139,7 +139,12 @@ export function PrioritySeg({ value, onChange }: { value: Priority; onChange: (p
 
 // "Blocked by" picker — choose the tasks that must reach Done before this one can
 // start. Candidates are the other tasks in the project (self excluded by caller).
-export function DepPicker({ candidates, value, onChange }: { candidates: TaskRow[]; value: string[]; onChange: (ids: string[]) => void }) {
+// With any blockers selected, offers the per-task "Start when unblocked" opt-in:
+// the last blocker flipping to Done launches this task's first turn by itself.
+export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart }: {
+  candidates: TaskRow[]; value: string[]; onChange: (ids: string[]) => void;
+  autoStart: boolean; onAutoStart: (on: boolean) => void;
+}) {
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className="field">
@@ -158,7 +163,14 @@ export function DepPicker({ candidates, value, onChange }: { candidates: TaskRow
           ))}
         </div>
       )}
-      <div className="hlp">This task can&apos;t be started until every selected task is marked Done.</div>
+      {value.length > 0 ? (
+        <label className="dep-autostart" title="When the last blocker above is marked Done, this task sends its initial prompt by itself">
+          <input type="checkbox" checked={autoStart} onChange={(e) => onAutoStart(e.target.checked)} />
+          Start when unblocked <span className="opt">— session launches itself once every blocker is done</span>
+        </label>
+      ) : (
+        <div className="hlp">This task can&apos;t be started until every selected task is marked Done.</div>
+      )}
     </div>
   );
 }

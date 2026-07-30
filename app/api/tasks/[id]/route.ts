@@ -3,6 +3,7 @@ import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
+import { maybeAutoStartDependents } from "@/lib/autoStart";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +28,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = (await req.json()) as Partial<Task>;
+  const prevStatus = getTask(id)?.status;
   // Whitelist user-editable fields.
   const allowed: Partial<Task> = {};
-  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode"] as const) {
+  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
   // A manual status change is the user taking the wheel — clear the "your turn" flag.
@@ -49,6 +51,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   const task = updateTask(id, allowed);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // Flipping to done may be the last blocker some auto-start dependent was
+  // waiting on. Fire-and-forget: the launch runs detached (worktree creation
+  // can take seconds) and must never delay or fail this status change.
+  if (task.status === "done" && prevStatus !== "done") maybeAutoStartDependents(id);
   return NextResponse.json({ ...task, depends_on: getTaskDeps(id) });
 }
 

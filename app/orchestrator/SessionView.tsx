@@ -94,14 +94,18 @@ function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task
           <strong>{task.title}.</strong> {task.description}
         </div>
       </div>
-      {blocked && (
+      {blocked && (task.auto_start ? (
+        <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
+          {Icon.bolt()} Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change this.
+        </div>
+      ) : (
         <div className="hero-blocked" title={`Blocked until done: ${blockedBy!.join(", ")}`}>
           {Icon.lock()} Blocked until {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.
         </div>
-      )}
+      ))}
       <div style={{ display: "flex", gap: 10 }}>
         <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blocked ? `Blocked until done: ${blockedBy!.join(", ")}` : undefined}>
-          {Icon.play()} {running ? "Starting…" : blocked ? "Blocked" : "Start session"}
+          {Icon.play()} {running ? "Starting…" : blocked ? (task.auto_start ? "Queued" : "Blocked") : "Start session"}
         </button>
         <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={onEdit} disabled={running} title="Edit title & description before starting">
           {Icon.edit()} Edit

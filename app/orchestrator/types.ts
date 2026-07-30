@@ -47,6 +47,7 @@ export interface TaskRow {
   cost_usd: number; // cumulative dollar spend across all turns of this task
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   depends_on: string[]; // task ids this task is blocked by until they're done
+  auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
 }
