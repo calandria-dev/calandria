@@ -119,6 +119,19 @@ Keep `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset so it uses your subscription, 
 
 Every setting is an env var with a sane default — see [`.env.example`](.env.example).
 
+## Testing
+
+```bash
+npm test              # unit/integration suite (vitest)
+npm run test:e2e      # end-to-end suite (Playwright)
+npm run preflight     # both — the pre-push gate
+```
+
+The e2e suite boots the real production server against a throwaway instance and
+drives the whole loop through the browser — onboarding, project/task creation,
+running sessions, diff, merge, list/kanban views — using a deterministic mock
+agent driver, so it needs no agent CLI or login. Details: [`e2e/README.md`](e2e/README.md).
+
 ## Self-host
 
 One hardened Docker container, built to sit behind an authenticated tunnel:
