@@ -84,7 +84,7 @@ COPY --from=build --chown=root:root /app/node_modules ./node_modules
 COPY --from=build --chown=root:root /app/.next ./.next
 COPY --from=build --chown=root:root /app/public ./public
 COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.config.mjs /app/package.json ./
-# server.js dynamically imports the origin auth verifier and the service
+# server.js dynamically imports the origin auth verifiers and the service
 # hostname router at runtime (un-bundled, unlike the middleware copy compiled
 # into .next). Import graphs: lib/auth/origin.mjs -> lib/cf-access.mjs;
 # lib/service-router.mjs -> lib/service-host.mjs.

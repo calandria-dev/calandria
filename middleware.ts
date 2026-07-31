@@ -16,6 +16,7 @@ import {
   instanceServiceTokenOk,
   verifyOriginRequest,
 } from "@/lib/auth/origin.mjs";
+import { localHttpRequestAllowed } from "@/lib/auth/local-origin.mjs";
 
 // The non-Access paths: health probes (Docker HEALTHCHECK / monitoring) and
 // the build-version stamp present the shared SERVICE_TOKEN instead of an Access
@@ -46,9 +47,23 @@ function isAgentToolPath(pathname: string): boolean {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Local dev with no origin provider configured runs fully open (single-user
-  // machine) — same as every other route.
-  if (!originAuthEnabled()) return NextResponse.next();
+  // Local mode has no login, but it is not an unbounded browser trust zone.
+  // Restrict Host to loopback/configured origins (DNS-rebinding defense), reject
+  // cross-site Fetch Metadata, and require any supplied Origin to match Host.
+  // Raw local clients such as curl, health checks, and the MCP bridge omit the
+  // browser headers and remain supported as long as their Host is allowed.
+  if (!originAuthEnabled()) {
+    return localHttpRequestAllowed({
+      host: req.headers.get("host"),
+      origin: req.headers.get("origin"),
+      secFetchSite: req.headers.get("sec-fetch-site"),
+    })
+      ? NextResponse.next()
+      : new NextResponse("Forbidden: local origin not allowed.\n", {
+          status: 403,
+          headers: { "content-type": "text/plain" },
+        });
+  }
 
   if (isServiceTokenPath(pathname) && serviceTokenOk(req.headers.get("x-service-token"))) {
     return NextResponse.next();

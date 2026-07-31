@@ -111,6 +111,11 @@ agent in from the browser — connecting **either one** completes setup (it beco
 default and the tutorial runs on it) — then drops you into a 2-minute hands-on tutorial.
 Keep `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset so it uses your subscription, not the API.
 
+Local mode has no login, but it accepts browser traffic only from loopback origins by
+default and rejects cross-site HTTP/WebSocket access to the app and terminal. If you
+intentionally open it on a LAN, add that exact origin to `ORCH_ALLOWED_ORIGINS`; use real
+origin authentication for anything internet-facing.
+
 Every setting is an env var with a sane default — see [`.env.example`](.env.example).
 
 ## Self-host
