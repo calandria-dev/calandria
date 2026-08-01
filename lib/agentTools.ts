@@ -17,6 +17,7 @@ import { publish } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
+import { resolveConnectedAgent } from "./agents/connections";
 
 /**
  * Resolve `blocked_by` refs against a per-session title→id map: an id passes
@@ -51,6 +52,12 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     description: input.description,
     priority: input.priority ?? "med",
     suggested: true,
+    // Connected-first, matching the New-task dialog (defaultAgentFor). A task's
+    // agent is fixed for its whole life, so inheriting an unconnected project
+    // default would mint tasks that can never run — the exact way a Codex-only
+    // instance would silently accumulate dead Claude tasks in the tray. Null
+    // (nothing connected) leaves createTask's own default in place.
+    agent: resolveConnectedAgent([project.default_agent]) ?? undefined,
   });
   let depNote = "";
   if (input.blocked_by?.length) {

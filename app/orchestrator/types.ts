@@ -174,7 +174,12 @@ export type AgentInfoT = {
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[] };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT };
+// Which agent actually runs the app's project-scoped internal jobs (recaps,
+// context drafts), resolved connected-first on the server (lib/agents/oneshots).
+// `id: null` = nothing connected; `fallback` = the configured agent isn't
+// connected, so a different one is standing in.
+export type UtilityAgentT = { id: string | null; configured: string; fallback: boolean };
 export type AgentLoginT = ClaudeLoginT & { code?: string | null };
 
 // ---------- status maps (DB status -> design's r/a/g classes + labels) ----------
@@ -209,7 +214,7 @@ export interface AgentCapabilities {
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
 export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
-export interface AgentsBundle { default: string; agents: AgentInfo[] }
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic "Default" head — it

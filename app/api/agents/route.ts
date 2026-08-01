@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
+import { resolveUtilityAgent } from "@/lib/agents/oneshots";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,11 @@ export async function GET() {
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
     default: getSetting("default_agent") || DEFAULT_AGENT,
+    // The agent that will actually run project-scoped internal jobs (recaps,
+    // "Refresh with AI"), resolved connected-first server-side so Settings can
+    // show the EFFECTIVE choice — and flag it as a fallback when the configured
+    // agent isn't connected. `id: null` means nothing is connected at all.
+    utility: resolveUtilityAgent(),
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
       return {

@@ -58,6 +58,8 @@ Each **project** carries reusable context. Each **task** is its own agent sessio
 | **Claude Code** | Fully supported — the reference driver; every feature lands here first. |
 | **OpenAI Codex** | Fully supported — parallel tasks, diff review/merge, `/clear` lineage, interactive questions (via the orchestrator's `ask_user` bridge), and cost tracking. Two caveats from the upstream CLI being non-interactive: dollar figures are **estimated** from token counts × published API prices (ChatGPT-plan auth reports tokens only — shown with a `~`), and there are no mid-turn *command approval* prompts, so the permission modes offered are Auto-run and Plan. [Issues welcome](https://github.com/iishyfishyy/operator-oss/issues). |
 
+**Claude is a default, not a requirement.** The app is agent-agnostic end to end: connect Codex alone and everything works — the first-run wizard is satisfied by *any* one agent and adopts it as your default, new tasks default to a connected agent (never a grayed-out one), and the app's own background jobs (project recaps, "Refresh with AI" context drafts) resolve their agent **connected-first**, so they run on Codex when Claude isn't connected. Settings → Run defaults names the agent those jobs will actually use, and marks it `(fallback)` when it isn't the one you configured. With nothing connected, those jobs stop with a "connect an agent" message rather than failing silently.
+
 Want another agent? The driver seam is small — see [adding a new agent](docs/ARCHITECTURE.md).
 
 ## Insights

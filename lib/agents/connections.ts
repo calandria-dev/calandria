@@ -1,5 +1,11 @@
 import { getSetting, setSetting } from "../store";
-import { listDrivers, getDriverStrict, DEFAULT_AGENT } from "./registry";
+// capabilities.ts, not registry.ts, on purpose: this module only enumerates and
+// validates agent IDS — it never drives an agent — and importing the registry
+// would drag both agent SDKs into every consumer's graph (the async-external
+// poisoning documented in capabilities.ts). Staying SDK-free is what lets
+// lib/agentTools.ts resolve a connected agent without poisoning the internal
+// agent-tools routes. Pinned by tests/importGraph.test.ts.
+import { listAgentIds, isAgentId, DEFAULT_AGENT } from "./capabilities";
 
 // Per-agent connection state, persisted in the settings table keyed by agent id
 // (`agent_conn_<id>`). Distinct from lib/onboarding.ts, which tracks the single
@@ -50,7 +56,7 @@ export function isAgentConnected(agentId: string): boolean {
 
 /** The first connected agent in registry order, or null when none is connected. */
 export function firstConnectedAgent(): string | null {
-  for (const d of listDrivers()) if (isAgentConnected(d.id)) return d.id;
+  for (const id of listAgentIds()) if (isAgentConnected(id)) return id;
   return null;
 }
 
@@ -62,7 +68,7 @@ export function firstConnectedAgent(): string | null {
  */
 export function resolveConnectedAgent(preferred: (string | null | undefined)[]): string | null {
   for (const id of preferred) {
-    if (id && getDriverStrict(id) && isAgentConnected(id)) return id;
+    if (id && isAgentId(id) && isAgentConnected(id)) return id;
   }
   return firstConnectedAgent();
 }

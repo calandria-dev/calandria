@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
 import { DEFAULT_SETTINGS, reasoningOptions, permissionOptions, type Settings, type AgentsBundle } from "./types";
-import { capsFor } from "./agents";
+import { capsFor, agentLabel } from "./agents";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
@@ -118,6 +118,30 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// The EFFECTIVE utility agent, resolved connected-first by the server
+// (lib/agents/oneshots.ts). The buttons above show what's *configured*; this
+// line shows what will actually run — they diverge whenever the configured
+// agent isn't connected, and silently picking a different agent would be a
+// worse surprise than saying so. When nothing is connected at all, internal
+// jobs can't run, so this says that instead of naming a stand-in.
+function UtilityEffective({ agents }: { agents: AgentsBundle }) {
+  const u = agents.utility;
+  if (!u) return null;
+  if (!u.id)
+    return (
+      <div className="hlp" style={{ marginTop: 8 }}>
+        {Icon.bolt()} No agent is connected — recaps and context refresh are paused. Connect one in Settings → Agents.
+      </div>
+    );
+  const label = agentLabel(agents, u.id);
+  return (
+    <div className="hlp" style={{ marginTop: 8 }}>
+      Running on <strong>{label}</strong>
+      {u.fallback && <span className="opt"> (fallback — {agentLabel(agents, u.configured)} isn&apos;t connected)</span>}
     </div>
   );
 }
@@ -254,7 +278,9 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                       {agents.agents.map((a) => (
                         <button
                           key={a.id}
-                          className={(appDefaults.utility_agent || "claude") === a.id ? "on" : ""}
+                          // Unset falls through to the app default agent, not a
+                          // hardcoded Claude — mirrors resolveUtilityAgent().
+                          className={(appDefaults.utility_agent || agents.utility?.configured || appDefaultAgent) === a.id ? "on" : ""}
                           title={a.authenticated ? `Run background jobs on ${a.label}` : `${a.label} isn't connected yet`}
                           onClick={() => setAppDefault("utility_agent", a.id)}
                         >
@@ -262,6 +288,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                         </button>
                       ))}
                     </div>
+                    <UtilityEffective agents={agents} />
                   </div>
                 )}
                 {multiAgent && (
