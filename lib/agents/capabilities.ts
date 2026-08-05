@@ -25,6 +25,18 @@ const CAPABILITIES: Record<string, AgentCapabilities> = {
   codex: CODEX_CAPABILITIES,
 };
 
+/** Every registered agent id, in registry order — the SDK-free half of
+ * listDrivers(), for callers that only need to enumerate/validate ids
+ * (connection state, connected-first resolution) rather than drive an agent. */
+export function listAgentIds(): string[] {
+  return Object.keys(CAPABILITIES);
+}
+
+/** Whether `id` is a registered agent — the SDK-free getDriverStrict() null check. */
+export function isAgentId(id: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CAPABILITIES, id);
+}
+
 /** Capability descriptor by agent id; unknown/null ids fall back to the default
  * agent (same forgiving resolution as getDriver — a hand-edited tasks.agent row
  * should still resolve to something). */

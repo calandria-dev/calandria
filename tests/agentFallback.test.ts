@@ -9,8 +9,9 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { setSetting, getSetting, createProject, createTask, getTask, updateTask } from "../lib/store";
 import { getDb } from "../lib/db";
 import { setAgentConnection, isAgentConnected, firstConnectedAgent, resolveConnectedAgent } from "../lib/agents/connections";
-import { utilityDriver } from "../lib/agents/oneshots";
+import { utilityDriver, resolveUtilityAgent } from "../lib/agents/oneshots";
 import { completeOnboarding } from "../lib/onboarding";
+import { createSuggestedTask } from "../lib/agentTools";
 import { defaultAgentFor } from "../app/orchestrator/agents";
 import type { AgentsBundle } from "../app/orchestrator/types";
 
@@ -91,6 +92,42 @@ describe("utilityDriver (connected-first)", () => {
   });
 });
 
+// What Settings renders as the EFFECTIVE utility agent. Same resolution as
+// utilityDriver(), but reported rather than thrown — the "(fallback)" hint and
+// the "nothing connected" note are both driven from here.
+describe("resolveUtilityAgent (reported effective agent)", () => {
+  beforeEach(resetSettings);
+
+  it("reports no agent, and the configured default, when nothing is connected", () => {
+    expect(resolveUtilityAgent()).toEqual({ id: null, configured: "claude", fallback: false });
+  });
+
+  it("is not a fallback when the configured agent is connected", () => {
+    connect("claude");
+    expect(resolveUtilityAgent()).toEqual({ id: "claude", configured: "claude", fallback: false });
+  });
+
+  it("flags a fallback when the configured agent is NOT connected", () => {
+    connect("codex");
+    setSetting("utility_agent", "claude");
+    expect(resolveUtilityAgent()).toEqual({ id: "codex", configured: "claude", fallback: true });
+  });
+
+  it("treats the app default agent as configured when utility_agent is unset", () => {
+    connect("codex");
+    setSetting("default_agent", "codex");
+    expect(resolveUtilityAgent()).toEqual({ id: "codex", configured: "codex", fallback: false });
+  });
+
+  it("prefers an explicit utility_agent over the app default when both are connected", () => {
+    connect("claude");
+    connect("codex");
+    setSetting("default_agent", "claude");
+    setSetting("utility_agent", "codex");
+    expect(resolveUtilityAgent()).toEqual({ id: "codex", configured: "codex", fallback: false });
+  });
+});
+
 describe("defaultAgentFor (client, connected-first)", () => {
   const bundle = (authed: Record<string, boolean>, def = "claude"): AgentsBundle => ({
     default: def,
@@ -123,6 +160,37 @@ describe("defaultAgentFor (client, connected-first)", () => {
 
   it("falls back to existence when nothing is connected", () => {
     expect(defaultAgentFor(bundle({ claude: false, codex: false }), null)).toBe("claude");
+  });
+});
+
+// suggest_task mints tasks with no user in the loop, so nothing downstream can
+// correct a bad agent choice — and a task's agent is fixed for its whole life.
+describe("suggested tasks are born on a connected agent", () => {
+  beforeEach(resetSettings);
+
+  it("overrides an unconnected project default with the connected agent", () => {
+    setSetting("default_agent", "claude");
+    const project = createProject({ name: "SuggestCodexOnly" });
+    expect(project.default_agent).toBe("claude");
+    connect("codex"); // claude never connected
+    const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
+    expect(getTask(task.id)?.agent).toBe("codex");
+  });
+
+  it("keeps the project default when it IS connected", () => {
+    setSetting("default_agent", "claude");
+    const project = createProject({ name: "SuggestBoth" });
+    connect("claude");
+    connect("codex");
+    const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
+    expect(getTask(task.id)?.agent).toBe("claude");
+  });
+
+  it("falls back to the project default when nothing is connected", () => {
+    setSetting("default_agent", "claude");
+    const project = createProject({ name: "SuggestNone" });
+    const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
+    expect(getTask(task.id)?.agent).toBe("claude");
   });
 });
 
