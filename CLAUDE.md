@@ -7,6 +7,7 @@ Orchestrator — a local-first web app that runs many Claude Code sessions in pa
 - `npm run dev` — app (:3000, `server.js`) + pty sidecar (:3001, `pty-server.js`) via concurrently. `npm run dev:next` / `npm run pty` run them separately.
 - `npm run build` (turbopack) then `npm start` for production.
 - `npm test` — vitest, serial on purpose (tests spawn many real git subprocesses). Single file: `npx vitest run tests/merge.test.ts`.
+- `npm run test:e2e` — Playwright end-to-end suite: builds, then boots the real prod server against a hermetic temp instance with the deterministic mock agent (`lib/agents/mock/`, registered only when `ORCH_E2E_MOCK_AGENT=1`) and drives onboarding → project → task → turn → diff → merge through the UI. `npm run preflight` = unit + e2e, the pre-push gate. See `e2e/README.md` (mock-turn directives, selector conventions, staleness gotcha: the server runs the **built** bundle).
 - No lint script; TypeScript is strict, path alias `@/*` → repo root (mirrored in `vitest.config.ts`).
 
 ## Architecture
