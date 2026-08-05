@@ -51,6 +51,13 @@ const cfAccessImport = import("./lib/auth/origin.mjs");
 // bypass the app-session origin gate below on purpose.
 const serviceRouterImport = import("./lib/service-router.mjs");
 
+// Inherited-credential guard (issue #4): an ANTHROPIC_API_KEY that leaked in
+// from the launch environment would make every SDK turn bill per-token while
+// the UI reports the subscription login. Strip such keys before we serve a
+// single request (persisted keys are re-applied from their 0600 files at db
+// init; ORCH_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
+const envKeysImport = import("./lib/env-keys.mjs");
+
 // Per-instance overrides (see README "Configuration"). PTY_HOST/PTY_PORT must
 // match what pty-server.js binds — the sidecar is loopback-only by default and
 // is reached exclusively through this proxy.
@@ -167,7 +174,18 @@ function proxyPtyUpgrade(req, socket, head) {
   proxyReq.end();
 }
 
-Promise.all([app.prepare(), cfAccessImport, serviceRouterImport]).then(([, cfAccess, serviceRouter]) => {
+Promise.all([app.prepare(), cfAccessImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, serviceRouter, envKeys]) => {
+  // Before listen (= before any request can read env): drop inherited billing
+  // keys so turns can't silently switch from the subscription login to
+  // per-token API billing. See lib/env-keys.mjs.
+  for (const name of envKeys.stripInheritedAgentKeys()) {
+    console.warn(
+      `[server] WARN: ${name} was set in the environment — unsetting it. ` +
+        `Turns authenticate via the connected agent login (or a key saved in Settings). ` +
+        `Set ORCH_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose.`,
+    );
+  }
+
   // getUpgradeHandler() is only valid after prepare().
   const upgradeHandler = app.getUpgradeHandler();
   const server = http.createServer((req, res) => {

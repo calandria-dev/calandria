@@ -62,7 +62,7 @@ describe("codex event mapping", () => {
     // turn.completed → one usage event: tokens from usage, reasoning folded
     // into output, cache_read from cached_input_tokens, and cost_usd ESTIMATED
     // from the token counts at the default model's published API prices
-    // ((39612−30848)×$1.25 + 30848×$0.125 + 119×$10, per 1M).
+    // ((39612−30848)×$5.00 + 30848×$0.50 + 119×$30, per 1M).
     const usage = byType(evs, "usage") as Extract<StreamEvent, { type: "usage" }>[];
     expect(usage).toHaveLength(1);
     expect(usage[0].usage).toMatchObject({
@@ -71,7 +71,7 @@ describe("codex event mapping", () => {
       cache_read_tokens: 30848,
       cache_creation_tokens: 0,
     });
-    expect(usage[0].usage.cost_usd).toBeCloseTo(0.016001, 6);
+    expect(usage[0].usage.cost_usd).toBeCloseTo(0.062814, 6);
 
     // No EMPTY sentinel leaks through, and every tool id is emitted at most once.
     expect(evs.some((e) => e.type === "notice")).toBe(false);

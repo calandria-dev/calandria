@@ -25,8 +25,11 @@ describe("modelLabel", () => {
   });
 
   it("falls back to capability labels for ids with no version shape", () => {
-    expect(modelLabel("gpt-5.1-codex-max", CODEX_CAPABILITIES)).toBe("GPT-5.1 Codex Max");
-    expect(modelLabel("gpt-5.1-codex-mini", CODEX_CAPABILITIES)).toBe("GPT-5.1 Codex Mini");
+    expect(modelLabel("gpt-5.5", CODEX_CAPABILITIES)).toBe("GPT-5.5");
+    expect(modelLabel("gpt-5.3-codex", CODEX_CAPABILITIES)).toBe("GPT-5.3 Codex");
+    // "gpt-5.4-mini" also contains "gpt-5.4" — longest-first matching must not
+    // let the shorter value shadow the more specific one.
+    expect(modelLabel("gpt-5.4-mini", CODEX_CAPABILITIES)).toBe("GPT-5.4 Mini");
   });
 
   it("degrades to the family, then the raw id", () => {

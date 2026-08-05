@@ -43,6 +43,12 @@ const apiKeyStatus = (): AgentAuthStatus =>
   ({ authenticated: true, method: "OpenAI API key", email: null, plan: "API", error: null });
 
 export async function codexStatus(): Promise<AgentAuthStatus> {
+  // Key check BEFORE the CLI's own view: `codex login status` is keyed on
+  // ~/.codex/auth.json and can report a ChatGPT login while an OPENAI_API_KEY
+  // in the env is what the codex children actually bill (issue #4). After the
+  // boot strip (lib/env-keys.mjs) a key here is always deliberate, so when one
+  // is present the honest status is API-key billing, whatever the CLI says.
+  if (hasOpenAiKey()) return apiKeyStatus();
   try {
     const { stdout, stderr } = await run(CODEX, ["login", "status"], { timeout: 20_000, env: process.env });
     const text = stripAnsi(`${stdout}\n${stderr}`);
@@ -51,16 +57,11 @@ export async function codexStatus(): Promise<AgentAuthStatus> {
       const email = text.match(/\b([\w.+-]+@[\w.-]+\.\w+)\b/)?.[1] ?? null;
       return { authenticated: true, method, email, plan: planOf(method ?? text), error: null };
     }
-    // The CLI's own view is keyed on ~/.codex/auth.json; an OPENAI_API_KEY the
-    // user supplied via the api-key path lives in the env instead (see
-    // lib/openai-key.ts), so it can read "not logged in" yet turns still work.
-    if (process.env.OPENAI_API_KEY || hasOpenAiKey()) return apiKeyStatus();
     return { authenticated: false, method: null, email: null, plan: null, error: text.trim() || "not logged in" };
   } catch (e) {
     const err = e as { code?: string; stdout?: string; stderr?: string };
     if (err.code === "ENOENT")
       return { authenticated: false, method: null, email: null, plan: null, error: "the codex CLI isn't installed in this workspace" };
-    if (process.env.OPENAI_API_KEY || hasOpenAiKey()) return apiKeyStatus();
     // A "not logged in" exit (nonzero) lands here.
     const out = stripAnsi(`${err.stdout ?? ""}${err.stderr ?? ""}`);
     return { authenticated: false, method: null, email: null, plan: null, error: out.trim() || "not logged in" };

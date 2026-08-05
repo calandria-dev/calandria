@@ -55,6 +55,8 @@ orchestrator.db-wal
 
 # screenshots / playwright artifacts
 .playwright-mcp/
+/test-results/
+/playwright-report/
 *.png
 # ...except README/docs images, which must be committed
 !docs/images/

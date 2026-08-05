@@ -26,13 +26,22 @@ export async function GET() {
     utility: resolveUtilityAgent(),
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
+      // Effective-credential overlay (issue #4): the settings record says how
+      // the user CONNECTED, but a live API key (persisted 0600 file, or env via
+      // the ORCH_ALLOW_API_KEY_ENV opt-in) is what turns actually bill — it
+      // outranks a stored subscription login, so report it, not the record.
+      const keyed = !!d.apiKey?.has();
       return {
         id: d.id,
         label: d.label,
         capabilities: d.capabilities,
-        connected: !!conn,
-        authenticated: !!conn,
-        account: conn ? { email: conn.email, plan: conn.plan, method: conn.method } : null,
+        connected: keyed || !!conn,
+        authenticated: keyed || !!conn,
+        account: keyed
+          ? { email: null, plan: "API", method: "api_key" as const }
+          : conn
+            ? { email: conn.email, plan: conn.plan, method: conn.method }
+            : null,
         // Connected on record, but its credentials died in flight (expired OAuth
         // session, revoked key) — set by the runner when a turn fails on auth
         // (lib/authFailure.ts) and cleared by the next successful turn or

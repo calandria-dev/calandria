@@ -12,6 +12,9 @@
     "build": "NODE_ENV=production next build --turbopack",
     "start": "NODE_ENV=production concurrently -k -n app,pty -c blue,green \"node server.js\" \"node pty-server.js\"",
     "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:only": "playwright test",
+    "preflight": "npm test && npm run test:e2e",
     "postinstall": "node scripts/fix-pty.js"
   },
   "dependencies": {
@@ -36,6 +39,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "20.17.6",
     "@types/react": "19.2.17",

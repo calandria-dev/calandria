@@ -16,6 +16,11 @@ import { DB_DIR } from "./config";
 const KEY_PATH = path.join(DB_DIR, "openai-api-key");
 
 export function hasOpenAiKey(): boolean {
+  // Env first: after the boot strip (lib/env-keys.mjs), a key in process.env is
+  // always deliberate — persisted here, or kept via ORCH_ALLOW_API_KEY_ENV —
+  // and it is what the codex children actually bill, so status surfaces must
+  // count it even when no key file exists.
+  if (process.env.OPENAI_API_KEY) return true;
   try {
     return fs.statSync(KEY_PATH).size > 0;
   } catch {

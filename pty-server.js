@@ -70,6 +70,16 @@ wss.on("connection", (ws, req) => {
   try { ws.send(JSON.stringify({ type: "ready", cwd })); } catch {}
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`[pty-server] listening on ws://${HOST}:${PORT}`);
+// Separate process from server.js, so it needs its own inherited-credential
+// guard (issue #4): every pty shell inherits this env, and a leaked
+// ANTHROPIC_API_KEY would silently switch `claude` in a terminal tab to
+// per-token billing. Listen only after the strip so no shell can spawn with
+// the key still present. See lib/env-keys.mjs (ORCH_ALLOW_API_KEY_ENV opts in).
+import("./lib/env-keys.mjs").then((envKeys) => {
+  for (const name of envKeys.stripInheritedAgentKeys()) {
+    console.warn(`[pty-server] WARN: ${name} was set in the environment — unsetting it (ORCH_ALLOW_API_KEY_ENV=1 to keep).`);
+  }
+  server.listen(PORT, HOST, () => {
+    console.log(`[pty-server] listening on ws://${HOST}:${PORT}`);
+  });
 });

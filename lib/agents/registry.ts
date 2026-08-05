@@ -15,6 +15,7 @@
 import type { AgentDriver } from "./types";
 import { claudeDriver } from "./claude/driver";
 import { codexDriver } from "./codex/driver";
+import { mockDriver } from "./mock/driver";
 
 export { DEFAULT_AGENT } from "./capabilities";
 import { DEFAULT_AGENT } from "./capabilities";
@@ -24,7 +25,14 @@ import { DEFAULT_AGENT } from "./capabilities";
 // modules; a top-level map literal would crash on an import cycle).
 let DRIVERS: Record<string, AgentDriver> | null = null;
 function drivers(): Record<string, AgentDriver> {
-  if (!DRIVERS) DRIVERS = { [claudeDriver.id]: claudeDriver, [codexDriver.id]: codexDriver };
+  if (!DRIVERS) {
+    DRIVERS = { [claudeDriver.id]: claudeDriver, [codexDriver.id]: codexDriver };
+    // The deterministic e2e driver (lib/agents/mock/) — registered only when the
+    // Playwright suite's env flag is set, so it can never appear in a real
+    // instance's agent picker. The import above is unconditional but harmless:
+    // the mock has no SDK dependency.
+    if (process.env.ORCH_E2E_MOCK_AGENT === "1") DRIVERS[mockDriver.id] = mockDriver;
+  }
   return DRIVERS;
 }
 

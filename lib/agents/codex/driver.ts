@@ -59,10 +59,19 @@ function orchestratorMcpConfig(project: Project, task: Task): CodexOptions["conf
 }
 
 // Reasoning preset → codex model_reasoning_effort. null / unknown = inherit
-// codex's default (no override).
-const EFFORT: Record<string, ModelReasoningEffort> = {
-  off: "minimal",
-  think: "low",
+// codex's default (no override, i.e. the preset's default_reasoning_level —
+// "medium" on every current model).
+//
+// Every model preset in the bundled CLI supports exactly low|medium|high|xhigh.
+// "minimal" still typechecks (the SDK type allows it) but the API 400s the
+// whole turn ("tools cannot be used with reasoning.effort 'minimal'"), so it
+// must never be sent — codex has no true "off"; "low" is its floor. The scale
+// below mirrors the Claude driver's effort mapping (think → medium,
+// think_hard → high, ultrathink → xhigh) so a preset means the same thing on
+// either agent. Exported for tests (tests/codexReasoning.test.ts).
+export const EFFORT: Record<string, ModelReasoningEffort> = {
+  off: "low",
+  think: "medium",
   think_hard: "high",
   ultrathink: "xhigh",
 };

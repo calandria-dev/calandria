@@ -39,6 +39,20 @@ export const CLAUDE_CLI_PATH =
 export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
 
 /**
+ * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
+ * ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY). Off by default: both entrypoints
+ * strip those vars at boot (lib/env-keys.mjs — server.js and pty-server.js read
+ * the env name directly, as does docker/entrypoint.sh) so a key leaked in from
+ * a shell profile or unit file can't silently switch turns from the connected
+ * subscription login to per-token billing (issue #4). Keys saved through the
+ * app's own "I have an API key" path are unaffected — they're re-applied from
+ * their 0600 files at db init, after the strip.
+ */
+export const ALLOW_API_KEY_ENV = ["1", "true", "on"].includes(
+  String(process.env.ORCH_ALLOW_API_KEY_ENV || "").toLowerCase(),
+);
+
+/**
  * Base TCP port for per-project managed services. Each project is assigned a
  * stable port (base + slot) at creation, stored on its row, injected as PORT
  * into the dev/setup/test service env and the project's PTY shell. Override to
