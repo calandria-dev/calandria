@@ -8,8 +8,8 @@
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Project, Task, StreamEvent, AskQuestion } from "../../types";
-import type { AgentDriver } from "../types";
+import type { Project, Task, StreamEvent, AskQuestion, TurnUsage } from "../../types";
+import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
 import { getSetting } from "../../store";
 import { createSuggestedTask, registerExposedService, resolveTitleRefs } from "../../agentTools";
@@ -36,6 +36,7 @@ import {
   cancelClaudeLogin,
   verifyTurn,
 } from "../../claude-auth";
+import { claudeUsage } from "./usage";
 
 function orchestratorServer(project: Project, onSuggest: (title: string) => void, onExpose: (info: { name: string; url: string }) => void) {
   // Titles created this session, so `blocked_by` can reference earlier suggestions
@@ -289,16 +290,9 @@ async function* runTurn(
         } else if (message.type === "result") {
           // Per-turn spend: the result message carries this turn's dollar cost
           // and token counts. Persisted by the consumer for cumulative totals.
-          const u = (message.usage ?? {}) as unknown as Record<string, number>;
           queue.push({
             type: "usage",
-            usage: {
-              cost_usd: message.total_cost_usd ?? 0,
-              input_tokens: u.input_tokens ?? 0,
-              output_tokens: u.output_tokens ?? 0,
-              cache_read_tokens: u.cache_read_input_tokens ?? 0,
-              cache_creation_tokens: u.cache_creation_input_tokens ?? 0,
-            },
+            usage: claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> }),
           });
           if (message.subtype !== "success" && "result" in message === false) {
             queue.push({ type: "error", content: withResetTime(`Run ended: ${message.subtype}`) });
@@ -327,7 +321,7 @@ async function* runTurn(
  * Summarize a transcript into a concise handoff note for the /clear flow.
  * One-shot, no tools — just text in, summary out.
  */
-async function summarizeTranscript(transcript: string, project: Project): Promise<string> {
+async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Summarize the following Claude Code session into a concise handoff note for a fresh session ` +
@@ -344,14 +338,15 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
   });
 
   let out = "";
+  let usage: TurnUsage | undefined;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    }
+    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
   }
-  return out.trim() || "(no summary produced)";
+  return { text: out.trim() || "(no summary produced)", usage };
 }
 
 // Delimiters Claude wraps the final context document in, so we can extract just
@@ -369,7 +364,7 @@ const CTX_CLOSE = "<<<END_CONTEXT>>>";
  * context and recent git activity. Returns markdown the user reviews before
  * saving — we deliberately don't persist here.
  */
-async function draftProjectContext(project: Project, digest: string): Promise<string> {
+async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
   const response = query({
     prompt:
       `You are refreshing the saved "project context" for the project "${project.name}". ` +
@@ -404,12 +399,13 @@ async function draftProjectContext(project: Project, digest: string): Promise<st
   });
 
   let out = "";
+  let usage: TurnUsage | undefined;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    }
+    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
   }
   // Extract just the wrapped document; fall back to the raw text if the model
   // didn't emit the markers (then strip a stray fence if it wrapped the whole
@@ -418,7 +414,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<st
   const close = out.lastIndexOf(CTX_CLOSE);
   let doc = open !== -1 && close > open ? out.slice(open + CTX_OPEN.length, close) : out;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return doc || "(no context produced)";
+  return { text: doc || "(no context produced)", usage };
 }
 
 /**
@@ -427,7 +423,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<st
  * recent activity (task summaries, statuses, recent commits). Describes what
  * happened only — deliberately no next-step suggestions.
  */
-async function summarizeProjectRecap(project: Project, digest: string): Promise<string> {
+async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns ` +
@@ -445,14 +441,15 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
   });
 
   let out = "";
+  let usage: TurnUsage | undefined;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    }
+    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
   }
-  return out.trim() || "(no recap produced)";
+  return { text: out.trim() || "(no recap produced)", usage };
 }
 
 export const claudeDriver: AgentDriver = {

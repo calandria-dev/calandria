@@ -18,10 +18,10 @@
 
 import { getDriver, listDrivers, DEFAULT_AGENT } from "./registry";
 import { resolveConnectedAgent } from "./connections";
-import { getSetting } from "../store";
+import { addInternalUsage, getSetting } from "../store";
 import { track } from "../analytics";
-import type { AgentDriver } from "./types";
-import type { Project, Task } from "../types";
+import type { AgentDriver, OneShotResult } from "./types";
+import type { Project, Task, TurnUsage } from "../types";
 
 // The one-shot helper names on AgentDriver, all optional.
 type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap";
@@ -91,30 +91,58 @@ async function run<K extends OneShotKey>(
   job: K,
   requested: string,
   preferred: () => AgentDriver,
-  invoke: (impl: NonNullable<AgentDriver[K]>) => Promise<string>,
+  invoke: (impl: NonNullable<AgentDriver[K]>) => Promise<OneShotResult>,
+  scope: { project_id?: string; task_id?: string } = {},
 ): Promise<string> {
   const started = Date.now();
   let agent: string | null = null;
   try {
     const driver = resolveFor(preferred(), job);
     agent = driver.id;
-    const out = await invoke(driver[job] as NonNullable<AgentDriver[K]>);
-    track("internal_job_ran", { job, agent, requested, fallback: agent !== requested, ok: true, ms: Date.now() - started });
-    return out;
+    const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>);
+    // Keep older third-party/test drivers from breaking at runtime while the
+    // TypeScript contract moves them to OneShotResult.
+    const result: OneShotResult = typeof raw === "string" ? { text: raw } : raw;
+    const ms = Date.now() - started;
+    const usage = result.usage;
+    addInternalUsage({
+      job, agent, requested_agent: requested, fallback: agent !== requested,
+      ...scope, ok: true, ms, usage,
+    });
+    trackUsage(job, agent, requested, true, ms, usage);
+    return result.text;
   } catch (e) {
     // agent stays null when resolution itself failed (nothing connected) — that
     // distinction is the whole point of tracking failures too.
-    track("internal_job_ran", {
-      job,
-      agent,
-      requested,
-      fallback: agent !== null && agent !== requested,
-      ok: false,
-      error: e instanceof Error ? e.message : String(e),
-      ms: Date.now() - started,
+    const ms = Date.now() - started;
+    const recordedAgent = agent ?? requested;
+    addInternalUsage({
+      job, agent: recordedAgent, requested_agent: requested,
+      fallback: agent !== null && agent !== requested, ...scope, ok: false, ms,
     });
+    trackUsage(job, agent, requested, false, ms, undefined, e);
     throw e;
   }
+}
+
+function trackUsage(
+  job: OneShotKey,
+  agent: string | null,
+  requested: string,
+  ok: boolean,
+  ms: number,
+  usage?: TurnUsage,
+  error?: unknown,
+) {
+  track("internal_job_ran", {
+    job, agent, requested, fallback: agent !== null && agent !== requested, ok, ms,
+    cost_usd: usage?.cost_usd ?? 0,
+    input_tokens: usage?.input_tokens ?? 0,
+    output_tokens: usage?.output_tokens ?? 0,
+    cache_read_tokens: usage?.cache_read_tokens ?? 0,
+    cache_creation_tokens: usage?.cache_creation_tokens ?? 0,
+    ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }),
+  });
 }
 
 // The wrappers are async so utilityDriver()'s no-agent-connected throw always
@@ -125,15 +153,22 @@ async function run<K extends OneShotKey>(
 /** /clear handoff note — TASK-scoped (the task's agent, else the utility agent). */
 export async function summarizeTranscript(task: Task, transcript: string, project: Project): Promise<string> {
   const own = getDriver(task.agent);
-  return run("summarizeTranscript", own.id, () => own, (impl) => impl(transcript, project));
+  return run("summarizeTranscript", own.id, () => own, (impl) => impl(transcript, project), {
+    project_id: project.id,
+    task_id: task.id,
+  });
 }
 
 /** Project-context draft ("Refresh with AI") — PROJECT-scoped (utility agent). */
 export async function draftProjectContext(project: Project, digest: string): Promise<string> {
-  return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest));
+  return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest), {
+    project_id: project.id,
+  });
 }
 
 /** "Where you left off" recap — PROJECT-scoped (utility agent). */
 export async function summarizeProjectRecap(project: Project, digest: string): Promise<string> {
-  return run("summarizeProjectRecap", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest));
+  return run("summarizeProjectRecap", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest), {
+    project_id: project.id,
+  });
 }

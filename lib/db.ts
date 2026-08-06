@@ -140,6 +140,27 @@ export function init(db: Database.Database) {
       created_at            INTEGER NOT NULL
     );
 
+    -- Agent work performed outside a task chat: summaries, recaps, context
+    -- drafts, and connection verification. Deliberately has no foreign keys so
+    -- deleting a project/task does not erase historical overhead spend.
+    CREATE TABLE IF NOT EXISTS internal_usage (
+      id                    TEXT PRIMARY KEY,
+      job                   TEXT NOT NULL,
+      agent                 TEXT NOT NULL,
+      requested_agent       TEXT NOT NULL,
+      fallback              INTEGER NOT NULL DEFAULT 0,
+      project_id            TEXT,
+      task_id               TEXT,
+      ok                    INTEGER NOT NULL DEFAULT 1,
+      ms                    INTEGER NOT NULL DEFAULT 0,
+      cost_usd              REAL NOT NULL DEFAULT 0,
+      input_tokens          INTEGER NOT NULL DEFAULT 0,
+      output_tokens         INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at            INTEGER NOT NULL
+    );
+
     -- One row per successful merge that actually landed commits (re-merges of an
     -- already-merged branch don't record). additions/deletions are the line
     -- stats of what that merge introduced on the base branch — captured at merge
@@ -213,6 +234,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
     CREATE INDEX IF NOT EXISTS idx_task_usage_task ON task_usage(task_id);
     CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
+    CREATE INDEX IF NOT EXISTS idx_internal_usage_created ON internal_usage(created_at);
     CREATE INDEX IF NOT EXISTS idx_task_merges_project ON task_merges(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_merges_task ON task_merges(task_id);
   `);

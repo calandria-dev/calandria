@@ -21,7 +21,8 @@ import type {
   TodoListItem,
 } from "@openai/codex-sdk";
 import { clip, summarizeResult, resultText } from "../shared";
-import { DEFAULT_CODEX_MODEL, estimateCostUsd } from "./pricing";
+import { DEFAULT_CODEX_MODEL } from "./pricing";
+import { codexUsage } from "./usage";
 
 // Per-turn state threaded through every event: the item ids we've already
 // emitted a `tool` event for, plus the model the turn runs (drives cost
@@ -56,16 +57,7 @@ export function mapThreadEvent(ev: ThreadEvent, state: CodexMapState): StreamEve
       // reasoning as output, so both the context gauge and the estimate
       // reflect true spend; codex has no cache-creation counter
       // (cache_creation_tokens=0).
-      const u = ev.usage;
-      const usage = {
-        cost_usd: 0,
-        input_tokens: u.input_tokens,
-        output_tokens: u.output_tokens + u.reasoning_output_tokens,
-        cache_read_tokens: u.cached_input_tokens,
-        cache_creation_tokens: 0,
-      };
-      usage.cost_usd = estimateCostUsd(state.model, usage);
-      return [{ type: "usage", usage }];
+      return [{ type: "usage", usage: codexUsage(ev.usage, state.model) }];
     }
     case "turn.failed":
       // A model/turn failure (distinct from a Stop, which kills the process and

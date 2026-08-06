@@ -20,8 +20,8 @@
 
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
-import type { Project, Task, StreamEvent } from "../../types";
-import type { AgentDriver } from "../types";
+import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
+import type { AgentDriver, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting } from "../../store";
 import { CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
@@ -196,8 +196,8 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // run is cut off (returning whatever the agent had said by then). Any failure
 // degrades to empty text (callers add their own "(no … produced)" fallback) so
 // a failed helper turn never rejects into the recap/refresh jobs — mirrors the
-// Claude driver, whose collectors always return a string.
-async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<string> {
+// Claude driver. Usage received before an error or max-items abort is retained.
+async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
   const codex = new Codex({ codexPathOverride: CODEX_CLI_PATH || undefined });
   const thread = codex.startThread({
     workingDirectory: project.repo_path || process.cwd(),
@@ -210,10 +210,15 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   let items = 0;
   // The last agent_message wins — the same semantics as the SDK's finalResponse.
   let finalResponse = "";
+  let usage: TurnUsage | undefined;
+  const state = newState(resolveCodexModel(null));
   try {
     const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
     for await (const ev of events) {
-      if (ev.type === "turn.failed" || ev.type === "error") return "";
+      for (const mapped of mapThreadEvent(ev, state)) {
+        if (mapped.type === "usage") usage = mapped.usage;
+      }
+      if (ev.type === "turn.failed" || ev.type === "error") return { text: "", usage };
       if (ev.type === "item.started" && ++items > maxItems) {
         abort.abort(); // kills the codex process; keep what we have
         break;
@@ -223,27 +228,27 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   } catch {
     // Aborting above surfaces as a throw from the stream — that's the guard
     // firing, not a failure. A throw without our abort is a real error: degrade.
-    if (!abort.signal.aborted) return "";
+    if (!abort.signal.aborted) return { text: "", usage };
   }
-  return finalResponse.trim();
+  return { text: finalResponse.trim(), usage };
 }
 
-async function summarizeTranscript(transcript: string, project: Project): Promise<string> {
-  const out = await oneShot(
+async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `Summarize the following Codex session into a concise handoff note for a fresh session continuing the ` +
       `same task. Cover: what was done, the current state of the code, decisions made, and what remains. Be ` +
       `specific about files and follow-ups. Output only the note.\n\n=== TRANSCRIPT ===\n${transcript}`,
     ONESHOT_MAX_ITEMS_TEXT
   );
-  return out || "(no summary produced)";
+  return { text: result.text || "(no summary produced)", usage: result.usage };
 }
 
 const CTX_OPEN = "<<<CONTEXT>>>";
 const CTX_CLOSE = "<<<END_CONTEXT>>>";
 
-async function draftProjectContext(project: Project, digest: string): Promise<string> {
-  const out = await oneShot(
+async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `You are refreshing the saved "project context" for the project "${project.name}". This context is prepended ` +
       `to every new session in this project, so it must get a fresh session up to speed fast and accurately reflect ` +
@@ -260,15 +265,15 @@ async function draftProjectContext(project: Project, digest: string): Promise<st
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
     ONESHOT_MAX_ITEMS_EXPLORE
   );
-  const open = out.indexOf(CTX_OPEN);
-  const close = out.lastIndexOf(CTX_CLOSE);
-  let doc = open !== -1 && close > open ? out.slice(open + CTX_OPEN.length, close) : out;
+  const open = result.text.indexOf(CTX_OPEN);
+  const close = result.text.lastIndexOf(CTX_CLOSE);
+  let doc = open !== -1 && close > open ? result.text.slice(open + CTX_OPEN.length, close) : result.text;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return doc || "(no context produced)";
+  return { text: doc || "(no context produced)", usage: result.usage };
 }
 
-async function summarizeProjectRecap(project: Project, digest: string): Promise<string> {
-  const out = await oneShot(
+async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns after ` +
       `time away. Output ONLY 2–4 terse markdown bullet points ("- " each), one line each, ideally under ~12 words. ` +
@@ -276,7 +281,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
     ONESHOT_MAX_ITEMS_TEXT
   );
-  return out || "(no recap produced)";
+  return { text: result.text || "(no recap produced)", usage: result.usage };
 }
 
 export const codexDriver: AgentDriver = {

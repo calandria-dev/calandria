@@ -6,7 +6,7 @@
 // flow — the same swappable-seam pattern as lib/billing/ and
 // lib/control-plane/provisioner/.
 
-import type { Project, Task, StreamEvent } from "../types";
+import type { Project, Task, StreamEvent, TurnUsage } from "../types";
 
 export type { StreamEvent };
 
@@ -99,6 +99,11 @@ export interface AgentVerifyResult {
   error: string | null;
 }
 
+export interface OneShotResult {
+  text: string;
+  usage?: TurnUsage;
+}
+
 /**
  * The "I have an API key instead" alternative to the subscription login, as a
  * small surface a driver optionally provides (mirrors lib/anthropic-key.ts /
@@ -153,11 +158,11 @@ export interface AgentDriver {
   // project-scoped and run on the utility agent.
 
   /** Condense a session transcript into a handoff note for the /clear flow. */
-  summarizeTranscript?(transcript: string, project: Project): Promise<string>;
+  summarizeTranscript?(transcript: string, project: Project): Promise<OneShotResult>;
   /** Draft a fresh "what we're building" context by exploring the repo (read-only). */
-  draftProjectContext?(project: Project, digest: string): Promise<string>;
+  draftProjectContext?(project: Project, digest: string): Promise<OneShotResult>;
   /** Short "where you left off" recap from a recent-activity digest. */
-  summarizeProjectRecap?(project: Project, digest: string): Promise<string>;
+  summarizeProjectRecap?(project: Project, digest: string): Promise<OneShotResult>;
 
   // ---------- auth (the setup wizard's connect / verify flow) ----------
 
