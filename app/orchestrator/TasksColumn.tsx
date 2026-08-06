@@ -29,11 +29,17 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect }: { ta
         <AgentBadge label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         <PriPill p={task.priority} />
       </div>
-      {blocked && (
+      {blocked && (task.auto_start ? (
+        // Queued to auto-start ≠ plain blocked: this one launches itself the
+        // moment its last blocker is marked done.
+        <div className="blocked-chip auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
+          {Icon.bolt()} Auto-starts after {blockedBy!.length === 1 ? blockedBy![0] : `${blockedBy!.length} tasks`}
+        </div>
+      ) : (
         <div className="blocked-chip" title={`Blocked until done: ${blockedBy!.join(", ")}`}>
           {Icon.lock()} Blocked by {blockedBy!.length === 1 ? blockedBy![0] : `${blockedBy!.length} tasks`}
         </div>
-      )}
+      ))}
       {task.description && <div className="tdesc">{task.description}</div>}
       <div className="task-foot">
         <span className="activity">{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>

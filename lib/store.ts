@@ -272,6 +272,21 @@ export function getTaskDeps(taskId: string): string[] {
   ).map((r) => r.depends_on_id);
 }
 
+// Tasks that opted into auto-start and are blocked by the given task: the
+// candidates to launch when it's marked done (lib/autoStart.ts re-checks each
+// one's OTHER blockers before starting it). Deliberately narrow — only a
+// never-started, non-suggested, plain not_started task may auto-start; on_hold
+// means the user parked it, and a suggestion hasn't been reviewed yet.
+export function listAutoStartCandidates(dependsOnId: string): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT t.* FROM tasks t JOIN task_dependencies td ON td.task_id = t.id
+       WHERE td.depends_on_id = ? AND t.auto_start = 1 AND t.started = 0
+         AND t.suggested = 0 AND t.status = 'not_started'`
+    )
+    .all(dependsOnId) as Task[];
+}
+
 // Replace a task's dependency set. Drops self-references and ids outside the
 // task's project, then guards against cycles before persisting. Throws on a cycle.
 export function setTaskDeps(taskId: string, dependsOn: string[]): void {
@@ -363,9 +378,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, running=?, awaiting_input=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, running=?, awaiting_input=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.running, n.awaiting_input, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.running, n.awaiting_input, n.updated_at, id);
   return getTask(id);
 }
 

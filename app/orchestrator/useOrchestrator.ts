@@ -456,11 +456,12 @@ export function useOrchestrator() {
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[] }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[]; auto_start: boolean }) => {
     if (!project) return;
     const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent });
-    // Dependencies are an edit-after-create step (the task id doesn't exist until now).
-    if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on });
+    // Dependencies (and the auto-start opt-in that rides on them) are an
+    // edit-after-create step (the task id doesn't exist until now).
+    if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
     await loadTasks(project.id, false);
     setSelTask(t.id);
     setModal(null);
@@ -494,8 +495,8 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
-  const saveTask = async (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[] }) => {
-    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
+  const saveTask = async (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { ...patch, auto_start: patch.auto_start ? 1 : 0 });
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
     setEditId(null);
   };

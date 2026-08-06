@@ -134,11 +134,15 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
       {actions}
       {(blocked || sessionCount > 0) && !mini && (
         <div className="bc-foot">
-          {blocked && (
+          {blocked && (task.auto_start ? (
+            <span className="bc-chip autostart" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
+              {Icon.bolt()} Auto-starts after {blockedBy!.length === 1 ? "1 task" : `${blockedBy!.length} tasks`}
+            </span>
+          ) : (
             <span className="bc-chip block" title={`Blocked until done: ${blockedBy!.join(", ")}`}>
               {Icon.lock()} Blocked by {blockedBy!.length === 1 ? "1 task" : `${blockedBy!.length} tasks`}
             </span>
-          )}
+          ))}
           <span className="sp" />
           {sessionCount > 0 && <span className="bc-sess" title={`${sessionCount} session${sessionCount !== 1 ? "s" : ""}`}>{Icon.clock()} {sessionCount}</span>}
         </div>
