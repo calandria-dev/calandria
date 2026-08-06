@@ -1,6 +1,8 @@
 // Client-side shapes + UI constants shared across the orchestrator modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import type { Priority, Status } from "@/lib/types";
+import type { InternalUsageEstimate } from "@/lib/internalUsage";
+export type { InternalUsageEstimate };
 
 // ---------- client shapes ----------
 export interface ProjectRow {

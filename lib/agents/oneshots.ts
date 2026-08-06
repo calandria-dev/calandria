@@ -22,6 +22,7 @@ import { addInternalUsage, getSetting } from "../store";
 import { track } from "../analytics";
 import type { AgentDriver, OneShotResult } from "./types";
 import type { Project, Task, TurnUsage } from "../types";
+import { backgroundJobsEnabled } from "../backgroundJobs";
 
 // The one-shot helper names on AgentDriver, all optional.
 type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap";
@@ -93,7 +94,11 @@ async function run<K extends OneShotKey>(
   preferred: () => AgentDriver,
   invoke: (impl: NonNullable<AgentDriver[K]>) => Promise<OneShotResult>,
   scope: { project_id?: string; task_id?: string } = {},
+  unattended = false,
 ): Promise<string> {
+  if (unattended && !backgroundJobsEnabled()) {
+    throw new Error("Background jobs are off in Settings → Background jobs");
+  }
   const started = Date.now();
   let agent: string | null = null;
   try {
@@ -167,8 +172,12 @@ export async function draftProjectContext(project: Project, digest: string): Pro
 }
 
 /** "Where you left off" recap — PROJECT-scoped (utility agent). */
-export async function summarizeProjectRecap(project: Project, digest: string): Promise<string> {
+export async function summarizeProjectRecap(
+  project: Project,
+  digest: string,
+  options: { unattended?: boolean } = {},
+): Promise<string> {
   return run("summarizeProjectRecap", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest), {
     project_id: project.id,
-  });
+  }, options.unattended ?? true);
 }

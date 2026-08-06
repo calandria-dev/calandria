@@ -14,6 +14,12 @@ import { getDb } from "../lib/db";
 import { addUsage, createProject, createTask, getInstanceUsage, setSetting } from "../lib/store";
 import { setAgentConnection } from "../lib/agents/connections";
 import { draftProjectContext } from "../lib/agents/oneshots";
+import {
+  addInternalUsage,
+  getClearEstimate,
+  getContextDraftEstimate,
+  internalUsageLast30Days,
+} from "../lib/internalUsage";
 
 const USAGE = {
   cost_usd: 0.25,
@@ -99,5 +105,43 @@ describe("internal agent usage", () => {
       internal_tokens: 10,
       internal_jobs: 1,
     });
+  });
+
+  it("groups the settings readout by job and excludes usage older than 30 days", () => {
+    const insert = getDb().prepare(
+      `INSERT INTO internal_usage (id, job, agent, requested_agent, cost_usd, created_at)
+       VALUES (?, ?, 'claude', 'claude', ?, ?)`
+    );
+    insert.run("recent-recap", "summarizeProjectRecap", 0.19, Date.now());
+    insert.run("recent-recap-2", "summarizeProjectRecap", 0.01, Date.now());
+    insert.run("old-recap", "summarizeProjectRecap", 99, Date.now() - 31 * 24 * 60 * 60 * 1000);
+
+    expect(internalUsageLast30Days()).toContainEqual({
+      job: "summarizeProjectRecap",
+      runs: 2,
+      cost_usd: 0.2,
+    });
+  });
+
+  it("uses a project's latest context draft, then the instance median", () => {
+    const project = createProject({ name: "Estimated" });
+    addInternalUsage({ job: "draftProjectContext", agent: "claude", requested_agent: "claude", project_id: project.id, usage: { ...USAGE, cost_usd: 0.11, input_tokens: 30_000, output_tokens: 8_000, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    expect(getContextDraftEstimate(project.id)).toMatchObject({ tokens: 38_000, cost_usd: 0.11, source: "project_latest" });
+
+    const other = createProject({ name: "Fallback" });
+    addInternalUsage({ job: "draftProjectContext", agent: "claude", requested_agent: "claude", usage: { ...USAGE, cost_usd: 0.21, input_tokens: 58_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    expect(getContextDraftEstimate(other.id)).toMatchObject({ tokens: 48_000, cost_usd: 0.16, source: "instance_median" });
+  });
+
+  it("scales /clear history to the current transcript and prefers the task agent", () => {
+    addInternalUsage({ job: "summarizeTranscript", agent: "claude", requested_agent: "claude", usage: { ...USAGE, cost_usd: 0.12, input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    addInternalUsage({ job: "summarizeTranscript", agent: "codex", requested_agent: "codex", usage: { ...USAGE, cost_usd: 9, input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+
+    expect(getClearEstimate(200, "claude")).toMatchObject({ tokens: 240, cost_usd: 0.24, source: "scaled_history" });
+  });
+
+  it("does not manufacture estimates without metered history", () => {
+    expect(getContextDraftEstimate("missing")).toBeNull();
+    expect(getClearEstimate(20_000, "claude")).toBeNull();
   });
 });
