@@ -51,7 +51,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   addMessage(id, gen, "session_break", summary);
 
   // Fresh generation: new context window, session reset. started=0 so the next
-  // send re-issues title+description, and buildProjectContext now includes the summary.
+  // send opens with the generic start prompt; buildProjectContext supplies the
+  // task metadata and now includes the summary.
   const next = updateTask(id, {
     generation: gen + 1,
     session_id: null,

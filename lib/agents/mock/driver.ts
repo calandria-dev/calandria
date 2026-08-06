@@ -5,9 +5,9 @@
 // e2e runs need no Claude/Codex credentials and produce the same transcript
 // every time.
 //
-// Turn behavior is scripted by directives embedded anywhere in the user text
-// (the initial turn's text is the task title + description, so directives work
-// there too):
+// Turn behavior is scripted by directives embedded in user text or, for a
+// fresh session, in the task metadata supplied through the real drivers'
+// project context:
 //   e2e:write=<relpath>:<content>   write a file into the task's worktree
 //   e2e:sleep=<ms>                  hold the turn open (Stop / queue tests)
 //   e2e:fail=<message>              end the turn with an error event
@@ -77,15 +77,18 @@ export const mockDriver: AgentDriver = {
     const signal = abort?.signal;
     const cwd = task.worktree_path || project.repo_path;
     const sessionId = task.session_id || `mock-${task.id}-g${task.generation}`;
+    const instructionText = task.session_id
+      ? userText
+      : [task.title, task.description, userText].filter(Boolean).join("\n");
 
     yield { type: "session", sessionId };
     yield { type: "model", model: "mock-1" };
 
-    const sleepMs = userText.match(/e2e:sleep=(\d+)/)?.[1];
+    const sleepMs = instructionText.match(/e2e:sleep=(\d+)/)?.[1];
     if (sleepMs) await sleep(Math.min(Number(sleepMs), 120_000), signal);
     if (signal?.aborted) return; // a Stop ends the stream without an error event
 
-    const fail = userText.match(/e2e:fail=([^\n]+)/)?.[1];
+    const fail = instructionText.match(/e2e:fail=([^\n]+)/)?.[1];
     if (fail) {
       yield { type: "error", content: fail.trim() };
       return;
@@ -93,7 +96,7 @@ export const mockDriver: AgentDriver = {
 
     // File writes: every explicit e2e:write, else the default notes append.
     const writes: { rel: string; content: string }[] = [];
-    for (const m of userText.matchAll(/e2e:write=([^\s:]+):([^\n]+)/g)) {
+    for (const m of instructionText.matchAll(/e2e:write=([^\s:]+):([^\n]+)/g)) {
       writes.push({ rel: m[1], content: m[2].trim() + "\n" });
     }
     if (writes.length === 0) {
@@ -124,7 +127,7 @@ export const mockDriver: AgentDriver = {
       // not a repo / nothing to commit — fine
     }
 
-    for (const m of userText.matchAll(/e2e:suggest=([^\n]+)/g)) {
+    for (const m of instructionText.matchAll(/e2e:suggest=([^\n]+)/g)) {
       const title = m[1].trim();
       createSuggestedTask(project, { title, description: "Suggested by the mock agent (e2e)." });
       yield { type: "suggested", title };

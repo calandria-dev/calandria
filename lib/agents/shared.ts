@@ -7,6 +7,11 @@
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
 
+// A fresh agent session still needs a user turn to begin, but task metadata is
+// already supplied by buildProjectContext(). Keep this prompt deliberately
+// generic so the title and details have one canonical representation.
+export const INITIAL_TASK_PROMPT = "Start working on the task described in the task context.";
+
 /**
  * Build the context string that is prepended to every task's session via the
  * agent's system prompt. This is the "write project context once" feature:

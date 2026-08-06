@@ -69,7 +69,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const canStart = !blocked && agentReady;
   const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, depends_on: deps, auto_start: autoStart && deps.length > 0 });
   return (
-    <Modal title="New task" sub={`${project.name} · title + description become ${agentLabel(agents, agent)}'s first prompt`} onClose={onClose}
+    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
           title={blocked ? "Can't start now — this task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
@@ -86,7 +86,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
       </div>
       <div className="field">
         <div className="lab">Description <span className="opt">— what to do</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
+        <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
         <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
@@ -114,7 +114,7 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
   const save = () => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0 });
   return (
-    <Modal title="Edit task" sub="title + description become the agent's first prompt" onClose={onClose}
+    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
       footer={<>
         {confirmDel ? (
           <button className="btn-danger on" onClick={() => onDelete(task.id)} title="Permanently remove this task, its session and worktree">{Icon.x()} Delete task permanently</button>
