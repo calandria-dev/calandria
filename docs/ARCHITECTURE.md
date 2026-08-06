@@ -114,6 +114,13 @@ summaries/recaps/drafts. AI conflict-resolution turns need no special routing:
 it as an ordinary message, so it flows through `startTurn()` → the task's driver like any
 turn.
 
+Unattended one-shots are server-gated by the `background_jobs` setting (default `on`).
+Project recaps add a second `recap_mode` gate: `automatic` (default), `on_open`, or `off`.
+The five-minute sweep requires `automatic`; opening a project accepts `automatic` or
+`on_open`. Explicit `/clear`, Refresh with AI, and manual recap refreshes bypass the
+unattended gate. Settings reads a single 30-day aggregation from `internal_usage` so the
+controls show their run count and API-price-equivalent cost without polling.
+
 ### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `expose_service` / `ask_user` are the same orchestrator tools every driver

@@ -4,6 +4,21 @@ import type { TurnUsage } from "./types";
 
 export type InternalJob = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "verify";
 
+export interface InternalJobUsage30d {
+  job: InternalJob;
+  runs: number;
+  cost_usd: number;
+}
+
+export function internalUsageLast30Days(): InternalJobUsage30d[] {
+  return getDb().prepare(
+    `SELECT job, COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost_usd
+       FROM internal_usage
+      WHERE created_at >= ?
+      GROUP BY job`
+  ).all(Date.now() - 30 * 24 * 60 * 60 * 1000) as InternalJobUsage30d[];
+}
+
 export type InternalUsageEstimate = {
   tokens: number;
   cost_usd: number;

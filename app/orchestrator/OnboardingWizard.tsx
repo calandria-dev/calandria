@@ -139,6 +139,9 @@ function ConnectStep({
         sub="Operator runs coding agents as you. Sign in with the account you already have — connect one now, add others any time from Settings."
       />
       <div className="wiz-body">
+        <div className="hlp" style={{ margin: "0 0 18px", maxWidth: 620 }}>
+          Operator uses the connected agent for small utility jobs, including automatic project recaps and session summaries you request. Control these any time in Settings → Background jobs.
+        </div>
         {!bundle && <div className="wiz-verify"><span className="wiz-spin" /> <span>Loading agents…</span></div>}
         {agents.length > 1 && (
           <div className="seg" style={{ maxWidth: 460, marginBottom: 20 }}>

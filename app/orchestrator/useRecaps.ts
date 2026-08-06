@@ -7,12 +7,15 @@ import type { RecapInfo, TaskRow } from "./types";
 // Owns project "where you left off" recaps plus the selection-on-landing logic:
 // fetch/generate a recap when entering a project, sweep stale projects on an
 // interval, and decide whether to land on the recap or auto-pick the first task.
-export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef }: {
+export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef, settingsReady, backgroundJobs, recapMode }: {
   selProj: string | null;
   selTask: string | null;
   tasks: TaskRow[];
   setSelTask: (id: string | null) => void;
   selProjRef: MutableRefObject<string | null>;
+  settingsReady: boolean;
+  backgroundJobs: boolean;
+  recapMode: "automatic" | "on_open" | "off";
 }) {
   const [recaps, setRecaps] = useState<Record<string, RecapInfo>>({});
 
@@ -22,9 +25,11 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef }: {
     try {
       let info = await jget<RecapInfo>(`/api/projects/${pid}/recap`);
       setRecaps((m) => ({ ...m, [pid]: info }));
-      if (regen || (info.needsRecap && !info.recap && !info.generating)) {
+      const unattended = !regen;
+      const canGenerate = regen || (settingsReady && backgroundJobs && recapMode !== "off");
+      if (canGenerate && (regen || (info.needsRecap && !info.recap && !info.generating))) {
         setRecaps((m) => ({ ...m, [pid]: { ...info, generating: true } }));
-        const g = await jsend<{ recap: string; recap_at: number }>(`/api/projects/${pid}/recap`, "POST");
+        const g = await jsend<{ recap: string; recap_at: number }>(`/api/projects/${pid}/recap`, "POST", { unattended });
         info = { ...info, recap: g.recap, recap_at: g.recap_at, needsRecap: false, generating: false, hasHistory: true };
         setRecaps((m) => ({ ...m, [pid]: info }));
       }
@@ -34,9 +39,9 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef }: {
       const msg = e instanceof Error ? e.message : String(e);
       setRecaps((m) => ({ ...m, [pid]: { ...(m[pid] as RecapInfo), generating: false, error: msg } }));
     }
-  }, []);
+  }, [backgroundJobs, recapMode, settingsReady]);
 
-  useEffect(() => { if (selProj) fetchRecap(selProj); }, [selProj, fetchRecap]);
+  useEffect(() => { if (selProj && settingsReady) fetchRecap(selProj); }, [selProj, settingsReady, fetchRecap]);
 
   // Landing decision: once tasks + recap status are in, auto-select the first
   // task ONLY when there's no recap to show. If you're returning to a project
@@ -71,6 +76,7 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef }: {
   // Proactively sweep for stale projects on load and on an interval, then
   // refresh the currently-open project's recap so a freshly-baked one appears.
   useEffect(() => {
+    if (!settingsReady || !backgroundJobs || recapMode !== "automatic") return;
     const sweep = () => {
       jsend("/api/recaps/sweep", "POST")
         .then(() => { if (selProjRef.current) fetchRecap(selProjRef.current); })
@@ -79,7 +85,7 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef }: {
     sweep();
     const t = setInterval(sweep, 5 * 60 * 1000);
     return () => clearInterval(t);
-  }, [fetchRecap, selProjRef]);
+  }, [backgroundJobs, fetchRecap, recapMode, selProjRef, settingsReady]);
 
   return { recaps, fetchRecap };
 }

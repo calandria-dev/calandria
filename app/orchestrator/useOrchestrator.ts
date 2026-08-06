@@ -46,6 +46,7 @@ export function useOrchestrator() {
   // Server-backed app defaults (e.g. default reasoning / permission mode a task
   // inherits). Stored in orchestrator.db, not localStorage, so runTurn can read them.
   const [appDefaults, setAppDefaults] = useState<Record<string, string>>({});
+  const [appDefaultsReady, setAppDefaultsReady] = useState(false);
   // Agent capability descriptors (GET /api/agents): the model/reasoning/permission
   // pickers, per-task agent badges, cost/ask gates, and the new-task agent picker
   // all read from this — no hardcoded per-agent lists in the client.
@@ -167,11 +168,21 @@ export function useOrchestrator() {
     usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask });
 
   // ---------- project recaps + landing decision ----------
-  const { recaps, fetchRecap } = useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef });
+  const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
+    ? appDefaults.recap_mode
+    : "automatic";
+  const { recaps, fetchRecap } = useRecaps({
+    selProj, selTask, tasks, setSelTask, selProjRef,
+    settingsReady: appDefaultsReady,
+    backgroundJobs: appDefaults.background_jobs !== "off",
+    recapMode,
+  });
 
   // Load server-backed app defaults (reasoning / permission mode) once.
   useEffect(() => {
-    jget<Record<string, string>>("/api/settings").then(setAppDefaults).catch(() => {});
+    jget<Record<string, string>>("/api/settings")
+      .then(setAppDefaults)
+      .finally(() => setAppDefaultsReady(true));
   }, []);
 
   // Onboarding: a fresh instance opens the wizard automatically; an already
@@ -579,7 +590,11 @@ export function useOrchestrator() {
   // (agent-scoped and legacy) plus the reset of client-only settings.
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
-    for (const key of Object.keys(appDefaults)) if (key.startsWith("default_") || key === "utility_agent") void setAppDefault(key, null);
+    for (const key of Object.keys(appDefaults)) {
+      if (key.startsWith("default_") || key === "utility_agent" || key === "background_jobs" || key === "recap_mode") {
+        void setAppDefault(key, null);
+      }
+    }
   };
 
   // Set a project's default agent for new tasks (persisted; existing tasks keep

@@ -152,6 +152,7 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
 // work. Today there's one section; appearance/models/integrations slot in later.
 const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNode }[] = [
   { id: "general", label: "General", icon: Icon.gear },
+  { id: "background", label: "Background jobs", icon: Icon.clock },
   { id: "run", label: "Run defaults", icon: Icon.spark },
   { id: "agents", label: "Agents", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
@@ -185,12 +186,31 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
   const multiAgent = agents.agents.length > 1;
+  const backgroundJobs = appDefaults.background_jobs !== "off";
+  const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
+    ? appDefaults.recap_mode
+    : "automatic";
+  const [jobUsage, setJobUsage] = useState<Record<string, { runs: number; cost_usd: number }> | null>(null);
+  useEffect(() => {
+    if (section !== "background" || jobUsage !== null) return;
+    jget<{ jobs: { job: string; runs: number; cost_usd: number }[] }>("/api/settings/background-jobs")
+      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd }]))))
+      .catch(() => setJobUsage({}));
+  }, [jobUsage, section]);
+  const recapUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0 };
+  const utilityUsage = [jobUsage?.summarizeProjectRecap, jobUsage?.draftProjectContext]
+    .filter((u): u is { runs: number; cost_usd: number } => !!u)
+    .reduce((sum, u) => ({ runs: sum.runs + u.runs, cost_usd: sum.cost_usd + u.cost_usd }), { runs: 0, cost_usd: 0 });
+  const usageLine = (label: string, usage = recapUsage) =>
+    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`;
   // Any server-backed run default set (agent-scoped, legacy, or default_agent)
   // means we're off the built-in defaults.
   const hasRunDefault = Object.keys(appDefaults).some((k) => k.startsWith("default_") || k === "utility_agent");
+  const hasBackgroundDefault = !backgroundJobs || recapMode !== "automatic";
   const isDefault = settings.clearThresholdPct === DEFAULT_SETTINGS.clearThresholdPct
     && settings.clearThresholdTokens === DEFAULT_SETTINGS.clearThresholdTokens
-    && !hasRunDefault;
+    && !hasRunDefault
+    && !hasBackgroundDefault;
   // Clamp on commit so a half-typed value never persists out of range.
   const clampPct = (n: number) => Math.min(100, Math.max(1, Math.round(n)));
   const clampTokens = (n: number) => Math.max(1000, Math.round(n));
@@ -206,7 +226,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
             </button>
           ))}
         </div>
-        <div className="settings-nav-foot">{section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "background" ? "agent utility work · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -246,6 +266,66 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 </div>
               </div>
             )}
+            {section === "background" && (
+              <>
+                <div className="field">
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="lab">{Icon.bolt()} Let Operator use your agent for background work</div>
+                      <div className="hlp" style={{ marginTop: 4 }}>
+                        Turn this off to stop unattended agent work. Things you explicitly ask for—such as <code>/clear</code>, Refresh with AI, or manually refreshing a recap—still run.
+                      </div>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-label="Let Operator use your agent for background work"
+                      aria-checked={backgroundJobs}
+                      className={`in-switch${backgroundJobs ? " on" : ""}`}
+                      onClick={() => setAppDefault("background_jobs", backgroundJobs ? "off" : null)}
+                    ><span /></button>
+                  </div>
+                  <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Project recap activity")}</div>
+                </div>
+
+                <div className="field">
+                  <div className="lab">{Icon.clock()} Project recaps</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Choose when Operator writes a fresh “where you left off” recap. Manual refreshes remain available in every mode.
+                  </div>
+                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 620 }}>
+                    {([
+                      ["automatic", "Automatic"],
+                      ["on_open", "Only when I open a project"],
+                      ["off", "Off"],
+                    ] as const).map(([value, label]) => (
+                      <button key={value} className={recapMode === value ? "on" : ""} onClick={() => setAppDefault("recap_mode", value === "automatic" ? null : value)}>{label}</button>
+                    ))}
+                  </div>
+                  <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Project recaps")}</div>
+                </div>
+
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Utility agent</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Put Operator&apos;s utility work on a cheaper or second login—for example, run recaps on Codex while keeping Claude quota for your main tasks.
+                  </div>
+                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                    {agents.agents.map((a) => (
+                      <button
+                        key={a.id}
+                        className={(appDefaults.utility_agent || agents.utility?.configured || appDefaultAgent) === a.id ? "on" : ""}
+                        title={a.authenticated ? `Run utility jobs on ${a.label}` : `${a.label} isn't connected yet`}
+                        onClick={() => setAppDefault("utility_agent", a.id)}
+                      >
+                        {a.label}{!a.authenticated && <span className="opt"> · not connected</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <UtilityEffective agents={agents} />
+                  <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Utility agent jobs", utilityUsage)}</div>
+                </div>
+              </>
+            )}
             {section === "run" && (
               <>
                 {multiAgent && (
@@ -266,29 +346,6 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                         </button>
                       ))}
                     </div>
-                  </div>
-                )}
-                {multiAgent && (
-                  <div className="field">
-                    <div className="lab">{Icon.spark()} Utility agent</div>
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Runs the app&apos;s own background jobs — project recaps and &ldquo;Refresh with AI&rdquo; context drafts. (A task&apos;s <code>/clear</code> handoff note is always written by that task&apos;s own agent.)
-                    </div>
-                    <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
-                      {agents.agents.map((a) => (
-                        <button
-                          key={a.id}
-                          // Unset falls through to the app default agent, not a
-                          // hardcoded Claude — mirrors resolveUtilityAgent().
-                          className={(appDefaults.utility_agent || agents.utility?.configured || appDefaultAgent) === a.id ? "on" : ""}
-                          title={a.authenticated ? `Run background jobs on ${a.label}` : `${a.label} isn't connected yet`}
-                          onClick={() => setAppDefault("utility_agent", a.id)}
-                        >
-                          {a.label}{!a.authenticated && <span className="opt"> · not connected</span>}
-                        </button>
-                      ))}
-                    </div>
-                    <UtilityEffective agents={agents} />
                   </div>
                 )}
                 {multiAgent && (

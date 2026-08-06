@@ -14,7 +14,12 @@ import { getDb } from "../lib/db";
 import { addUsage, createProject, createTask, getInstanceUsage, setSetting } from "../lib/store";
 import { setAgentConnection } from "../lib/agents/connections";
 import { draftProjectContext } from "../lib/agents/oneshots";
-import { addInternalUsage, getClearEstimate, getContextDraftEstimate } from "../lib/internalUsage";
+import {
+  addInternalUsage,
+  getClearEstimate,
+  getContextDraftEstimate,
+  internalUsageLast30Days,
+} from "../lib/internalUsage";
 
 const USAGE = {
   cost_usd: 0.25,
@@ -99,6 +104,22 @@ describe("internal agent usage", () => {
       internal_cost_usd: 1.5,
       internal_tokens: 10,
       internal_jobs: 1,
+    });
+  });
+
+  it("groups the settings readout by job and excludes usage older than 30 days", () => {
+    const insert = getDb().prepare(
+      `INSERT INTO internal_usage (id, job, agent, requested_agent, cost_usd, created_at)
+       VALUES (?, ?, 'claude', 'claude', ?, ?)`
+    );
+    insert.run("recent-recap", "summarizeProjectRecap", 0.19, Date.now());
+    insert.run("recent-recap-2", "summarizeProjectRecap", 0.01, Date.now());
+    insert.run("old-recap", "summarizeProjectRecap", 99, Date.now() - 31 * 24 * 60 * 60 * 1000);
+
+    expect(internalUsageLast30Days()).toContainEqual({
+      job: "summarizeProjectRecap",
+      runs: 2,
+      cost_usd: 0.2,
     });
   });
 
