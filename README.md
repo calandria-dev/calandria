@@ -37,7 +37,8 @@ Each **project** carries reusable context. Each **task** is its own agent sessio
 - **Integrated terminal + managed services** — a real shell per project, plus supervised dev/setup/test processes that survive restarts, with live logs and optional public URLs.
 - **Honest usage tracking + insights** — live per-task tokens and spend, plus a local analytics dashboard. The chip leads with tokens the agent actually processed and keeps prompt-cache re-reads (usually most of the raw total) as secondary detail; on a subscription login the dollar figure is labelled as an API-price equivalent covered by your plan, not a bill.
 - **List or kanban board** — flip the workspace to a full-width board of live status columns (Suggested / Not started / In progress / Needs input / Done); drag cards to reorder or change status, click one to open its session in a slide-over. ⌘⇧B toggles.
-- Plus: agent-suggested tasks, task dependencies, image attachments, clone from GitHub, recaps, a first-run tutorial.
+- **Task pipelines** — chain tasks with "Blocked by" dependencies; opt a blocked task into **Start when unblocked** and it launches its own session the moment its last blocker is marked done.
+- Plus: agent-suggested tasks, image attachments, clone from GitHub, recaps, a first-run tutorial.
 
 **Watch the session stream — tool calls, edits, questions:**
 
