@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration } from "./format";
-import { SLABEL, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle } from "./types";
+import { relTime, duration, fmtJobCost } from "./format";
+import { SLABEL, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -152,7 +152,7 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
 
 // Mirror of the server's RefreshState (lib/contextRefresh.ts) — the detached
 // "Refresh with AI" job state the modal polls.
-type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number };
+type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number; estimate?: InternalUsageEstimate | null };
 
 export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
@@ -172,6 +172,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
   const [prevContext, setPrevContext] = useState<string | null>(null);
+  const [refreshEstimate, setRefreshEstimate] = useState<InternalUsageEstimate | null>(null);
   // Edit vs. rendered-markdown preview of the context. Refreshing forces edit
   // (the textarea shows the disabled/loading state).
   const [preview, setPreview] = useState(false);
@@ -192,6 +193,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // Fold a polled job state into the UI. Idempotent: applies a finished draft at
   // most once, then acks it so it doesn't resurface on the next modal open.
   const handleState = useCallback((s: RefreshState) => {
+    setRefreshEstimate(s.estimate ?? null);
     if (s.status === "running") { setRefreshing(true); return; }
     if (s.started_at && appliedRef.current !== s.started_at) {
       if (s.status === "done" && s.draft) {
@@ -285,6 +287,11 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
               disabled={refreshing || !repo}
               title={repo ? "Let an agent read the repo and draft fresh context. Review and edit before saving." : "Set a working directory first"}
             >{Icon.spark()} {refreshing ? "Reading the repo…" : "Refresh with AI"}</button>
+            {refreshEstimate && !refreshing && (
+              <span className="job-cost-hint">
+                {refreshEstimate.source === "project_latest" ? "Last run used" : "Typical run uses"} {fmtJobCost(refreshEstimate)}
+              </span>
+            )}
           </div>
         </div>
         {showPreview ? (

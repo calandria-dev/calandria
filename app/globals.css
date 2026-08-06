@@ -981,6 +981,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* composer */
 .composer{flex:0 0 auto;padding:14px 18px 16px;border-top:1px solid var(--line);background:var(--surface);}
+.clear-confirm{flex:0 0 auto;display:flex;align-items:center;gap:9px;padding:9px 18px;border-bottom:1px solid var(--line);background:var(--surface);font-size:12px;color:var(--ink-2);}
+.clear-confirm .spacer{flex:1;}
+@media(max-width:700px){.clear-confirm{flex-wrap:wrap;padding:9px 12px}.clear-confirm .job-cost-hint{width:100%;order:2}.clear-confirm .spacer{display:none}}
 .composer-inner{max-width:760px;margin:0 auto;position:relative;}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
@@ -1074,6 +1077,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ctx-lab{flex-wrap:wrap;}
 .ctx-lab .ctx-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
 .ctx-lab .ctx-actions .btn{flex-shrink:0;white-space:nowrap;}
+.job-cost-hint{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-4);white-space:nowrap;}
 /* Rendered-markdown preview that stands in for a .field textarea (same box). */
 .field .md-preview{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;overflow-y:auto;font-size:14px;}
 .field .md-preview.empty{color:var(--ink-3);font-style:italic;}
