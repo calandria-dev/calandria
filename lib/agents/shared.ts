@@ -17,13 +17,18 @@ export const INITIAL_TASK_PROMPT = "Start working on the task described in the t
  * agent's system prompt. This is the "write project context once" feature:
  * project description + conventions + the task framing + any prior-session
  * summaries from earlier generations of this task.
+ *
+ * When the task opted out of the saved project context (send_context = 0), the
+ * "what we're building" block is omitted but everything the session needs to
+ * function stays: task title/details, carried summaries, and the orchestrator
+ * tool instructions.
  */
 export function buildProjectContext(project: Project, task: Task): string {
   const summaries = listSummaries(task.id);
   const ctx = project.context || [project.building, project.conventions].filter(Boolean).join("\n");
   const lines: string[] = [];
   lines.push(`You are working inside the project "${project.name}".`);
-  if (ctx) lines.push(`\nWhat we're building (project context):\n${ctx}`);
+  if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
   if (project.branch) lines.push(`\nGit branch: ${project.branch}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);

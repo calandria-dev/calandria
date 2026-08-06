@@ -39,7 +39,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const prevStatus = current.status;
   // Whitelist user-editable fields.
   const allowed: Partial<Task> = {};
-  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start"] as const) {
+  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
   if ("agent" in body) {

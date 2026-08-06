@@ -18,6 +18,7 @@ export interface Project {
   test_command: string; // optional one-shot test command
   port: number; // deterministic per-project port, injected as PORT into services + the PTY
   default_agent: string; // agent driver new tasks in this project run under (lib/agents/registry.ts)
+  send_context: number; // 1 = include the saved project context in new agent sessions (default for new tasks)
   recap: string; // last LLM "where you left off" recap (auto-generated when idle)
   recap_at: number; // when the recap was generated (0 = none)
   recap_covers_at: number; // the project's last-activity ts the recap was based on
@@ -41,6 +42,7 @@ export interface Task {
   status: Status;
   suggested: number; // 1 = Claude-proposed, idle in the suggested tray
   agent: string; // agent driver this task's sessions run under (default "claude"; see lib/agents/)
+  send_context: number; // 1 = include the saved project context in this task's sessions (seeded from projects.send_context)
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
   reasoning: string | null; // thinking preset ("off"|"think"|"think_hard"|"ultrathink"); null = inherit default

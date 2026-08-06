@@ -30,7 +30,7 @@ Each **project** carries reusable context. Each **task** is its own agent sessio
 - **Parallel sessions** — every task is an isolated git worktree with its own agent session.
 - **Diff review → one-click merge** — or AI conflict resolution, branch sync, and GitHub PR creation.
 - **Pick your agent per task** — Claude Code or Codex, both on subscription logins.
-- **Write-once project context** — auto-injected into every task; **Refresh with AI** redrafts it from the repo.
+- **Write-once project context** — auto-injected into every task; **Refresh with AI** redrafts it from the repo. Opt out per project or per task ("Send saved project context to the agent" at task start) when a session should run lean — task details and orchestrator tools are always included.
 - **Session lineage** — `/clear` hands a summary to a fresh context window; the task lives on.
 - **Reconnect-safe turns** — turns run server-side; reload or sleep the laptop and the transcript catches up. Queue follow-ups mid-turn.
 - **Knows when your agent login dies** — an expired sign-in raises a workspace-wide banner with a one-click reconnect (plus the same button in the failed transcript). Queued follow-ups stay queued instead of failing one by one, and the banner clears itself the moment a turn runs again.

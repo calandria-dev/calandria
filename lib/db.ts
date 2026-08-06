@@ -40,6 +40,9 @@ export function init(db: Database.Database) {
       port          INTEGER NOT NULL DEFAULT 0,
       -- Which agent driver new tasks in this project run under (lib/agents/).
       default_agent TEXT NOT NULL DEFAULT 'claude',
+      -- 1 = include the saved project context in new agent sessions; the default
+      -- each new task's own send_context is seeded from.
+      send_context INTEGER NOT NULL DEFAULT 1,
       position    INTEGER NOT NULL DEFAULT 0,
       deprecated  INTEGER NOT NULL DEFAULT 0,
       -- 1 for the built-in "Welcome" tutorial project so it's excluded from the
@@ -58,6 +61,9 @@ export function init(db: Database.Database) {
       suggested   INTEGER NOT NULL DEFAULT 0,
       -- The agent driver this task's sessions run under (lib/agents/registry.ts).
       agent       TEXT NOT NULL DEFAULT 'claude',
+      -- 1 = prepend the saved project context to this task's sessions (seeded
+      -- from the project's send_context at creation; adjustable at task start).
+      send_context INTEGER NOT NULL DEFAULT 1,
       model       TEXT,
       resolved_model TEXT,
       reasoning   TEXT,
@@ -315,6 +321,9 @@ export function migrate(db: Database.Database) {
   // Agent-driver seam (lib/agents/): which driver new tasks default to. Every
   // pre-seam project ran Claude, so the column default backfills correctly.
   add("default_agent", "TEXT NOT NULL DEFAULT 'claude'");
+  // Whether new sessions get the saved project context. Default 1 preserves the
+  // always-included behavior for existing projects.
+  add("send_context", "INTEGER NOT NULL DEFAULT 1");
   // Manual sidebar ordering. Backfill in creation order so existing projects
   // keep the order they had when this column was the implicit sort.
   if (!cols.includes("position")) {
@@ -359,6 +368,9 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
   // GitHub PR opened from this task's branch via "Create PR" ("" = none yet).
   if (!taskCols.includes("pr_url")) db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''");
+  // Per-task "send saved project context" flag (default 1 = the old always-on
+  // behavior; seeded from the project's send_context for tasks created later).
+  if (!taskCols.includes("send_context")) db.exec("ALTER TABLE tasks ADD COLUMN send_context INTEGER NOT NULL DEFAULT 1");
   // Per-task auto-start opt-in: launch the first turn when the last blocker is
   // marked done (default off preserves the old never-auto-start behavior).
   if (!taskCols.includes("auto_start")) db.exec("ALTER TABLE tasks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0");

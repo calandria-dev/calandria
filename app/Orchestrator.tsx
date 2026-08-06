@@ -227,7 +227,7 @@ export default function Orchestrator() {
             onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
             onReconnect={() => openSettings("agents")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission}
+            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
             onResolveWithAI={o.resolveConflictsWithAI}
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
@@ -313,7 +313,7 @@ export default function Orchestrator() {
                 onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
                 onReconnect={() => openSettings("agents")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission}
+                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
                 onResolveWithAI={o.resolveConflictsWithAI}
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}
