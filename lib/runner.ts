@@ -7,7 +7,7 @@
 // /messages streams (including zero) can watch; disconnects never touch the
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
-import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -15,6 +15,9 @@ import { publish } from "@/lib/events";
 import { worktreeSyncStatus, fastForwardWorktree } from "@/lib/git";
 import { track } from "@/lib/analytics";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
+import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
+import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import type { Task, Project, ToolData, TurnUsage } from "@/lib/types";
 
 /**
@@ -133,16 +136,29 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
 }
 
 /**
- * Persist + publish a failed-turn line. When the failure is the API's context
- * -overflow rejection ("prompt is too long"), append CONTEXT_OVERFLOW_NOTICE so
- * the transcript carries a durable, reconnect-safe recovery hint that the UI
- * turns into a one-click "Start fresh context" (/clear) button. The raw error
- * text stays visible so token counts are still legible.
+ * Persist + publish a failed-turn line, appending a recovery hint when the
+ * failure is one we know how to fix:
+ *   - the API's context-overflow rejection ("prompt is too long") →
+ *     CONTEXT_OVERFLOW_NOTICE, which the UI turns into a one-click "Start fresh
+ *     context" (/clear) button;
+ *   - a dead agent login (expired OAuth session, revoked/invalid key) →
+ *     AUTH_EXPIRED_NOTICE, which becomes a "Reconnect <agent>" button;
+ *   - a spent usage limit (Claude's 5-hour/weekly subscription cap, an API 429)
+ *     → USAGE_LIMIT_NOTICE, informational — the recovery is waiting for the
+ *     reset, so there is no button.
+ * Either way the raw provider text stays visible above the hint, so token counts
+ * and the actual wording remain legible. The persisted message is the durable
+ * channel — it survives SSE reconnects because the snapshot replays from SQLite.
  */
 export function publishTurnError(id: string, gen: number, errText: string): void {
-  const content = isPromptTooLong(errText)
-    ? `⚠ ${errText}\n\n${CONTEXT_OVERFLOW_NOTICE}`
-    : `⚠ ${errText}`;
+  const notice = isPromptTooLong(errText)
+    ? CONTEXT_OVERFLOW_NOTICE
+    : isAuthFailure(errText)
+      ? AUTH_EXPIRED_NOTICE
+      : isUsageLimit(errText)
+        ? USAGE_LIMIT_NOTICE
+        : null;
+  const content = notice ? `⚠ ${errText}\n\n${notice}` : `⚠ ${errText}`;
   // The persist can itself throw — most importantly when the task row is gone
   // (project/task deleted mid-turn): addMessage then hits a FOREIGN KEY error.
   // This function is the *error* path, so a throw here escapes the runner's
@@ -176,7 +192,31 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // attached to the terminal turn_completed / turn_failed event below.
   let turnUsage: TurnUsage | null = null;
   let turnError: string | null = null;
+  // Set when this turn died on authentication rather than on the work: the
+  // agent's login is dead instance-wide, so the queue must be parked (every
+  // follow-up would fail identically) and the whole app told, not just this task.
+  let authFailure: string | null = null;
+  // Set when this turn died on a spent usage limit (Claude's 5-hour/weekly
+  // subscription cap, an API 429): the quota is dead until it resets, so the
+  // queue must be parked for the same reason — every follow-up would drain
+  // straight into the same limit. Classified after authFailure (a dead login
+  // never doubles as a spent quota).
+  let usageLimitFailure: string | null = null;
   const startedAt = Date.now();
+
+  // Persist + publish a failed turn's transcript line (with a recovery hint when
+  // we know the fix), and — for a dead login — raise the instance-wide flag every
+  // tab reads, published once per outage so a fleet of failing tasks can't spam
+  // the banner. Returns true when the failure was an authentication failure, so
+  // the caller records it for the queue decision below.
+  const failTurn = (text: string): boolean => {
+    publishTurnError(id, gen, text);
+    if (!isAuthFailure(text)) return false;
+    if (markAgentAuthBroken(task.agent, text, Date.now())) {
+      publish(id, { type: "agent_auth", agent: task.agent, broken: true, reason: text });
+    }
+    return true;
+  };
   try {
     // The setup below runs INSIDE the try on purpose: a throw here (SQLite I/O
     // error, disk full) must still hit the finally, or the turn never
@@ -264,12 +304,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         turnUsage = ev.usage;
         publish(id, ev);
       } else if (ev.type === "error") {
-        // A soft error emitted mid-stream (e.g. "Run ended: …"). Mark the turn
-        // failed for analytics; the transcript still renders the line below.
+        // A soft error emitted mid-stream (e.g. "Run ended: …"). Marks the turn
+        // failed for analytics and publishes the persisted form, so live viewers
+        // and snapshot replays render the identical line (with a recovery hint
+        // on context overflow / a dead login).
         turnError = ev.content;
-        // Publish the persisted form so live viewers and snapshot replays
-        // render the identical line (with a recovery hint on context overflow).
-        publishTurnError(id, gen, ev.content);
+        if (failTurn(ev.content)) authFailure = ev.content;
+        else if (isUsageLimit(ev.content)) usageLimitFailure = ev.content;
       } else if (ev.type === "notice") {
         // A quiet system note emitted mid-turn (e.g. expose_service confirming a
         // live URL). Persist it so a reload still shows the line, like syncNote.
@@ -286,7 +327,8 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // Persisted (not just streamed): with no request attached, nobody may be
     // listening when this fires — the transcript must carry it.
     turnError = err instanceof Error ? err.message : String(err);
-    publishTurnError(id, gen, turnError);
+    if (failTurn(turnError)) authFailure = turnError;
+    else if (isUsageLimit(turnError)) usageLimitFailure = turnError;
   } finally {
     // NOTE: this whole block is synchronous (better-sqlite3, in-memory pub/sub),
     // so nothing can interleave with it — the registry slot is either handed off
@@ -340,6 +382,16 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // row and never touches the fresh generation — safe to run either way.
     if (opened) endSession(id, gen);
 
+    // A turn that actually ran is the strongest possible proof the agent's login
+    // works — stronger than `claude auth status`, since it exercised the same
+    // path a real turn takes. So clear any broken-connection flag left by an
+    // earlier failure and tell every tab, which is how the banner comes down
+    // after the user reconnects in a different window (or the credential
+    // refreshed itself). Publishes only when the flag was actually set.
+    if (!turnError && opened && clearAgentAuthBroken(task.agent)) {
+      publish(id, { type: "agent_auth", agent: task.agent, broken: false, reason: null });
+    }
+
     // A Stop — or a /clear that advanced the generation out from under us —
     // discards the parked queue: those follow-ups were lined up behind the train
     // of thought the user just interrupted (or the context they just cleared),
@@ -354,6 +406,21 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
+    } else if (authFailure || usageLimitFailure) {
+      // The login (or the quota) is dead, not the work: draining now would run
+      // each follow-up straight into the same authentication error / spent
+      // limit, emptying the queue and stacking identical walls of red for
+      // messages that never actually ran. Leave them parked (they're rows in
+      // pending_messages, so they survive a reload and still render as queued
+      // bubbles) and say so once. They drain normally at the end of the next
+      // turn, after a reconnect / once the limit resets.
+      const parked = listPendingMessages(id).length;
+      if (parked) {
+        const when = authFailure ? "once you reconnect" : "once the limit resets";
+        const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue — ${parked === 1 ? "it runs" : "they run"} ${when}.`;
+        const m = addMessage(id, gen, "system", note);
+        publish(id, { type: "notice", content: note, msgId: m.id, generation: gen });
+      }
     } else {
       // Hand the occupancy slot to the follow-up FIRST — an atomic swap of our
       // controller for a fresh one — so hasTurn never reads false between this

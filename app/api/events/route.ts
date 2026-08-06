@@ -1,7 +1,6 @@
 import { getTask, countAwaiting } from "@/lib/store";
-import { subscribeGlobal } from "@/lib/events";
+import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
 import { sseOpened, sseClosed } from "@/lib/idle";
-import type { GlobalTaskEvent, TaskStreamEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -14,7 +13,9 @@ export const maxDuration = 300;
 // `session` re-fires turn_started once the agent session actually opens,
 // because that's when status flips to in_progress. Both map to the same
 // coarse event — the payload is a snapshot, so replays are idempotent.
-function coarse(ev: TaskStreamEvent): GlobalTaskEvent["event"] | null {
+// `task_updated` is a mutation route (status PATCH, /clear) settling the row
+// with no turn involved; same snapshot payload, same idempotence.
+function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
   switch (ev.type) {
     case "user":
     case "session":
@@ -27,6 +28,8 @@ function coarse(ev: TaskStreamEvent): GlobalTaskEvent["event"] | null {
       return "suggested";
     case "turn_end":
       return "turn_end";
+    case "task_updated":
+      return "task_updated";
     default:
       return null;
   }
@@ -36,7 +39,8 @@ function coarse(ev: TaskStreamEvent): GlobalTaskEvent["event"] | null {
  * The global task-lifecycle stream: one always-open SSE connection per client
  * tab, broadcasting coarse turn boundaries for EVERY task across EVERY project
  * — turn started, parked on a question, question answered, suggestion created,
- * turn ended. It's what keeps the task list's spinners, the project rail's
+ * turn ended, plus the route-published mutations (status PATCH / /clear settles,
+ * task deletion). It's what keeps the task list's spinners, the project rail's
  * "needs you" badges, and the titlebar pill live for tasks whose transcript
  * stream isn't open (only the SELECTED task has one), replacing the old
  * 10-second task-list poll.
@@ -53,13 +57,37 @@ export async function GET(req: Request) {
   let cleanup = () => {};
   const stream = new ReadableStream({
     start(controller) {
+      const send = (payload: GlobalWireEvent) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch {
+          cleanup();
+        }
+      };
       const unsub = subscribeGlobal((taskId, ev) => {
+        // An agent's login died (or started working again). Task-keyed on the bus
+        // because that's where it was detected, but instance-wide in meaning —
+        // one login per agent, shared by every task — so it relays verbatim and
+        // every tab raises/drops the reconnect banner at once.
+        if (ev.type === "agent_auth") {
+          send({ type: "agent_auth", agent: ev.agent, broken: ev.broken, reason: ev.reason });
+          return;
+        }
+        // A task row was hard-deleted. There is nothing left to re-read — the
+        // event carries its own project id + recomputed awaiting count — and
+        // the getTask bail below would otherwise drop it, freezing the
+        // project's badge in other tabs until the next SSE reconnect.
+        if (ev.type === "task_deleted") {
+          send({ type: "task_deleted", taskId, projectId: ev.projectId, awaiting_count: ev.awaiting_count });
+          return;
+        }
         const event = coarse(ev);
         if (!event) return;
-        // Task deleted mid-turn (rows are hard-deleted) — nothing to report.
+        // Task deleted mid-turn (rows are hard-deleted) — nothing to report;
+        // the DELETE route's own task_deleted publish (above) covers cleanup.
         const t = getTask(taskId);
         if (!t) return;
-        const payload: GlobalTaskEvent = {
+        const payload: GlobalTaskWireEvent = {
           type: "task",
           event,
           taskId,
@@ -69,11 +97,7 @@ export async function GET(req: Request) {
           status: t.status,
           awaiting_count: countAwaiting(t.project_id),
         };
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-        } catch {
-          cleanup();
-        }
+        send(payload);
       });
       // Keep-alive comment so proxies don't reap quiet streams, and so a dead
       // client is detected (enqueue throws) even when nothing is running.

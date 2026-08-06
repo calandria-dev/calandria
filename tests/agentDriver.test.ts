@@ -65,6 +65,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createProject, createTask, getTask, listMessages, getTaskUsage, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
+import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe, subscribeGlobal } from "@/lib/events";
 import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
@@ -381,16 +382,16 @@ describe("codex driver contract through the runner", () => {
 
     // Token usage persisted from turn.completed, with cost_usd ESTIMATED from
     // the fixture's token counts at the default model's published API prices
-    // ((39612−30848)×$1.25 + 30848×$0.125 + 119×$10, per 1M) — this is what
+    // ((39612−30848)×$5.00 + 30848×$0.50 + 119×$30, per 1M) — this is what
     // populates the task cost chip and Insights for Codex tasks.
     const taskUsage = getTaskUsage(task.id)!;
     expect(taskUsage).toMatchObject({ turns: 1 });
     expect(taskUsage.total_tokens).toBeGreaterThan(0);
-    expect(taskUsage.cost_usd).toBeCloseTo(0.016001, 6);
+    expect(taskUsage.cost_usd).toBeCloseTo(0.062814, 6);
 
     // The driver reports the model it resolved (task.model null → the CLI
     // default), persisted for the badge and the Insights provider panel.
-    expect(after.resolved_model).toBe("gpt-5.1-codex-max");
+    expect(after.resolved_model).toBe(DEFAULT_CODEX_MODEL);
 
     // Transcript: user echo, the two agent messages, and the command tool call
     // merged with its result — all persisted rows, agent-agnostic.

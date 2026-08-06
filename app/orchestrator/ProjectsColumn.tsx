@@ -3,11 +3,23 @@
 import { useState } from "react";
 import { Icon } from "../icons";
 import { fmtCost, relTime } from "./format";
-import { SEARCH_MIN, type ProjectRow } from "./types";
+import { SEARCH_MIN, type AgentInfo, type ProjectRow } from "./types";
 import { SearchBar } from "./shared";
 
-export function ProjectsColumn({ projects, deprecated, selId, running, width, onSelect, onNew, onOpenAppearance, onReorder, onRestore, onCollapse, settingsActive, onOpenSettings, mobile }: {
-  projects: ProjectRow[]; deprecated: ProjectRow[]; selId: string | null; running: Set<string>; width: number;
+// Footer line under "Your workspace": the real auth state per connected agent,
+// from GET /api/agents (which reports the EFFECTIVE billing credential — an
+// active API key outranks a stored subscription login; see issue #4).
+function agentAuthLine(agents: AgentInfo[]): string {
+  const parts = agents
+    .filter((a) => a.authenticated)
+    .map((a) =>
+      a.account?.method === "api_key" ? `${a.label} · API key` : `${a.label} · ${a.account?.plan ? `${a.account.plan} login` : "subscription"}`,
+    );
+  return parts.length ? parts.join(", ") : "No agent connected";
+}
+
+export function ProjectsColumn({ projects, deprecated, agents, selId, running, width, onSelect, onNew, onOpenAppearance, onReorder, onRestore, onCollapse, settingsActive, onOpenSettings, mobile }: {
+  projects: ProjectRow[]; deprecated: ProjectRow[]; agents: AgentInfo[]; selId: string | null; running: Set<string>; width: number;
   onSelect: (id: string) => void; onNew: () => void; onOpenAppearance: () => void;
   onReorder: (ids: string[]) => void; onRestore: (id: string) => void; onCollapse: () => void;
   settingsActive: boolean; onOpenSettings: () => void; mobile?: boolean;
@@ -113,7 +125,7 @@ export function ProjectsColumn({ projects, deprecated, selId, running, width, on
           <div className="av">{Icon.bolt()}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="un">Your workspace</div>
-            <div className="ue">Max login · no API key</div>
+            <div className="ue">{agentAuthLine(agents)}</div>
           </div>
         </div>
       </div>

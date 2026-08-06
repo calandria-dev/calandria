@@ -131,6 +131,22 @@ export function useOrchestrator() {
     try { const { ids } = await jget<{ ids: string[] }>("/api/running"); setRunning(new Set(ids)); } catch {}
   }, []);
 
+  // Load the agent capability bundle (drives every run-control picker AND the
+  // per-agent connected/authenticated/authBroken status). Re-runnable: any in-app
+  // connect (wizard finish, Settings → Agents) calls this so the shared bundle —
+  // and thus the New-task dialog's "· not connected" flag and the reconnect
+  // banner — updates live, no reload. Declared above the event streams because
+  // useGlobalEvents calls it when an agent's login dies or recovers.
+  const refreshAgents = useCallback(
+    () => jget<AgentsBundle>("/api/agents").then(setAgents).catch(() => {}),
+    []
+  );
+  useEffect(() => { void refreshAgents(); }, [refreshAgents]);
+
+  // Agents that are connected on record but whose credentials just stopped
+  // working — the titlebar reconnect banner's input. Normally empty.
+  const brokenAgents = useMemo(() => agents.agents.filter((a) => !!a.authBroken), [agents]);
+
   // ---------- live task event stream + transcript state ----------
   const { msgsByTask, appendMsg, setAnswerOnMsg } = useTaskStream({
     selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks,
@@ -138,7 +154,7 @@ export function useOrchestrator() {
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
   // stream ISN'T open — only the selected task has one.
-  useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning });
+  useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
   // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
   // session view shows a transcript skeleton instead of an empty chat flash.
@@ -157,16 +173,6 @@ export function useOrchestrator() {
   useEffect(() => {
     jget<Record<string, string>>("/api/settings").then(setAppDefaults).catch(() => {});
   }, []);
-
-  // Load the agent capability bundle (drives every run-control picker AND the
-  // per-agent connected/authenticated status). Re-runnable: any in-app connect
-  // (wizard finish, Settings → Agents) calls this so the shared bundle — and
-  // thus the New-task dialog's "· not connected" flag — updates live, no reload.
-  const refreshAgents = useCallback(
-    () => jget<AgentsBundle>("/api/agents").then(setAgents).catch(() => {}),
-    []
-  );
-  useEffect(() => { void refreshAgents(); }, [refreshAgents]);
 
   // Onboarding: a fresh instance opens the wizard automatically; an already
   // set-up one (onboarding_complete) never sees it unless re-run from Settings.
@@ -235,6 +241,23 @@ export function useOrchestrator() {
   // Entering a project loads its tasks but does NOT auto-pick one — the landing
   // decision (recap vs. first task) is made in useRecaps once recap status is known.
   useEffect(() => { if (selProj) loadTasks(selProj, false); }, [selProj, loadTasks]);
+
+  // A hidden tab gets throttled and its SSE streams may quietly die, so the
+  // project badges / "needs you" counts drift while you're away. On the
+  // hidden→visible transition, refetch the project list once — skipping brief
+  // tab flips (the stream never missed a beat) so rapid alt-tabbing doesn't
+  // spam the endpoint.
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+      if (!hiddenAt || Date.now() - hiddenAt < 5_000) return;
+      hiddenAt = 0;
+      jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   // Browser notification when a task newly needs you — the payoff for the
   // permission asked for during onboarding. Fires on the awaiting transition
@@ -396,10 +419,21 @@ export function useOrchestrator() {
     runTurn(taskId, "", true);
   }, [tasks, running, runTurn, appendMsg]);
 
+  // Cheap local patch: a mutation just took a task out of the "needs you" set,
+  // so drop it from its project's badge now rather than waiting for the SSE
+  // roundtrip (the published lifecycle event re-syncs the exact count moments
+  // later; the selected project's pill reads liveAwaiting, so this only matters
+  // once you navigate away).
+  const decAwaiting = (t: TaskRow) =>
+    setProjects((prev) => prev.map((p) => (p.id === t.project_id ? { ...p, awaiting_count: Math.max(0, p.awaiting_count - 1) } : p)));
+
   const setStatus = async (s: Status) => {
     if (!task) return;
+    const wasAwaiting = isAwaiting(task);
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { status: s });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
+    // The server clears awaiting_input on a manual status change.
+    if (wasAwaiting) decAwaiting(task);
   };
   const setPriority = async (p: Priority) => {
     if (!task) return;
@@ -470,8 +504,12 @@ export function useOrchestrator() {
   // Hard-deletes the task (and its worktree/branch server-side), closes the edit
   // modal, and drops it from the selection if it was the one being viewed.
   const removeTask = async (id: string) => {
+    const t = tasks.find((x) => x.id === id);
     await jsend(`/api/tasks/${id}`, "DELETE");
     setTasks((prev) => prev.filter((x) => x.id !== id));
+    // A deleted task can no longer need you — the task_deleted event confirms
+    // with the server-recomputed count moments later.
+    if (t && isAwaiting(t)) decAwaiting(t);
     setEditId(null);
     setSelTask((cur) => (cur === id ? null : cur));
   };
@@ -560,7 +598,7 @@ export function useOrchestrator() {
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
-    settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents,
+    settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
     onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated,
     layout, setLayout, accessEmail, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,

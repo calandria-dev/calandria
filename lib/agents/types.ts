@@ -12,12 +12,16 @@ export type { StreamEvent };
 
 // One selectable model in a driver's picker. `value` is what's persisted in
 // tasks.model (null there = inherit the driver's default); `contextWindow` is
-// the model's token window, driving the context-occupancy gauge.
+// the model's token window, driving the context-occupancy gauge. `group` is an
+// optional section heading — drivers with long lists (Claude Code offers a
+// dozen-plus pins) split them so the picker stays scannable; consecutive
+// options sharing a group render under one header.
 export interface AgentModelOption {
   value: string;
   label: string;
   sub: string; // short picker subtitle, e.g. "most capable"
   contextWindow: number;
+  group?: string;
 }
 
 // A reasoning preset / permission mode a driver supports. `value` is what's

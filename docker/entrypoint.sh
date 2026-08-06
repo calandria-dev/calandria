@@ -13,18 +13,24 @@ mkdir -p \
   "$HOME/projects" \
   "$HOME/.claude"
 
-# Subscription login only. If an Anthropic key/token env var is present, the
-# `claude` CLI (and the Agent SDK child processes, and every pty shell — all
-# inherit this environment) prefers it over the volume's claude.ai login and
-# silently switches to per-token API billing. Strip them so a stray `-e` on
-# `docker run` can never do that. See docs/DEPLOY.md → "Per-user claude login".
-for _v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
-  if [[ -n "${!_v:-}" ]]; then
-    echo "WARN: $_v was set in the container environment — unsetting it." \
-         "Instances authenticate via 'claude auth login' (subscription) only." >&2
-    unset "$_v"
-  fi
-done
+# Subscription login by default. If an agent key/token env var is present, the
+# `claude`/`codex` CLIs (and the Agent SDK child processes, and every pty shell
+# — all inherit this environment) prefer it over the volume's stored login and
+# silently switch to per-token API billing. Strip them so a stray `-e` on
+# `docker run` can never do that — unless ORCH_ALLOW_API_KEY_ENV=1 explicitly
+# opts in to env-provided keys. Both node entrypoints repeat this strip
+# in-process (lib/env-keys.mjs) so bare-node deploys get the same guard; this
+# is the container backstop. See docs/DEPLOY.md → "Per-user claude login".
+if [[ "${ORCH_ALLOW_API_KEY_ENV:-}" != "1" && "${ORCH_ALLOW_API_KEY_ENV:-}" != "true" ]]; then
+  for _v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY; do
+    if [[ -n "${!_v:-}" ]]; then
+      echo "WARN: $_v was set in the container environment — unsetting it." \
+           "Instances authenticate via the connected agent login (or a key saved in Settings);" \
+           "set ORCH_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose." >&2
+      unset "$_v"
+    fi
+  done
+fi
 
 # Optional git identity for task worktree commits, settable per instance
 # without entering the container. Never overrides one already on the volume.

@@ -10,9 +10,17 @@ import type { TurnUsage } from "../../types";
 
 // Published API prices in USD per 1M tokens (developers.openai.com/api/docs/
 // pricing). Cached input is OpenAI's standard 90% discount on input. Matched
-// by longest prefix so dated/suffixed model ids ("gpt-5.1-codex-max-…") hit
-// their family row; keep more-specific prefixes above shorter ones.
+// by longest prefix so dated/suffixed model ids ("gpt-5.4-mini-…") hit their
+// family row; keep more-specific prefixes above shorter ones — "gpt-5.4-mini"
+// MUST sit above "gpt-5.4", and the bare "gpt-5" catch-all stays last.
+// Retired models keep their rows: historical turns still price against the
+// model they actually ran on, even once the picker stops offering it.
 const PRICES: { prefix: string; input: number; cachedInput: number; output: number }[] = [
+  { prefix: "gpt-5.5", input: 5.0, cachedInput: 0.5, output: 30.0 },
+  { prefix: "gpt-5.4-mini", input: 0.75, cachedInput: 0.075, output: 4.5 },
+  { prefix: "gpt-5.4", input: 2.5, cachedInput: 0.25, output: 15.0 },
+  { prefix: "gpt-5.3-codex", input: 1.75, cachedInput: 0.175, output: 14.0 },
+  { prefix: "gpt-5.2", input: 1.75, cachedInput: 0.175, output: 14.0 },
   { prefix: "gpt-5.1-codex-mini", input: 0.25, cachedInput: 0.025, output: 2.0 },
   { prefix: "gpt-5.1-codex-max", input: 1.25, cachedInput: 0.125, output: 10.0 },
   { prefix: "gpt-5.1-codex", input: 1.25, cachedInput: 0.125, output: 10.0 },
@@ -25,8 +33,10 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // The codex CLI's own default model, assumed when a task doesn't pick one
 // (tasks.model = null → we omit the model override and the CLI runs its
 // default). Used to resolve pricing and the resolved-model badge; bump when
-// upstream changes its default.
-export const DEFAULT_CODEX_MODEL = "gpt-5.1-codex-max";
+// upstream changes its default. Verify against the CLI's preset table rather
+// than guessing: the default is the preset the `/model` menu marks "(default)"
+// — equivalently, `priority: 0`.
+export const DEFAULT_CODEX_MODEL = "gpt-5.5";
 
 /** The model a codex turn effectively runs: the task's choice, else the CLI default. */
 export function resolveCodexModel(taskModel: string | null | undefined): string {

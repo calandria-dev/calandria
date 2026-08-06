@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { pendingId } = await req.json().catch(() => ({ pendingId: undefined }));
-  const removed = pendingId ? deletePendingMessage(String(pendingId)) : undefined;
-  // Guard on task ownership so one task can't drop another's queued message.
-  if (removed && removed.task_id === id) publish(id, { type: "dequeued", msgId: removed.id });
-  return NextResponse.json({ ok: true, removed: !!(removed && removed.task_id === id) });
+  // Scoped by task id in the store so one task can't drop another's queued message.
+  const removed = pendingId ? deletePendingMessage(String(pendingId), id) : undefined;
+  if (removed) publish(id, { type: "dequeued", msgId: removed.id });
+  return NextResponse.json({ ok: true, removed: !!removed });
 }

@@ -1,16 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { fmtTokens, fmtCost, modelLabel, isAwaiting, buildSessions } from "./format";
+import { fmtTokens, fmtCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, RAIL_W,
   type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle,
 } from "./types";
-import { capsFor, agentLabel } from "./agents";
+import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
 import { MessageView, SessionBreak } from "./Transcript";
 import { Composer } from "./Composer";
@@ -115,9 +115,21 @@ function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task
   );
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+// Ref-backed identity-stable wrapper: Orchestrator passes fresh inline handlers
+// on every render, which would defeat MessageView's memo — the wrapper keeps one
+// function identity for the component's lifetime while always invoking the
+// latest handler.
+function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...args: A) => void {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => { ref.current?.(...args); }, []);
+}
+
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
+  // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
+  onReconnect?: () => void;
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
@@ -138,18 +150,23 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
+  const stableAnswer = useStableHandler(onAnswer);
+  const stableCancelQueued = useStableHandler(onCancelQueued);
+  const stableClear = useStableHandler(onClear);
+  const stableReconnect = useStableHandler(onReconnect);
   // Run-control pickers + feature gates come from this task's agent capabilities,
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
   const models = modelOptions(caps);
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
-  // Cost display: real billed figures show plainly; agents whose auth reports
-  // tokens only (Codex on a ChatGPT plan) show an ESTIMATED figure with an ~.
-  // Only an agent that reports neither hides the $ (token counts always show).
-  // Unknown caps (bundle still loading) default to showing cost.
-  const costEstimated = caps?.costIsEstimated === true;
-  const showCost = caps?.reportsCostUsd !== false || costEstimated;
+  // Usage chip: tokens split into fresh work vs re-read cache (the raw total is
+  // mostly cache reads and wildly overstates what ran), and a dollar figure whose
+  // presentation follows how this agent is signed in — a subscription login's
+  // figure is an API-price equivalent covered by plan quota, not a bill. Both
+  // derivations live in ./format so the wording has one home.
+  const usage = usageSplit(task);
+  const cost = costDisplay(findAgent(agents, task.agent));
   const multiAgent = agents.agents.length > 1;
   // PR number for the header chip, parsed from the stored URL (…/pull/42).
   const prNum = task.pr_url?.match(/\/pull\/(\d+)/)?.[1];
@@ -247,7 +264,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 const prev = s.messages[mi - 1];
                 // collapse the repeated "Claude Code" header across an assistant run (text → tool → text)
                 const hideWho = m.role === "assistant" && !!prev && (prev.role === "assistant" || prev.role === "tool");
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={onAnswer} onCancelQueued={onCancelQueued} onClear={onClear} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} />;
               })}
             </div>
           ))}
@@ -257,7 +274,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
           {/* Follow-ups queued mid-turn, pinned below the live turn — they
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={onAnswer} onCancelQueued={onCancelQueued} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onCancelQueued={stableCancelQueued} />
           ))}
         </div>
       </div>
@@ -298,8 +315,10 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             )}
             <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
             {(task.cost_usd > 0 || task.total_tokens > 0) && (
-              <span className="usage-chip" title={showCost ? `${task.total_tokens.toLocaleString()} tokens · ${costEstimated ? `~${fmtCost(task.cost_usd)} (estimated from token counts × API prices)` : fmtCost(task.cost_usd)} this task` : `${task.total_tokens.toLocaleString()} tokens this task`}>
-                {fmtTokens(task.total_tokens)} tok{showCost && <> <span className="usage-dot">·</span> {costEstimated && "~"}{fmtCost(task.cost_usd)}</>}
+              <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
+                {fmtTokens(usage.fresh)} tok
+                {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
+                {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
               </span>
             )}
             {mobile && hasSession && (
@@ -317,11 +336,16 @@ export function SessionView({ project, task, agents, messages, running, blockedB
               </button>
               {modelOpen && (
                 <Popover onClose={() => setModelOpen(false)}>
-                  {models.map((m) => (
-                    <div key={m.label} className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
-                      <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
-                      {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
-                    </div>
+                  {models.map((m, i) => (
+                    <Fragment key={m.label}>
+                      {/* Section header whenever the group changes — Claude Code's
+                          list runs to a dozen-plus pins, so it needs the structure. */}
+                      {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
+                      <div className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
+                        <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
+                        {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
+                      </div>
+                    </Fragment>
                   ))}
                 </Popover>
               )}

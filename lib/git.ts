@@ -95,24 +95,30 @@ export async function recentCommits(repoPath: string, n = 10): Promise<string> {
 }
 
 /**
- * Create an isolated git worktree + branch for a task, branched from the repo's
- * current HEAD. Returns the worktree path and branch, or `null` when isolation
+ * Create an isolated git worktree + branch for a task, branched from the
+ * project's configured base branch (`baseBranch`) when it exists, else from the
+ * repo's current HEAD. Basing off the configured branch matters: `mergeTask`
+ * lands the task INTO that branch, so branching from whatever the main checkout
+ * happens to have checked out would make tasks base off one branch and merge
+ * into another. Returns the worktree path and branch, or `null` when isolation
  * isn't possible (not a git repo, or no commits yet) — the caller then falls
  * back to running directly in the project's repo path.
  */
 export async function ensureWorktree(
   repoPath: string,
-  taskId: string
+  taskId: string,
+  baseBranch?: string
 ): Promise<{ path: string; branch: string; baseSha: string } | null> {
   // Serialize with merges and other worktree creations on the same repo: both
   // touch the shared worktree registry / read HEAD for the base sha, and a merge
   // racing this could hand back a base_sha read off a transient HEAD.
-  return withRepoLock(repoPath, () => ensureWorktreeLocked(repoPath, taskId));
+  return withRepoLock(repoPath, () => ensureWorktreeLocked(repoPath, taskId, baseBranch));
 }
 
 async function ensureWorktreeLocked(
   repoPath: string,
-  taskId: string
+  taskId: string,
+  baseBranch?: string
 ): Promise<{ path: string; branch: string; baseSha: string } | null> {
   // Greenfield (non-git) or commitless repo: initialize it so the task can be
   // isolated. Without this, every orchestrator-created project — which starts
@@ -124,15 +130,20 @@ async function ensureWorktreeLocked(
 
   const wtPath = path.join(WORKTREES_DIR, taskId);
   const branch = branchForTask(taskId);
+  // Start point: the configured base branch if it exists, else current HEAD.
+  // The fallback must stay — a freshly-initialized repo may have an unborn or
+  // differently-named default branch, and a misconfigured project shouldn't
+  // block task isolation entirely.
+  const start = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
   // The commit the task branches from — the stable base for diff + merge.
-  const baseSha = await git(repoPath, ["rev-parse", "HEAD"]);
+  const baseSha = await git(repoPath, ["rev-parse", start || "HEAD"]);
   fs.mkdirSync(WORKTREES_DIR, { recursive: true });
 
   // Already linked (e.g. retry after a failed first launch) — reuse it.
   if (fs.existsSync(wtPath)) return { path: wtPath, branch, baseSha };
 
   try {
-    await git(repoPath, ["worktree", "add", "-b", branch, wtPath]);
+    await git(repoPath, ["worktree", "add", "-b", branch, wtPath, ...(start ? [start] : [])]);
   } catch {
     // Branch may already exist from a prior generation; attach to it instead.
     await git(repoPath, ["worktree", "add", wtPath, branch]);

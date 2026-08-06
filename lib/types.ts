@@ -228,7 +228,20 @@ export type TaskStreamEvent =
   | { type: "queued"; msgId: string; content: string; generation: number }
   | { type: "dequeued"; msgId: string }
   | { type: "snapshot"; messages: Message[]; pending: PendingMessage[]; running: boolean }
+  | AgentAuthEvent
   | { type: "turn_end" };
+
+// An agent's credentials died (broken=true) or started working again
+// (broken=false). Published by the runner on the failing/succeeding task's
+// channel — but it's really an INSTANCE-wide fact (one login per agent, shared
+// by every task), so GET /api/events relays it verbatim to every tab, where it
+// drives the titlebar reconnect banner. See lib/authFailure.ts.
+export type AgentAuthEvent = {
+  type: "agent_auth";
+  agent: string;
+  broken: boolean;
+  reason: string | null;
+};
 
 // Coarse cross-task lifecycle events on the always-open GET /api/events stream
 // (the wildcard channel of lib/events.ts). One event per turn boundary — turn
@@ -248,6 +261,11 @@ export type GlobalTaskEvent = {
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
 };
+
+// Everything GET /api/events can send. Task lifecycle is the bulk of it;
+// agent_auth rides the same stream because a dead login affects every task in
+// every project at once, so there's nothing task-shaped to hang it off.
+export type GlobalEvent = GlobalTaskEvent | AgentAuthEvent;
 
 // How a tool call is stored (JSON) in a "tool" message's content.
 export interface ToolData {

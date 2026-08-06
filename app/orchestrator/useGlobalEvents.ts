@@ -1,28 +1,45 @@
 "use client";
 
 import { useEffect, useRef, type MutableRefObject } from "react";
-import type { GlobalTaskEvent } from "@/lib/types";
+import type { GlobalWireEvent } from "@/lib/events";
 import { jget } from "./api";
 import type { ProjectRow, TaskRow } from "./types";
 
 // One always-open EventSource on GET /api/events: coarse lifecycle events for
 // EVERY task across EVERY project (turn started / awaiting input / answered /
-// suggestion created / turn ended). This is what clears spinners and updates
+// suggestion created / turn ended / mutation-route settles and deletions).
+// This is what clears spinners and updates
 // the "needs you" badges for tasks whose transcript stream isn't open — only
 // the selected task has one (useTaskStream) — replacing the old 10s poll.
-export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning }: {
+export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents }: {
   selProjRef: MutableRefObject<string | null>;
   setTaskRunning: (id: string, on: boolean) => void;
   setTasks: React.Dispatch<React.SetStateAction<TaskRow[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectRow[]>>;
   loadTasks: (projectId: string, selectFirst?: boolean) => Promise<void>;
   reconcileRunning: () => Promise<void>;
+  refreshAgents: () => Promise<void>;
 }) {
   // Apply one lifecycle event. The payload is a fresh snapshot of the task
   // row's running/awaiting_input/status (read after the runner persisted it),
   // so applying it is idempotent — overlaps with the selected task's own
   // stream, which fires for the same boundaries, are harmless.
-  const handle = (ev: GlobalTaskEvent) => {
+  const handle = (ev: GlobalWireEvent) => {
+    // An agent's login died or came back. Refetch the shared agents bundle
+    // rather than patching state locally, so the reconnect banner, the Settings
+    // cards, and the New-task picker all read one server-side truth. Rare event
+    // (once per outage), so the extra fetch costs nothing.
+    if (ev.type === "agent_auth") { void refreshAgents(); return; }
+    // A task was hard-deleted (possibly in another tab — in this one the local
+    // removal already happened, so the replay is a no-op). Drop it and adopt
+    // the recomputed project badge the event carries; there's no row left to
+    // re-fetch.
+    if (ev.type === "task_deleted") {
+      setTaskRunning(ev.taskId, false);
+      setTasks((prev) => prev.filter((t) => t.id !== ev.taskId));
+      setProjects((prev) => prev.map((p) => (p.id === ev.projectId ? { ...p, awaiting_count: ev.awaiting_count } : p)));
+      return;
+    }
     if (ev.type !== "task") return;
     setTaskRunning(ev.taskId, ev.running);
     setTasks((prev) => prev.map((t) => {
@@ -62,11 +79,15 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
       if (selProjRef.current) void loadTasks(selProjRef.current, false);
       void reconcileRunning();
+      // An agent_auth event fired while we were dark would be lost (this stream
+      // is a live tail), leaving a stale banner — or none when the login is in
+      // fact dead. The bundle carries the persisted flag, so refetch it too.
+      void refreshAgents();
     };
     es.onmessage = (e) => {
-      try { handleRef.current(JSON.parse(e.data) as GlobalTaskEvent); } catch {}
+      try { handleRef.current(JSON.parse(e.data) as GlobalWireEvent); } catch {}
     };
     return () => es.close();
     // All deps are stable (a ref, a setState, []-memoized callbacks).
-  }, [selProjRef, setProjects, loadTasks, reconcileRunning]);
+  }, [selProjRef, setProjects, loadTasks, reconcileRunning, refreshAgents]);
 }

@@ -138,6 +138,10 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       const ctxTokens = u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens;
       setTasks((prev) => prev.map((x) => (x.id === taskId
         ? { ...x, cost_usd: (x.cost_usd ?? 0) + u.cost_usd, total_tokens: (x.total_tokens ?? 0) + turnTokens,
+            // Cache buckets accumulate alongside the total so the usage chip's
+            // fresh-vs-cached split stays right mid-turn, not just after a reload.
+            cache_read_tokens: (x.cache_read_tokens ?? 0) + u.cache_read_tokens,
+            cache_creation_tokens: (x.cache_creation_tokens ?? 0) + u.cache_creation_tokens,
             context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)) }
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });

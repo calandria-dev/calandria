@@ -39,11 +39,22 @@ describe("pending (queued) messages", () => {
     const b = addPendingMessage(task.id, 1, "b");
     const c = addPendingMessage(task.id, 1, "c");
 
-    const removed = deletePendingMessage(b.id);
+    const removed = deletePendingMessage(b.id, task.id);
     expect(removed?.id).toBe(b.id);
     expect(listPendingMessages(task.id).map((m) => m.content)).toEqual(["a", "c"]);
     void a;
     void c;
+  });
+
+  it("refuses to cancel a parked follow-up through a different task's id", () => {
+    const project = createProject({ name: "Queue2b" });
+    const owner = createTask({ project_id: project.id, title: "Owner", description: "" });
+    const other = createTask({ project_id: project.id, title: "Other", description: "" });
+
+    const parked = addPendingMessage(owner.id, 1, "keep me");
+
+    expect(deletePendingMessage(parked.id, other.id)).toBeUndefined();
+    expect(listPendingMessages(owner.id).map((m) => m.content)).toEqual(["keep me"]);
   });
 
   it("clears the whole queue (e.g. on Stop) and returns what it removed", () => {

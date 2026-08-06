@@ -72,6 +72,35 @@ describe("ensureWorktree", () => {
     expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
+  it("bases off the configured branch even when another branch is checked out", async () => {
+    const repo = await makeRepo();
+    const mainSha = await git(repo, "rev-parse", "main");
+    // Park the main checkout on a diverged side branch — the trap that used to
+    // make tasks base off one branch and merge into another.
+    await git(repo, "checkout", "-b", "side");
+    const sideSha = await commitFile(repo, "side.txt", "side\n");
+    const taskId = uid();
+
+    const wt = await ensureWorktree(repo, taskId, "main");
+    expect(wt!.baseSha).toBe(mainSha);
+    expect(await git(wt!.path, "rev-parse", "HEAD")).toBe(mainSha);
+    expect(await git(wt!.path, "rev-parse", "HEAD")).not.toBe(sideSha);
+    // The main repo stays parked on its side branch.
+    expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("side");
+  });
+
+  it("falls back to HEAD when the configured branch does not exist", async () => {
+    const repo = await makeRepo();
+    await git(repo, "checkout", "-b", "side");
+    const sideSha = await commitFile(repo, "side.txt", "side\n");
+
+    // Misconfigured project (or a fresh repo whose default branch is named
+    // differently): current HEAD is the only sane base.
+    const wt = await ensureWorktree(repo, uid(), "no-such-branch");
+    expect(wt!.baseSha).toBe(sideSha);
+    expect(await git(wt!.path, "rev-parse", "HEAD")).toBe(sideSha);
+  });
+
   it("is idempotent — a second call reuses the existing worktree", async () => {
     const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
     const again = await ensureWorktree(repo, taskId);

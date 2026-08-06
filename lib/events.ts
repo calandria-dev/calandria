@@ -6,10 +6,42 @@
 // kept on globalThis so it survives dev HMR module reloads (same pattern as
 // lib/abort.ts / lib/asks.ts).
 
-import type { TaskStreamEvent } from "./types";
+import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
+
+// Lifecycle facts published by mutation ROUTES rather than the runner — a
+// manual status PATCH or /clear settling the task row (task_updated), or a
+// task hard-delete (task_deleted). Without them those mutations are silent on
+// the bus, so every other tab's "needs you" badges keep counting a task the
+// server already settled (or deleted). They're not transcript detail, so they
+// go to GLOBAL listeners only (publishGlobal) — per-task /messages streams
+// never see them. task_deleted carries its project id + freshly recomputed
+// awaiting count itself: by the time a listener sees it the row is gone, so
+// the usual re-read-the-task enrichment (GET /api/events) is impossible.
+export type TaskMutationEvent =
+  | { type: "task_updated" }
+  | { type: "task_deleted"; projectId: string; awaiting_count: number };
+
+/** Everything a global listener can see: turn events plus route mutations. */
+export type BusEvent = TaskStreamEvent | TaskMutationEvent;
+
+// What GET /api/events sends over the wire: lib/types' GlobalEvent members,
+// the task payload widened with the "task_updated" boundary, and the row-less
+// deletion event. Defined here — beside the bus events that produce them —
+// rather than in lib/types.ts.
+export type GlobalTaskWireEvent = Omit<GlobalTaskEvent, "event"> & {
+  event: GlobalTaskEvent["event"] | "task_updated";
+};
+export type TaskDeletedWireEvent = {
+  type: "task_deleted";
+  taskId: string;
+  projectId: string;
+  /** The project's awaiting count recomputed AFTER the row was deleted. */
+  awaiting_count: number;
+};
+export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
-type GlobalListener = (taskId: string, ev: TaskStreamEvent) => void;
+type GlobalListener = (taskId: string, ev: BusEvent) => void;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -74,6 +106,21 @@ export function publish(taskId: string, ev: TaskStreamEvent): void {
       fn(taskId, ev);
     } catch {
       // same rule as above
+    }
+  }
+}
+
+/**
+ * Fan a route-published mutation fact out to GLOBAL listeners only. Mutation
+ * events aren't transcript detail, so per-task /messages viewers never see
+ * them — the global /api/events stream is their sole consumer.
+ */
+export function publishGlobal(taskId: string, ev: TaskMutationEvent): void {
+  for (const fn of globalRegistry()) {
+    try {
+      fn(taskId, ev);
+    } catch {
+      // same rule as publish()
     }
   }
 }

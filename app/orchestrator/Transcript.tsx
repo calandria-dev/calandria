@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { ToolData, ToolPeek, AskQuestion, AskAnswers } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { diffCls, splitAttachments, type MsgAttachment } from "./format";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
+import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
+import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
 
@@ -170,7 +172,12 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
   );
 }
 
-export function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onCancelQueued, onClear }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void }) {
+// Memoized: during a live turn every SSE event re-renders the transcript's
+// parents, but message objects are append-only (replaced only when their content
+// changes), so unchanged messages skip re-rendering — and re-parsing their
+// markdown — entirely. Callers must pass identity-stable handlers or the memo
+// is defeated (SessionView wraps its handlers for exactly this reason).
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onCancelQueued, onClear, onReconnect }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -203,7 +210,7 @@ export function MessageView({ m, initial, hideWho, running, agent, agentLabel = 
       return (
         <div className="msg system overflow">
           <div className="msg-body">
-            ⚠ {m.content}
+            {m.content}
             {onClear && (
               <div className="overflow-actions">
                 <button className="btn btn-sm" onClick={onClear} disabled={running} title="Save a summary and start a fresh context window">
@@ -215,10 +222,44 @@ export function MessageView({ m, initial, hideWho, running, agent, agentLabel = 
         </div>
       );
     }
+    // The agent's login died: same shape as the overflow case — the warning line
+    // plus the one action that fixes it (Settings → Agents, where the connect
+    // flow lives). Instance-wide, so the titlebar banner says it too; this is
+    // the in-context copy for whoever is reading the failed task.
+    if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
+      return (
+        <div className="msg system overflow">
+          <div className="msg-body">
+            {m.content}
+            {onReconnect && (
+              <div className="overflow-actions">
+                <button className="btn btn-sm" onClick={onReconnect} title={`Sign in to ${agentLabel} again`}>
+                  {Icon.bolt()} Reconnect {agentLabel}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    // The agent's usage limit is spent: same shape as the two cases above, but
+    // the only recovery is waiting for the reset (the error line above the
+    // notice carries the reset time when the SDK reported one), so this renders
+    // the notice styled like the others with no action button.
+    if (m.content.includes(USAGE_LIMIT_NOTICE)) {
+      return (
+        <div className="msg system overflow">
+          <div className="msg-body">{m.content}</div>
+        </div>
+      );
+    }
     // Notes that already carry their own glyph (✓/ℹ — e.g. the "caught up to main"
-    // sync note) render quietly; everything else is a warning and gets the ⚠.
+    // sync note) render quietly; anything else is a warning. The runner's error
+    // lines arrive with their own ⚠ already, so only glyph-less content gets one
+    // (prepending unconditionally used to render "⚠ ⚠ …").
     const info = /^[✓ℹ]/.test(m.content);
-    return <div className={`msg system${info ? " info" : ""}`}><div className="msg-body">{info ? m.content : `⚠ ${m.content}`}</div></div>;
+    const glyphed = info || m.content.startsWith("⚠");
+    return <div className={`msg system${info ? " info" : ""}`}><div className="msg-body">{glyphed ? m.content : `⚠ ${m.content}`}</div></div>;
   }
   const isUser = m.role === "user";
   // Only user messages carry attachment markers; assistant text passes through.
@@ -239,7 +280,7 @@ export function MessageView({ m, initial, hideWho, running, agent, agentLabel = 
       </div>
     </div>
   );
-}
+});
 
 export function SessionBreak({ summary }: { summary: string }) {
   return (

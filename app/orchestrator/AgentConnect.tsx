@@ -4,9 +4,40 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { Modal } from "./Modal";
-import type { AgentInfoT, AgentsResponseT, AgentLoginT, ClaudeVerifyT } from "./types";
+import { AUTH_BANNER_HINT } from "@/lib/authFailure";
+import type { AgentInfo, AgentInfoT, AgentsResponseT, AgentLoginT, ClaudeVerifyT } from "./types";
 
 const NUDGE_DISMISSED = "orch_agent_nudge_dismissed";
+
+// The instance-wide "your agent login died" strip, under the titlebar.
+//
+// An expired OAuth session is per-INSTANCE (one login per agent, shared by every
+// task), but it only shows up as a failed turn inside whichever task ran first —
+// so without this you'd have to open that task to learn that nothing can run.
+// The flag is server-persisted (lib/agents/connections.ts) and broadcast on
+// GET /api/events, so this appears in every tab within a moment of the failure
+// and disappears the instant a turn succeeds again. Deliberately not
+// dismissible: no session can run until it's fixed.
+export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; onReconnect: () => void }) {
+  if (broken.length === 0) return null;
+  const names = broken.map((a) => a.label).join(" & ");
+  // One agent: show what the provider actually said, so "expired session" isn't
+  // confused with "revoked key" or a network blip. Several: keep it to the names.
+  const detail = broken.length === 1 ? broken[0].authBroken?.reason : null;
+  return (
+    <div className="auth-banner" role="alert">
+      <span className="ab-ic">{Icon.bolt()}</span>
+      <span className="ab-msg">
+        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working — the sign-in expired.</b> {AUTH_BANNER_HINT}
+        {detail && <span className="ab-why" title={detail}>{detail}</span>}
+      </span>
+      <span className="ab-spacer" />
+      <button className="btn btn-sm btn-accent" onClick={onReconnect}>
+        Reconnect {broken.length === 1 ? broken[0].label : "agents"}
+      </button>
+    </div>
+  );
+}
 
 // Post-setup nudge: once the required Claude connection is done, gently suggest
 // connecting the other available agents (Codex) so tasks can run on them too.
@@ -74,6 +105,27 @@ export function AgentConnect({
   const canApiKey = !!agent.capabilities.apiKeyHint;
   const [mode, setMode] = useState<"subscription" | "api_key">(agent.account?.method === "api_key" ? "api_key" : "subscription");
   const [reconnect, setReconnect] = useState(false);
+
+  // Connected on record, but its credentials died in flight (lib/authFailure.ts).
+  // Never show the green "is connected" state here: the banner sends people to
+  // this card to FIX it, so lead with what broke and put the login one click away.
+  if (agent.connected && agent.authBroken && !reconnect) {
+    return (
+      <div className="wiz-connected broken">
+        <span className="wiz-warn">{Icon.bolt()}</span>
+        <div>
+          <div className="wiz-ok-t">
+            {agent.label}&apos;s sign-in stopped working
+            {agent.account?.email ? <> for <strong>{agent.account.email}</strong></> : ""}
+          </div>
+          <div className="hlp" style={{ margin: "3px 0 0" }}>{agent.authBroken.reason}</div>
+          <button className="btn btn-accent btn-sm" style={{ marginTop: 9 }} onClick={() => setReconnect(true)}>
+            {Icon.bolt()} Sign in again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Already connected from a prior run — show the state + a reconnect affordance.
   if (agent.connected && !reconnect) {

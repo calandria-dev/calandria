@@ -4,7 +4,7 @@
 // unsubscribing detaches cleanly, and one throwing subscriber — per-task or
 // global — never breaks delivery to the others or to the turn publishing.
 import { describe, it, expect } from "vitest";
-import { subscribe, subscribeGlobal, publish } from "@/lib/events";
+import { subscribe, subscribeGlobal, publish, publishGlobal, type BusEvent } from "@/lib/events";
 import type { TaskStreamEvent } from "@/lib/types";
 
 const turnEnd: TaskStreamEvent = { type: "turn_end" };
@@ -12,7 +12,7 @@ const notice: TaskStreamEvent = { type: "notice", content: "hi" };
 
 describe("event bus global channel", () => {
   it("delivers every task's events to a global listener, with the task id", () => {
-    const seen: [string, TaskStreamEvent][] = [];
+    const seen: [string, BusEvent][] = [];
     const unsub = subscribeGlobal((taskId, ev) => seen.push([taskId, ev]));
     try {
       publish("task-a", turnEnd);
@@ -44,6 +44,27 @@ describe("event bus global channel", () => {
     unsub();
     publish("t", turnEnd);
     expect(count).toBe(1);
+  });
+
+  it("publishGlobal reaches only global listeners, never per-task viewers", () => {
+    const globalSeen: BusEvent[] = [];
+    const taskSeen: TaskStreamEvent[] = [];
+    const unsubs = [
+      subscribeGlobal((_taskId, ev) => globalSeen.push(ev)),
+      subscribe("t", (ev) => taskSeen.push(ev)),
+    ];
+    try {
+      publishGlobal("t", { type: "task_updated" });
+      publishGlobal("t", { type: "task_deleted", projectId: "p", awaiting_count: 2 });
+      expect(globalSeen).toEqual([
+        { type: "task_updated" },
+        { type: "task_deleted", projectId: "p", awaiting_count: 2 },
+      ]);
+      // Mutation facts are not transcript detail — the /messages stream never sees them.
+      expect(taskSeen).toEqual([]);
+    } finally {
+      for (const u of unsubs) u();
+    }
   });
 
   it("a throwing subscriber never breaks the others or the publisher", () => {

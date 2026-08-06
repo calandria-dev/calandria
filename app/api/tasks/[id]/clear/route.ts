@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, listMessages, addMessage, addSummary, clearPendingMessages } from "@/lib/store";
 import { summarizeTranscript } from "@/lib/agents/oneshots";
 import { hasTurn, abortTurn } from "@/lib/abort";
-import { publish } from "@/lib/events";
+import { publish, publishGlobal } from "@/lib/events";
 import { buildClippedTranscript } from "@/lib/transcript";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +67,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   // clears the queue on its own path; doing it here too covers the no-turn case
   // and any residual rows, and is idempotent.)
   for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
+
+  // The row just settled (running/awaiting reset, status in_progress) outside
+  // any turn, and the `dequeued` publishes above are transcript detail the
+  // coarse /api/events filter drops — announce the settle so every other tab's
+  // spinners and "needs you" badges recount.
+  publishGlobal(id, { type: "task_updated" });
 
   return NextResponse.json({ task: next, summary, generation: gen + 1 });
 }

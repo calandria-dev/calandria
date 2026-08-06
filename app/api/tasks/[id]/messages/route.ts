@@ -101,7 +101,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // point — a second POST landing in this window queues instead of double-running.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
-          const wt = await ensureWorktree(project.repo_path, fresh.id);
+          const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
           if (wt) {
             fresh.worktree_path = wt.path;
             fresh.work_branch = wt.branch;

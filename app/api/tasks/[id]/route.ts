@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps } from "@/lib/store";
+import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, countAwaiting } from "@/lib/store";
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
+import { publishGlobal } from "@/lib/events";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     ...task,
     cost_usd: usage.cost_usd,
     total_tokens: usage.total_tokens,
+    // The cache buckets travel with the total so the usage chip can split
+    // "fresh work" from re-read context instead of showing one inflated number.
+    cache_read_tokens: usage.cache_read_tokens,
+    cache_creation_tokens: usage.cache_creation_tokens,
     context_tokens: ctx.context_tokens,
     context_pct: ctx.context_pct,
     depends_on: getTaskDeps(id),
@@ -51,6 +56,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   const task = updateTask(id, allowed);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // A manual status change settles status + awaiting_input outside any turn, so
+  // no runner publish will follow — announce it ourselves or every other tab's
+  // "needs you" badges keep counting this task until their next reconnect.
+  if ("status" in allowed) publishGlobal(id, { type: "task_updated" });
   // Flipping to done may be the last blocker some auto-start dependent was
   // waiting on. Fire-and-forget: the launch runs detached (worktree creation
   // can take seconds) and must never delay or fail this status change.
@@ -70,5 +79,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   }
   removeTaskUploads(id);
   deleteTask(id);
+  // Publish AFTER the hard delete, carrying the project id + its recomputed
+  // awaiting count: the row is gone, so /api/events' usual re-read-the-task
+  // enrichment would drop the event and freeze the project's badge in every
+  // other tab until the next SSE reconnect.
+  if (task) publishGlobal(id, { type: "task_deleted", projectId: task.project_id, awaiting_count: countAwaiting(task.project_id) });
   return NextResponse.json({ ok: true });
 }

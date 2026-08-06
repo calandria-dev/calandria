@@ -23,6 +23,14 @@ process.env.ORCH_CP_DB_DIR = path.join(root, "cp-db");
 process.env.ORCH_PROVISIONER = "mock";
 process.env.ORCH_BILLING_PROVIDER = "mock";
 
+// Hermetic agent credentials: a developer's real API key exported in their
+// shell would otherwise leak into the suite — hasApiKey()/hasOpenAiKey() are
+// env-aware (they report the effective billing credential; see lib/env-keys.mjs)
+// and would flip status assertions. Same list the boot strip covers.
+for (const v of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "ORCH_ALLOW_API_KEY_ENV"]) {
+  delete process.env[v];
+}
+
 // Hermetic git: pin all config to a file we control so the suite never depends
 // on (or mutates) the user's identity, hooks, signing, or default-branch setup.
 const gitconfig = path.join(root, "gitconfig");

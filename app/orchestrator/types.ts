@@ -46,6 +46,8 @@ export interface TaskRow {
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
+  cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
+  cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
   depends_on: string[]; // task ids this task is blocked by until they're done
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
@@ -168,7 +170,11 @@ export type AgentInfoT = {
   capabilities: AgentCapabilitiesT;
   connected: boolean;
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
+  authBroken?: AgentAuthBrokenT | null;
 };
+// Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
+// `reason` is the provider's own error text; `at` is when it was first seen.
+export type AgentAuthBrokenT = { at: number; reason: string };
 export type AgentsResponseT = { default: string; agents: AgentInfoT[] };
 export type AgentLoginT = ClaudeLoginT & { code?: string | null };
 
@@ -186,7 +192,7 @@ export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 // capability descriptor (models / reasoning / permission modes it supports, plus
 // feature flags) served by GET /api/agents. The client renders every picker from
 // this data, so a task's controls always match the agent it runs under.
-export interface AgentModelOption { value: string; label: string; sub: string; contextWindow: number }
+export interface AgentModelOption { value: string; label: string; sub: string; contextWindow: number; group?: string }
 export interface AgentPickerOption { value: string; label: string; sub: string }
 export interface AgentCapabilities {
   models: AgentModelOption[];
@@ -198,16 +204,21 @@ export interface AgentCapabilities {
   costIsEstimated: boolean;   // cost is estimated from tokens × API prices — show with ~
   supportsResume: boolean;    // turns can resume a prior session/thread id
 }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean }
+// How this agent is signed in. "subscription" (a Max/Pro or ChatGPT login) means
+// turns draw on plan quota and cost no marginal money, so a dollar figure is an
+// API-PRICE EQUIVALENT rather than a charge; "api_key" means it really is billed.
+// Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
+export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
+export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
 export interface AgentsBundle { default: string; agents: AgentInfo[] }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic "Default" head — it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
-export type PickerOption = { value: string | null; label: string; sub: string };
+export type PickerOption = { value: string | null; label: string; sub: string; group?: string };
 const DEFAULT_HEAD: PickerOption = { value: null, label: "Default", sub: "inherit the agent's default" };
-const withDefault = (opts: { value: string; label: string; sub: string }[]): PickerOption[] => [DEFAULT_HEAD, ...opts];
+const withDefault = (opts: PickerOption[]): PickerOption[] => [DEFAULT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
 // (agent metadata not loaded yet) yields just the Default head.
 export const modelOptions = (caps?: AgentCapabilities): PickerOption[] => withDefault(caps?.models ?? []);

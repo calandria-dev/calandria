@@ -33,8 +33,9 @@ Each **project** carries reusable context. Each **task** is its own agent sessio
 - **Write-once project context** — auto-injected into every task; **Refresh with AI** redrafts it from the repo.
 - **Session lineage** — `/clear` hands a summary to a fresh context window; the task lives on.
 - **Reconnect-safe turns** — turns run server-side; reload or sleep the laptop and the transcript catches up. Queue follow-ups mid-turn.
+- **Knows when your agent login dies** — an expired sign-in raises a workspace-wide banner with a one-click reconnect (plus the same button in the failed transcript). Queued follow-ups stay queued instead of failing one by one, and the banner clears itself the moment a turn runs again.
 - **Integrated terminal + managed services** — a real shell per project, plus supervised dev/setup/test processes that survive restarts, with live logs and optional public URLs.
-- **Cost tracking + insights** — live per-task spend and a local analytics dashboard.
+- **Honest usage tracking + insights** — live per-task tokens and spend, plus a local analytics dashboard. The chip leads with tokens the agent actually processed and keeps prompt-cache re-reads (usually most of the raw total) as secondary detail; on a subscription login the dollar figure is labelled as an API-price equivalent covered by your plan, not a bill.
 - **List or kanban board** — flip the workspace to a full-width board of live status columns (Suggested / Not started / In progress / Needs input / Done); drag cards to reorder or change status, click one to open its session in a slide-over. ⌘⇧B toggles.
 - **Task pipelines** — chain tasks with "Blocked by" dependencies; opt a blocked task into **Start when unblocked** and it launches its own session the moment its last blocker is marked done.
 - Plus: agent-suggested tasks, image attachments, clone from GitHub, recaps, a first-run tutorial.
@@ -63,6 +64,18 @@ Want another agent? The driver seam is small — see [adding a new agent](docs/A
 ## Insights
 
 Open **Insights** from the top bar for a local analytics dashboard of what your agents cost and ship: per-day spend and token usage (including cache reads/writes), tasks shipped, and lines merged to base — sliceable by project and agent across 7/30/90-day ranges, with deltas against the prior period. Everything is computed from the local SQLite database in a single fetch, filter changes recompute instantly in the browser, and nothing is sent anywhere. Claude spend is the SDK-reported dollar figure; Codex spend is estimated from token counts at published API prices and marked with a `~`.
+
+### Reading the numbers
+
+The per-task chip in the session header reads `250k tok · 3.5M cached · ~$4.20`, and each part means something different:
+
+| Part | What it means |
+|-|-|
+| `250k tok` | Tokens the agent processed for the first time: prompt, completion, and context written into the prompt cache. This is the headline because it's the work that actually happened. |
+| `3.5M cached` | Prompt-cache **reads**: the conversation so far, re-sent every turn and billed at ~10% of the input rate. It dominates the raw token total on any long task and is not 3.5M tokens of new work. |
+| `~$4.20` | On a **Max/Pro or ChatGPT subscription login** this is an *API-price equivalent*: what those tokens would have cost through the API. Your turns draw on plan quota, so the marginal cost is $0 and the figure carries a `~`. With an **API key** connected instead, it's a real billed amount and shows plainly. Codex figures are additionally estimated (its CLI reports tokens only). |
+
+Hover the chip for the exact counts and the full breakdown.
 
 ## Managed services
 
@@ -100,18 +113,39 @@ Managed services are on by default; `ORCH_FEATURE_SERVICES=0` turns the whole fe
 
 ```bash
 npm install
-npm run dev
+npm run build
+npm start
 # open http://localhost:3000
 ```
+
+This is the production build — use it whenever you're actually *using* the app.
+Hacking on Operator itself? `npm run dev` runs the dev server (Turbopack + React dev
+build) with hot reload — but it compiles each route on first hit and is **much slower**,
+so don't run it for day-to-day use.
 
 You need **Node 18.18+**, **macOS or Linux**, and at least one agent CLI: **Claude Code**
 (`npm i -g @anthropic-ai/claude-code`, Pro/Max plan — recommended) or **Codex**
 (`npm i -g @openai/codex`, ChatGPT plan). First run opens a setup wizard that signs the
 agent in from the browser — connecting **either one** completes setup (it becomes the app
 default and the tutorial runs on it) — then drops you into a 2-minute hands-on tutorial.
-Keep `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` unset so it uses your subscription, not the API.
+A stray `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the launch environment is stripped at
+boot (with a warning) so turns bill your subscription, not the API — set
+`ORCH_ALLOW_API_KEY_ENV=1` if you really do want to run on an env-provided key.
 
 Every setting is an env var with a sane default — see [`.env.example`](.env.example).
+
+## Testing
+
+```bash
+npm test              # unit/integration suite (vitest)
+npm run test:e2e      # end-to-end suite (Playwright)
+npm run preflight     # both — the pre-push gate
+```
+
+The e2e suite boots the real production server against a throwaway instance and
+drives the whole loop through the browser — onboarding, project/task creation,
+running sessions, diff, merge, list/kanban views — using a deterministic mock
+agent driver, so it needs no agent CLI or login. Details: [`e2e/README.md`](e2e/README.md).
 
 ## Self-host
 

@@ -69,8 +69,59 @@ export function resolveConnectedAgent(preferred: (string | null | undefined)[]):
 
 export function setAgentConnection(agentId: string, conn: AgentConnection): void {
   setSetting(key(agentId), `${conn.method}|${conn.email ?? ""}|${conn.plan ?? ""}`);
+  // A fresh login / verify / api-key save IS the repair — never leave a stale
+  // "reconnect me" banner up after the user just did.
+  clearAgentAuthBroken(agentId);
 }
 
 export function clearAgentConnection(agentId: string): void {
   setSetting(key(agentId), null);
+  // Disconnected on purpose: the agent now reads as "not connected", which the
+  // UI already explains — a broken-connection banner on top would be noise.
+  clearAgentAuthBroken(agentId);
+}
+
+// ---------- broken-connection flag (credentials died AFTER connecting) ----------
+// `agent_conn_<id>` says "this agent was wired up"; it can't say "and it just
+// stopped working". An expired OAuth session leaves the connection record intact
+// while every turn fails, so the runner records the failure here
+// (lib/runner.ts, classified by lib/authFailure.ts) and the app surfaces it
+// instance-wide instead of only inside the task that happened to run first.
+// Stored as "<epoch ms>|<reason>" — reason may itself contain "|", so only the
+// first separator is split on. Cleared by any successful turn or reconnect.
+
+export interface AgentAuthBroken {
+  /** When the failure was first seen (epoch ms). */
+  at: number;
+  /** The provider's own error text, so the UI can show what actually broke. */
+  reason: string;
+}
+
+const brokenKey = (agentId: string) => `agent_auth_broken_${agentId}`;
+
+export function getAgentAuthBroken(agentId: string): AgentAuthBroken | null {
+  const raw = getSetting(brokenKey(agentId));
+  if (!raw) return null;
+  const sep = raw.indexOf("|");
+  const at = Number(sep === -1 ? raw : raw.slice(0, sep));
+  return { at: Number.isFinite(at) ? at : 0, reason: sep === -1 ? "" : raw.slice(sep + 1) };
+}
+
+/**
+ * Record that this agent's credentials are dead. Returns true only the FIRST
+ * time (the flag was previously clear), so callers can publish/announce once per
+ * outage rather than on every failing turn — the `at` timestamp is preserved
+ * across repeats so the banner can say how long it's been broken.
+ */
+export function markAgentAuthBroken(agentId: string, reason: string, at: number): boolean {
+  const prev = getAgentAuthBroken(agentId);
+  setSetting(brokenKey(agentId), `${prev?.at ?? at}|${reason}`);
+  return !prev;
+}
+
+/** Clear the flag. Returns true if it was actually set (i.e. this healed it). */
+export function clearAgentAuthBroken(agentId: string): boolean {
+  if (!getSetting(brokenKey(agentId))) return false;
+  setSetting(brokenKey(agentId), null);
+  return true;
 }
