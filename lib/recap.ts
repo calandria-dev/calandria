@@ -11,6 +11,7 @@ import {
 import { summarizeProjectRecap } from "./agents/oneshots";
 import { recentCommits } from "./git";
 import type { Project } from "./types";
+import { automaticRecapsEnabled } from "./backgroundJobs";
 
 // How long a project must sit idle before a recap is considered worthwhile —
 // "it's been a while since I worked on this". Tunable; kept modest so the
@@ -80,7 +81,7 @@ function buildDigest(project: Project): { digest: string; coversAt: number } | n
 
 // Generate + persist a recap for one project. Returns the recap text, or null
 // if there's nothing to recap or a generation is already in flight.
-export async function generateRecap(projectId: string): Promise<string | null> {
+export async function generateRecap(projectId: string, options: { unattended?: boolean } = {}): Promise<string | null> {
   if (inFlight.has(projectId)) return null;
   const project = getProject(projectId);
   if (!project) return null;
@@ -92,7 +93,7 @@ export async function generateRecap(projectId: string): Promise<string | null> {
     let digest = built.digest;
     const commits = await recentCommits(project.repo_path, 10).catch(() => "");
     if (commits) digest += `\n\n## Recent git commits\n${commits}`;
-    const recap = await summarizeProjectRecap(project, digest);
+    const recap = await summarizeProjectRecap(project, digest, options);
     setProjectRecap(projectId, recap, built.coversAt);
     return recap;
   } finally {
@@ -103,12 +104,13 @@ export async function generateRecap(projectId: string): Promise<string | null> {
 // Generate recaps for every project that's gone stale with new activity.
 // Sequential, best-effort — one bad project never blocks the rest.
 export async function sweepRecaps(): Promise<number> {
+  if (!automaticRecapsEnabled()) return 0;
   let generated = 0;
   for (const p of listProjects()) {
     const st = recapStatus(p as Project);
     if (st.needsRecap && !st.generating) {
       try {
-        await generateRecap(p.id);
+        await generateRecap(p.id, { unattended: true });
         generated++;
       } catch {
         // skip — a single failed recap shouldn't abort the sweep

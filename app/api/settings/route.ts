@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic";
 // back-compat. `default_agent` is the app-wide default agent for new tasks;
 // `utility_agent` is the agent that runs project-scoped internal one-shots
 // (recaps, context drafts — see lib/agents/oneshots.ts), default "claude".
-const ALLOWED = /^(default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?)$/;
+// `background_jobs` defaults to "on" and gates unattended agent turns;
+// `recap_mode` defaults to "automatic" (also accepts "on_open" and "off").
+const ALLOWED = /^(background_jobs|recap_mode|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());
