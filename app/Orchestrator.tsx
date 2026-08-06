@@ -347,7 +347,7 @@ export default function Orchestrator() {
   );
 
   const insightsColumn = (
-    <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} />
+    <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} onOpenSettings={openSettings} />
   );
 
   const settingsColumn = (
