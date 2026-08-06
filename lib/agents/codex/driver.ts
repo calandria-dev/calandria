@@ -37,12 +37,23 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 // `command` is the absolute node binary (process.execPath) so the spawn doesn't
 // depend on PATH being present in the MCP subprocess env. The Codex SDK flattens
 // this `config` object into `--config mcp_servers.…` overrides (TOML) for the CLI.
-function orchestratorMcpConfig(project: Project, task: Task): CodexOptions["config"] {
+// Exported for tests (tests/codexMcpBridge.test.ts).
+export function orchestratorMcpConfig(project: Project, task: Task): CodexOptions["config"] {
   return {
     mcp_servers: {
       orchestrator: {
         command: process.execPath,
         args: [ORCH_MCP_SCRIPT],
+        // Codex gates MCP tool calls behind their OWN approval decision, which
+        // `approval_policy` does NOT cover: under the default mode every call to
+        // this server is routed to an approver, and `codex exec` (what the SDK
+        // spawns) has nobody to ask — so the call comes back instantly as
+        // `error: "user cancelled MCP tool call"` and suggest_task/expose_service
+        // silently never run. "approve" auto-approves this server's tools, which
+        // is right here: it's OUR first-party bridge, it only reaches the app's
+        // own loopback endpoints, and it's the exact analog of the Claude
+        // driver's bypassPermissions. (Valid modes: auto | prompt | approve.)
+        default_tools_approval_mode: "approve",
         // ask_user blocks until the user answers — hours, potentially. Codex's
         // default per-tool-call timeout (60s) would kill the parked call, so
         // raise it to ~1 day (mirrors the Claude driver's PreToolUse hook cap).
