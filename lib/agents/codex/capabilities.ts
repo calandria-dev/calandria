@@ -13,29 +13,43 @@ import { codexApiKey } from "./auth";
 const CTX = 272_000;
 
 export const CODEX_CAPABILITIES: AgentCapabilities = {
-  // Mirrors the codex CLI's own model preset table (what its `/model` menu
-  // lists), NOT a hand-picked subset: values are the presets' `slug`s, ordered
-  // by their `priority`. "Previous versions" are the presets the CLI tags with
-  // an `upgrade` target — still selectable, and worth offering for the same
-  // reason Claude pins older versions, but not what a new task should default
-  // to. Groups must stay contiguous: the picker opens a new section whenever
-  // `group` changes (SessionView.tsx). Re-check this list when bumping
-  // @openai/codex — the codex model line moves faster than Claude's, and a
-  // stale entry here is a model the CLI no longer accepts.
+  // Tracks the codex CLI's model line, ordered newest-first. "Previous
+  // versions" are still-live older models — selectable for the same reason
+  // Claude pins older versions, but not what a new task should default to.
+  // Groups must stay contiguous: the picker opens a new section whenever
+  // `group` changes (SessionView.tsx).
+  //
+  // Re-check this list when bumping @openai/codex-sdk; the codex model line
+  // moves faster than Claude's, and a stale entry here is a model that 400s the
+  // whole turn. Two traps when you do:
+  //   - The `{"models":[…]}` catalog embedded in the CLI binary is a stale
+  //     FALLBACK, not the truth. The live catalog is fetched at startup and can
+  //     both drop models the embedded one lists and keep ones it marks retired.
+  //   - Availability is per auth mode. We run on ChatGPT-plan login, and that
+  //     account type refuses models the API tier still serves.
+  // So verify empirically, on a ChatGPT login:
+  //   codex exec --model <slug> "reply with the single word ok"
+  // Checked that way against codex-cli 0.146.0: gpt-5.2 and gpt-5.3-codex now
+  // 400 with "not supported when using Codex with a ChatGPT account" (both were
+  // listed here before), while gpt-5.4 / gpt-5.4-mini still run despite the
+  // embedded catalog flagging them for migration to Terra / Luna.
   models: [
-    { value: "gpt-5.5", label: "GPT-5.5", sub: "frontier coding, research, and real-world work", contextWindow: CTX, group: "Latest" },
-    { value: "gpt-5.4", label: "GPT-5.4", sub: "strong model for everyday coding", contextWindow: CTX, group: "Latest" },
-    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", sub: "small, fast, and cost-efficient", contextWindow: CTX, group: "Latest" },
-    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex", sub: "previous coding-optimized model", contextWindow: CTX, group: "Previous versions" },
-    { value: "gpt-5.2", label: "GPT-5.2", sub: "previous model for long-running agents", contextWindow: CTX, group: "Previous versions" },
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "latest frontier agentic coding model (default)", contextWindow: CTX, group: "Latest" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", sub: "balanced agentic coding for everyday work", contextWindow: CTX, group: "Latest" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", sub: "fast and affordable agentic coding", contextWindow: CTX, group: "Latest" },
+    { value: "gpt-5.5", label: "GPT-5.5", sub: "previous frontier coding and research model", contextWindow: CTX, group: "Previous versions" },
+    { value: "gpt-5.4", label: "GPT-5.4", sub: "strong model for everyday coding", contextWindow: CTX, group: "Previous versions" },
+    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", sub: "small, fast, and cost-efficient", contextWindow: CTX, group: "Previous versions" },
   ],
   // Off/Think/Think hard/Ultrathink → codex's model_reasoning_effort scale
   // (low/medium/high/xhigh — see EFFORT in ./driver.ts). Codex can't disable
   // reasoning ("minimal" 400s the turn), so "Off" is its floor, "low"; the
   // subs name the actual effort each preset sends so the picker stays honest.
+  // The 5.6 family also accepts "max" and "ultra" above xhigh; the shared
+  // preset vocabulary tops out at ultrathink, so those aren't reachable yet.
   reasoningOptions: [
     { value: "off", label: "Off", sub: "low effort — codex's minimum" },
-    { value: "think", label: "Think", sub: "medium effort (codex default)" },
+    { value: "think", label: "Think", sub: "medium effort" },
     { value: "think_hard", label: "Think hard", sub: "high effort" },
     { value: "ultrathink", label: "Ultrathink", sub: "extra-high effort" },
   ],

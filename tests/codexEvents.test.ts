@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { mapThreadEvent, newState } from "@/lib/agents/codex/events";
 import { estimateCostUsd, resolveCodexModel, DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
+import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
 import type { StreamEvent } from "@/lib/types";
 
 // The Codex event-mapping unit test. Feeds recorded codex `codex exec
@@ -162,6 +163,26 @@ describe("codex cost estimation", () => {
   it("prefix-matches dated ids and falls back to the default family for unknown models", () => {
     expect(estimateCostUsd("gpt-5.1-codex-mini-2026-01-15", usage)).toBeCloseTo(0.36, 10);
     expect(estimateCostUsd("some-future-model", usage)).toBeCloseTo(estimateCostUsd(DEFAULT_CODEX_MODEL, usage), 10);
+  });
+
+  it("prices each 5.6 tier distinctly — the bare alias follows Sol, not the catch-all", () => {
+    // Sol $5/$0.50/$30, Terra $2/$0.20/$12, Luna $0.20/$0.02/$1.20 per 1M
+    // (developers.openai.com/api/docs/pricing). Ordering matters: "gpt-5.6" is a
+    // prefix of all three, so it must be matched last or it swallows them.
+    expect(estimateCostUsd("gpt-5.6-sol", usage)).toBeCloseTo(6.2, 10); // 3.0 + 0.2 + 3.0
+    expect(estimateCostUsd("gpt-5.6-terra", usage)).toBeCloseTo(2.48, 10); // 1.2 + 0.08 + 1.2
+    expect(estimateCostUsd("gpt-5.6-luna", usage)).toBeCloseTo(0.248, 10); // 0.12 + 0.008 + 0.12
+    expect(estimateCostUsd("gpt-5.6", usage)).toBeCloseTo(estimateCostUsd("gpt-5.6-sol", usage), 10);
+  });
+
+  it("has a real price row for every model the picker offers", () => {
+    // Guards the drift that makes an estimate silently wrong: a new picker entry
+    // with no row of its own falls through to the bare "gpt-5" catch-all and
+    // quietly prices at the wrong rate instead of failing.
+    const catchAll = estimateCostUsd("gpt-5-nonexistent-family", usage);
+    for (const m of CODEX_CAPABILITIES.models) {
+      expect(estimateCostUsd(m.value, usage), m.value).not.toBeCloseTo(catchAll, 10);
+    }
   });
 
   it("never bills cached reads above the full prompt (defensive clamp)", () => {

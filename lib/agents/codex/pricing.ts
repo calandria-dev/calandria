@@ -16,6 +16,12 @@ import type { TurnUsage } from "../../types";
 // Retired models keep their rows: historical turns still price against the
 // model they actually ran on, even once the picker stops offering it.
 const PRICES: { prefix: string; input: number; cachedInput: number; output: number }[] = [
+  { prefix: "gpt-5.6-sol", input: 5.0, cachedInput: 0.5, output: 30.0 },
+  { prefix: "gpt-5.6-terra", input: 2.0, cachedInput: 0.2, output: 12.0 },
+  { prefix: "gpt-5.6-luna", input: 0.2, cachedInput: 0.02, output: 1.2 },
+  // The bare "gpt-5.6" alias routes to Sol, so it prices as Sol. Must sit
+  // BELOW the suffixed rows — it's a prefix of all three.
+  { prefix: "gpt-5.6", input: 5.0, cachedInput: 0.5, output: 30.0 },
   { prefix: "gpt-5.5", input: 5.0, cachedInput: 0.5, output: 30.0 },
   { prefix: "gpt-5.4-mini", input: 0.75, cachedInput: 0.075, output: 4.5 },
   { prefix: "gpt-5.4", input: 2.5, cachedInput: 0.25, output: 15.0 },
@@ -33,10 +39,11 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // The codex CLI's own default model, assumed when a task doesn't pick one
 // (tasks.model = null → we omit the model override and the CLI runs its
 // default). Used to resolve pricing and the resolved-model badge; bump when
-// upstream changes its default. Verify against the CLI's preset table rather
-// than guessing: the default is the preset the `/model` menu marks "(default)"
-// — equivalently, `priority: 0`.
-export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+// upstream changes its default. Verify rather than guess: it's the
+// lowest-`priority` entry in the catalog embedded in the CLI binary, and can be
+// confirmed end-to-end by running `codex exec` under a scratch CODEX_HOME (no
+// config.toml to override it) and reading the model off the session rollout.
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 
 /** The model a codex turn effectively runs: the task's choice, else the CLI default. */
 export function resolveCodexModel(taskModel: string | null | undefined): string {
