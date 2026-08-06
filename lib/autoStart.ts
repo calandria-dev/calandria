@@ -9,7 +9,7 @@
 //
 // The launch mirrors the initial-turn branch of POST /api/tasks/[id]/messages
 // (claim the turn slot, ensure the worktree under the per-task lock, persist +
-// publish the title+description prompt, hand off to lib/runner.ts) — kept in
+// publish the generic opening prompt, hand off to lib/runner.ts) — kept in
 // step with that route; the turn itself runs detached exactly like any other.
 
 import fs from "node:fs";
@@ -26,7 +26,7 @@ import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
-import { MAX_MESSAGE_CHARS } from "@/lib/promptLimits";
+import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import type { Task } from "@/lib/types";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
@@ -91,8 +91,7 @@ async function launchInitialTurn(taskId: string, doneTitle: string): Promise<voi
       const fresh = getTask(taskId);
       if (!fresh || fresh.started || fresh.suggested || fresh.status !== "not_started" || !fresh.auto_start) return;
       if (getTaskDeps(taskId).some(blocks)) return;
-      const userText = `${fresh.title}\n\n${fresh.description}`.trim();
-      if (!userText || userText.length > MAX_MESSAGE_CHARS) return;
+      const userText = INITIAL_TASK_PROMPT;
 
       // Give the task its own worktree + branch (self-heals a pruned one),
       // falling back to repo_path on any git hiccup — same as the route.
@@ -111,7 +110,7 @@ async function launchInitialTurn(taskId: string, doneTitle: string): Promise<voi
       }
 
       const gen = fresh.generation;
-      const userMsg = addMessage(taskId, gen, "user", `**${fresh.title}** — ${fresh.description}`);
+      const userMsg = addMessage(taskId, gen, "user", userText);
       // Mark running immediately, but defer `started` until the agent actually
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });

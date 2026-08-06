@@ -459,8 +459,8 @@ function seedIfEmpty(db: Database.Database) {
 
   // The hands-on task: it drives the full loop in one turn — a question, a
   // one-file edit, a diff to review, a one-click merge. Its title + description
-  // become the first prompt (see app/api/tasks/[id]/messages), so the steps are
-  // written as instructions to Claude.
+  // become the injected task context, so the steps are written as instructions
+  // to the agent.
   seedTask("Try me: add a tagline", TUTORIAL_TASK_DESC, "hi", 0);
   // A pre-loaded "suggested" task so the tray isn't empty — this is exactly what
   // a Claude session drops there when it proposes follow-up work.
