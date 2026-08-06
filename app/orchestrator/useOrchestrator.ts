@@ -455,10 +455,17 @@ export function useOrchestrator() {
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { permission_mode: p });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
+  // The task-start "Send saved project context" checkbox (TaskHero) persists
+  // immediately so the flag is already on the row when the first turn launches.
+  const setSendContext = async (v: boolean) => {
+    if (!task) return;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { send_context: v ? 1 : 0 });
+    setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
+  };
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[]; auto_start: boolean }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean }) => {
     if (!project) return;
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent });
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -529,7 +536,7 @@ export function useOrchestrator() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
@@ -606,7 +613,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, fetchRecap, runTurn, answerQuestion, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
-    setReasoning, setPermission, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

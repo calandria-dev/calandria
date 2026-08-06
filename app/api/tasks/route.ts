@@ -24,6 +24,9 @@ export async function POST(req: Request) {
     // Agent is chosen at creation and fixed for the task's life (sessions can't
     // migrate between CLIs); createTask falls back to the project default.
     agent: typeof body.agent === "string" ? body.agent : undefined,
+    // Whether sessions get the saved project context; falls back to the
+    // project's send_context setting when omitted.
+    send_context: typeof body.send_context === "boolean" ? body.send_context : undefined,
   });
   // `suggested` tasks are agent proposals in the tray; a real user-created task
   // is the funnel's "first task" step. Flag which so the funnel can filter.

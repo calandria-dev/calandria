@@ -16,6 +16,7 @@ export interface ProjectRow {
   setup_command: string;
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
+  send_context: number; // 1 = new tasks default to sending the saved project context to the agent
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -33,6 +34,7 @@ export interface TaskRow {
   status: Status;
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
+  send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default

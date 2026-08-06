@@ -45,12 +45,13 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[]; auto_start: boolean }) => void; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean }) => void; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
   const [agent, setAgent] = useState(() => defaultAgentFor(agents, project.default_agent));
   const [startNow, setStartNow] = useState(false);
+  const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -67,7 +68,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
   const canStart = !blocked && agentReady;
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, depends_on: deps, auto_start: autoStart && deps.length > 0 });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: autoStart && deps.length > 0 });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -87,7 +88,12 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
       <div className="field">
         <div className="lab">Description <span className="opt">— what to do</span></div>
         <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
-        <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
+        {sendContext && <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
+          title="Uncheck to start this task's sessions without the saved project context. Task details and orchestrator tools are always included.">
+          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+          Send saved project context to the agent
+        </label>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       <div className="field">
@@ -154,9 +160,10 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
 // "Refresh with AI" job state the modal polls.
 type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number };
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
+  const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [repo, setRepo] = useState(project.repo_path);
   const [branch, setBranch] = useState(project.branch);
   const [devCmd, setDevCmd] = useState(project.dev_command);
@@ -256,7 +263,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, repo_path: repo, branch, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -305,6 +312,13 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           <div className="hlp">Drafted from the repo. Review and edit it, then Save — or Undo to revert.</div>
         ) : (
           <div className="hlp">Be specific about stack, conventions, and constraints. Every task in this project inherits it.</div>
+        )}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+          Include this context in new agent sessions
+        </label>
+        {!sendContext && (
+          <div className="hlp">New tasks will start without the saved context (task details and orchestrator tools are still included). Each task can override this when it starts.</div>
         )}
       </div>
       <div style={{ display: "flex", gap: 14 }}>

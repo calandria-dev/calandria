@@ -77,9 +77,10 @@ function SyncBanner({ taskId, running, onResolveWithAI, onSwitchToChat }: {
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; running: boolean; blockedBy?: string[] }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, blockedBy }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; running: boolean; blockedBy?: string[] }) {
   const carried = task.generation > 1;
   const blocked = !!blockedBy?.length && !task.started;
+  const sendContext = task.send_context !== 0;
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
     <div className="hero">
@@ -90,10 +91,15 @@ function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task
       <div className="h-prompt">
         <div className="hp-h">Initial prompt the agent will receive</div>
         <div className="hp-b">
-          <span className="ctx-pre">↳ {project.name} project context{carried ? " + previous session summary" : ""} (auto-prepended)</span>
+          <span className="ctx-pre">↳ {sendContext ? `${project.name} project context` : "task details only"}{carried ? " + previous session summary" : ""} (auto-prepended)</span>
           <strong>{task.title}.</strong> {task.description}
         </div>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: running ? "not-allowed" : "pointer" }}
+        title="Uncheck to start without the saved project context. Task details and orchestrator tools are always included.">
+        <input type="checkbox" checked={sendContext} disabled={running} onChange={(e) => onSetSendContext(e.target.checked)} />
+        Send saved project context to the agent
+      </label>
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
           {Icon.bolt()} Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change this.
@@ -125,13 +131,14 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
+  onSetSendContext: (v: boolean) => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -420,7 +427,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} running={running} blockedBy={blockedBy} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} running={running} blockedBy={blockedBy} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),
