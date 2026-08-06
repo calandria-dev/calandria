@@ -1,6 +1,7 @@
 // Pure formatting + derivation helpers shared across the orchestrator modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
+import type { InternalUsageEstimate } from "./types";
 
 // Compact token count: 1234 → "1.2k", 1_200_000 → "1.2M".
 export function fmtTokens(n: number): string {
@@ -21,6 +22,11 @@ export function fmtCost(n: number): string {
   if (n <= 0) return "$0.00";
   if (n < 0.01) return "<$0.01";
   return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+}
+
+export function fmtJobCost(e: InternalUsageEstimate): string {
+  const cost = e.cost_usd <= 0 ? "$0.00" : e.cost_usd < 0.01 ? "<$0.01" : `$${e.cost_usd.toFixed(2)}`;
+  return `~${fmtTokens(e.tokens)} tokens (~${cost})`;
 }
 
 // ---------- the usage chip (tokens + cost, honestly) ----------

@@ -16,6 +16,7 @@ import {
 } from "../lib/store";
 import { maybeAutoStartDependents, readyAutoStartDependents } from "../lib/autoStart";
 import { hasTurn } from "../lib/abort";
+import { INITIAL_TASK_PROMPT, buildProjectContext } from "../lib/agents/shared";
 import { tmpDir } from "./helpers";
 import type { Task } from "../lib/types";
 
@@ -101,19 +102,24 @@ describe("maybeAutoStartDependents (the launch)", () => {
     // The launch initializes a real git repo + worktree — allow it a few seconds.
     await vi.waitFor(() => expect(startTurnMock).toHaveBeenCalledTimes(1), { timeout: 10_000 });
 
-    // The runner got B's initial prompt (title + description) plus the
-    // auto-start note in the syncNote slot, with the claimed controller.
+    // The runner gets a generic opening turn plus the auto-start note; task
+    // metadata lives only in the injected project context.
     const [task, project, userText, note, controller] = startTurnMock.mock.calls[0];
     expect(task.id).toBe(b.id);
     expect(project.id).toBe(b.project_id);
-    expect(userText).toBe("B\n\nbuild on A");
+    expect(userText).toBe(INITIAL_TASK_PROMPT);
+    expect(userText).not.toContain(b.title);
+    expect(userText).not.toContain(b.description);
+    const context = buildProjectContext(project, b);
+    expect(context).toContain('The current task is: "B"');
+    expect(context).toContain("Task details: build on A");
     expect(note).toContain('"A" is done');
     expect(controller).toBeInstanceOf(AbortController);
     expect(hasTurn(b.id)).toBe(true);
 
     // Same pre-launch state the POST route leaves: prompt echoed to the
     // transcript, running flagged, `started` deferred until a session opens.
-    expect(listMessages(b.id).map((m) => [m.role, m.content])).toEqual([["user", "**B** — build on A"]]);
+    expect(listMessages(b.id).map((m) => [m.role, m.content])).toEqual([["user", INITIAL_TASK_PROMPT]]);
     const fresh = getTask(b.id)!;
     expect(fresh.running).toBe(1);
     expect(fresh.started).toBe(0);

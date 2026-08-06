@@ -426,7 +426,7 @@ export function useOrchestrator() {
     } finally {
       setTaskRunning(taskId, false);
     }
-    // spin up the fresh window (re-prime with title + description + carried summary)
+    // Spin up the fresh window; its injected context carries task metadata + summary.
     runTurn(taskId, "", true);
   }, [tasks, running, runTurn, appendMsg]);
 

@@ -778,7 +778,7 @@ export function getInstanceUsage(): InstanceUsage {
 
 /**
  * Everything the Insights dashboard charts, as per-day facts grouped by
- * (day, project, agent) — the client slices/filters/aggregates locally so
+ * (day, project, agent), with Operator jobs additionally grouped by job — the client slices/filters/aggregates locally so
  * switching range/project/agent filters never refetches. Days are local-time
  * `YYYY-MM-DD` strings (this is a single-user, local-first surface; the server's
  * clock IS the user's clock). One fetch covers the widest range plus the same
@@ -788,6 +788,8 @@ export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   /** Per-day token/cost usage. */
   usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** Operator's own one-shot work, kept separate from task usage. */
+  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
   shipped: { d: string; p: string; a: string; n: number }[];
   /** Lines landed on the base branch that day (from task_merges). */
@@ -810,6 +812,15 @@ export function getInsightsData(sinceMs: number): InsightsData {
        FROM task_usage WHERE created_at >= ? GROUP BY d, p, a`
     )
     .all(sinceMs) as InsightsData["usage"];
+  const internal = db
+    .prepare(
+      `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
+              COALESCE(project_id, '') AS p, agent AS a, job, COUNT(*) AS n,
+              SUM(cost_usd) AS cost, SUM(input_tokens) AS inp, SUM(output_tokens) AS out,
+              SUM(cache_read_tokens) AS cr, SUM(cache_creation_tokens) AS cw
+       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job`
+    )
+    .all(sinceMs) as InsightsData["internal"];
   const shipped = db
     .prepare(
       `SELECT date(merged_at/1000, 'unixepoch', 'localtime') AS d, project_id AS p, agent AS a, COUNT(*) AS n
@@ -829,7 +840,7 @@ export function getInsightsData(sinceMs: number): InsightsData {
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  return { projects, usage, shipped, merges, models };
+  return { projects, usage, internal, shipped, merges, models };
 }
 
 // ---------- recaps ----------

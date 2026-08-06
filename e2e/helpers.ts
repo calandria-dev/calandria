@@ -82,7 +82,7 @@ export async function createTask(
   return res.json();
 }
 
-/** Kick off a turn. The initial turn prompts with title+description; later ones with `text`. */
+/** Kick off a turn. Initial starts use the generic opener; later turns use `text`. */
 export async function sendMessage(request: APIRequestContext, taskId: string, text = "go"): Promise<void> {
   const res = await request.post(`/api/tasks/${taskId}/messages`, { data: { text } });
   expect(res.ok()).toBeTruthy();

@@ -79,7 +79,7 @@ export function startTurn(task: Task, project: Project, userText: string, syncNo
  * POST /messages resume path and the queue drainer (a dequeued follow-up is
  * always a resume turn). Mirrors the prep the POST route does inline for the
  * very first turn; the initial turn stays in the route since it also creates
- * the worktree and sends the title+description as its prompt.
+ * the worktree and persists the generic opening prompt.
  */
 export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController): Promise<void> {
   const id = task.id;

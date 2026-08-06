@@ -17,6 +17,7 @@ import type { AgentsBundle } from "./types";
 interface Payload {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
   models: { a: string; m: string }[];
@@ -27,6 +28,7 @@ interface DayRow {
   key: string;
   date: Date;
   spend: number; inp: number; out: number; cr: number; cw: number; tokens: number;
+  overheadSpend: number; overheadFresh: number; overheadTokens: number;
   tasks: number; add: number; del: number;
   byAgent: Record<string, { spend: number; tokens: number; tasks: number }>;
 }
@@ -87,6 +89,14 @@ function agentHues(ids: string[]): Record<string, string> {
   return out;
 }
 const TOKEN_HUES = { inp: "var(--blue)", out: "var(--green)", cw: "var(--amber)", cr: "var(--coral)" } as const;
+const OPERATOR_HUE = "var(--operator)";
+
+const JOBS: Record<string, { label: string; settings: string }> = {
+  summarizeProjectRecap: { label: "Project recaps", settings: "run" },
+  summarizeTranscript: { label: "Session summaries (/clear)", settings: "general" },
+  draftProjectContext: { label: "Context drafts (Refresh with AI)", settings: "run" },
+  verify: { label: "Agent verify", settings: "agents" },
+};
 
 // ---------- chart primitives (ported from the design) ----------
 function Sparkline({ vals, color, w = 120, h = 30 }: { vals: number[]; color: string; w?: number; h?: number }) {
@@ -250,21 +260,25 @@ function ChartCard({ title, sub, right, children }: { title: string; sub: string
   );
 }
 
-const LegendSwatch = ({ color, label, dim }: { color: string; label: string; dim?: boolean }) => (
+const LegendSwatch = ({ color, label, dim, onClick }: { color: string; label: string; dim?: boolean; onClick?: () => void }) => (
   <span className="in-leg" style={dim ? { color: "var(--ink-4)" } : undefined}>
-    <span className="in-leg-dot" style={{ background: color, opacity: dim ? 0.3 : 1 }} />
-    {label}
+    {onClick ? (
+      <button className="in-leg-btn" onClick={onClick} aria-pressed={!dim}>
+        <span className="in-leg-dot" style={{ background: color, opacity: dim ? 0.3 : 1 }} />{label}
+      </button>
+    ) : <><span className="in-leg-dot" style={{ background: color, opacity: dim ? 0.3 : 1 }} />{label}</>}
   </span>
 );
 
 // ---------- the view ----------
-export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClose: () => void }) {
+export function InsightsView({ agents, onClose, onOpenSettings }: { agents: AgentsBundle; onClose: () => void; onOpenSettings: (section: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<Range>("30d");
   const [project, setProject] = useState<string>("all");
   const [agent, setAgent] = useState<string>("all");
   const [includeCache, setIncludeCache] = useState(false);
+  const [showOperator, setShowOperator] = useState(true);
   const [menu, setMenu] = useState<"project" | "agent" | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [hover, setHover] = useState<Hover>({ chart: null, i: null });
@@ -295,15 +309,15 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
     // Agent ids that ever appear (bundle first for stable hue order, then any
     // id that exists only in historical data, e.g. a removed driver).
     const agentIds = [...agents.agents.map((x) => x.id)];
-    for (const r of data.usage) if (!agentIds.includes(r.a)) agentIds.push(r.a);
+    for (const r of [...data.usage, ...data.internal]) if (!agentIds.includes(r.a)) agentIds.push(r.a);
     const hues = agentHues(agentIds);
 
     // ---- per-day rows for the current range + totals for the previous one ----
-    const blank = (key: string, date: Date): DayRow => ({ key, date, spend: 0, inp: 0, out: 0, cr: 0, cw: 0, tokens: 0, tasks: 0, add: 0, del: 0, byAgent: {} });
+    const blank = (key: string, date: Date): DayRow => ({ key, date, spend: 0, inp: 0, out: 0, cr: 0, cw: 0, tokens: 0, overheadSpend: 0, overheadFresh: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0, byAgent: {} });
     const rows = daysBack(N, 0).map(({ key, date }) => blank(key, date));
     const byKey = new Map(rows.map((r) => [r.key, r]));
     const prevKeys = new Set(daysBack(N, N).map((d) => d.key));
-    const prev = { spend: 0, tokens: 0, tasks: 0, add: 0, del: 0 };
+    const prev = { spend: 0, tokens: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
     const perAgent = (r: DayRow, a: string) => (r.byAgent[a] ??= { spend: 0, tokens: 0, tasks: 0 });
 
     for (const u of data.usage) {
@@ -316,6 +330,19 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
         pa.spend += u.cost; pa.tokens += tokens;
       } else if (prevKeys.has(u.d)) {
         prev.spend += u.cost; prev.tokens += tokens;
+      }
+    }
+    for (const u of data.internal) {
+      if (!matchP(u.p) || !matchA(u.a)) continue;
+      const tokens = u.inp + u.out + u.cr + u.cw;
+      const r = byKey.get(u.d);
+      if (r) {
+        r.overheadSpend += u.cost;
+        r.overheadFresh += u.inp + u.out;
+        r.overheadTokens += tokens;
+      } else if (prevKeys.has(u.d)) {
+        prev.overheadSpend += u.cost;
+        prev.overheadTokens += tokens;
       }
     }
     for (const s of data.shipped) {
@@ -331,9 +358,9 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
       else if (prevKeys.has(m.d)) { prev.add += m.add; prev.del += m.del; }
     }
 
-    const cur = { spend: 0, tokens: 0, tasks: 0, add: 0, del: 0 };
-    for (const r of rows) { cur.spend += r.spend; cur.tokens += r.tokens; cur.tasks += r.tasks; cur.add += r.add; cur.del += r.del; }
-    const activeDays = rows.filter((r) => r.spend > 0 || r.tokens > 0 || r.tasks > 0 || r.add > 0 || r.del > 0).length;
+    const cur = { spend: 0, tokens: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
+    for (const r of rows) { cur.spend += r.spend; cur.tokens += r.tokens; cur.overheadSpend += r.overheadSpend; cur.overheadTokens += r.overheadTokens; cur.tasks += r.tasks; cur.add += r.add; cur.del += r.del; }
+    const activeDays = rows.filter((r) => r.spend > 0 || r.tokens > 0 || r.overheadSpend > 0 || r.overheadTokens > 0 || r.tasks > 0 || r.add > 0 || r.del > 0).length;
 
     // Agents that actually have usage in the visible rows — drives the spend
     // stack + provider panel, so a single-provider user sees a single series.
@@ -343,6 +370,7 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
     // Agents whose cost is estimated from token counts rather than billed
     // (capabilities.costIsEstimated) — their figures render with an ~.
     const estIds = new Set(chartAgents.filter((a) => capsFor(agents, a)?.costIsEstimated));
+    const overheadEstimated = data.internal.some((u) => matchP(u.p) && matchA(u.a) && rows.some((r) => r.key === u.d) && capsFor(agents, u.a)?.costIsEstimated);
 
     // ---- provider panel ----
     const providers = chartAgents.map((a) => {
@@ -392,9 +420,23 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
       .map(([id, e]) => ({ id, name: projMeta.get(id)?.name ?? "(deleted project)", color: projMeta.get(id)?.color ?? "var(--ink-4)", ...e }))
       .sort((a, b) => b.spend - a.spend);
 
-    const isEmpty = data.usage.length === 0 && data.shipped.length === 0 && data.merges.length === 0;
+    // ---- Operator convenience work, grouped into actionable job rows ----
+    const jobs = new Map<string, { job: string; n: number; tokens: number; cost: number; estimated: boolean; projects: Set<string> }>();
+    for (const u of data.internal) {
+      if (!matchP(u.p) || !matchA(u.a) || dayIndex.get(u.d) === undefined) continue;
+      const e = jobs.get(u.job) ?? { job: u.job, n: 0, tokens: 0, cost: 0, estimated: false, projects: new Set<string>() };
+      e.n += u.n;
+      e.tokens += u.inp + u.out + u.cr + u.cw;
+      e.cost += u.cost;
+      e.estimated ||= !!capsFor(agents, u.a)?.costIsEstimated;
+      e.projects.add(u.p);
+      jobs.set(u.job, e);
+    }
+    const jobRows = [...jobs.values()].sort((a, b) => b.cost - a.cost);
 
-    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, providers, provSpendSum, projectRows, isEmpty };
+    const isEmpty = data.usage.length === 0 && data.internal.length === 0 && data.shipped.length === 0 && data.merges.length === 0;
+
+    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, jobRows, isEmpty };
   }, [data, N, project, agent, agents]);
 
   const projName = (id: string) => data?.projects.find((p) => p.id === id)?.name ?? id;
@@ -407,7 +449,7 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
     );
   if (!data || !model) return <div className="col col-session insights" />;
 
-  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, providers, provSpendSum, projectRows, isEmpty } = model;
+  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, jobRows, isEmpty } = model;
   // Spend framing when estimated-cost agents are in view: all-estimated vs a
   // mix of billed + estimated figures.
   const spendSub = estIds.size === 0 ? "API-equivalent cost"
@@ -420,8 +462,16 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
     return { text: `${Math.abs(pct)}%`, arrow: pct > 0 ? "▲ " : "▼ ", color: pct > 0 ? "var(--green)" : "var(--coral)" };
   };
 
+  const totalSpend = cur.spend + cur.overheadSpend;
+  const prevTotalSpend = prev.spend + prev.overheadSpend;
+  const overheadPct = totalSpend > 0 ? (cur.overheadSpend / totalSpend) * 100 : 0;
+  const prevOverheadPct = prevTotalSpend > 0 ? (prev.overheadSpend / prevTotalSpend) * 100 : 0;
+  const overheadMark = overheadEstimated ? "~" : "";
+  const totalMark = overheadEstimated || estIds.size > 0 ? "~" : "";
+
   const kpis: { label: string; value: ReactNode; sub: string; spark: ReactNode; d: { text: string; arrow: string; color: string } }[] = [
     { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--blue)" />, d: delta(cur.spend, prev.spend) },
+    { label: "Operator overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={OPERATOR_HUE} />, d: delta(overheadPct, prevOverheadPct) },
     { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--green)" />, d: delta(cur.tokens, prev.tokens) },
     { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--blue)" />, d: delta(cur.tasks, prev.tasks) },
     {
@@ -437,8 +487,8 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
     { label: "Active projects", value: <span className="kpi-big">{String(projectRows.length)}</span>, sub: "worked on this period", spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--ink-3)" />, d: { text: "", arrow: "", color: "var(--ink-4)" } },
   ];
 
-  const spendMax = Math.max(...rows.map((r) => r.spend), 1e-9);
-  const tokenMax = Math.max(...rows.map((r) => (includeCache ? r.tokens : r.inp + r.out)), 1e-9);
+  const spendMax = Math.max(...rows.map((r) => r.spend + (showOperator ? r.overheadSpend : 0)), 1e-9);
+  const tokenMax = Math.max(...rows.map((r) => (includeCache ? r.tokens : r.inp + r.out) + (showOperator ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), 1e-9);
   const taskMax = Math.max(...rows.map((r) => r.tasks), 1);
   const mergedMax = Math.max(...rows.map((r) => Math.max(r.add, r.del)), 1);
   const tokenCats: { k: "inp" | "out" | "cw" | "cr"; label: string }[] = includeCache
@@ -555,18 +605,23 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
             <div className="in-grid">
               <ChartCard
                 title="Daily spend" sub="API-equivalent, per day"
-                right={chartAgents.length > 1 ? (
-                  <div className="in-legend">{chartAgents.map((a) => <LegendSwatch key={a} color={hues[a]} label={label(a)} />)}</div>
-                ) : undefined}
+                right={<div className="in-legend">
+                  {chartAgents.map((a) => <LegendSwatch key={a} color={hues[a]} label={label(a)} />)}
+                  <LegendSwatch color={OPERATOR_HUE} label="Operator" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                </div>}
               >
                 <DailyChart
                   id="spend" rows={rows} max={spendMax} hover={hover} onHover={setHover}
-                  segsFor={(r) => chartAgents.map((a) => ({ v: r.byAgent[a]?.spend ?? 0, color: hues[a] }))}
+                  segsFor={(r) => [
+                    ...chartAgents.map((a) => ({ v: r.byAgent[a]?.spend ?? 0, color: hues[a] })),
+                    ...(showOperator ? [{ v: r.overheadSpend, color: OPERATOR_HUE }] : []),
+                  ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...chartAgents.map((a) => ({ label: label(a), val: `${estIds.has(a) ? "~" : ""}${fmtMoney(r.byAgent[a]?.spend ?? 0)}`, color: hues[a] })),
-                      { label: "Total", val: fmtMoney(r.spend), strong: true },
+                      ...(showOperator ? [{ label: "Operator", val: `${overheadMark}${fmtMoney(r.overheadSpend)}`, color: OPERATOR_HUE }] : []),
+                      { label: "Total", val: `${totalMark}${fmtMoney(r.spend + (showOperator ? r.overheadSpend : 0))}`, strong: true },
                     ],
                   })}
                 />
@@ -589,15 +644,20 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
                   {([{ k: "inp", label: "Input" }, { k: "out", label: "Output" }, { k: "cr", label: "Cache read" }, { k: "cw", label: "Cache write" }] as const).map((c) => (
                     <LegendSwatch key={c.k} color={TOKEN_HUES[c.k]} label={c.label} dim={!includeCache && c.k !== "inp" && c.k !== "out"} />
                   ))}
+                  <LegendSwatch color={OPERATOR_HUE} label="Operator" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
                 </div>
                 <DailyChart
                   id="tokens" rows={rows} max={tokenMax} hover={hover} onHover={setHover}
-                  segsFor={(r) => tokenCats.map((c) => ({ v: r[c.k], color: TOKEN_HUES[c.k] }))}
+                  segsFor={(r) => [
+                    ...tokenCats.map((c) => ({ v: r[c.k], color: TOKEN_HUES[c.k] })),
+                    ...(showOperator ? [{ v: includeCache ? r.overheadTokens : r.overheadFresh, color: OPERATOR_HUE }] : []),
+                  ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...tokenCats.map((c) => ({ label: c.label, val: fmtCompact(r[c.k]), color: TOKEN_HUES[c.k] })),
-                      { label: includeCache ? "Total" : "Fresh total", val: fmtCompact(includeCache ? r.tokens : r.inp + r.out), strong: true },
+                      ...(showOperator ? [{ label: "Operator", val: fmtCompact(includeCache ? r.overheadTokens : r.overheadFresh), color: OPERATOR_HUE }] : []),
+                      { label: includeCache ? "Total" : "Fresh total", val: fmtCompact((includeCache ? r.tokens : r.inp + r.out) + (showOperator ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), strong: true },
                     ],
                   })}
                 />
@@ -639,12 +699,48 @@ export function InsightsView({ agents, onClose }: { agents: AgentsBundle; onClos
               </ChartCard>
             </div>
 
+            {/* Operator convenience work */}
+            <section className="in-card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
+              <div className="in-card-h" style={{ padding: "17px 20px 14px" }}>
+                <div>
+                  <div className="in-card-t">Operator&apos;s own usage</div>
+                  <div className="in-card-s">Convenience features that run agents outside your task chats · {rangeText}</div>
+                </div>
+                <span className="mono in-card-n">{overheadMark}{fmtMoney(cur.overheadSpend)} total</span>
+              </div>
+              <div className="in-otable">
+                <div className="in-orow in-ohead mono">
+                  <span>FEATURE</span><span>RUNS</span><span>TOKENS</span><span>TOTAL COST</span><span>AVG / RUN</span><span>CONTROL</span>
+                </div>
+                {jobRows.map((j) => {
+                  const meta = JOBS[j.job] ?? { label: j.job, settings: "run" };
+                  const mark = j.estimated ? "~" : "";
+                  return (
+                    <div key={j.job} className="in-orow">
+                      <span>
+                        <span className="in-oname">{meta.label}</span>
+                        <span className="mono in-oscope">{[...j.projects].map((p) => p ? projName(p) : "—").join(" · ")}</span>
+                      </span>
+                      <span className="mono dim">{j.n.toLocaleString()}</span>
+                      <span className="mono dim">{fmtCompact(j.tokens)}</span>
+                      <span className="mono" title={j.estimated ? "Estimated from token counts × published API prices" : undefined}>{mark}{fmtMoney(j.cost)}</span>
+                      <span className="mono in-oavg" title={j.estimated ? "Estimated from token counts × published API prices" : undefined}>{mark}{fmtMoney(j.n > 0 ? j.cost / j.n : 0)}</span>
+                      <button className="in-olink" onClick={() => onOpenSettings(meta.settings)}>Settings →</button>
+                    </div>
+                  );
+                })}
+                {jobRows.length === 0 && (
+                  <div className="in-oempty">No Operator convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here—not your task chats.</div>
+                )}
+              </div>
+            </section>
+
             {/* by provider */}
             <section className="in-card" style={{ marginBottom: 16 }}>
               <div className="in-card-h" style={{ marginBottom: 16 }}>
                 <div>
                   <div className="in-card-t">By provider</div>
-                  <div className="in-card-s">Share of spend · {rangeText}</div>
+                  <div className="in-card-s">Share of task spend · {rangeText}</div>
                 </div>
                 <span className="mono in-card-n">{fmtMoney(cur.spend)} total</span>
               </div>

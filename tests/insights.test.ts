@@ -9,6 +9,7 @@ import {
   updateTask,
 } from "../lib/store";
 import { commitFile, makeRepoWithWorktree, tmpDir, writeFile } from "./helpers";
+import { addInternalUsage } from "../lib/internalUsage";
 
 const DAY = 24 * 60 * 60 * 1000;
 const usage = (over: Partial<Parameters<typeof addUsage>[0]["usage"]> = {}) => ({
@@ -90,5 +91,45 @@ describe("getInsightsData", () => {
     const later = getInsightsData(Date.now() + DAY);
     expect(later.merges.filter((r) => r.p === project.id)).toHaveLength(0);
     expect(later.shipped.filter((r) => r.p === project.id)).toHaveLength(0);
+  });
+
+  it("groups Operator usage by job and keeps project-less runs separate from task usage", () => {
+    const { project, task } = makeProjectTask("codex");
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage() });
+    addInternalUsage({
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      project_id: project.id, usage: usage({ cost_usd: 0.4, input_tokens: 20, output_tokens: 10 }),
+    });
+    addInternalUsage({
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      project_id: project.id, usage: usage({ cost_usd: 0.6, input_tokens: 30, output_tokens: 15 }),
+    });
+    addInternalUsage({
+      job: "summarizeProjectRecap", agent: "codex", requested_agent: "codex",
+      project_id: project.id, usage: usage({ cost_usd: 0.2 }),
+    });
+    addInternalUsage({
+      job: "verify", agent: "claude", requested_agent: "claude",
+      usage: usage({ cost_usd: 0.05, input_tokens: 5, output_tokens: 1 }),
+    });
+
+    const data = getInsightsData(Date.now() - DAY);
+    const mine = data.internal.filter((r) => r.p === project.id);
+    expect(mine).toHaveLength(2);
+    const drafts = mine.find((r) => r.job === "draftProjectContext")!;
+    expect(drafts.n).toBe(2);
+    expect(drafts.cost).toBeCloseTo(1);
+    expect(drafts.inp).toBe(50);
+    expect(drafts.out).toBe(25);
+
+    const verify = data.internal.find((r) => r.job === "verify" && r.a === "claude")!;
+    expect(verify.p).toBe("");
+    expect(verify.n).toBe(1);
+
+    // Operator convenience work must never change the existing task-turn cube.
+    const taskRows = data.usage.filter((r) => r.p === project.id);
+    expect(taskRows).toHaveLength(1);
+    expect(taskRows[0].cost).toBeCloseTo(1.5);
+    expect(taskRows[0].inp).toBe(100);
   });
 });

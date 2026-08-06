@@ -35,8 +35,8 @@ test("create a task, run the session, view the diff, and merge", async ({ page, 
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
 
-  // New task whose description carries a mock-agent directive: the initial
-  // prompt is title + description, so the turn writes greeting.txt.
+  // New task whose injected task context carries a mock-agent directive, so
+  // the initial turn writes greeting.txt.
   await page.getByRole("button", { name: "Task", exact: true }).click();
   await page.getByPlaceholder("e.g. Add rate-limiting to auth endpoints").fill(TASK_TITLE);
   await page
