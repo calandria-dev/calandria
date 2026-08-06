@@ -494,7 +494,7 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
-  const saveTask = async (id: string, patch: { title: string; description: string; priority: Priority; depends_on: string[] }) => {
+  const saveTask = async (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[] }) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
     setEditId(null);

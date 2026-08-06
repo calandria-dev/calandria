@@ -39,7 +39,7 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
           {onConnect && <button className="btn btn-line btn-sm" onClick={onConnect}>Connect {sel.label}</button>}
         </div>
       ) : (
-        <div className="hlp">{help ?? "Fixed once the task is created — a session can’t move between CLIs."}</div>
+        <div className="hlp">{help ?? "Can be changed until the task's first session starts."}</div>
       )}
     </div>
   );
@@ -98,17 +98,19 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   );
 }
 
-export function EditTaskModal({ task, tasks, onClose, onSave, onDelete }: { task: TaskRow; tasks: TaskRow[]; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; depends_on: string[] }) => void; onDelete: (id: string) => void }) {
+export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[] }) => void; onDelete: (id: string) => void; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
+  const [agent, setAgent] = useState(task.agent);
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
   const [confirmDel, setConfirmDel] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   const can = title.trim().length > 0;
+  const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = () => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, depends_on: deps });
+  const save = () => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps });
   return (
     <Modal title="Edit task" sub="title + description become the agent's first prompt" onClose={onClose}
       footer={<>
@@ -131,6 +133,7 @@ export function EditTaskModal({ task, tasks, onClose, onSave, onDelete }: { task
         <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
         <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
       </div>
+      {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />

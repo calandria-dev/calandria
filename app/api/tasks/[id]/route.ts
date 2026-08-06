@@ -4,6 +4,7 @@ import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
 import { publishGlobal } from "@/lib/events";
+import { isAgentId } from "@/lib/agents/capabilities";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -32,10 +33,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = (await req.json()) as Partial<Task>;
+  const current = getTask(id);
+  if (!current) return NextResponse.json({ error: "not found" }, { status: 404 });
   // Whitelist user-editable fields.
   const allowed: Partial<Task> = {};
   for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
+  }
+  if ("agent" in body) {
+    if (typeof body.agent !== "string" || !isAgentId(body.agent))
+      return NextResponse.json({ error: "valid agent required" }, { status: 400 });
+    if (current.started === 1 || current.running === 1)
+      return NextResponse.json({ error: "agent cannot change after the task starts" }, { status: 409 });
+    if (body.agent !== current.agent) {
+      allowed.agent = body.agent;
+      // Run controls are provider-specific. An inherited/default choice is safe
+      // for the newly selected driver; persisted choices from the old one aren't.
+      allowed.model = null;
+      allowed.resolved_model = null;
+      allowed.reasoning = null;
+      allowed.permission_mode = null;
+      allowed.session_id = null;
+    }
   }
   // A manual status change is the user taking the wheel — clear the "your turn" flag.
   if ("status" in allowed) allowed.awaiting_input = 0;
