@@ -16,6 +16,10 @@ import os from "node:os";
 import { CODEX_CLI_PATH } from "../../config";
 import { hasOpenAiKey, looksLikeOpenAiKey, setOpenAiKey, clearOpenAiKey } from "../../openai-key";
 import type { AgentApiKeyAuth, AgentAuthStatus, AgentLoginSession, AgentVerifyResult } from "../types";
+import type { TurnUsage } from "../../types";
+import { addInternalUsage } from "../../internalUsage";
+import { resolveCodexModel } from "./pricing";
+import { codexUsage, type CodexTokenUsage } from "./usage";
 
 const run = promisify(execFile);
 
@@ -85,19 +89,48 @@ export const codexApiKey: AgentApiKeyAuth = {
  * so it runs from $HOME without a repo.
  */
 export async function verifyCodexTurn(): Promise<AgentVerifyResult> {
+  const started = Date.now();
   try {
     const { stdout } = await run(
       CODEX,
-      ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "Reply with exactly: OK"],
+      ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "Reply with exactly: OK"],
       { timeout: 90_000, env: process.env, maxBuffer: 4 * 1024 * 1024, cwd: os.homedir() }
     );
-    const out = stripAnsi(stdout).trim();
-    return { ok: out.length > 0, output: out, error: out.length > 0 ? null : "the test turn returned no output" };
+    const { output, usage } = parseVerifyEvents(stdout);
+    const ok = output.length > 0;
+    addInternalUsage({
+      job: "verify", agent: "codex", requested_agent: "codex", ok,
+      ms: Date.now() - started, usage,
+    });
+    return { ok, output, error: ok ? null : "the test turn returned no output" };
   } catch (e) {
-    const err = e as { stderr?: string; message?: string };
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    const { usage } = parseVerifyEvents(err.stdout ?? "");
     const msg = stripAnsi(err.stderr || err.message || "test turn failed").trim();
+    addInternalUsage({
+      job: "verify", agent: "codex", requested_agent: "codex", ok: false,
+      ms: Date.now() - started, usage,
+    });
     return { ok: false, output: "", error: msg };
   }
+}
+
+function parseVerifyEvents(stdout: string): { output: string; usage?: TurnUsage } {
+  let output = "";
+  let usage: TurnUsage | undefined;
+  for (const line of stripAnsi(stdout).split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const raw = JSON.parse(line) as {
+        type?: string;
+        item?: { type?: string; text?: string };
+        usage?: CodexTokenUsage;
+      };
+      if (raw.type === "item.completed" && raw.item?.type === "agent_message") output = raw.item.text ?? "";
+      if (raw.type === "turn.completed" && raw.usage) usage = codexUsage(raw.usage, resolveCodexModel(null));
+    } catch {}
+  }
+  return { output: output.trim(), usage };
 }
 
 // ---------- device-auth login session ----------

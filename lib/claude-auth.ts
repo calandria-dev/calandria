@@ -3,6 +3,9 @@ import { promisify } from "node:util";
 import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { CLAUDE_CLI_PATH as CLAUDE } from "./config";
+import { addInternalUsage } from "./internalUsage";
+import { claudeUsage } from "./agents/claude/usage";
+import type { TurnUsage } from "./types";
 
 const run = promisify(execFile);
 
@@ -288,17 +291,33 @@ export async function claudeStatus(): Promise<ClaudeStatus> {
  * the connection actually produces output (not just that credentials exist).
  */
 export async function verifyTurn(): Promise<{ ok: boolean; output: string; error: string | null }> {
+  const started = Date.now();
   try {
-    const { stdout } = await run(CLAUDE, ["-p", "Reply with exactly: OK"], {
+    const { stdout } = await run(CLAUDE, ["-p", "Reply with exactly: OK", "--output-format", "json"], {
       timeout: 90_000,
       env: process.env,
       maxBuffer: 1024 * 1024,
     });
-    const out = stdout.trim();
-    return { ok: out.length > 0, output: out, error: out.length > 0 ? null : "the test turn returned no output" };
+    const parsed = JSON.parse(stdout) as { result?: string; total_cost_usd?: number; usage?: Record<string, number> };
+    const out = (parsed.result ?? "").trim();
+    const ok = out.length > 0;
+    addInternalUsage({
+      job: "verify", agent: "claude", requested_agent: "claude", ok,
+      ms: Date.now() - started, usage: claudeUsage(parsed),
+    });
+    return { ok, output: out, error: ok ? null : "the test turn returned no output" };
   } catch (e) {
-    const err = e as { stderr?: string; message?: string };
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    let usage: TurnUsage | undefined;
+    try {
+      const parsed = JSON.parse(err.stdout ?? "") as { total_cost_usd?: number; usage?: Record<string, number> };
+      usage = claudeUsage(parsed);
+    } catch {}
     const msg = (err.stderr || err.message || "test turn failed").trim();
+    addInternalUsage({
+      job: "verify", agent: "claude", requested_agent: "claude", ok: false,
+      ms: Date.now() - started, usage,
+    });
     return { ok: false, output: "", error: msg };
   }
 }

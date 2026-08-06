@@ -7,6 +7,7 @@ import { getDb } from "./db";
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
 import type { Project, Task, Message, PendingMessage, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals } from "./types";
+export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
 
@@ -709,6 +710,9 @@ export function getProjectUsage(projectId: string): UsageTotals {
 // ---------- instance-wide rollup (for the control-plane fleet view) ----------
 
 export interface InstanceUsage extends UsageTotals {
+  internal_cost_usd: number;
+  internal_tokens: number;
+  internal_jobs: number;
   projects: number;
   tasks: number; // real tasks (suggested excluded), like listProjects' task_count
   running_tasks: number;
@@ -752,10 +756,20 @@ export function getInstanceUsage(): InstanceUsage {
     awaiting_tasks: number;
     last_activity: number;
   };
+  const internal = db
+    .prepare(
+      `SELECT
+         COALESCE(SUM(cost_usd), 0) AS internal_cost_usd,
+         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) AS internal_tokens,
+         COUNT(*) AS internal_jobs
+       FROM internal_usage`
+    )
+    .get() as Pick<InstanceUsage, "internal_cost_usd" | "internal_tokens" | "internal_jobs">;
   return {
     ...usage,
     total_tokens:
       usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_creation_tokens,
+    ...internal,
     ...counts,
   };
 }

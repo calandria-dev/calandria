@@ -140,14 +140,14 @@ export const mockDriver: AgentDriver = {
 
   // One-shot helpers return canned text so /clear, recap, and "Refresh with AI"
   // are exercisable without a real agent.
-  async summarizeTranscript(transcript: string): Promise<string> {
-    return `Mock handoff summary (${transcript.length} chars of transcript).`;
+  async summarizeTranscript(transcript: string) {
+    return { text: `Mock handoff summary (${transcript.length} chars of transcript).` };
   },
-  async draftProjectContext(project: Project): Promise<string> {
-    return `Mock context draft for ${project.name}.`;
+  async draftProjectContext(project: Project) {
+    return { text: `Mock context draft for ${project.name}.` };
   },
-  async summarizeProjectRecap(project: Project): Promise<string> {
-    return `Mock recap for ${project.name}: everything is fine.`;
+  async summarizeProjectRecap(project: Project) {
+    return { text: `Mock recap for ${project.name}: everything is fine.` };
   },
 
   async authStatus(): Promise<AgentAuthStatus> {
