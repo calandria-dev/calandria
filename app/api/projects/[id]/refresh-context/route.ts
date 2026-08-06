@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { startRefreshJob, getRefreshState, clearRefresh } from "@/lib/contextRefresh";
+import { getContextDraftEstimate } from "@/lib/internalUsage";
 
 export const dynamic = "force-dynamic";
+
+const withEstimate = <T extends object>(projectId: string, state: T) => ({
+  ...state,
+  estimate: getContextDraftEstimate(projectId),
+});
 
 // "Refresh with AI" runs as a DETACHED background job (see lib/contextRefresh.ts):
 // the agent reads the repo and drafts fresh project context, persisting the
@@ -18,7 +24,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (!getProject(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
   try {
     const state = startRefreshJob(id);
-    return NextResponse.json(state, { status: 202 });
+    return NextResponse.json(withEstimate(id, state), { status: 202 });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }
@@ -28,12 +34,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const state = getRefreshState(id);
   if (!state) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json(state);
+  return NextResponse.json(withEstimate(id, state));
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const state = clearRefresh(id);
   if (!state) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json(state);
+  return NextResponse.json(withEstimate(id, state));
 }

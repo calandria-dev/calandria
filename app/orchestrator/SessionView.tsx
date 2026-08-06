@@ -4,11 +4,11 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { fmtTokens, fmtCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, RAIL_W,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate,
 } from "./types";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
@@ -16,6 +16,7 @@ import { MessageView, SessionBreak } from "./Transcript";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
 import { ColResize, ColRail } from "./Layout";
+import { jget } from "./api";
 
 // Non-blocking banner shown when a reopened task's worktree is behind its base
 // branch. Computed (read-only) on open; the actual git op fires only when the user
@@ -125,9 +126,10 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
+  clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
@@ -147,6 +149,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const [modelOpen, setModelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<"chat" | "changes">("chat");
+  const [clearEstimate, setClearEstimate] = useState<InternalUsageEstimate | null>(null);
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
@@ -154,6 +157,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  useEffect(() => {
+    if (!clearConfirming) { setClearEstimate(null); return; }
+    let alive = true;
+    jget<{ estimate: InternalUsageEstimate | null }>(`/api/tasks/${task.id}/clear`)
+      .then((r) => { if (alive) setClearEstimate(r.estimate); })
+      .catch(() => { if (alive) setClearEstimate(null); });
+    return () => { alive = false; };
+  }, [clearConfirming, task.id]);
   // Run-control pickers + feature gates come from this task's agent capabilities,
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
@@ -417,6 +428,16 @@ export function SessionView({ project, task, agents, messages, running, blockedB
 
         {hasSession && (
           <SyncBanner taskId={task.id} running={running} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} />
+        )}
+
+        {clearConfirming && (
+          <div className="clear-confirm">
+            <span>Save a summary and start a fresh context?</span>
+            {clearEstimate && <span className="job-cost-hint">Estimated to use {fmtJobCost(clearEstimate)}</span>}
+            <span className="spacer" />
+            <button className="btn btn-ghost btn-sm" onClick={onCancelClear}>Cancel</button>
+            <button className="btn btn-accent btn-sm" onClick={onConfirmClear}>{Icon.clear()} Confirm /clear</button>
+          </div>
         )}
 
         {!hasSession ? (
