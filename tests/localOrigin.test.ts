@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  isLoopbackPeer,
   localHttpRequestAllowed,
   localWebSocketRequestAllowed,
+  safeRedirectPath,
 } from "../lib/auth/local-origin.mjs";
 
 const emptyEnv = {};
@@ -101,5 +103,52 @@ describe("local origin boundary", () => {
       { host: "operator.example.com", origin: "https://operator.example.com", secFetchSite: "same-origin" },
       env,
     )).toBe(false);
+  });
+});
+
+/* The sidecar's own gate. Headers are attacker-controlled; the peer address is
+ * not, which is the whole reason this sits alongside the Origin check rather
+ * than replacing it. */
+describe("isLoopbackPeer", () => {
+  it("accepts the proxy on this machine, including IPv4-over-IPv6 peers", () => {
+    expect(isLoopbackPeer("127.0.0.1", {})).toBe(true);
+    expect(isLoopbackPeer("::1", {})).toBe(true);
+    expect(isLoopbackPeer("::ffff:127.0.0.1", {})).toBe(true);
+    expect(isLoopbackPeer("127.0.0.53", {})).toBe(true);
+  });
+
+  it("rejects someone who found PTY_PORT from the network", () => {
+    expect(isLoopbackPeer("192.168.1.20", {})).toBe(false);
+    expect(isLoopbackPeer("10.0.0.5", {})).toBe(false);
+    expect(isLoopbackPeer(undefined, {})).toBe(false);
+  });
+
+  it("can be opted out of for a deliberately split deployment", () => {
+    expect(isLoopbackPeer("192.168.1.20", { ORCH_PTY_ALLOW_REMOTE: "1" })).toBe(true);
+  });
+});
+
+/* The post-auth redirect guard. Each rejection below defeats the obvious
+ * startsWith("/") && !startsWith("//") version. */
+describe("safeRedirectPath", () => {
+  it("keeps ordinary in-app paths", () => {
+    expect(safeRedirectPath("/tasks/abc?x=1#y")).toBe("/tasks/abc?x=1#y");
+    expect(safeRedirectPath("/")).toBe("/");
+    expect(safeRedirectPath(undefined)).toBe("/");
+  });
+
+  it("rejects protocol-relative and absolute targets", () => {
+    expect(safeRedirectPath("//evil.com")).toBe("/");
+    expect(safeRedirectPath("https://evil.com")).toBe("/");
+  });
+
+  it("rejects the backslash browsers normalize into the authority position", () => {
+    expect(safeRedirectPath("/\\evil.com")).toBe("/");
+  });
+
+  it("rejects tab/CR/LF smuggling browsers strip before parsing", () => {
+    expect(safeRedirectPath("/\t/evil.com")).toBe("/");
+    expect(safeRedirectPath("/\n\\evil.com")).toBe("/");
+    expect(safeRedirectPath("/\r/evil.com")).toBe("/");
   });
 });

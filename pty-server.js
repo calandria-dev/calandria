@@ -29,10 +29,19 @@ const wss = new WebSocketServer({
   verifyClient: (info, callback) => {
     import("./lib/auth/local-origin.mjs")
       .then((localOrigin) => {
+        // Peer address first: it is the one thing in this handshake the caller
+        // cannot forge. server.js proxies from this same machine, so a
+        // non-loopback peer found PTY_PORT directly.
+        const peer = info.req.socket?.remoteAddress;
+        if (!localOrigin.isLoopbackPeer(peer)) {
+          console.warn(`[pty-server] rejected connection from ${peer} (not loopback)`);
+          return callback(false, 401, "Unauthorized");
+        }
         const allowed = localOrigin.localWebSocketRequestAllowed({
           host: info.req.headers.host,
           origin: info.origin,
         });
+        if (!allowed) console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"}`);
         callback(allowed);
       })
       .catch((err) => {
