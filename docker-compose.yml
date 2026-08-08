@@ -40,6 +40,10 @@ services:
       - /tmp:rw,nosuid,nodev,size=512m
     environment:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Extra exact browser origins for intentional unauthenticated LAN access.
+      # Loopback + PUBLIC_BASE_URL already work without this. Internet-facing
+      # instances should use CF_ACCESS_* instead of broadening local mode.
+      ORCH_ALLOWED_ORIGINS: ${ORCH_ALLOWED_ORIGINS:-}
       GIT_USER_NAME: ${GIT_USER_NAME:-}
       GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
       # Origin-side Cloudflare Access enforcement (lib/cf-access.mjs). Both

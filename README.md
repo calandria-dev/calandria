@@ -134,6 +134,11 @@ A stray `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the launch environment is stri
 boot (with a warning) so turns bill your subscription, not the API — set
 `ORCH_ALLOW_API_KEY_ENV=1` if you really do want to run on an env-provided key.
 
+Local mode has no login, but it accepts browser traffic only from loopback origins by
+default and rejects cross-site HTTP/WebSocket access to the app and terminal. If you
+intentionally open it on a LAN, add that exact origin to `ORCH_ALLOWED_ORIGINS`; use real
+origin authentication for anything internet-facing.
+
 Every setting is an env var with a sane default — see [`.env.example`](.env.example).
 
 ## Testing

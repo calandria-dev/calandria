@@ -41,6 +41,7 @@ process.on("uncaughtException", (err) => {
 // would hand out a shell. jose v6 is ESM-only, hence the dynamic import from
 // this CommonJS file.
 const cfAccessImport = import("./lib/auth/origin.mjs");
+const localOriginImport = import("./lib/auth/local-origin.mjs");
 
 // Host-header router for public service hostnames (<slug>--<appHost>, e.g.
 // calc--myhost.example.com). Opt-in via ORCH_SERVICE_HOSTS (the services
@@ -174,7 +175,7 @@ function proxyPtyUpgrade(req, socket, head) {
   proxyReq.end();
 }
 
-Promise.all([app.prepare(), cfAccessImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, serviceRouter, envKeys]) => {
+Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys]) => {
   // Before listen (= before any request can read env): drop inherited billing
   // keys so turns can't silently switch from the subscription login to
   // per-token API billing. See lib/env-keys.mjs.
@@ -212,7 +213,20 @@ Promise.all([app.prepare(), cfAccessImport, serviceRouterImport, envKeysImport])
         upgradeHandler(req, socket, head);
       }
     };
-    if (!cfAccess.originAuthEnabled()) return route();
+    if (!cfAccess.originAuthEnabled()) {
+      // WebSockets are not protected by the browser's same-origin policy. In
+      // local mode, validate both Host (DNS-rebinding defense) and Origin before
+      // proxying /pty to a full shell or handing an upgrade to Next dev HMR.
+      if (localOrigin.localWebSocketRequestAllowed({
+        host: req.headers.host,
+        origin: req.headers.origin,
+      })) {
+        return route();
+      }
+      try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {}
+      socket.destroy();
+      return;
+    }
     cfAccess
       .verifyOriginNodeRequest(req)
       .then(route)

@@ -36,9 +36,16 @@ WebSocket upgrade** (`server.js`, in front of the `/pty` terminal proxy). No val
 assertion → 403. [`lib/cf-access.mjs`](../lib/cf-access.mjs) is the single shared
 verifier; the titlebar shows the authenticated email.
 
-Unset (the local default), the app runs open — fine on your own machine, not on a public
-port. The one exception is `SERVICE_TOKEN`: a shared secret letting health probes read
-`GET /api/instance/idle` — and only that route — without an Access JWT
+Unset (the local default), the app has no login, but it still enforces a browser-origin
+boundary: loopback hosts are accepted, cross-site requests are rejected, and `/pty`
+WebSocket upgrades require a matching browser `Origin`. This prevents an unrelated
+website from driving the local shell and blocks DNS-rebinding hostnames. `PUBLIC_BASE_URL`
+is accepted automatically; intentional LAN access must list its exact origin in
+`ORCH_ALLOWED_ORIGINS`. This remains a single-user mode, not authentication — never expose
+it raw to the internet.
+
+The one Access-mode exception is `SERVICE_TOKEN`: a shared secret letting health probes
+read the documented service-token routes without an Access JWT
 (`x-service-token` header).
 
 ## Idle signal
@@ -71,6 +78,7 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
 | `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment |
+| `ORCH_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the idle/health route; see above |

@@ -24,7 +24,23 @@ const server = http.createServer((_req, res) => {
   res.end("orchestrator pty-server");
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  verifyClient: (info, callback) => {
+    import("./lib/auth/local-origin.mjs")
+      .then((localOrigin) => {
+        const allowed = localOrigin.localWebSocketRequestAllowed({
+          host: info.req.headers.host,
+          origin: info.origin,
+        });
+        callback(allowed);
+      })
+      .catch((err) => {
+        console.error("[pty-server] Failed to load local-origin.mjs", err);
+        callback(false);
+      });
+  },
+});
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost");
