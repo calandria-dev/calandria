@@ -91,7 +91,9 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # lib/service-router.mjs -> lib/service-host.mjs; lib/env-keys.mjs (also
 # imported by pty-server.js) stands alone. lib/auth/local-origin.mjs (imported
 # by server.js AND pty-server.js) arrives with the lib/auth copy below.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs ./lib/
+# lib/resolveHostname.js is CommonJS and require()'d synchronously (the bind
+# address is needed before listen), but it is COPY'd for the same reason.
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/resolveHostname.js ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/orch-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so
@@ -100,16 +102,18 @@ COPY --from=build --chown=root:root /app/scripts/orch-mcp.mjs ./scripts/orch-mcp
 COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDefs.mjs
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/orch-entrypoint
 
-# HOSTNAME is explicit because Docker injects the container id as $HOSTNAME,
-# which would otherwise become server.js's bind address. 0.0.0.0 is correct
-# INSIDE the container; isolation comes from publishing on the host's loopback
-# only (-p 127.0.0.1:<port>:3000) with Cloudflare Tunnel in front.
+# ORCH_HOSTNAME, not HOSTNAME: server.js no longer reads the generic variable
+# (Docker injects the container id into it, and Fedora's /etc/profile exports
+# the machine name) — see lib/resolveHostname.js. 0.0.0.0 is correct INSIDE the
+# container, where the default loopback bind would make the published port
+# unreachable; isolation comes from publishing on the host's loopback only
+# (-p 127.0.0.1:<port>:3000) with Cloudflare Tunnel in front.
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOME=/home/orch \
     SHELL=/bin/bash \
     PORT=3000 \
-    HOSTNAME=0.0.0.0 \
+    ORCH_HOSTNAME=0.0.0.0 \
     PTY_HOST=127.0.0.1 \
     PTY_PORT=3001 \
     ORCH_WORKTREES_DIR=/home/orch/worktrees \

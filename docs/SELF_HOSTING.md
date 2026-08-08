@@ -69,12 +69,12 @@ relocates an instance (fresh container, different user, different ports) with **
 code edits**. [`.env.example`](../.env.example) is the same list in copyable form.
 Export the variables in the environment that launches `npm run dev` / `npm start` —
 `server.js` and `pty-server.js` are plain Node and read them before Next boots, so a
-`.env` file alone doesn't cover `PORT`/`HOSTNAME`/`PTY_*`.
+`.env` file alone doesn't cover `PORT`/`ORCH_HOSTNAME`/`PTY_*`.
 
 | Variable | Default | What it does |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
-| `HOSTNAME` | `0.0.0.0` | Bind address of the app server |
+| `ORCH_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `ORCH_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
 | `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment |

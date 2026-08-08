@@ -16,6 +16,7 @@
  */
 const http = require("node:http");
 const nextImport = require("next");
+const { resolveHostname, hostnameMigrationWarning } = require("./lib/resolveHostname");
 
 // Last-resort process guards. Turns run detached (lib/runner.ts), owned by this
 // process and not awaited by any request — so a stray rejection or throw from a
@@ -64,7 +65,10 @@ const envKeysImport = import("./lib/env-keys.mjs");
 // is reached exclusively through this proxy.
 const dev = process.env.NODE_ENV !== "production";
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-const hostname = process.env.HOSTNAME || "0.0.0.0";
+// ORCH_HOSTNAME only, defaulting to loopback — bare HOSTNAME is ignored because
+// shells and container runtimes inject it, and the default must not publish an
+// unauthenticated shell to the network. See lib/resolveHostname.js.
+const hostname = resolveHostname();
 const ptyHost = process.env.PTY_HOST || "127.0.0.1";
 const ptyPort = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;
 
@@ -259,6 +263,19 @@ Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImpo
       `[server] orchestrator ready on http://${hostname}:${port} ` +
         `(${dev ? "dev" : "production"}); /pty -> ws://${ptyHost}:${ptyPort}; ${auth}`,
     );
+    // An older deployment that set HOSTNAME deliberately just became
+    // loopback-only; say so rather than letting remote access vanish silently.
+    const migration = hostnameMigrationWarning();
+    if (migration) console.warn(`[server] WARN: ${migration}`);
+    // Binding past loopback publishes the app AND the terminal. The origin gate
+    // stops hostile web pages, not a peer with a socket that can forge a Host
+    // header, so that combination needs real auth.
+    if (!cfAccess.originAuthEnabled() && !/^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i.test(hostname)) {
+      console.warn(
+        `[server] WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
+          `this port gets the app and a shell. Set CF_ACCESS_*, or unset ORCH_HOSTNAME.`,
+      );
+    }
     if (dev) {
       // One-time heads-up: dev mode compiles each route on first hit (Turbopack +
       // React dev build) and is MUCH slower than the production build. Users who
