@@ -27,6 +27,7 @@ import type {
   StreamEvent,
 } from "../types";
 import { createSuggestedTask } from "@/lib/agentTools";
+import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
 const MOCK_PLAN = "Mock";
@@ -60,18 +61,7 @@ let currentLogin: AgentLoginSession | null = null;
 export const mockDriver: AgentDriver = {
   id: "mock",
   label: "Mock Agent",
-  capabilities: {
-    models: [{ value: "mock-1", label: "Mock 1", sub: "deterministic", contextWindow: 200_000 }],
-    reasoningOptions: [],
-    permissionModes: [],
-    supportsAsks: false,
-    supportsMcpTools: true,
-    reportsCostUsd: false,
-    costIsEstimated: false,
-    supportsResume: true,
-    apiKeyHint: null,
-    loginStyle: "paste_code",
-  },
+  capabilities: MOCK_CAPABILITIES,
 
   async *runTurn(task: Task, project: Project, userText: string, abort?: AbortController): AsyncGenerator<StreamEvent> {
     const signal = abort?.signal;

@@ -17,6 +17,7 @@
 import type { AgentCapabilities } from "./types";
 import { CLAUDE_CAPABILITIES } from "./claude/capabilities";
 import { CODEX_CAPABILITIES } from "./codex/capabilities";
+import { MOCK_CAPABILITIES } from "./mock/capabilities";
 
 export const DEFAULT_AGENT = "claude";
 
@@ -24,6 +25,14 @@ const CAPABILITIES: Record<string, AgentCapabilities> = {
   claude: CLAUDE_CAPABILITIES,
   codex: CODEX_CAPABILITIES,
 };
+
+// The deterministic e2e agent, under the same env gate registry.ts uses. It has
+// to be here and not only there: this file backs listAgentIds()/isAgentId(), so
+// without it the mock is connectable but invisible to every id-level lookup —
+// firstConnectedAgent() skips it, and completeOnboarding() then finds nothing to
+// adopt on a mock-only first run. Read at import time like the rest of this
+// module; the env is set before the server boots (e2e/env.ts).
+if (process.env.ORCH_E2E_MOCK_AGENT === "1") CAPABILITIES.mock = MOCK_CAPABILITIES;
 
 /** Every registered agent id, in registry order — the SDK-free half of
  * listDrivers(), for callers that only need to enumerate/validate ids
