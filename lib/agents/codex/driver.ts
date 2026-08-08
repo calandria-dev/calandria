@@ -23,10 +23,10 @@ import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, Co
 import type { Project, Task, StreamEvent } from "../../types";
 import type { AgentDriver } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
-import { getSetting } from "../../store";
+import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
 import { buildProjectContext } from "../shared";
-import { mapThreadEvent, newState } from "./events";
+import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 
@@ -126,7 +126,10 @@ async function* runTurn(
   // ~/.codex/config.toml default keeps winning — so the resolved value is an
   // assumption in that edge case, consistent with the estimated-cost framing.
   const model = resolveCodexModel(task.model);
-  const state = newState(model);
+  // Codex reports the thread's CUMULATIVE token counts on every turn.completed,
+  // so a resumed thread starts from the baseline the last turn stored (see
+  // events.ts). A fresh thread starts from zero.
+  const state = newState(model, (task.session_id ? getThreadUsageCum<CodexCum>(task.session_id) : null) ?? ZERO_CUM);
 
   // Fallback (task choice → agent-scoped app default → legacy default → codex
   // built-in), matching the Claude driver.
@@ -163,6 +166,16 @@ async function* runTurn(
     const { events } = await thread.runStreamed(prompt, { signal: abortController?.signal });
     for await (const ev of events) {
       for (const out of mapThreadEvent(ev, state)) yield out;
+      // Advance the thread's cumulative baseline the moment a turn's usage is
+      // mapped, not at the end of the run: a crash (or a Stop) between here and
+      // turn end would otherwise make the NEXT turn re-count everything this
+      // one already billed. The session row exists by now — the runner persists
+      // it when it consumes the `session` event yielded above.
+      if (state.cumDirty) {
+        state.cumDirty = false;
+        const id = thread.id ?? task.session_id;
+        if (id) setThreadUsageCum(id, state.cum);
+      }
     }
   } catch (err) {
     // A Stop (abort) kills the codex process, which surfaces here as a throw —
