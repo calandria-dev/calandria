@@ -7,7 +7,7 @@
 Each **project** carries reusable context. Each **task** is its own agent session — **Claude Code** or **Codex** — in its own git worktree. Drive ten at once, see exactly which one needs you, review every diff before it merges. Runs on your **Max/Pro login** — no API key, no per-token billing.
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Node ≥18.18](https://img.shields.io/badge/node-%E2%89%A518.18-brightgreen.svg)](package.json)
+[![Node ≥20.9](https://img.shields.io/badge/node-%E2%89%A520.9-brightgreen.svg)](package.json)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-8A2BE2.svg)](CONTRIBUTING.md)
 
 <!-- TODO(video): replace this screenshot with a 30–45s screen capture (GitHub hosts .mp4
@@ -125,7 +125,7 @@ Hacking on Operator itself? `npm run dev` runs the dev server (Turbopack + React
 build) with hot reload — but it compiles each route on first hit and is **much slower**,
 so don't run it for day-to-day use.
 
-You need **Node 18.18+**, **macOS or Linux**, and at least one agent CLI: **Claude Code**
+You need **Node 20.9+**, **macOS or Linux**, and at least one agent CLI: **Claude Code**
 (`npm i -g @anthropic-ai/claude-code`, Pro/Max plan — recommended) or **Codex**
 (`npm i -g @openai/codex`, ChatGPT plan). First run opens a setup wizard that signs the
 agent in from the browser — connecting **either one** completes setup (it becomes the app
