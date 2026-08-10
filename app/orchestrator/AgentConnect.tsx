@@ -28,7 +28,7 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
     <div className="auth-banner" role="alert">
       <span className="ab-ic">{Icon.bolt()}</span>
       <span className="ab-msg">
-        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working — the sign-in expired.</b> {AUTH_BANNER_HINT}
+        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working — {broken.length === 1 ? "its" : "their"} credentials need attention.</b> {AUTH_BANNER_HINT}
         {detail && <span className="ab-why" title={detail}>{detail}</span>}
       </span>
       <span className="ab-spacer" />
@@ -102,8 +102,12 @@ export function AgentConnect({
   onConnected?: () => void;
   compact?: boolean;
 }) {
-  const canApiKey = !!agent.capabilities.apiKeyHint;
-  const [mode, setMode] = useState<"subscription" | "api_key">(agent.account?.method === "api_key" ? "api_key" : "subscription");
+  const configuredBedrock = agent.provider === "bedrock";
+  const canApiKey = !!agent.capabilities.apiKeyHint && !configuredBedrock;
+  const canBedrock = agent.capabilities.supportsBedrock === true;
+  const [mode, setMode] = useState<"subscription" | "api_key" | "bedrock">(
+    configuredBedrock || agent.account?.method === "bedrock" ? "bedrock" : agent.account?.method === "api_key" ? "api_key" : "subscription"
+  );
   const [reconnect, setReconnect] = useState(false);
 
   // Connected on record, but its credentials died in flight (lib/authFailure.ts).
@@ -115,12 +119,12 @@ export function AgentConnect({
         <span className="wiz-warn">{Icon.bolt()}</span>
         <div>
           <div className="wiz-ok-t">
-            {agent.label}&apos;s sign-in stopped working
+            {agent.label}&apos;s credentials stopped working
             {agent.account?.email ? <> for <strong>{agent.account.email}</strong></> : ""}
           </div>
           <div className="hlp" style={{ margin: "3px 0 0" }}>{agent.authBroken.reason}</div>
           <button className="btn btn-accent btn-sm" style={{ marginTop: 9 }} onClick={() => setReconnect(true)}>
-            {Icon.bolt()} Sign in again
+            {Icon.bolt()} Refresh connection
           </button>
         </div>
       </div>
@@ -148,7 +152,7 @@ export function AgentConnect({
 
   return (
     <div>
-      {canApiKey && (
+      {!configuredBedrock && (canApiKey || canBedrock) && (
         <div className="seg" style={{ maxWidth: 460, marginBottom: 16 }}>
           <button className={mode === "subscription" ? "on" : ""} onClick={() => setMode("subscription")}>
             {Icon.bolt()} Sign in
@@ -156,13 +160,59 @@ export function AgentConnect({
           <button className={mode === "api_key" ? "on" : ""} onClick={() => setMode("api_key")}>
             {Icon.lock()} I have an API key
           </button>
+          {canBedrock && (
+            <button className={mode === "bedrock" ? "on" : ""} onClick={() => setMode("bedrock")}>
+              AWS Bedrock
+            </button>
+          )}
         </div>
       )}
       {mode === "subscription" ? (
         <SubscriptionConnect agent={agent} compact={compact} onConnected={onConnected} />
-      ) : (
+      ) : mode === "api_key" ? (
         <ApiKeyConnect agent={agent} onConnected={onConnected} />
+      ) : (
+        <BedrockConnect agent={agent} onConnected={onConnected} />
       )}
+    </div>
+  );
+}
+
+// ---------- Amazon Bedrock ----------
+
+function BedrockConnect({ agent, onConnected }: { agent: AgentInfoT; onConnected?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const verify = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await jsend<ClaudeVerifyT>(`/api/agents/${agent.id}/verify`, "POST");
+      if (!r.connected || r.provider !== "bedrock") {
+        setErr(r.connected
+          ? "Claude responded, but it is not configured to use Amazon Bedrock."
+          : r.error ?? "Amazon Bedrock verification failed.");
+        return;
+      }
+      onConnected?.();
+    } catch (e) {
+      setErr((e instanceof Error ? e.message : String(e)).replace(/^\d+\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="field" style={{ maxWidth: 620 }}>
+      <div className="hlp" style={{ marginTop: 0 }}>
+        Configure Claude Code with <code>CLAUDE_CODE_USE_BEDROCK=1</code>, an AWS region, and AWS credentials, then restart Operator. In Docker, set these values in the Compose environment. You can also run <code>claude</code> in the terminal and use <code>/setup-bedrock</code>; its settings persist in <code>~/.claude</code>.
+      </div>
+      <button className="btn btn-accent" disabled={busy} onClick={verify} style={{ alignSelf: "flex-start" }}>
+        {Icon.bolt()} {busy ? "Testing Bedrock…" : "Verify Amazon Bedrock"}
+      </button>
+      {busy && <div className="wiz-verify"><span className="wiz-spin" /> <span>Running a quick test turn through Amazon Bedrock…</span></div>}
+      {err && <div className="hlp" style={{ color: "var(--red)", marginTop: 8 }}>⚠ {err}</div>}
     </div>
   );
 }

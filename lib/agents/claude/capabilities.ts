@@ -25,13 +25,13 @@ const M1 = 1_000_000;
 
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   models: [
-    { value: "fable", label: "Fable 5", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
-    { value: "opus", label: "Opus 5", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
-    { value: "sonnet", label: "Sonnet 5", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
-    { value: "haiku", label: "Haiku 4.5", sub: "fastest, lowest cost", contextWindow: K200, group: "Latest" },
+    { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
+    { value: "opus", label: "Opus (provider default)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
+    { value: "sonnet", label: "Sonnet (provider default)", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
+    { value: "haiku", label: "Haiku (provider default)", sub: "fastest, lowest cost", contextWindow: K200, group: "Latest" },
     { value: "opusplan", label: "Opus Plan Mode", sub: "Opus while planning, Sonnet after", contextWindow: K200, group: "Latest" },
-    { value: "opus[1m]", label: "Opus 5 (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
-    { value: "sonnet[1m]", label: "Sonnet 5 (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
+    { value: "opus[1m]", label: "Opus (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
+    { value: "sonnet[1m]", label: "Sonnet (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
     { value: "opusplan[1m]", label: "Opus Plan Mode (1M)", sub: "plan on Opus, run on Sonnet 1M", contextWindow: M1, group: "1M context" },
     { value: "claude-opus-4-8", label: "Opus 4.8", sub: "previous Opus", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-4-8[1m]", label: "Opus 4.8 (1M)", sub: "previous Opus, 1M context", contextWindow: M1, group: "Pinned versions" },
@@ -56,6 +56,8 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   reportsCostUsd: true,
   costIsEstimated: false,
   supportsResume: true,
+  supportsCustomModels: true,
+  supportsBedrock: true,
   apiKeyHint: "sk-ant-…",
   loginStyle: "paste_code",
 };

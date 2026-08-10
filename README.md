@@ -135,6 +135,14 @@ A stray `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the launch environment is stri
 boot (with a warning) so turns bill your subscription, not the API — set
 `ORCH_ALLOW_API_KEY_ENV=1` if you really do want to run on an env-provided key.
 
+Claude can instead run entirely through **Amazon Bedrock**. Configure the normal AWS
+credential chain (or `AWS_BEARER_TOKEN_BEDROCK`), set
+`CLAUDE_CODE_USE_BEDROCK=1` plus an AWS region, restart Operator, then choose
+**Amazon Bedrock → Verify** under Settings → Agents. Docker Compose forwards the
+documented Bedrock/AWS variables and persists `~/.aws`; see [`.env.example`](.env.example).
+Operator uses one Claude provider per instance, so Bedrock and a Claude subscription
+are not mixed within the same instance.
+
 Local mode has no login, but it accepts browser traffic only from loopback origins by
 default and rejects cross-site HTTP/WebSocket access to the app and terminal. If you
 intentionally open it on a LAN, add that exact origin to `ORCH_ALLOWED_ORIGINS`; use real

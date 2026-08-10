@@ -65,6 +65,13 @@ export function modelContextWindow(agent: string | null | undefined, model: stri
   if (model) {
     const hit = models.find((m) => m.value === model);
     if (hit) return hit.contextWindow;
+    // Provider-native ids and inference-profile ARNs are intentionally open
+    // ended. Only claim 1M when the string itself identifies that mode/model;
+    // otherwise use the conservative standard window rather than the widest
+    // catalog entry (which would make a 200k custom model look nearly empty).
+    const id = model.toLowerCase();
+    if (id.includes("[1m]") || id.includes("claude-sonnet-5") || id.includes("claude-fable-5")) return 1_000_000;
+    return DEFAULT_CONTEXT_WINDOW;
   }
   const widest = models.reduce((mx, m) => Math.max(mx, m.contextWindow), 0);
   return widest || DEFAULT_CONTEXT_WINDOW;

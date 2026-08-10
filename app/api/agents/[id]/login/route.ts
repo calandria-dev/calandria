@@ -20,6 +20,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const driver = getDriverStrict(id);
   if (!driver) return NextResponse.json({ error: "unknown agent" }, { status: 404 });
+  if (driver.configuredProvider?.() === "bedrock")
+    return NextResponse.json({ error: "Claude is configured for Amazon Bedrock; verify the AWS connection instead" }, { status: 409 });
   const s = await driver.startLogin();
   if (s.status === "success") setAgentConnection(id, { method: "subscription", email: s.email, plan: s.plan });
   return NextResponse.json(s);

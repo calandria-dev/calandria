@@ -37,6 +37,7 @@ import {
   verifyTurn,
 } from "../../claude-auth";
 import { claudeUsage } from "./usage";
+import { isBedrockConfigured } from "./provider";
 
 function orchestratorServer(project: Project, onSuggest: (title: string) => void, onExpose: (info: { name: string; url: string }) => void) {
   // Titles created this session, so `blocked_by` can reference earlier suggestions
@@ -459,6 +460,7 @@ export const claudeDriver: AgentDriver = {
   id: "claude",
   label: "Claude Code",
   capabilities: CLAUDE_CAPABILITIES,
+  configuredProvider: () => isBedrockConfigured() ? "bedrock" : null,
   runTurn,
   summarizeTranscript,
   draftProjectContext,

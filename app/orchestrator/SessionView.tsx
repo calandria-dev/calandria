@@ -154,6 +154,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const [statusOpen, setStatusOpen] = useState(false);
   const [priOpen, setPriOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [customModel, setCustomModel] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<"chat" | "changes">("chat");
   const [clearEstimate, setClearEstimate] = useState<InternalUsageEstimate | null>(null);
@@ -176,6 +177,8 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
   const models = modelOptions(caps);
+  const configuredModelLabel = models.find((m) => m.value === task.model)?.label
+    ?? (task.model ? modelLabel(task.model, caps) : "Default");
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
   // Usage chip: tokens split into fresh work vs re-read cache (the raw total is
@@ -348,14 +351,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             <div style={{ position: "relative" }}>
               <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
                 {Icon.spark()}
-                <span className="cv">{models.find((m) => m.value === task.model)?.label ?? "Default"}</span>
+                <span className="cv" title={task.model ?? "Inherit the agent default"}>{configuredModelLabel}</span>
                 {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
                 {Icon.chevDown()}
               </button>
               {modelOpen && (
                 <Popover onClose={() => setModelOpen(false)}>
                   {models.map((m, i) => (
-                    <Fragment key={m.label}>
+                    <Fragment key={m.value ?? "default"}>
                       {/* Section header whenever the group changes — Claude Code's
                           list runs to a dozen-plus pins, so it needs the structure. */}
                       {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
@@ -365,6 +368,31 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                       </div>
                     </Fragment>
                   ))}
+                  {caps?.supportsCustomModels && (
+                    <form className="pop-custom-model" onSubmit={(e) => {
+                      e.preventDefault();
+                      const value = customModel.trim();
+                      if (!value) return;
+                      onSetModel(value);
+                      setCustomModel("");
+                      setModelOpen(false);
+                    }}>
+                      <div className="pop-sec">Custom model</div>
+                      <div className="pop-custom-row">
+                        <input
+                          className="ctx-mono"
+                          value={customModel}
+                          onChange={(e) => setCustomModel(e.target.value)}
+                          placeholder="model ID or inference-profile ARN"
+                          aria-label="Custom model ID"
+                        />
+                        <button className="btn btn-sm btn-accent" type="submit" disabled={!customModel.trim()}>Use</button>
+                      </div>
+                      {task.model && !models.some((m) => m.value === task.model) && (
+                        <div className="pi-sub" title={task.model}>Current: {task.model}</div>
+                      )}
+                    </form>
+                  )}
                 </Popover>
               )}
             </div>
