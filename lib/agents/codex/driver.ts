@@ -24,7 +24,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting } from "../../store";
-import { CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
+import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
 import { buildProjectContext } from "../shared";
 import { mapThreadEvent, newState } from "./events";
 import { resolveCodexModel } from "./pricing";
@@ -92,16 +92,25 @@ function reasoningEffort(level: string | null): { modelReasoningEffort?: ModelRe
   return e ? { modelReasoningEffort: e } : {};
 }
 
-type RunControls = { sandboxMode: SandboxMode; approvalPolicy: ApprovalMode; networkAccessEnabled: boolean };
+type RunControls = { sandboxMode: SandboxMode; networkAccessEnabled: boolean };
 
-// The task's run permission → codex sandbox + approval policy. Default (null /
-// unknown / "bypassPermissions") is the auto-run analog of Claude's
-// bypassPermissions: write within the workspace, run commands and reach the
-// network without approvals — safe because tasks run in isolated worktrees /
-// a hardened container. "plan" runs read-only so codex proposes without editing.
+// The task's run permission → codex sandbox. Default (null / unknown /
+// "bypassPermissions") is the auto-run analog of Claude's bypassPermissions:
+// write within the workspace, run commands and reach the network without
+// approvals — safe because tasks run in isolated worktrees / a hardened
+// container. "plan" runs read-only so codex proposes without editing.
 function runControls(mode: string | null): RunControls {
-  if (mode === "plan") return { sandboxMode: "read-only", approvalPolicy: "never", networkAccessEnabled: false };
-  return { sandboxMode: "workspace-write", approvalPolicy: "never", networkAccessEnabled: true };
+  if (mode === "plan") return { sandboxMode: "read-only", networkAccessEnabled: false };
+  return { sandboxMode: "workspace-write", networkAccessEnabled: true };
+}
+
+// The approval-policy override sent to the CLI, or nothing when the instance
+// opts to inherit ~/.codex/config.toml — enterprise-managed requirements can
+// disallow "never", and omitting the flag lets the managed config decide.
+// See CODEX_APPROVAL_POLICY in lib/config.ts.
+function approvalOverride(): { approvalPolicy?: ApprovalMode } {
+  if (CODEX_APPROVAL_POLICY === "inherit") return {};
+  return { approvalPolicy: CODEX_APPROVAL_POLICY as ApprovalMode };
 }
 
 /**
@@ -141,7 +150,7 @@ async function* runTurn(
     // be — skip the check so codex never hard-errors on a missing repo.
     skipGitRepoCheck: true,
     sandboxMode: controls.sandboxMode,
-    approvalPolicy: controls.approvalPolicy,
+    ...approvalOverride(),
     networkAccessEnabled: controls.networkAccessEnabled,
     ...(task.model ? { model: task.model } : {}),
     ...reasoningEffort(reasoning),
@@ -203,7 +212,7 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
     workingDirectory: project.repo_path || process.cwd(),
     skipGitRepoCheck: true,
     sandboxMode: mode,
-    approvalPolicy: "never",
+    ...approvalOverride(),
     networkAccessEnabled: false,
   });
   const abort = new AbortController();
