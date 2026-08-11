@@ -469,8 +469,8 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
   const [repo, setRepo] = useState("");
   const colors = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"];
   const [color, setColor] = useState(colors[0]);
-  // Where the code comes from: a fresh/local folder (the greenfield path) or a
-  // clone of one of the user's GitHub repos (the onboarding path).
+  // Where the code comes from: a local folder — existing repo or greenfield —
+  // or a clone of one of the user's GitHub repos (the onboarding path).
   const [mode, setMode] = useState<"fresh" | "clone">("fresh");
   const [cloneSpec, setCloneSpec] = useState(""); // owner/repo or pasted URL
   const [cloning, setCloning] = useState(false);
@@ -526,13 +526,13 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
       <div className="field">
         <div className="lab">{Icon.folder()} Code</div>
         <div className="seg">
-          <button className={mode === "fresh" ? "on" : ""} onClick={() => setMode("fresh")}>Start fresh</button>
+          <button className={mode === "fresh" ? "on" : ""} onClick={() => setMode("fresh")}>Local folder</button>
           <button className={mode === "clone" ? "on" : ""} onClick={() => setMode("clone")}>{Icon.github()} Clone from GitHub</button>
         </div>
       </div>
       {mode === "fresh" ? (
         <div className="field">
-          <div className="lab">Working dir <span className="opt">— optional, can add later</span></div>
+          <div className="lab">Working dir <span className="opt">— pick an existing repo or folder, or leave blank to start fresh and add one later</span></div>
           <div style={{ display: "flex", gap: 8 }}>
             <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={repo} placeholder="/Users/you/code/project" onChange={(e) => setRepo(e.target.value)} />
             <BrowseDirButton initial={repo} onPick={setRepo} />
