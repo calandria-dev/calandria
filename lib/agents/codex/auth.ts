@@ -251,22 +251,14 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
   st.proc.stderr?.on("data", onData);
 
   st.proc.on("exit", (exitCode) => {
-    if (st.timer) clearTimeout(st.timer);
-    if (st.status === "success") return;
-    // codex login exits 0 once the browser authorization completes. Trust the
-    // CLI's own status over scraping.
-    if (exitCode === 0 || st.status === "awaiting" || st.status === "submitting") {
-      void finishSuccess(st);
+    if (st.status === "success" || st.status === "error") {
+      if (st.timer) clearTimeout(st.timer);
       return;
     }
-    st.status = "error";
-    const last = st.buf
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !/http|code|browser|sign in/i.test(l))
-      .slice(-3)
-      .join(" · ");
-    st.error = last || `codex login exited with code ${exitCode}`;
+    // Keep the reaper armed until settleAfterExit resolves — clearing it here
+    // used to leave a session that never settled pinned at "awaiting" forever,
+    // locking the onboarding wizard's Continue button on fresh machines.
+    void settleAfterExit(st, exitCode);
   });
 
   return awaitUrl();
@@ -298,6 +290,44 @@ async function finishSuccess(st: LoginState) {
   } else if (st.status === "awaiting" || st.status === "submitting") {
     // Not done yet — keep waiting (the CLI is still polling); leave status as-is.
   }
+}
+
+// The child exited — the session MUST settle to success or error from here.
+// codex login exits 0 once the browser authorization completes, but the
+// auth.json write can land a beat after exit, and `codex login status` can
+// hiccup (enterprise-managed configs prepend warnings and sometimes exit
+// nonzero), so retry the status check before declaring the login dead.
+async function settleAfterExit(st: LoginState, exitCode: number | null) {
+  const expectSuccess = exitCode === 0 || st.status === "awaiting" || st.status === "submitting";
+  let lastErr: string | null = null;
+  for (let i = 0; i < (expectSuccess ? 5 : 1); i++) {
+    // The reaper (or a stdout-driven finishSuccess) may settle us mid-loop.
+    if (st.status === "success" || st.status === "error") return;
+    const s = await codexStatus();
+    if (s.authenticated) {
+      st.status = "success";
+      st.email = s.email;
+      st.plan = s.plan;
+      if (st.timer) clearTimeout(st.timer);
+      return;
+    }
+    lastErr = s.error;
+    await new Promise((r) => setTimeout(r, 1_000 * (i + 1)));
+  }
+  if (st.status === "success" || st.status === "error") return;
+  st.status = "error";
+  if (st.timer) clearTimeout(st.timer);
+  if (expectSuccess) {
+    st.error = `codex login finished but \`codex login status\` reports: ${lastErr || "not logged in"} — try Verify connection, or start again`;
+    return;
+  }
+  const last = st.buf
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/http|code|browser|sign in/i.test(l))
+    .slice(-3)
+    .join(" · ");
+  st.error = last || `codex login exited with code ${exitCode}`;
 }
 
 // Resolve once the session leaves "starting" (URL parsed / error); give up

@@ -44,6 +44,15 @@ export function OnboardingWizard({
   useEffect(() => { load(); }, [load]);
 
   const connected = (bundle?.agents ?? []).filter((a) => a.connected);
+
+  // While nothing is connected yet, keep re-checking: a login can settle
+  // server-side after a missed onConnected (e.g. the connect card was remounted
+  // mid-login), and without this the Continue button stays locked until a reload.
+  useEffect(() => {
+    if (step !== "connect" || connected.length > 0) return;
+    const t = setInterval(load, 3_000);
+    return () => clearInterval(t);
+  }, [step, connected.length, load]);
   const verifyAgent =
     (justConnected && connected.find((a) => a.id === justConnected)) || connected[0] || null;
 
