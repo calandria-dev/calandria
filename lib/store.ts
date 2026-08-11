@@ -398,11 +398,13 @@ export function setTaskStatus(id: string, status: Status) {
   return updateTask(id, { status });
 }
 
-// Merged tasks that still hold an on-record worktree — the candidates for the
-// "prune merged worktrees" cleanup. Joined with the owning project so the API
-// can resolve each worktree's repo (for git ops) and label it for the user.
+// Merged tasks and completed tasks that still hold an on-record worktree — the
+// candidates for Settings → Storage cleanup. A completed task is included even
+// when its work was never merged, because the user may explicitly discard it.
+// Joined with the owning project so the API can resolve each worktree's repo
+// (for git ops) and label it for the user.
 // Whether the directory actually exists on disk is checked by the caller.
-export interface PrunableWorktree {
+export interface ReclaimableWorktree {
   id: string;
   title: string;
   project_id: string;
@@ -412,17 +414,19 @@ export interface PrunableWorktree {
   worktree_path: string;
   work_branch: string;
   merged_at: number;
+  status: Status;
+  updated_at: number;
 }
-export function listPrunableWorktrees(): PrunableWorktree[] {
+export function listReclaimableWorktrees(): ReclaimableWorktree[] {
   return getDb()
     .prepare(
       `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path, p.branch AS base_branch,
-              t.worktree_path, t.work_branch, t.merged_at
+              t.worktree_path, t.work_branch, t.merged_at, t.status, t.updated_at
          FROM tasks t JOIN projects p ON p.id = t.project_id
-        WHERE t.merged_at > 0 AND t.worktree_path != ''
-        ORDER BY t.merged_at ASC`
+        WHERE t.worktree_path != '' AND (t.merged_at > 0 OR t.status = 'done')
+        ORDER BY CASE WHEN t.merged_at > 0 THEN t.merged_at ELSE t.updated_at END ASC`
     )
-    .all() as PrunableWorktree[];
+    .all() as ReclaimableWorktree[];
 }
 
 // ---------- settings (app-level key/value, readable server-side) ----------

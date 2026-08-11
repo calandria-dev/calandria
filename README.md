@@ -28,6 +28,7 @@ Each **project** carries reusable context. Each **task** is its own agent sessio
 ## Features
 
 - **Parallel sessions** — every task is an isolated git worktree with its own agent session.
+- **Storage cleanup** — reclaim worktrees for merged or Done tasks from Settings; unmerged work requires an explicit permanent-discard confirmation.
 - **Diff review → one-click merge** — or AI conflict resolution, branch sync, and GitHub PR creation.
 - **Pick your agent per task** — Claude Code or Codex, both on subscription logins.
 - **Write-once project context** — auto-injected into every task; **Refresh with AI** redrafts it from the repo. Opt out per project or per task ("Send saved project context to the agent" at task start) when a session should run lean — task details and orchestrator tools are always included.
