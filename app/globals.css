@@ -779,6 +779,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .msg{margin-bottom:22px;}
 .msg .who{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;}
 .msg .who .badge{font-size:9px;padding:1px 5px;border-radius:4px;background:var(--surface-2);color:var(--ink-3);letter-spacing:.04em;}
+.msg .who .msg-time{font-weight:400;letter-spacing:.03em;text-transform:none;color:var(--ink-3);opacity:.75;}
 .msg .who .av{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;color:#fff;font-size:10px;}
 .msg .who .av.you{background:linear-gradient(135deg,#C2603C,#D89A3A);}
 /* Assistant side: the agent's brand mark, drawn bare (no chip) in brand colour

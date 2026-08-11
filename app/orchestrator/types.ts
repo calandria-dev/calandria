@@ -92,6 +92,7 @@ export interface Msg {
   content: string;
   generation: number;
   toolId?: string; // tool_use id, for merging the tool_result that arrives later
+  ts?: number; // created_at of the persisted row (ms epoch); absent on synthetic ids
 }
 export interface ProjectSession {
   id: string;

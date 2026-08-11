@@ -78,8 +78,11 @@ function orchestratorServer(project: Project, onSuggest: (title: string) => void
             priority: args.priority,
             blocked_by: resolveTitleRefs(args.blocked_by, createdByTitle),
           });
-          createdByTitle.set(args.title, task.id);
-          onSuggest(args.title);
+          // A null task = the project was deleted mid-turn; `text` already says so.
+          if (task) {
+            createdByTitle.set(args.title, task.id);
+            onSuggest(args.title);
+          }
           return { content: [{ type: "text", text }] };
         }
       ),

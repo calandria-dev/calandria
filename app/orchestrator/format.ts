@@ -167,6 +167,16 @@ export function formatAnswersText(questions: AskQuestion[], answers: AskAnswers)
   });
   return `Answering your question${questions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
 }
+// Absolute wall-clock stamp for a transcript message ("3:42 PM", locale-aware).
+// Messages from an earlier day prefix the date, so a task resumed days later
+// still reads right. Absolute on purpose: MessageView is memoized, so a
+// relative "2m ago" would freeze at whatever it said when the row rendered.
+export function clockTime(ts: number): string {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
 export function relTime(ts: number): string {
   const d = Date.now() - ts;
   const m = Math.floor(d / 60000);

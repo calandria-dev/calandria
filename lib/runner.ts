@@ -42,7 +42,7 @@ export function startTurn(task: Task, project: Project, userText: string, syncNo
     // session with a turn the Stop button couldn't reach.
     console.error(`[runner] startTurn(${task.id}) raced a live turn; queueing the message instead`);
     const pm = addPendingMessage(task.id, task.generation, userText);
-    publish(task.id, { type: "queued", msgId: pm.id, content: userText, generation: task.generation });
+    publish(task.id, { type: "queued", msgId: pm.id, content: userText, generation: task.generation, ts: pm.created_at });
     return;
   }
   // Detached: nobody awaits this. `run()` guards its own body (try/catch/finally)
@@ -93,7 +93,7 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
   const abortController = controller ?? claimTurn(id);
   if (!abortController) {
     const pm = addPendingMessage(id, gen, userText);
-    publish(id, { type: "queued", msgId: pm.id, content: userText, generation: gen });
+    publish(id, { type: "queued", msgId: pm.id, content: userText, generation: gen, ts: pm.created_at });
     return;
   }
   try {
@@ -123,7 +123,7 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     }
     const userMsg = addMessage(id, gen, "user", userText);
     updateTask(id, { running: 1, suggested: 0, awaiting_input: 0 });
-    publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen });
+    publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
     startTurn(task, project, userText, syncNote, abortController);
   } catch (err) {
     // The turn never launched (e.g. the task row vanished mid-await) — release
@@ -166,13 +166,16 @@ export function publishTurnError(id: string, gen: number, errText: string): void
   // server. Degrade gracefully: if we can't persist, still fan out to any live
   // viewer with a best-effort id, and never rethrow.
   let msgId: string | undefined;
+  let ts: number | undefined;
   try {
-    msgId = addMessage(id, gen, "system", content).id;
+    const m = addMessage(id, gen, "system", content);
+    msgId = m.id;
+    ts = m.created_at;
   } catch (err) {
     console.error(`[runner] could not persist turn error for task ${id} (row gone?):`, err);
   }
   try {
-    publish(id, { type: "error", content, msgId, generation: gen });
+    publish(id, { type: "error", content, msgId, generation: gen, ts });
   } catch {
     // in-memory pub/sub; ignore
   }
@@ -239,7 +242,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
 
     if (syncNote) {
       const m = addMessage(id, gen, "system", syncNote);
-      publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen });
+      publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen, ts: m.created_at });
     }
     for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController)) {
       // Persist first, then publish enriched with the DB message id — so a
@@ -259,12 +262,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         publish(id, ev);
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
-        publish(id, { ...ev, msgId: m.id, generation: gen });
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool") {
         const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff };
         const m = addMessage(id, gen, "tool", JSON.stringify(data));
         toolMsgs[ev.id] = { dbId: m.id, data };
-        publish(id, { ...ev, msgId: m.id, generation: gen });
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
         const t = toolMsgs[ev.id];
         if (t) {
@@ -286,7 +289,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // once the turn fully ends. Persisted BEFORE publishing so reloads and
         // the global /api/events stream (which re-reads the row per event) agree.
         updateTask(id, { awaiting_input: 1 });
-        publish(id, { ...ev, msgId: m.id, generation: gen });
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "ask_answered") {
         const t = toolMsgs[ev.id];
         if (t) {
@@ -315,7 +318,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // A quiet system note emitted mid-turn (e.g. expose_service confirming a
         // live URL). Persist it so a reload still shows the line, like syncNote.
         const m = addMessage(id, gen, "system", ev.content);
-        publish(id, { ...ev, msgId: m.id, generation: gen });
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "done") {
         sessionId = ev.sessionId;
         publish(id, ev);
@@ -418,8 +421,14 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       if (parked) {
         const when = authFailure ? "once you reconnect" : "once the limit resets";
         const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue — ${parked === 1 ? "it runs" : "they run"} ${when}.`;
-        const m = addMessage(id, gen, "system", note);
-        publish(id, { type: "notice", content: note, msgId: m.id, generation: gen });
+        // Best-effort: the task row can be gone by now (deleted mid-turn), and a
+        // FOREIGN KEY throw here would escape the detached run()'s finally.
+        try {
+          const m = addMessage(id, gen, "system", note);
+          publish(id, { type: "notice", content: note, msgId: m.id, generation: gen, ts: m.created_at });
+        } catch (err) {
+          console.error(`[runner] could not persist parked-queue notice for task ${id} (row gone?):`, err);
+        }
       }
     } else {
       // Hand the occupancy slot to the follow-up FIRST — an atomic swap of our
@@ -485,9 +494,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
             // surface the error, and settle the task so it doesn't hang in a
             // running-but-dead state.
             unregisterTurn(id, nextController);
-            const content = `⚠ ${err instanceof Error ? err.message : String(err)}`;
-            const m = addMessage(id, gen, "system", content);
-            publish(id, { type: "error", content, msgId: m.id, generation: gen });
+            // publishTurnError persists + publishes without ever rethrowing — a
+            // plain addMessage here could hit a FOREIGN KEY error (task deleted
+            // while we waited on the lock) and, thrown from inside this .catch,
+            // become an unhandled rejection that crashes the server.
+            publishTurnError(id, gen, err instanceof Error ? err.message : String(err));
             updateTask(id, { running: 0, awaiting_input: opened ? 1 : 0 });
             publish(id, { type: "turn_end" });
           });

@@ -3,6 +3,7 @@ import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
+import { withTaskLock } from "@/lib/taskLock";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
 import { isAgentId } from "@/lib/agents/capabilities";
@@ -88,20 +89,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const task = getTask(id);
-  // Stop any in-flight turn before tearing down its worktree, so the runner
-  // isn't mid-write when the directory disappears.
-  abortTurn(id);
-  if (task?.worktree_path) {
-    const project = getProject(task.project_id);
-    if (project?.repo_path) await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
-  }
-  removeTaskUploads(id);
-  deleteTask(id);
-  // Publish AFTER the hard delete, carrying the project id + its recomputed
-  // awaiting count: the row is gone, so /api/events' usual re-read-the-task
-  // enrichment would drop the event and freeze the project's badge in every
-  // other tab until the next SSE reconnect.
-  if (task) publishGlobal(id, { type: "task_deleted", projectId: task.project_id, awaiting_count: countAwaiting(task.project_id) });
+  // Under the same per-task lock the merge/sync/turn-launch paths hold: those
+  // re-read the task and then INSERT rows keyed on it (task_merges, messages),
+  // so a delete landing between their re-read and their insert throws FOREIGN
+  // KEY out of a route that already validated the row. Serializing here closes
+  // that window; the cascade then removes whatever they committed first.
+  await withTaskLock(id, async () => {
+    const task = getTask(id);
+    // Stop any in-flight turn before tearing down its worktree, so the runner
+    // isn't mid-write when the directory disappears.
+    abortTurn(id);
+    if (task?.worktree_path) {
+      const project = getProject(task.project_id);
+      if (project?.repo_path) await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
+    }
+    removeTaskUploads(id);
+    deleteTask(id);
+    // Publish AFTER the hard delete, carrying the project id + its recomputed
+    // awaiting count: the row is gone, so /api/events' usual re-read-the-task
+    // enrichment would drop the event and freeze the project's badge in every
+    // other tab until the next SSE reconnect.
+    if (task) publishGlobal(id, { type: "task_deleted", projectId: task.project_id, awaiting_count: countAwaiting(task.project_id) });
+  });
   return NextResponse.json({ ok: true });
 }

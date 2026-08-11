@@ -114,7 +114,7 @@ async function launchInitialTurn(taskId: string, doneTitle: string): Promise<voi
       // Mark running immediately, but defer `started` until the agent actually
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });
-      publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen });
+      publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
       // The note rides the runner's syncNote slot: persisted + published at the
       // top of the turn, so the transcript records WHY this session began.
       const note = doneTitle ? `▶ Auto-started — "${doneTitle}" is done.` : "▶ Auto-started — last blocker is done.";

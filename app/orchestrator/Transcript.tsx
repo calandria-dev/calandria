@@ -4,7 +4,7 @@ import { memo, useState } from "react";
 import type { ToolData, ToolPeek, AskQuestion, AskAnswers } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
-import { diffCls, splitAttachments, type MsgAttachment } from "./format";
+import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
@@ -184,7 +184,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     const { text, attachments } = splitAttachments(m.content);
     return (
       <div className="msg user queued">
-        <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span></div>
+        <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span>{m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}</div>
         <div className="msg-body">
           {text && <Markdown>{text}</Markdown>}
           <AttachmentStrip items={attachments} />
@@ -271,6 +271,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
           <Avatar who={isUser ? "user" : "cc"} agent={agent} />
           {isUser ? "You" : "Agent"}
           {initial && <span className="badge">initial prompt</span>}
+          {m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}
         </div>
       )}
       <div className="msg-body">

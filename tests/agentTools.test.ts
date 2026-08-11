@@ -20,24 +20,24 @@ describe("agentTools shared logic", () => {
   it("createSuggestedTask creates a suggested task with the given priority", () => {
     const project = createProject({ name: "Shared" });
     const { task, text } = createSuggestedTask(project, { title: "Do X", description: "the X", priority: "hi" });
-    const row = getTask(task.id)!;
+    const row = getTask(task!.id)!;
     expect(row).toMatchObject({ title: "Do X", description: "the X", priority: "hi", suggested: 1, status: "not_started" });
     expect(text).toContain("Do X");
-    expect(text).toContain(task.id);
+    expect(text).toContain(task!.id);
   });
 
   it("wires blocked_by deps and drops unknown/foreign ids without throwing", () => {
     const project = createProject({ name: "Deps" });
-    const a = createSuggestedTask(project, { title: "A", description: "" }).task;
+    const a = createSuggestedTask(project, { title: "A", description: "" }).task!;
     const b = createSuggestedTask(project, { title: "B", description: "", blocked_by: [a.id] });
-    expect(getTaskDeps(b.task.id)).toEqual([a.id]);
+    expect(getTaskDeps(b.task!.id)).toEqual([a.id]);
     expect(b.text).toContain("Blocked by 1 task(s).");
 
     // An unknown id is silently dropped by setTaskDeps — no throw, real dep kept.
     const other = createProject({ name: "Deps2" });
-    const foreign = createSuggestedTask(other, { title: "Foreign", description: "" }).task;
+    const foreign = createSuggestedTask(other, { title: "Foreign", description: "" }).task!;
     const c = createSuggestedTask(project, { title: "C", description: "", blocked_by: [a.id, "ghost", foreign.id] });
-    expect(getTaskDeps(c.task.id)).toEqual([a.id]);
+    expect(getTaskDeps(c.task!.id)).toEqual([a.id]);
   });
 
   it("resolveTitleRefs maps session titles to ids and passes ids through", () => {
@@ -74,7 +74,7 @@ describe("internal agent-tool endpoints", () => {
 
   it("suggest-task forwards resolved blocked_by ids to setTaskDeps", async () => {
     const project = createProject({ name: "EP-Deps" });
-    const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task;
+    const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
     const res = await post(suggestTask, "/api/internal/agent-tools/suggest-task", {
       projectId: project.id,
       title: "Dependent",

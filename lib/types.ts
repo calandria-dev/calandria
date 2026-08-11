@@ -224,10 +224,12 @@ export type StreamEvent =
 // follow-up from the transcript — either because the runner is now running it
 // as the next turn, or because it was cancelled. `snapshot` carries the parked
 // queue too, so a reload mid-run re-renders the queued bubbles.
+// `ts` mirrors the persisted row's created_at (ms epoch) so a live-tail bubble
+// carries the same clock a reconnect's snapshot row would.
 export type TaskStreamEvent =
-  | (StreamEvent & { msgId?: string; generation?: number })
-  | { type: "user"; content: string; msgId: string; generation: number }
-  | { type: "queued"; msgId: string; content: string; generation: number }
+  | (StreamEvent & { msgId?: string; generation?: number; ts?: number })
+  | { type: "user"; content: string; msgId: string; generation: number; ts?: number }
+  | { type: "queued"; msgId: string; content: string; generation: number; ts?: number }
   | { type: "dequeued"; msgId: string }
   | { type: "snapshot"; messages: Message[]; pending: PendingMessage[]; running: boolean }
   | AgentAuthEvent

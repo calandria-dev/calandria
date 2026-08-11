@@ -49,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!content) return new Response(JSON.stringify({ error: "empty message" }), { status: 400 });
     if (content.length > MAX_MESSAGE_CHARS) return new Response(JSON.stringify({ error: TOO_LARGE }), { status: 413 });
     const pm = addPendingMessage(id, task.generation, content);
-    publish(id, { type: "queued", msgId: pm.id, content, generation: task.generation });
+    publish(id, { type: "queued", msgId: pm.id, content, generation: task.generation, ts: pm.created_at });
     return new Response(JSON.stringify({ ok: true, queued: true }), {
       status: 202,
       headers: { "Content-Type": "application/json" },
@@ -123,7 +123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         updateTask(id, { running: 1, suggested: 0, awaiting_input: 0 });
         // Echo the user message to every open stream of this task (other viewers,
         // and the sender itself — the client renders from events, not optimistically).
-        publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen });
+        publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
         startTurn(fresh, project, userText, "", controller);
       } else {
         // Resume: catch the worktree up, persist + echo the message, then hand off

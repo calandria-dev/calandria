@@ -54,6 +54,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
   }
 
+  // The summarize above can take minutes — re-read before writing. The task may
+  // have been deleted while we waited (addSummary would then throw FOREIGN KEY
+  // and 500), or another tab's /clear may have already advanced the generation
+  // (bumping again here would skip a generation and double-record the boundary).
+  const cur = getTask(id);
+  if (!cur) return NextResponse.json({ error: "task was deleted while summarizing" }, { status: 404 });
+  if (cur.generation !== gen) return NextResponse.json({ task: cur, summary, generation: cur.generation });
+
   addSummary(id, gen, summary);
   // Record the boundary + summary in the message log for continuity in the UI.
   addMessage(id, gen, "session_break", summary);

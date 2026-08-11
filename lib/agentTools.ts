@@ -11,7 +11,7 @@
 
 import { nanoid } from "nanoid";
 import type { Project, Task, ServiceInfo, Priority, AskQuestion, ToolData } from "./types";
-import { createTask, setTaskDeps, addMessage, updateMessage, updateTask } from "./store";
+import { createTask, setTaskDeps, addMessage, updateMessage, updateTask, getProject } from "./store";
 import { exposeService } from "./services";
 import { publish } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
@@ -43,9 +43,16 @@ export interface SuggestTaskInput {
  * Returns the created task plus the human-readable confirmation text both the
  * MCP server and the HTTP endpoint hand back to the agent verbatim. Bad deps
  * degrade to a note rather than throwing (setTaskDeps drops foreign ids and
- * rejects cycles).
+ * rejects cycles). A null task means the project vanished and nothing was made.
  */
-export function createSuggestedTask(project: Project, input: SuggestTaskInput): { task: Task; text: string } {
+export function createSuggestedTask(project: Project, input: SuggestTaskInput): { task: Task | null; text: string } {
+  // `project` can be the snapshot captured at turn START (the Claude driver's
+  // MCP server closes over it) — the row may have been deleted while the turn
+  // ran, and inserting its id would hit tasks' project_id FOREIGN KEY. Re-read
+  // at insert time and hand the agent a refusal instead of throwing.
+  if (!getProject(project.id)) {
+    return { task: null, text: `Could not add "${input.title}": the project no longer exists.` };
+  }
   const task = createTask({
     project_id: project.id,
     title: input.title,
@@ -98,7 +105,7 @@ export function startAskUser(task: Task, questions: AskQuestion[]): { askId: str
   // Claude asks, driving the "Needs your input" badges. Cleared on answer below;
   // the runner's turn-end finally re-settles it either way.
   updateTask(task.id, { awaiting_input: 1 });
-  publish(task.id, { type: "ask", id: askId, questions, msgId: m.id, generation: task.generation });
+  publish(task.id, { type: "ask", id: askId, questions, msgId: m.id, generation: task.generation, ts: m.created_at });
 
   void waitForAnswer(task.id, askId, questions, turnSignal(task.id))
     .then((answers) => {
