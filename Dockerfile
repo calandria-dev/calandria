@@ -15,7 +15,13 @@
 # Run:    see docker-compose.yml or the reference `docker run` in docs/DEPLOY.md.
 
 # ---- build stage: install all deps (incl. dev), compile Next ----------------
-FROM node:22-bookworm-slim AS build
+# Pinned by digest, not by the `22-bookworm-slim` tag, which moves on every
+# Node patch and Debian security rebuild — a tag reference means two builds of
+# the same commit are not the same image. The digest is the multi-arch INDEX
+# digest (linux/amd64 + linux/arm64/v8), so both matrix legs still resolve
+# their own manifest from it. .github/dependabot.yml bumps it weekly; keep the
+# two FROM lines identical or the runtime stage silently diverges from build.
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build
 WORKDIR /app
 
 # Toolchain only as a fallback — better-sqlite3 and node-pty ship Linux x64
@@ -40,7 +46,8 @@ RUN npm run build
 RUN npm prune --omit=dev && node scripts/fix-pty.js
 
 # ---- runtime stage -----------------------------------------------------------
-FROM node:22-bookworm-slim
+# Same digest as the build stage above — see the note there.
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
 
 # git: project repos + per-task worktrees.  openssh-client: git over ssh.
 # tini: PID 1 (reaps the pty shells' orphans).  procps: ps for debugging shells.
