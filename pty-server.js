@@ -19,6 +19,22 @@ const pty = require("node-pty");
 const PORT = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;
 const HOST = process.env.PTY_HOST || "127.0.0.1";
 
+// Last-resort process guards, the same backstop server.js installs and for the
+// same reason — except the blast radius here is bigger than it looks. `npm
+// start` runs the two processes under `concurrently -k`, so -k kills the app
+// when the sidecar dies: one malformed frame on one terminal socket would take
+// down every in-flight agent turn across every project plus all SSE streams.
+// A terminal tab is not allowed to be that load-bearing. Individual call sites
+// are fixed to degrade gracefully; these catch the rest of the class. We log
+// LOUDLY rather than exit — the noise is deliberate, since this can mask real
+// bugs: every occurrence is a bug to chase, not a state to live in.
+process.on("unhandledRejection", (reason) => {
+  console.error("[pty-server] UNHANDLED REJECTION (kept alive — investigate):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[pty-server] UNCAUGHT EXCEPTION (kept alive — investigate):", err);
+});
+
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("orchestrator pty-server");
@@ -85,8 +101,17 @@ wss.on("connection", (ws, req) => {
   ws.on("message", (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    if (msg.type === "input") term.write(msg.data);
-    else if (msg.type === "resize" && msg.cols > 0 && msg.rows > 0) {
+    // Well-formed JSON is not a well-formed message. `null` parses fine and
+    // would throw a TypeError on the .type lookup below, and write() throws
+    // ERR_INVALID_ARG_TYPE on a non-string — either escapes this handler and,
+    // but for the process guards above, exits the sidecar, which
+    // `concurrently -k` turns into an app-wide outage. So every field is
+    // checked before use. The try/catch additionally covers a write that races
+    // the shell's own exit.
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "input" && typeof msg.data === "string") {
+      try { term.write(msg.data); } catch {}
+    } else if (msg.type === "resize" && msg.cols > 0 && msg.rows > 0) {
       try { term.resize(msg.cols, msg.rows); } catch {}
     }
   });
