@@ -81,6 +81,13 @@ export async function GET(req: Request) {
           send({ type: "task_deleted", taskId, projectId: ev.projectId, awaiting_count: ev.awaiting_count });
           return;
         }
+        // A task was re-parented. The row still exists, but re-reading it can
+        // only say where it landed — the project it LEFT has to drop it from
+        // its tray, so both ids travel with the event.
+        if (ev.type === "task_moved") {
+          send({ type: "task_moved", taskId, fromProjectId: ev.fromProjectId, toProjectId: ev.toProjectId });
+          return;
+        }
         const event = coarse(ev);
         if (!event) return;
         // Task deleted mid-turn (rows are hard-deleted) — nothing to report;

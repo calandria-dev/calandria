@@ -9,17 +9,21 @@
 import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 
 // Lifecycle facts published by mutation ROUTES rather than the runner — a
-// manual status PATCH or /clear settling the task row (task_updated), or a
-// task hard-delete (task_deleted). Without them those mutations are silent on
-// the bus, so every other tab's "needs you" badges keep counting a task the
-// server already settled (or deleted). They're not transcript detail, so they
-// go to GLOBAL listeners only (publishGlobal) — per-task /messages streams
-// never see them. task_deleted carries its project id + freshly recomputed
-// awaiting count itself: by the time a listener sees it the row is gone, so
-// the usual re-read-the-task enrichment (GET /api/events) is impossible.
+// manual status PATCH or /clear settling the task row (task_updated), a task
+// hard-delete (task_deleted), or a task re-parented to another project
+// (task_moved). Without them those mutations are silent on the bus, so every
+// other tab's "needs you" badges keep counting a task the server already
+// settled (or deleted). They're not transcript detail, so they go to GLOBAL
+// listeners only (publishGlobal) — per-task /messages streams never see them.
+// task_deleted carries its project id + freshly recomputed awaiting count
+// itself: by the time a listener sees it the row is gone, so the usual
+// re-read-the-task enrichment (GET /api/events) is impossible. task_moved
+// carries BOTH project ids because the row only remembers where it landed,
+// and the tray it left has to lose it.
 export type TaskMutationEvent =
   | { type: "task_updated" }
-  | { type: "task_deleted"; projectId: string; awaiting_count: number };
+  | { type: "task_deleted"; projectId: string; awaiting_count: number }
+  | { type: "task_moved"; fromProjectId: string; toProjectId: string };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -38,7 +42,16 @@ export type TaskDeletedWireEvent = {
   /** The project's awaiting count recomputed AFTER the row was deleted. */
   awaiting_count: number;
 };
-export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | AgentAuthEvent;
+// A task changed projects. Deliberately count-free, unlike task_deleted: a move
+// also changes both projects' task_count, which no event carries, so clients
+// refetch the project list once — cheap for a rare, hand-driven mutation.
+export type TaskMovedWireEvent = {
+  type: "task_moved";
+  taskId: string;
+  fromProjectId: string;
+  toProjectId: string;
+};
+export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | TaskMovedWireEvent | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
 type GlobalListener = (taskId: string, ev: BusEvent) => void;

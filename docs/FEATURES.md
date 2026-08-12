@@ -42,6 +42,11 @@ Use a compact list or a full-width kanban board with Suggested, Not started, In 
 Needs input, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
 
+A misfiled task can be moved to another project from **Edit task**, keeping its description
+and transcript. Only tasks that haven't started can move — once a task has run, its git
+worktree belongs to the current project's repository — and the move drops any blocked-by
+links it had, since dependencies can't span projects.
+
 Agents can also suggest follow-up tasks while they work. Project recaps help restore your
 mental context when you return later.
 

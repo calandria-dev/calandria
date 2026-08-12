@@ -377,6 +377,107 @@ export function reorderTasks(ids: string[]) {
   })();
 }
 
+// Why a task may not change projects right now — null when it may. A task with
+// a worktree holds a checkout cut from its CURRENT project's repo: re-parenting
+// the row would leave it diffing against one repository and merging into
+// another. Rather than tear the worktree down behind the user's back, the move
+// is refused; delete-and-recreate is still the answer for started work.
+// (`started`, `running` and the worktree columns are checked together — a task
+// can be flagged started before its worktree exists, and a merged task keeps
+// `started` after its worktree is reclaimed.)
+export function moveTaskBlockedReason(task: Task): string | null {
+  if (task.running === 1) return "a task with a running turn can't be moved";
+  if (task.started === 1 || task.worktree_path || task.work_branch || task.base_sha)
+    return "a started task can't be moved — its git worktree belongs to the current project's repo";
+  return null;
+}
+
+// What a move left behind, so the caller can tell the user (dependency edges
+// can't span projects — see setTaskDeps — so every edge touching the task goes).
+export interface TaskMove {
+  task: Task;
+  /** Tasks this one was blocked by. */
+  dropped_blockers: string[];
+  /** Tasks that were blocked by this one. */
+  dropped_dependents: string[];
+}
+
+/**
+ * Re-parent an unstarted task to another project — the one path that changes
+ * `project_id` after creation (a misfiled task used to mean delete + recreate,
+ * losing its transcript). Throws when the task/project is missing or the task
+ * is past the point of no return (see moveTaskBlockedReason); moving a task to
+ * the project it's already in is a no-op.
+ *
+ * The task's own child rows (messages, summaries, uploads) are task-keyed, so
+ * they simply come along. The project-keyed ones — sessions, task_usage,
+ * task_merges — are deliberately NOT re-pointed: every one of them is written
+ * by a turn that has already opened a session, which is exactly the state this
+ * refuses to move. Loosening the guard means revisiting that.
+ */
+export function moveTask(taskId: string, projectId: string): TaskMove {
+  const db = getDb();
+  const task = getTask(taskId);
+  if (!task) throw new Error("task not found");
+  const dest = getProject(projectId);
+  if (!dest) throw new Error("project not found");
+  if (task.project_id === projectId) return { task, dropped_blockers: [], dropped_dependents: [] };
+  const blocked = moveTaskBlockedReason(task);
+  if (blocked) throw new Error(blocked);
+
+  const src = getProject(task.project_id);
+  // `agent` and `send_context` are both DERIVED from the owning project at
+  // creation (see createTask) but stored as plain columns, so nothing records
+  // whether a value was the user's explicit pick or the project's default. A
+  // value that still matches the SOURCE project's default is treated as
+  // inherited and re-derived from the destination; anything else is an explicit
+  // choice and travels with the task.
+  const srcAgent = src?.default_agent || "claude";
+  const agent = task.agent === srcAgent ? dest.default_agent || "claude" : task.agent;
+  const srcSend = src ? (src.send_context !== 0 ? 1 : 0) : 1;
+  const sendContext = task.send_context === srcSend ? (dest.send_context !== 0 ? 1 : 0) : task.send_context;
+  // Re-deriving the agent switches drivers, so the same rule the PATCH route
+  // applies to a manual switch holds here: run controls are provider-specific,
+  // and only an inherited/default choice is safe for the new driver.
+  const switched = agent !== task.agent;
+  const model = switched ? null : task.model;
+  const resolvedModel = switched ? null : task.resolved_model;
+  const reasoning = switched ? null : task.reasoning;
+  const permissionMode = switched ? null : task.permission_mode;
+  const sessionId = switched ? null : task.session_id;
+
+  // Position is per-project (createTask appends at MAX+1 within the project), so
+  // the moved task needs a fresh one or it collides with the destination's order.
+  const position = (
+    db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(projectId) as { n: number }
+  ).n;
+  const droppedBlockers = getTaskDeps(taskId);
+  const droppedDependents = (
+    db.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?").all(taskId) as { task_id: string }[]
+  ).map((r) => r.task_id);
+  // A blocker-less task can never auto-start (lib/autoStart.ts selects through
+  // task_dependencies), so the opt-in would be a dead flag — clear it.
+  const autoStart = droppedBlockers.length ? 0 : task.auto_start;
+  const now = Date.now();
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_id = ?").run(taskId, taskId);
+    db.prepare(
+      `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
+        reasoning = ?, permission_mode = ?, session_id = ?, auto_start = ?, updated_at = ? WHERE id = ?`
+    ).run(projectId, position, agent, sendContext, model, resolvedModel, reasoning, permissionMode, sessionId, autoStart, now, taskId);
+    // Same dead-flag rule for the tasks left behind: one that just lost its last
+    // blocker has nothing left to auto-start from.
+    const clearDependent = db.prepare(
+      `UPDATE tasks SET auto_start = 0, updated_at = ? WHERE id = ? AND auto_start = 1
+         AND NOT EXISTS (SELECT 1 FROM task_dependencies WHERE task_id = ?)`
+    );
+    for (const id of droppedDependents) clearDependent.run(now, id, id);
+  })();
+
+  return { task: getTask(taskId)!, dropped_blockers: droppedBlockers, dropped_dependents: droppedDependents };
+}
+
 export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const cur = getTask(id);
   if (!cur) return undefined;
