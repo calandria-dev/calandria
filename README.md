@@ -6,13 +6,14 @@
 
 Operator is a web-based control room for your coding agents. 
 
-Self-host it or use our hosted version, then reach your workspace from your computer, tablet, or phone. 
+Run it locally on your machine, self-host it on a server, or use our hosted version. A
+deployed Operator workspace is available from your computer, tablet, or phone.
 
 Every task gets a persistent agent session in an isolated git worktree. 
 
 Operator uses your existing Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
 
-[**Try Operator hosted**](https://getoperator.dev) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
+[**Try Operator hosted**](https://getoperator.dev) · [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Node ≥20.9](https://img.shields.io/badge/node-%E2%89%A520.9-brightgreen.svg)](package.json)
@@ -70,7 +71,7 @@ optional explicit choice.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
-## Quick start
+## Run locally
 
 You need Node 20.9+, macOS or Linux, and at least one supported agent CLI.
 
