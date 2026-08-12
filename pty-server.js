@@ -13,7 +13,7 @@ const os = require("node:os");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
 
-// Per-instance overrides (see README "Configuration"). The sidecar stays bound
+// Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). The sidecar stays bound
 // to loopback by default — the browser never talks to it directly; server.js
 // proxies /pty upgrades to it on the same machine.
 const PORT = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;

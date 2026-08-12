@@ -339,7 +339,7 @@ function newManaged(projectId: string, name: string, kind: ServiceKind, command:
 // for requests arriving via the public hostname (the router preserves the
 // original Host header). Vite/Next need a config line instead — the public
 // host is handed over as ORCH_PUBLIC_HOST so configs can reference it; see
-// README "Managed services".
+// docs/SERVICES.md.
 function serviceEnv(m: Managed): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(m.port), FORCE_COLOR: "1" };
   const host = publicServiceHost(m.slug);
