@@ -43,6 +43,23 @@ the deterministic mock agent, so no agent CLI or login is required. See
 - **Env-driven config:** a new per-instance knob is an env var with a documented default,
   added to `lib/config.ts` (or `lib/features.ts` for flags) **and** `.env.example`.
 
+## AI-assisted contributions
+
+AI-written code is welcome. Contributors remain responsible for understanding the change,
+testing it, and addressing review feedback.
+
+Every pull request must include a short **Human-written context** section written in the
+contributor's own words, without AI generating or rewriting it. It must explain:
+
+- the bug, limitation, or user need being addressed; and
+- the proposed fix at a high level, including why that approach was chosen.
+
+Clearly label any AI-generated text elsewhere in the pull request description or review
+discussion as **AI-generated details**. You do not need to label individual lines of
+AI-written code. The goal is to give reviewers an authentic explanation from the person
+submitting and standing behind the change, while keeping AI-assisted implementation fully
+welcome.
+
 ## Developer Certificate of Origin
 
 Contributions are accepted under the [Developer Certificate of
