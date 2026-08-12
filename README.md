@@ -2,11 +2,12 @@
 
 # Operator
 
-### Run Claude Code and Codex in parallel across every project, from one control room.
+### Run Claude Code and Codex in parallel across every project, from any browser.
 
-Every task gets a persistent agent session in an isolated git worktree. See which agents
-need you, review their diffs, and merge when the work is ready. Operator uses your existing
-Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
+Operator is a web-based control room for your coding agents. Self-host it or use our hosted
+version, then reach your workspace from your computer, tablet, or phone. Every task gets a
+persistent agent session in an isolated git worktree. Operator uses your existing Max, Pro,
+or ChatGPT subscription, with no API key or per-token billing required.
 
 [**Try Operator hosted**](https://getoperator.dev) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
 
@@ -20,6 +21,8 @@ Max, Pro, or ChatGPT subscription, with no API key or per-token billing required
 
 ## Why Operator
 
+- **Your workspace is wherever you are.** Deploy Operator once and manage agents from any
+  device with a browser.
 - **Run many tasks without juggling terminals.** Every task has its own worktree, branch,
   transcript, and agent session.
 - **Know where you are needed.** A cross-project inbox surfaces sessions waiting for input
@@ -29,8 +32,8 @@ Max, Pro, or ChatGPT subscription, with no API key or per-token billing required
 
 ## How it works
 
-**Create a task → Operator creates an isolated worktree → your agent works → Operator
-alerts you when needed → you review and merge.**
+**Create tasks → connect them into a pipeline → Operator gives each one an isolated worktree
+and runs it when its dependencies finish → it alerts you when needed → you review and merge.**
 
 Project context is written once and carried into each task. Server-owned turns and persisted
 transcripts survive browser reloads and laptop sleep, and `/clear` starts a fresh context
@@ -40,13 +43,15 @@ window while preserving the task's lineage.
 
 - **Parallel, isolated tasks:** work across multiple repositories without agents mixing
   files or branches.
+- **Web-based and self-hostable:** run Operator on your own machine or server, then securely
+  access the same workspace from desktop or mobile.
 - **One “Needs you” inbox:** jump directly to any session waiting for an answer.
 - **Persistent context:** reuse project knowledge and continue long-running work across
   fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve conflicts, merge, or
   create a GitHub PR from the same screen.
-- **Task orchestration:** use list or kanban views, chain dependencies, and automatically
-  start tasks when their blockers finish.
+- **Branching task pipelines:** make tasks depend on one or several earlier tasks, branch
+  work into parallel paths, and launch each task automatically when its blockers finish.
 - **A complete workspace:** chat, terminal, managed services, live logs, and transparent
   token and usage insights stay together.
 
@@ -76,12 +81,14 @@ Open <http://localhost:3000>. The first-run wizard connects Claude Code or Codex
 you through a short hands-on tutorial.
 
 Use `npm run dev` only when developing Operator itself. For Docker, authentication,
-networking, and configuration, see the [self-hosting guide](docs/SELF_HOSTING.md).
+networking, and secure access from anywhere, see the [self-hosting guide](docs/SELF_HOSTING.md).
 
 ## Hosted
 
 [**getoperator.dev**](https://getoperator.dev) gives you an always-on Operator instance
-with no server setup. It uses this open-source app with a hosted control plane.
+with no server setup. Open it from any browser, including your phone, and return to the same
+projects, tasks, and running agent sessions. It uses this open-source app with a hosted
+control plane.
 
 ## Community
 
