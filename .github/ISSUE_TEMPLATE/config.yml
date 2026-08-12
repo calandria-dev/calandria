@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature request
+    url: https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas
+    about: Propose a feature, describe the problem, and gather feedback.
+  - name: Question or support
+    url: https://github.com/iishyfishyy/operator-oss/discussions/categories/q-a
+    about: Ask the community how to use or configure Operator.
+  - name: Security vulnerability
+    url: https://github.com/iishyfishyy/operator-oss/security/advisories/new
+    about: Report vulnerabilities privately rather than opening a public issue.
