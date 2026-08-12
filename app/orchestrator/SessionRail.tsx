@@ -129,7 +129,7 @@ export function SessionRail({ project, task, sessions, running, onResolveWithAI,
       </div>
       <div className="rail-scroll">
         {tab === "diff" && (
-          <TaskChanges taskId={task.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             if (res.ok && !res.merged) onSwitchToChat();
             return res;

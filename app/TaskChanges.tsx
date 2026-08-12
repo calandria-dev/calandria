@@ -141,8 +141,66 @@ const FileDiff = memo(function FileDiff({
   );
 });
 
+/**
+ * Offered after a merge lands: publish the base branch the merge just advanced.
+ *
+ * Merging only ever moved the LOCAL base branch, so a team that reviews on
+ * GitHub ends up with two diverging integration points — the app's and the
+ * remote's. One click closes that loop. Renders nothing unless there's a remote
+ * and something to send, so a purely local project never sees it.
+ */
+function PushBaseBranch({ projectId }: { projectId: string }) {
+  const [st, setSt] = useState<{ ahead: number; label: string } | null>(null);
+  const [state, setState] = useState<"" | "busy" | "done">("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/projects/${projectId}/base-branch`, { cache: "no-store" });
+        const j = await r.json();
+        if (live && j?.hasRemote && (j.ahead ?? 0) > 0 && !j.diverged) setSt({ ahead: j.ahead, label: j.label || "the remote" });
+      } catch { /* no banner beats a wrong one */ }
+    })();
+    return () => { live = false; };
+  }, [projectId]);
+
+  if (!st) return null;
+  if (state === "done") return <span className="tc-merged">✓ Pushed to {st.label}</span>;
+
+  const push = async () => {
+    setState("busy");
+    setErr("");
+    try {
+      const r = await fetch(`/api/projects/${projectId}/base-branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "push" }),
+      });
+      const j = await r.json();
+      // A rejected push leaves the merge intact — it landed locally either way.
+      if (j?.ok) setState("done");
+      else { setErr(j?.error || "push failed"); setState(""); }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setState("");
+    }
+  };
+
+  return (
+    <div className="tc-push">
+      <button className="tc-btn" onClick={push} disabled={state === "busy"} title={`Push the base branch to ${st.label}`}>
+        {state === "busy" ? "Pushing…" : `Push to ${st.label}`}
+      </button>
+      {err && <span className="tc-push-err">⚠ {err}</span>}
+    </div>
+  );
+}
+
 export default function TaskChanges({
   taskId,
+  projectId,
   running,
   prUrl,
   onMerged,
@@ -150,6 +208,7 @@ export default function TaskChanges({
   onResolveWithAI,
 }: {
   taskId: string;
+  projectId: string;
   running?: boolean;
   prUrl?: string; // GitHub PR already opened from this branch ("" / undefined = none)
   onMerged?: () => void;
@@ -467,6 +526,7 @@ export default function TaskChanges({
               ? `Already up to date with ${mergeRes.targetBranch}.`
               : `Merged into ${mergeRes.targetBranch}.`
             : `⚠ ${mergeRes.error || "merge failed"}`}
+          {mergeRes.ok && !mergeRes.alreadyMerged && <PushBaseBranch projectId={projectId} />}
           {mergeRes.conflicts && mergeRes.conflicts.length > 0 && (
             <div className="tc-conflicts">{mergeRes.conflicts.join("\n")}</div>
           )}

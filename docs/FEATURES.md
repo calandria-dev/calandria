@@ -36,6 +36,25 @@ Operator puts the task conversation and git diff side by side. From there you ca
 Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
 work requires an explicit permanent-discard confirmation.
 
+### Staying level with the remote
+
+Work does not only arrive through the merge button — a pull request merged on GitHub, a
+teammate's push, or a pull in another checkout all land on the remote instead. Operator
+fetches the base branch (best-effort) when you open a project and again before it cuts a
+new task worktree, so a new task starts from the real tip rather than a local `main` that
+went stale hours ago.
+
+Your own checkout is never moved behind your back. When local `main` is behind, the project
+header says so and offers a one-click fast-forward; when it is ahead, it offers a push; when
+the two have diverged, it says that and leaves the resolution to you. After a merge lands,
+the same push is offered inline, so the app-side loop and the GitHub-side loop stop drifting
+apart. Set `ORCH_GIT_FETCH=off` to keep an instance entirely offline.
+
+Advancing the base branch is what turns an in-flight task's pending merge from a
+fast-forward into a sync-then-merge, so a task that read "up to date" a moment ago can
+suddenly want syncing. The sync banner names the reason: the base branch moved on, not
+anything about the task.
+
 ## Planning and orchestration
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,

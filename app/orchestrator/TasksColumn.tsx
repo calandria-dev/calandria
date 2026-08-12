@@ -8,6 +8,7 @@ import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
 import { TaskCardSkeleton } from "./Layout";
 import { TaskBoard } from "./TaskBoard";
+import { BaseBranchBanner } from "./BaseBranchBanner";
 
 function TaskCard({ task, agents, selected, running, blockedBy, onSelect }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
@@ -88,7 +89,7 @@ function useCollapsed(key: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onCollapse, mobile, onBack }: {
+export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: Partial<Pick<TaskRow, "status" | "suggested">>, orderedIds: string[]) => void;
@@ -96,6 +97,8 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   mobile?: boolean; onBack?: () => void;
+  // Bumped when a merge lands, so the base-branch banner re-reads a branch the merge just moved.
+  baseBranchTick?: number;
 }) {
   const [query, setQuery] = useState("");
   // Minimize the Done/Cancelled groups so a long backlog of finished (or
@@ -141,6 +144,7 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
           </div>
           <div className="ctx-edit">{Icon.edit()} Context</div>
         </button>
+        <BaseBranchBanner projectId={project.id} refreshKey={baseBranchTick} />
       </div>
       {canSearch && <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" />}
       {loading ? (

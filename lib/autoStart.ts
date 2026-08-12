@@ -97,7 +97,7 @@ async function launchInitialTurn(taskId: string, doneTitle: string): Promise<voi
       // falling back to repo_path on any git hiccup — same as the route.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
-          const wt = await ensureWorktree(project.repo_path, fresh.id);
+          const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
           if (wt) {
             fresh.worktree_path = wt.path;
             fresh.work_branch = wt.branch;

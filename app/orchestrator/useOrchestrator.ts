@@ -383,9 +383,15 @@ export function useOrchestrator() {
   // A merge just landed. Refresh the task list so its merged state shows, and —
   // if this was the tutorial (a task in the seeded Welcome project) — fire the
   // "now build your own" nudge, the payoff for finishing the loop.
+  const [baseBranchTick, setBaseBranchTick] = useState(0);
+
   const onMerged = useCallback(() => {
     if (selProj) void loadTasks(selProj, false);
     if (project?.seeded) setNudge(true);
+    // A merge moves the project's base branch, which is exactly what the
+    // base-branch banner reports on — nudge it to re-read rather than leaving a
+    // stale "in sync" (or a stale behind-count) on screen.
+    setBaseBranchTick((n) => n + 1);
   }, [selProj, loadTasks, project]);
 
   // A PR was just opened (or updated) for a task. Refresh the task list so the
@@ -635,7 +641,7 @@ export function useOrchestrator() {
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
     settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
-    onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated,
+    onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated, baseBranchTick,
     layout, setLayout, accessEmail, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,

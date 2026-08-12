@@ -61,12 +61,19 @@ function SyncBanner({ taskId, running, onResolveWithAI, onSwitchToChat }: {
     finally { setBusy(false); load(); }
   };
 
+  // A task that read "up to date" a moment ago can land here without having
+  // changed at all: catching the local base branch up to its remote (or landing
+  // another task) moves the goalposts under every task in flight. Saying which
+  // side moved is the difference between "something is wrong with my task" and
+  // "main moved on", so the message names it.
+  const why = `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task — it just needs the newer commits before its own work can land.`;
+
   return (
-    <div className={`sync-banner${conflicts ? " conflict" : ""}`}>
+    <div className={`sync-banner${conflicts ? " conflict" : ""}`} title={why}>
       <span className="sync-msg">
         {conflicts > 0
-          ? `${st.behind} behind ${st.baseBranch} · conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
-          : `${st.behind} commit${st.behind === 1 ? "" : "s"} behind ${st.baseBranch}`}
+          ? `${st.baseBranch} moved on — ${st.behind} ahead of this task, conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
+          : `${st.baseBranch} moved on — ${st.behind} commit${st.behind === 1 ? "" : "s"} to pick up`}
       </span>
       <span className="sync-spacer" />
       {conflicts > 0 ? (
@@ -474,7 +481,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             </div>
           )
         ) : view === "changes" ? (
-          <TaskChanges taskId={task.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             // Resolution turn was kicked off (conflicts, not a clean merge) —
             // jump back to Chat so the user sees the message stream in.

@@ -30,6 +30,18 @@ test("sync endpoint reports an isolated, up-to-date worktree", async ({ request 
   expect(sync.behind).toBe(0);
 });
 
+test("base-branch endpoint stays quiet for a project with no remote", async ({ request }) => {
+  // The banner must render nothing — and the endpoint must not error or hang —
+  // for the very common local-only project. Every remote-aware surface is
+  // supposed to no-op rather than degrade when there's nowhere to fetch from.
+  const { task } = await runTaskToCompletion(request, { name: `remote-${uid()}`, title: "No remote here" });
+  const res = await request.get(`/api/projects/${task.project_id}/base-branch`);
+  expect(res.ok()).toBe(true);
+  const status = await res.json();
+  expect(status.hasRemote).toBe(false);
+  expect(status.behind ?? 0).toBe(0);
+});
+
 test("/clear condenses the generation and starts the next one fresh", async ({ request }) => {
   const { task } = await runTaskToCompletion(request, { name: `clear-${uid()}`, title: "Clear me" });
   expect(task.generation).toBe(1);

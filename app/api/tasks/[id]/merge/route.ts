@@ -31,6 +31,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       workBranch: task.work_branch,
       baseBranch: project.branch,
       message: `${task.title} (orchestrator task ${task.id})`,
+      // Lets the merge fast-forward the base past any remote commits the task
+      // was cut from, so the merge commit holds only the task's own work.
+      baseSha: task.base_sha,
     });
 
     if (result.ok) {

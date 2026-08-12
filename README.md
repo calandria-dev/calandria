@@ -33,6 +33,9 @@ Operator uses your existing Max, Pro, or ChatGPT subscription, with no API key o
   while the rest keep working.
 - **Stay in control of every change.** Review the diff beside the conversation, then merge,
   resolve conflicts, or open a pull request.
+- **Start from the real tip.** Operator fetches the base branch before cutting a task's
+  worktree, so a pull request merged on GitHub doesn't leave every new task branching off a
+  stale `main` — and it tells you when your own checkout has fallen behind.
 
 ## How it works
 
