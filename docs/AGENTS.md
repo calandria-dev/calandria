@@ -62,7 +62,11 @@ Two upstream differences are visible:
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
-  mid-turn approval mode.
+  mid-turn approval mode, and asks Codex not to require approvals
+  (`approval_policy=never`). If an enterprise-managed Codex configuration disallows
+  that, Operator detects the CLI's downgrade warning on the first affected turn and
+  switches itself to the compatible `on-request` policy automatically — the failed
+  turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` remains the manual override.
 
 ## Adding another agent
 
