@@ -13,6 +13,11 @@
 # already caps a fork's GITHUB_TOKEN at read-only, and this workflow adds the
 # belt to that brace by never running docker/login-action on the PR path.
 # PRs still build both arches, so a broken Dockerfile fails before merge.
+#
+# It is also gated on the unit suite (the `test` job below calls test.yml).
+# A green `docker build` only proves the Dockerfile is sound — it says nothing
+# about the code inside the image, and without this the registry would happily
+# accept a `latest` whose tests are red.
 name: Publish image
 
 on:
@@ -84,8 +89,22 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+  # The correctness gate, reused from test.yml rather than copied, so there is
+  # exactly one definition of "the tests pass". `build` needs it, so a red suite
+  # burns ~2 minutes of runner instead of ~20 and nothing reaches ghcr.io — not
+  # even the untagged by-digest blobs the matrix pushes ahead of the manifest.
+  #
+  # e2e: off — it already runs in test.yml on this same push, and the publish
+  # path has its own end-of-pipeline proof in `verify` (which boots the actual
+  # published image on both arches). Paying for a second full build + browser
+  # run here would add ~10 minutes to every release for no new signal.
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      e2e: "off"
+
   build:
-    needs: prepare
+    needs: [prepare, test]
     strategy:
       fail-fast: false
       matrix:

@@ -25,6 +25,15 @@ creation, turns, diff, merge, and workspace views against a disposable instance.
 the deterministic mock agent, so no agent CLI or login is required. See
 [`e2e/README.md`](e2e/README.md).
 
+## Continuous integration
+
+`.github/workflows/test.yml` runs `npm test` on every pull request and every push to
+`main`, and the image publish gates on it — a red suite never reaches the registry.
+
+The e2e suite is much slower, so it does **not** run on every push. It runs on `main`, and
+on a pull request labelled `e2e` — add that label when a change touches the core flow
+(onboarding, turns, diff, merge) and you want the browser-level proof before merge.
+
 ## Before starting
 
 - Search existing issues and discussions first.

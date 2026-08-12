@@ -1,0 +1,127 @@
+# Run the test suites. This is the repo's correctness gate; publish-image.yml
+# calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
+#
+# Two jobs, deliberately on different schedules:
+#
+#   unit  — `npm test` (vitest). ~1-2 minutes. Runs on everything, always.
+#   e2e   — `npm run test:e2e` (build + Playwright against the real prod server).
+#           Many minutes: it does a full `next build`, boots server.js + the pty
+#           sidecar against a hermetic temp instance, and drives a browser. Too
+#           slow to sit in front of every PR push, so it runs on main, on manual
+#           dispatch, and on a PR that carries the `e2e` label — the escape
+#           hatch for a change that obviously touches the app's core flow.
+#
+# `npm run preflight` (unit + e2e) is the documented pre-push gate locally; this
+# file is the same pair, split so the fast half reports fast.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    # `labeled` is here so adding the `e2e` label to an open PR actually starts
+    # an e2e run instead of waiting for the next push. The cost is that any
+    # label change re-runs `unit`; the concurrency group below cancels the
+    # superseded run, so it is one wasted job at worst.
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: "Run the e2e suite (auto = yes for a manual run)"
+        type: choice
+        options: [auto, "on", "off"]
+        default: auto
+  # Called by publish-image.yml, which wants the unit gate without paying for
+  # e2e a second time on the publish path.
+  workflow_call:
+    inputs:
+      e2e:
+        description: "auto (main/dispatch/labelled PR) | on (always) | off (never)"
+        type: string
+        default: auto
+
+# NOT the same group string as publish-image.yml's. A reusable workflow's
+# concurrency is evaluated in the CALLER's context, so `${{ github.workflow }}`
+# here resolves to "Publish image" when that workflow calls us — sharing the
+# group would have the called job queue behind the run that is waiting on it.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit (vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # .npmrc sets engine-strict, so this also asserts the Node floor.
+      - run: npm ci
+
+      # vitest, serial on purpose (vitest.config.ts sets fileParallelism:false):
+      # the tests shell out to a lot of real git subprocesses and four files in
+      # parallel thrash the process table. Don't "fix" this with --threads.
+      # No git identity is set up here on purpose — tests/setup.ts pins its own
+      # GIT_CONFIG_GLOBAL, so a runner with no git config is the case it must
+      # already handle.
+      - run: npm test
+
+  e2e:
+    name: End-to-end (Playwright)
+    # inputs is null on push/pull_request, so the `!= 'off'` branch is the
+    # default path there; only an explicit 'off' from a caller suppresses it.
+    if: >-
+      ${{ inputs.e2e == 'on'
+          || (inputs.e2e != 'off'
+              && (github.event_name == 'push'
+                  || github.event_name == 'workflow_dispatch'
+                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Chromium only — playwright.config.ts declares no other project.
+      # --with-deps pulls the system libraries the runner image lacks.
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # `test:e2e` is `npm run build && playwright test`, and the build MUST
+      # come first: the suite runs `npm start`, i.e. the BUILT bundle, so
+      # skipping it would silently test whatever was in .next before (there is
+      # nothing here, so it would simply fail to boot). See e2e/README.md.
+      # Everything else is self-contained: e2e/env.ts makes a temp root for the
+      # DB, worktrees and fixture repos and pins its own gitconfig, and
+      # ORCH_E2E_MOCK_AGENT=1 swaps in the deterministic mock driver, so no
+      # agent CLI, login, or network access is involved.
+      - name: Build and run the e2e suite
+        run: npm run test:e2e
+
+      # traces (retain-on-failure) and screenshots land in test-results/.
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-artifacts-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
