@@ -519,6 +519,20 @@ export function useOrchestrator() {
     setEditId(null);
   };
 
+  // Re-parent a misfiled task. Only unstarted tasks can move (the server
+  // refuses the rest — a worktree belongs to its project's repo) and every
+  // dependency edge touching it is dropped, since edges can't span projects.
+  // The row leaves this project's list right away; the published task_moved
+  // event re-syncs every other tab. Rejects on refusal — the modal shows why.
+  const moveTaskToProject = async (id: string, projectId: string) => {
+    await jsend<TaskRow>(`/api/tasks/${id}/move`, "POST", { project_id: projectId });
+    setTasks((prev) => prev.filter((x) => x.id !== id));
+    setEditId(null);
+    setSelTask((cur) => (cur === id ? null : cur));
+    // Both projects' task counts changed; the badge sums come from the server.
+    jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
+  };
+
   // Hard-deletes the task (and its worktree/branch server-side), closes the edit
   // modal, and drops it from the selection if it was the one being viewed.
   const removeTask = async (id: string) => {
@@ -628,7 +642,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, fetchRecap, runTurn, answerQuestion, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
-    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

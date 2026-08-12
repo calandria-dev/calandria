@@ -82,6 +82,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // atomically, so no other turn can have launched in the meantime.
       const fresh = getTask(id);
       if (!fresh) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+      // Including a re-parent (POST /move, unstarted tasks only): re-read the
+      // owning project so the worktree below is cut from the repo this task
+      // belongs to NOW, not the one it was filed under when the request landed.
+      const proj = fresh.project_id === project.id ? project : getProject(fresh.project_id);
+      if (!proj || !proj.repo_path.trim()) return new Response(JSON.stringify({ error: "no project" }), { status: 400 });
+      // The up-front mkdir covered the project we read then, not this one.
+      if (proj.id !== project.id) {
+        try {
+          fs.mkdirSync(proj.repo_path, { recursive: true });
+        } catch (err) {
+          return new Response(
+            JSON.stringify({ error: `Can't use working directory ${proj.repo_path}: ${err instanceof Error ? err.message : String(err)}` }),
+            { status: 400 }
+          );
+        }
+      }
 
       const isInitial = !fresh.started;
       // buildProjectContext() is the canonical source for task title/details;
@@ -103,7 +119,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // point — a second POST landing in this window queues instead of double-running.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
-          const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
+          const wt = await ensureWorktree(proj.repo_path, fresh.id, proj.branch);
           if (wt) {
             fresh.worktree_path = wt.path;
             fresh.work_branch = wt.branch;
@@ -124,11 +140,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Echo the user message to every open stream of this task (other viewers,
         // and the sender itself — the client renders from events, not optimistically).
         publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-        startTurn(fresh, project, userText, "", controller);
+        startTurn(fresh, proj, userText, "", controller);
       } else {
         // Resume: catch the worktree up, persist + echo the message, then hand off
         // to the detached runner. Same path the queue drainer uses.
-        await startResumeTurn(fresh, project, userText, controller);
+        await startResumeTurn(fresh, proj, userText, controller);
       }
       // The runner owns the claim now; its finally releases (or hands off) the slot.
       launched = true;

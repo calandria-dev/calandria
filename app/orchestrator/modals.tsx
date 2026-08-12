@@ -105,7 +105,82 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   );
 }
 
-export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => void; onDelete: (id: string) => void; onOpenSetup?: () => void }) {
+// Re-parent a misfiled task. Acts immediately (like Delete below it) rather
+// than riding along with Save: a move isn't a field set — it renumbers the
+// task's order in the destination, re-derives what it inherited from the old
+// project, and drops the blocked-by links that would otherwise span projects.
+// Offered only while the task is unstarted; once it has a worktree, that
+// checkout belongs to the current project's repo and the server refuses.
+function MoveProjectField({ task, tasks, projects, agents, onMove }: {
+  task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle;
+  onMove: (id: string, projectId: string) => Promise<void>;
+}) {
+  const [target, setTarget] = useState("");
+  const [moving, setMoving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const targets = useMemo(() => projects.filter((p) => p.id !== task.project_id), [projects, task.project_id]);
+  if (targets.length === 0) return null;
+  const dest = targets.find((p) => p.id === target) ?? null;
+  // Every edge touching this task goes — the ones it owns and the ones pointing
+  // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
+  const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
+  const links = (task.depends_on?.length ?? 0) + dependents;
+  // Mirrors moveTask's rule server-side: a value that still matches the current
+  // project's default reads as inherited, so it re-derives in the destination —
+  // an explicit choice travels with the task. Previewed rather than sprung on
+  // the user, since the guess can only ever be a guess.
+  const src = projects.find((p) => p.id === task.project_id);
+  const destAgent = dest ? dest.default_agent || "claude" : null;
+  const switching = !!dest && task.agent === (src?.default_agent || "claude") && destAgent !== task.agent ? destAgent : null;
+  const srcSend = src ? (src.send_context !== 0 ? 1 : 0) : 1;
+  const destSend = dest ? (dest.send_context !== 0 ? 1 : 0) : null;
+  const contextFlip = dest && task.send_context === srcSend && destSend !== task.send_context ? destSend : null;
+  const move = async () => {
+    if (!dest) return;
+    setMoving(true);
+    setErr(null);
+    try {
+      await onMove(task.id, dest.id);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setMoving(false);
+    }
+  };
+  return (
+    <div className="field">
+      <div className="lab">Move to project <span className="opt">— unstarted tasks only</span></div>
+      <div className="dep-list">
+        {targets.map((p) => (
+          <label key={p.id} className={`dep-row ${target === p.id ? "on" : ""}`}>
+            <input type="radio" name="move-project" checked={target === p.id} onChange={() => { setTarget(p.id); setErr(null); }} />
+            <span aria-hidden style={{ width: 15, height: 15, borderRadius: 5, background: p.color, flex: "0 0 auto" }} />
+            <span className="dep-title">{p.name}</span>
+            <span className="dep-status">{p.task_count} task{p.task_count !== 1 ? "s" : ""}</span>
+          </label>
+        ))}
+      </div>
+      {dest ? (
+        <>
+          <div className="hlp" style={{ color: "var(--amber)" }}>
+            Moves this task to {dest.name} right away — unsaved edits above are discarded.
+            {links > 0 && ` ${links} blocked-by link${links !== 1 ? "s" : ""} drop${links === 1 ? "s" : ""}: dependencies can't span projects.`}
+            {switching && ` It will run on ${agentLabel(agents, switching)}, ${dest.name}'s default.`}
+            {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
+            {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
+          </div>
+          <button className="btn btn-line" style={{ marginTop: 8 }} disabled={moving} onClick={move}>
+            {Icon.chevRight()} {moving ? "Moving…" : `Move to ${dest.name}`}
+          </button>
+        </>
+      ) : (
+        <div className="hlp">Pick a project to re-file this task under. Its transcript and description come with it.</div>
+      )}
+      {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
+    </div>
+  );
+}
+
+export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -147,6 +222,13 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
+      {/* Same gate as the agent picker, for the same reason: once a task has a
+          session it has a worktree cut from THIS project's repo. (The server
+          also refuses a worktree left by a failed launch — a state the client
+          row doesn't carry — and the field surfaces that error.) */}
+      {canChangeAgent && (
+        <MoveProjectField task={task} tasks={tasks} projects={projects} agents={agents} onMove={onMove} />
+      )}
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
           This permanently removes “{task.title}”, its agent session and git worktree from the orchestrator. Any unmerged work in the worktree is discarded.

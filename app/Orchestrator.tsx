@@ -551,7 +551,7 @@ export default function Orchestrator() {
 
       {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} onClose={() => o.setModal(null)} onCreate={o.createTask} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
-        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onOpenSetup={o.rerunOnboarding} />
+        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onOpenSetup={o.rerunOnboarding} />
       )}
       {o.modal === "context" && project && <ContextModal project={project} agents={o.agents} onSetDefaultAgent={o.setProjectDefaultAgent} onClose={() => o.setModal(null)} onSave={o.saveContext} onDelete={() => o.removeProject(project.id)} onDeprecate={() => o.setDeprecated(project.id, true)} />}
       {o.modal === "project" && <NewProjectModal onClose={() => o.setModal(null)} onCreate={o.createProject} />}
