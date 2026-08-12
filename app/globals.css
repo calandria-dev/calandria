@@ -668,7 +668,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sess-head .sh-main{min-width:150px;flex:1;}
 .sess-head .crumb{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;}
 .sess-head .crumb .sep{opacity:.5;}
-.sess-head .sh-title{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sess-head .sh-title{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:2px;display:flex;align-items:center;gap:4px;min-width:0;}
+.sess-head .sh-title .sht-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.sess-head .sh-edit{flex:0 0 auto;width:24px;height:24px;display:grid;place-items:center;border-radius:6px;color:var(--ink-3);}
+.sess-head .sh-edit svg{width:13px;height:13px;}
 .sess-head .sh-tools{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
 
 /* clickable link to the GitHub PR opened from this task's branch */

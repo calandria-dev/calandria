@@ -337,7 +337,10 @@ export function SessionView({ project, task, agents, messages, running, blockedB
               <span className="pic" style={{ width: 16, height: 16, borderRadius: 5, background: project.color, display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700 }}>{project.name[0]}</span>
               {project.name} <span className="sep">/</span> task
             </div>
-            <div className="sh-title">{task.title}</div>
+            <div className="sh-title">
+              <span className="sht-text" title={task.title}>{task.title}</span>
+              <button className="icon-btn sh-edit" title="View & edit task details" aria-label="View & edit task details" onClick={onEdit}>{Icon.edit()}</button>
+            </div>
           </div>
           <div className="sh-tools">
             {task.pr_url && (
