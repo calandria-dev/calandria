@@ -175,6 +175,9 @@ export type AgentInfoT = {
   id: string;
   label: string;
   provider?: string | null;
+  // The active provider's credentials can be refreshed from the UI (AWS SSO
+  // device-code flow) — shows the refresh button in the Bedrock connect card.
+  providerRefresh?: boolean;
   capabilities: AgentCapabilitiesT;
   connected: boolean;
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" | "bedrock" } | null;

@@ -36,6 +36,10 @@ export async function GET() {
         id: d.id,
         label: d.label,
         provider,
+        // Whether the active provider's credentials can be refreshed from the
+        // UI (AWS SSO device-code flow) — drives the connect card's refresh
+        // button; false = "reconfigure and restart" guidance only.
+        providerRefresh: d.providerAuthRefreshable?.() ?? false,
         capabilities: d.capabilities,
         connected: keyed || !!conn,
         authenticated: keyed || !!conn,

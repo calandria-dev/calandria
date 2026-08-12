@@ -213,6 +213,113 @@ function BedrockConnect({ agent, onConnected }: { agent: AgentInfoT; onConnected
       </button>
       {busy && <div className="wiz-verify"><span className="wiz-spin" /> <span>Running a quick test turn through Amazon Bedrock…</span></div>}
       {err && <div className="hlp" style={{ color: "var(--red)", marginTop: 8 }}>⚠ {err}</div>}
+      {agent.providerRefresh && <BedrockRefresh agent={agent} onConnected={onConnected} />}
+    </div>
+  );
+}
+
+// The in-app AWS SSO refresh: drives the agent's login surface, which on
+// Bedrock runs the instance's refresh command (Claude Code's `awsAuthRefresh`
+// setting, or a device-code `aws sso login` for the SSO profile) and surfaces
+// the device URL + one-time code here. Clicking through lands on the IdP
+// (silent if that session is still live) then the AWS approval page; nothing is
+// pasted back — the command exits on approval and the poll flips to success.
+function BedrockRefresh({ agent, onConnected }: { agent: AgentInfoT; onConnected?: () => void }) {
+  const [login, setLogin] = useState<AgentLoginT | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const fired = useRef(false);
+  const base = `/api/agents/${agent.id}/login`;
+
+  // Rejoin a refresh already underway (card re-mounted / page reload).
+  useEffect(() => {
+    jget<AgentLoginT | null>(base)
+      .then((l) => { if (l && l.status !== "idle") setLogin(l); })
+      .catch(() => {});
+  }, [base]);
+
+  const succeed = useCallback(() => {
+    if (fired.current) return;
+    fired.current = true;
+    // Prove the fresh credentials end-to-end (also updates the connection record).
+    jsend<ClaudeVerifyT>(`/api/agents/${agent.id}/verify`, "POST").catch(() => {}).finally(() => onConnected?.());
+  }, [agent.id, onConnected]);
+
+  const start = async () => {
+    setBusy(true);
+    fired.current = false;
+    try {
+      const l = await jsend<AgentLoginT>(base, "POST");
+      setLogin(l);
+      if (l.status === "success") succeed();
+    } catch (e) {
+      setLogin({ status: "error", url: null, email: null, plan: null, log: "", error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Poll while the CLI waits for the browser-side approval.
+  useEffect(() => {
+    if (!login || (login.status !== "starting" && login.status !== "awaiting")) return;
+    const t = setInterval(() => {
+      jget<AgentLoginT>(base).then((l) => {
+        setLogin(l);
+        if (l.status === "success") succeed();
+      }).catch(() => {});
+    }, 1800);
+    return () => clearInterval(t);
+  }, [login, base, succeed]);
+
+  if (login?.status === "success") {
+    return (
+      <div className="wiz-connected" style={{ marginTop: 12 }}>
+        <span className="wiz-ok">{Icon.check()}</span>
+        <div className="wiz-ok-t">AWS sign-in refreshed</div>
+      </div>
+    );
+  }
+
+  if (login?.status === "error") {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <div className="hlp" style={{ marginTop: 0, color: "var(--red)" }}>⚠ {login.error ?? "the AWS refresh failed"}</div>
+        <button className="btn btn-line btn-sm" onClick={start} disabled={busy} style={{ marginTop: 8 }}>{Icon.restore()} Try again</button>
+        <LogToggle log={login.log} show={showLog} setShow={setShowLog} />
+      </div>
+    );
+  }
+
+  if (login && (login.status === "awaiting" || login.status === "submitting")) {
+    return (
+      <div className="wiz-codecard" style={{ marginTop: 12 }}>
+        <div className="hlp" style={{ marginTop: 0 }}>1. Open this link and approve the sign-in with your AWS / company account:</div>
+        <div style={{ display: "flex", gap: 10, margin: "10px 0 6px", flexWrap: "wrap" }}>
+          <a className="btn btn-accent" href={login.url ?? undefined} target="_blank" rel="noreferrer">{Icon.bolt()} Open AWS sign-in</a>
+          <button className="btn btn-line" onClick={() => login.url && navigator.clipboard?.writeText(login.url)}>Copy link</button>
+        </div>
+        <div className="hlp" style={{ marginTop: 6 }}>
+          2. If asked for a code, enter{login.code ? ":" : " the code shown on the page."}
+        </div>
+        {login.code && <div className="ctx-mono" style={{ fontSize: 20, letterSpacing: 2, margin: "8px 0 2px", fontWeight: 600 }}>{login.code}</div>}
+        <div className="wiz-verify" style={{ marginTop: 10 }}><span className="wiz-spin" /> <span>Waiting for you to approve in the browser…</span></div>
+        <LogToggle log={login.log} show={showLog} setShow={setShowLog} />
+      </div>
+    );
+  }
+
+  if (login?.status === "starting") {
+    return <div className="wiz-verify" style={{ marginTop: 12 }}><span className="wiz-spin" /> <span>Starting the AWS refresh… getting your sign-in link.</span></div>;
+  }
+
+  // idle — the refresh CTA under the verify button
+  return (
+    <div className="hlp" style={{ marginTop: 10 }}>
+      AWS session expired?{" "}
+      <button className="linkbtn" onClick={start} disabled={busy}>
+        {busy ? "Starting…" : "Refresh AWS sign-in"}
+      </button>{" "}
+      — you&apos;ll approve it in your browser; nothing to paste back.
     </div>
   );
 }

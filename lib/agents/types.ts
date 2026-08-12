@@ -149,6 +149,11 @@ export interface AgentDriver {
   capabilities: AgentCapabilities;
   /** Instance-wide provider selected outside Operator, when applicable. */
   configuredProvider?(): string | null;
+  /** Whether the configured provider's credentials can be refreshed from the
+   *  UI via the login surface (e.g. an AWS SSO device-code flow). Drives the
+   *  refresh button in the connect card and gates POST /api/agents/[id]/login
+   *  when a third-party provider is active. */
+  providerAuthRefreshable?(): boolean;
 
   /**
    * Run one user turn. Resumes task.session_id when set, otherwise starts a

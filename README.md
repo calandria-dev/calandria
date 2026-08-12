@@ -141,7 +141,11 @@ credential chain (or `AWS_BEARER_TOKEN_BEDROCK`), set
 **Amazon Bedrock → Verify** under Settings → Agents. Docker Compose forwards the
 documented Bedrock/AWS variables and persists `~/.aws`; see [`.env.example`](.env.example).
 Operator uses one Claude provider per instance, so Bedrock and a Claude subscription
-are not mixed within the same instance.
+are not mixed within the same instance. On Bedrock the model picker offers the aliases
+your AWS config maps (`ANTHROPIC_DEFAULT_OPUS_MODEL` etc.) plus a custom-model field for
+Bedrock ids and inference-profile ARNs, and when your setup uses AWS IAM Identity Center
+(SSO), an expired session is refreshed from the UI with a click-to-approve device link —
+no shell needed. See [`docs/BEDROCK_INSTRUCTIONS.md`](docs/BEDROCK_INSTRUCTIONS.md).
 
 Local mode has no login, but it accepts browser traffic only from loopback origins by
 default and rejects cross-site HTTP/WebSocket access to the app and terminal. If you
