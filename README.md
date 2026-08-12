@@ -4,10 +4,13 @@
 
 ### Run Claude Code and Codex in parallel across every project, from any browser.
 
-Operator is a web-based control room for your coding agents. Self-host it or use our hosted
-version, then reach your workspace from your computer, tablet, or phone. Every task gets a
-persistent agent session in an isolated git worktree. Operator uses your existing Max, Pro,
-or ChatGPT subscription, with no API key or per-token billing required.
+Operator is a web-based control room for your coding agents. 
+
+Self-host it or use our hosted version, then reach your workspace from your computer, tablet, or phone. 
+
+Every task gets a persistent agent session in an isolated git worktree. 
+
+Operator uses your existing Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
 
 [**Try Operator hosted**](https://getoperator.dev) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
 
