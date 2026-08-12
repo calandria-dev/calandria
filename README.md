@@ -2,11 +2,11 @@
 
 # Operator
 
-### Run Claude Code and Codex in parallel—across every project—from one control room.
+### Run Claude Code and Codex in parallel across every project, from one control room.
 
 Every task gets a persistent agent session in an isolated git worktree. See which agents
 need you, review their diffs, and merge when the work is ready. Operator uses your existing
-Max, Pro, or ChatGPT subscription—no API key or per-token billing required.
+Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
 
 [**Try Operator hosted**](https://getoperator.dev) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
 
@@ -38,16 +38,16 @@ window while preserving the task's lineage.
 
 ## What makes it different
 
-- **Parallel, isolated tasks** — work across multiple repositories without agents mixing
+- **Parallel, isolated tasks:** work across multiple repositories without agents mixing
   files or branches.
-- **One “Needs you” inbox** — jump directly to any session waiting for an answer.
-- **Persistent context** — reuse project knowledge and continue long-running work across
+- **One “Needs you” inbox:** jump directly to any session waiting for an answer.
+- **Persistent context:** reuse project knowledge and continue long-running work across
   fresh context windows.
-- **Review-to-merge workflow** — inspect diffs, sync branches, resolve conflicts, merge, or
+- **Review-to-merge workflow:** inspect diffs, sync branches, resolve conflicts, merge, or
   create a GitHub PR from the same screen.
-- **Task orchestration** — use list or kanban views, chain dependencies, and automatically
+- **Task orchestration:** use list or kanban views, chain dependencies, and automatically
   start tasks when their blockers finish.
-- **A complete workspace** — chat, terminal, managed services, live logs, and transparent
+- **A complete workspace:** chat, terminal, managed services, live logs, and transparent
   token and usage insights stay together.
 
 ![Operator diff review beside an agent session](docs/images/changes.png)
