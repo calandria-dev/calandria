@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Priority, Status, AskQuestion, AskAnswers } from "@/lib/types";
+import type { Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
@@ -149,7 +149,7 @@ export function useOrchestrator() {
   const brokenAgents = useMemo(() => agents.agents.filter((a) => !!a.authBroken), [agents]);
 
   // ---------- live task event stream + transcript state ----------
-  const { msgsByTask, appendMsg, setAnswerOnMsg } = useTaskStream({
+  const { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg } = useTaskStream({
     selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks,
   });
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
@@ -339,6 +339,30 @@ export function useOrchestrator() {
       appendMsg(taskId, { id: `e-${Date.now()}`, role: "system", content: err instanceof Error ? err.message : String(err), generation: tasks.find((t) => t.id === taskId)?.generation ?? 1 });
     }
   }, [runTurn, tasks, appendMsg, setAnswerOnMsg]);
+
+  // Answer a tool-permission prompt. It rides the SAME /answer route as a
+  // question — the decision is just an answer whose value is a fixed keyword
+  // (validated server-side, see parseDecision) plus an optional typed reason.
+  // Unlike an ask there is NO resume fallback: if nothing is parked the turn is
+  // already gone, and re-sending "allow_once" as a chat message would be
+  // meaningless. The card locks itself and the failed state says why.
+  const decidePermission = useCallback(async (taskId: string, permId: string, decision: PermissionDecision, note?: string) => {
+    const optimistic: PermissionOutcome = { decision, note: note?.trim() || undefined };
+    setOutcomeOnMsg(taskId, permId, optimistic); // the stream echoes permission_decided
+    try {
+      const answers: AskAnswers = [[decision, ...(note?.trim() ? [note.trim()] : [])]];
+      const { resolved } = await jsend<{ resolved: boolean }>(`/api/tasks/${taskId}/answer`, "POST", { askId: permId, answers });
+      if (!resolved) {
+        setOutcomeOnMsg(taskId, permId, {
+          decision: "deny",
+          auto: true,
+          note: "This request expired — the turn is no longer waiting on it. Send a message to pick the work back up.",
+        });
+      }
+    } catch (err) {
+      appendMsg(taskId, { id: `e-${Date.now()}`, role: "system", content: err instanceof Error ? err.message : String(err), generation: tasks.find((t) => t.id === taskId)?.generation ?? 1 });
+    }
+  }, [tasks, appendMsg, setOutcomeOnMsg]);
 
   // Interrupt a running turn — the ONLY way one stops early now that turns are
   // detached from connections. The server aborts the SDK query, persists the
@@ -626,7 +650,7 @@ export function useOrchestrator() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    setSelTask, fetchRecap, runTurn, answerQuestion, stopTurn, cancelQueued, resolveConflictsWithAI,
+    setSelTask, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
     setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,

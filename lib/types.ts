@@ -166,6 +166,79 @@ export interface AskQuestion {
 // free-text typed into "Other". One entry per question, in question order.
 export type AskAnswers = string[][];
 
+// ---------- tool permission prompts (lib/permissions.ts) ----------
+
+// What the user picked on a permission card. "allow_always" additionally
+// records a project-scoped rule so the same call isn't asked about again.
+export type PermissionDecision = "allow_once" | "allow_always" | "deny";
+
+// How a remembered rule matches a later call:
+//   bash_prefix — Bash commands whose leading tokens match (`npm test …`)
+//   bash_exact  — one literal command line, for anything not safely generalizable
+// Bash-only on purpose: a command is the one tool input a user can read in full
+// and generalize honestly. "Always allow WebFetch here" would grant every URL,
+// so non-Bash tools get allow-once plus a session-scoped don't-ask-again
+// instead — see the note in lib/permissions.ts.
+export type PermissionMatchKind = "bash_prefix" | "bash_exact";
+
+// A remembered "always allow" (permission_rules table), scoped to one project.
+export interface PermissionRule {
+  id: string;
+  project_id: string;
+  tool: string;
+  match_kind: PermissionMatchKind;
+  value: string;
+  created_at: number;
+}
+
+// What "always allow" would remember, rendered on the card so the user approves
+// the exact rule they're creating rather than an implied one. "project" stores
+// a permission_rules row; "session" only hands the CLI its own don't-ask-again
+// payload, which dies with the session and is never persisted.
+export interface PermissionScopeOffer {
+  scope: "project" | "session";
+  match_kind?: PermissionMatchKind;
+  value: string;
+  label: string;
+}
+
+// One parked permission prompt. `id` is the SDK's toolUseID, and it doubles as
+// the ask-registry key — the decision travels back through the same
+// waitForAnswer/submitAnswer machinery an AskUserQuestion uses.
+export interface PermissionRequest {
+  id: string;
+  tool: string;
+  /** Headline: the CLI's own prompt sentence when it supplies one, else a derived title. */
+  title: string;
+  /** The input worth judging — the full command for Bash, the path for a write. */
+  detail: string;
+  /** Optional one-line subtitle from the CLI ("Claude will have write access to…"). */
+  description?: string;
+  diff?: DiffLine[];
+  /** Absent when the call can't be generalized into a rule honestly. */
+  scope?: PermissionScopeOffer;
+  /** ms epoch after which the prompt auto-denies itself; 0 = parks indefinitely. */
+  expiresAt: number;
+}
+
+// How a permission prompt settled. `auto` marks a decision nobody made — an
+// unattended or expired prompt that failed closed.
+export interface PermissionOutcome {
+  decision: PermissionDecision;
+  /** True for a decision nobody made — the gate failed closed on its own. */
+  auto?: boolean;
+  /**
+   * Why the gate decided without the user. "unattended" is the one the runner
+   * acts on: it means nobody was there, so queued follow-ups are parked rather
+   * than drained straight into the same wall (mirrors a dead-login turn).
+   */
+  reason?: "unattended" | "timeout" | "interrupted";
+  /** The rule label recorded on "always allow". */
+  remembered?: string;
+  /** The user's typed reason, or why the gate decided on its own. */
+  note?: string;
+}
+
 // Token usage + dollar cost for one Claude turn, parsed from the SDK result
 // message. Persisted per turn (task_usage table) and summed for cumulative spend.
 export interface TurnUsage {
@@ -206,6 +279,8 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
+  | { type: "permission"; request: PermissionRequest }
+  | { type: "permission_decided"; id: string; outcome: PermissionOutcome }
   | { type: "suggested"; title: string }
   | { type: "usage"; usage: TurnUsage }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
@@ -289,4 +364,9 @@ export interface ToolData {
   // tool_use id (stored here so it survives a reload — there's no DB column for
   // it). `answers` is absent while awaiting the user, set once answered.
   ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers };
+  // Present when this "tool" message is a permission prompt (the canUseTool
+  // gate under "Accept edits" / "Plan mode"). Same shape of deal as `ask`: the
+  // request is persisted so a reload re-renders an answerable card, and
+  // `outcome` is absent while the turn is parked, set once it settles.
+  permission?: { request: PermissionRequest; outcome?: PermissionOutcome };
 }

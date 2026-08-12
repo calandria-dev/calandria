@@ -88,6 +88,17 @@ export function subscribeGlobal(fn: GlobalListener): () => void {
   };
 }
 
+/**
+ * How many clients are watching the app right now — one global listener per
+ * open GET /api/events stream, i.e. roughly one per browser tab. Zero means
+ * nobody can SEE anything the server surfaces, let alone answer it, which is
+ * how the permission gate tells an unattended turn (an auto-started task at
+ * 3am) from one a human is sitting in front of. See lib/permissions.ts.
+ */
+export function watcherCount(): number {
+  return globalRegistry().size;
+}
+
 /** Fan an event out to every subscriber of this task. Safe with zero listeners. */
 export function publish(taskId: string, ev: TaskStreamEvent): void {
   const set = registry().get(taskId);

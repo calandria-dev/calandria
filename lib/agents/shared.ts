@@ -203,6 +203,10 @@ export function describeToolUse(
     }
     case "Task":
       return { title: `🤖 Subagent: ${String(input?.description ?? "task")}`, detail: clip(input?.prompt) };
+    case "ExitPlanMode":
+      // Plan mode's hand-off: the agent is asking to stop planning and start
+      // editing, with the plan itself as the input worth reading.
+      return { title: `📋 Proposed a plan`, detail: clip(input?.plan) };
     default:
       if (name.includes("suggest_task")) return { title: `✦ Suggested a task`, detail: clip(input) };
       if (name.includes("expose_service")) return { title: `🔌 Exposed ${String(input?.name ?? "service")} :${String(input?.port ?? "")}`, detail: clip(input) };

@@ -12,6 +12,7 @@
 //   e2e:sleep=<ms>                  hold the turn open (Stop / queue tests)
 //   e2e:fail=<message>              end the turn with an error event
 //   e2e:suggest=<title>             create a suggested task + emit "suggested"
+//   e2e:permission=<command>        raise a Bash permission card and park on it
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
@@ -27,6 +28,17 @@ import type {
   StreamEvent,
 } from "../types";
 import { createSuggestedTask } from "@/lib/agentTools";
+import { listPermissionRules, addPermissionRule } from "@/lib/store";
+import {
+  allowedByRules,
+  describePermission,
+  parseDecision,
+  promptDeadline,
+  scopeOfferFor,
+  waitForPermission,
+  DENIED_BY_USER,
+} from "@/lib/permissions";
+import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
@@ -82,6 +94,53 @@ export const mockDriver: AgentDriver = {
     if (fail) {
       yield { type: "error", content: fail.trim() };
       return;
+    }
+
+    // A tool-permission prompt. Deliberately runs the REAL gate helpers
+    // (lib/permissions.ts) rather than a hand-rolled stand-in, so the e2e suite
+    // covers the same rule lookup, card shape, parking, and rule storage the
+    // Claude driver's canUseTool goes through — everything except the SDK.
+    const gated = instructionText.match(/e2e:permission=([^\n]+)/)?.[1]?.trim();
+    if (gated) {
+      const input = { command: gated };
+      if (allowedByRules(listPermissionRules(project.id), "Bash", input)) {
+        yield { type: "notice", content: `Permission for \`${gated}\` was already remembered.` };
+      } else {
+        const described = describePermission("Bash", input);
+        const scope = scopeOfferFor("Bash", input) ?? undefined;
+        const id = `perm:mock-${task.id}-g${task.generation}`;
+        yield {
+          type: "permission",
+          request: {
+            id, tool: "Bash", title: described.title, detail: described.detail, scope,
+            expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+          },
+        };
+        const waited = await waitForPermission({
+          taskId: task.id, id, signal,
+          attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+          unattendedMs: PERMISSION_UNATTENDED_MS,
+        });
+        if ("answers" in waited) {
+          const { decision, note } = parseDecision(waited.answers);
+          let remembered: string | undefined;
+          if (decision === "allow_always" && scope?.scope === "project" && scope.match_kind) {
+            addPermissionRule({ project_id: project.id, tool: "Bash", match_kind: scope.match_kind, value: scope.value });
+            remembered = scope.label;
+          }
+          yield { type: "permission_decided", id, outcome: { decision, remembered, note: note || undefined } };
+          if (decision === "deny") {
+            yield { type: "assistant", content: `Skipped \`${gated}\` — ${note || DENIED_BY_USER}` };
+            yield { type: "done", sessionId };
+            return;
+          }
+        } else {
+          const reason = "expired" in waited ? waited.expired : "interrupted";
+          yield { type: "permission_decided", id, outcome: { decision: "deny", auto: true, reason } };
+          yield { type: "done", sessionId };
+          return;
+        }
+      }
     }
 
     // File writes: every explicit e2e:write, else the default notes append.

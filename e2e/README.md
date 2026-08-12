@@ -38,6 +38,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
   | `e2e:fail=<message>` | end the turn with an error event |
   | `e2e:suggest=<title>` | create a suggested task + emit the event |
+  | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs
@@ -49,6 +50,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
 | `03-views.spec.ts` | list ⇄ board (kanban) toggle, status columns, card placement |
 | `04-turn-behaviors.spec.ts` | mid-turn queueing, Stop, failed-turn notices, suggestions tray, session resume |
 | `05-api-smoke.spec.ts` | REST contracts: diff/sync shapes, `/clear` generation lineage, agent registry, hard deletes |
+| `06-permissions.spec.ts` | the tool-permission gate: a turn parks on a card, Allow once resumes it, Decline feeds the reason back, "Always allow" stores a project rule that skips the next prompt and is revocable in Settings |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named

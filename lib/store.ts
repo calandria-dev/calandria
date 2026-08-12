@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Message, PendingMessage, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals } from "./types";
+import type { Project, Task, Message, PendingMessage, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -427,6 +427,47 @@ export function listReclaimableWorktrees(): ReclaimableWorktree[] {
         ORDER BY CASE WHEN t.merged_at > 0 THEN t.merged_at ELSE t.updated_at END ASC`
     )
     .all() as ReclaimableWorktree[];
+}
+
+// ---------- permission rules (remembered "always allow" answers) ----------
+//
+// The durable half of the tool-permission gate (lib/permissions.ts): what the
+// user chose to stop being asked about, scoped to one project. Matching logic
+// lives in lib/permissions.ts; this is storage only.
+
+export function listPermissionRules(projectId: string): PermissionRule[] {
+  return getDb()
+    .prepare("SELECT * FROM permission_rules WHERE project_id = ? ORDER BY created_at DESC")
+    .all(projectId) as PermissionRule[];
+}
+
+/** Every rule across every project, newest first — the Settings revoke list. */
+export function listAllPermissionRules(): PermissionRule[] {
+  return getDb().prepare("SELECT * FROM permission_rules ORDER BY created_at DESC").all() as PermissionRule[];
+}
+
+/**
+ * Remember an "always allow" answer. Idempotent: re-approving the same rule
+ * keeps the original row (and its created_at) rather than stacking duplicates.
+ */
+export function addPermissionRule(input: {
+  project_id: string;
+  tool: string;
+  match_kind: PermissionMatchKind;
+  value: string;
+}): PermissionRule {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR IGNORE INTO permission_rules (id, project_id, tool, match_kind, value, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(nanoid(), input.project_id, input.tool, input.match_kind, input.value, Date.now());
+  return db
+    .prepare("SELECT * FROM permission_rules WHERE project_id = ? AND tool = ? AND match_kind = ? AND value = ?")
+    .get(input.project_id, input.tool, input.match_kind, input.value) as PermissionRule;
+}
+
+export function deletePermissionRule(id: string): void {
+  getDb().prepare("DELETE FROM permission_rules WHERE id = ?").run(id);
 }
 
 // ---------- settings (app-level key/value, readable server-side) ----------
