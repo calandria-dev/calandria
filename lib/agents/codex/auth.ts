@@ -91,11 +91,20 @@ export const codexApiKey: AgentApiKeyAuth = {
 export async function verifyCodexTurn(): Promise<AgentVerifyResult> {
   const started = Date.now();
   try {
-    const { stdout } = await run(
+    const pending = run(
       CODEX,
       ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "Reply with exactly: OK"],
       { timeout: 90_000, env: process.env, maxBuffer: 4 * 1024 * 1024, cwd: os.homedir() }
     );
+    // `codex exec` treats a non-TTY stdin as pending input ("Reading additional
+    // input from stdin...") and blocks on the read before running the turn.
+    // execFile always gives the child a stdin pipe, so without this EOF it waits
+    // out the full timeout and verify reports no output. From a terminal the
+    // TTY stdin isn't treated as pending, which is why this only bit the app.
+    // (promisify(execFile) exposes the ChildProcess as `.child`; note that the
+    // `input` option is spawnSync-only and is silently ignored here.)
+    pending.child.stdin?.end();
+    const { stdout } = await pending;
     const { output, usage } = parseVerifyEvents(stdout);
     const ok = output.length > 0;
     addInternalUsage({
