@@ -1,0 +1,312 @@
+# Build the Dockerfile and publish it to GitHub Container Registry.
+#
+# Shape: one native runner per architecture (no QEMU — the build stage runs
+# `npm ci` + `next build`, which emulation turns from minutes into an hour),
+# each pushing an anonymous by-digest blob; a final job stitches those digests
+# into one multi-arch manifest and tags it. That is the standard buildx
+# "distribute across runners" pattern, and it is why the per-arch jobs pass
+# `outputs: type=image,push-by-digest=true` instead of `tags:`.
+#
+# Publishing is gated on `needs.prepare.outputs.publish`, which is false for
+# every pull_request. A fork PR must never hold a token that can write to the
+# registry: on `pull_request` (as opposed to `pull_request_target`) GitHub
+# already caps a fork's GITHUB_TOKEN at read-only, and this workflow adds the
+# belt to that brace by never running docker/login-action on the PR path.
+# PRs still build both arches, so a broken Dockerfile fails before merge.
+name: Publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Workflow-level permissions are the floor; only the jobs that talk to the
+# registry raise them.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR pushes are wasted work, but never cancel a publish mid-push:
+  # a half-written manifest is worse than a redundant build.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/jgsephora/operator-oss
+
+jobs:
+  # Computes everything that must be IDENTICAL across the matrix legs — most
+  # importantly BUILT_AT, which would otherwise differ per runner.
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      annotations: ${{ steps.meta.outputs.annotations }}
+      built_at: ${{ steps.vars.outputs.built_at }}
+      short_sha: ${{ steps.vars.outputs.short_sha }}
+    steps:
+      # An allowlist, not `!= pull_request`: a negative test silently starts
+      # publishing the day someone adds another trigger to this file.
+      # workflow_dispatch stays on the list so a branch can be test-published
+      # under its sha- tag; it can never move `latest`, which is pinned to the
+      # default branch by the metadata rules below.
+      - name: Decide whether this event may publish
+        id: gate
+        run: |
+          echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute build provenance values
+        id: vars
+        run: |
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        env:
+          # imagetools applies these to the manifest list, not the per-arch images.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          images: ${{ env.IMAGE }}
+          # `latest` tracks main only. Deliberately NOT moved by a v* tag: this
+          # image is deployed from main, and a back-published patch tag silently
+          # rolling `latest` backwards is a nasty way to find that out.
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ matrix.platform }}
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          # The image has no .git, so GET /api/version can only report what is
+          # baked in here. Both ARGs sit at the very bottom of the Dockerfile,
+          # after every COPY, so their per-build churn invalidates two trivial
+          # ENV layers rather than the npm ci / next build layers above them.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILT_AT=${{ needs.prepare.outputs.built_at }}
+          # Per-arch cache scopes: a shared scope would have the two legs
+          # overwrite each other's manifest every run and never hit. mode=max
+          # is what keeps the build stage (npm ci, next build) cached at all —
+          # the default only stores layers present in the final image.
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          # PRs read the cache but never write it. Two mode=max arch caches are
+          # already most of the repo's 10 GB allowance; letting every PR add its
+          # own pair would evict the main-branch entries that make builds fast.
+          cache-to: ${{ needs.prepare.outputs.publish == 'true' && format('type=gha,mode=max,scope={0}', matrix.arch) || '' }}
+          # BuildKit's default attestation would make each leg push an index
+          # rather than a plain manifest, which is the wrong input shape for the
+          # imagetools merge below. Signing belongs on the merged index instead
+          # (actions/attest with the digest the merge job outputs) — not done
+          # here, but that is the upgrade path, not "turn provenance back on".
+          provenance: false
+          # Publish path: an untagged by-digest blob, claimed by the merge job.
+          # PR path: build everything, materialize nothing.
+          outputs: >-
+            ${{ needs.prepare.outputs.publish == 'true'
+                && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE)
+                || 'type=cacheonly' }}
+
+      - name: Export digest
+        if: needs.prepare.outputs.publish == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: needs.prepare.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the multi-arch manifest
+        id: manifest
+        working-directory: /tmp/digests
+        env:
+          TAGS: ${{ needs.prepare.outputs.tags }}
+          ANNOTATIONS: ${{ needs.prepare.outputs.annotations }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then args+=(--tag "$tag"); fi
+          done <<< "$TAGS"
+          while IFS= read -r ann; do
+            if [ -n "$ann" ]; then args+=(--annotation "$ann"); fi
+          done <<< "$ANNOTATIONS"
+
+          refs=()
+          for d in *; do refs+=("${IMAGE}@sha256:${d}"); done
+          [ ${#refs[@]} -eq 2 ] || { echo "expected 2 per-arch digests, got ${#refs[@]}"; exit 1; }
+
+          docker buildx imagetools create \
+            --metadata-file "${RUNNER_TEMP}/manifest.json" \
+            "${args[@]}" "${refs[@]}"
+
+          # Take the index digest from the create result, not from a follow-up
+          # `inspect` of the tag: the tag is mutable and a concurrent run could
+          # have moved it, which would point `verify` at someone else's build.
+          # (A per-arch build digest is NOT the index digest — don't reuse those.)
+          digest=$(jq -er '."containerimage.digest" // ."containerimage.descriptor".digest' \
+            "${RUNNER_TEMP}/manifest.json")
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Published ${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
+
+  # Proves the published artifact runs, on each architecture in the manifest.
+  # A green build is not evidence of a working image: the runtime stage COPYs
+  # its plain-Node .mjs files by name, so a new one that nobody added to the
+  # Dockerfile still builds and only fails when something imports it.
+  verify:
+    needs: [prepare, merge]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Job-level `env:` cannot read the `env` context, so REF is assembled in a
+      # step and handed to the rest of the job through $GITHUB_ENV.
+      - name: Resolve the image reference
+        run: echo "REF=${IMAGE}@${{ needs.merge.outputs.digest }}" >> "$GITHUB_ENV"
+
+      - name: Check the runtime .mjs files the build output does not bundle
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh "$REF" -c '
+            set -e
+            for f in lib/cf-access.mjs lib/service-router.mjs lib/service-host.mjs \
+                     lib/env-keys.mjs lib/resolveHostname.js lib/auth/origin.mjs \
+                     lib/auth/local-origin.mjs scripts/orch-mcp.mjs lib/agentToolDefs.mjs; do
+              test -f "$f" || { echo "MISSING $f"; exit 1; }
+            done
+            echo "runtime .mjs files present"
+          '
+
+      - name: Boot the container and wait for HEALTHCHECK
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          token=$(openssl rand -hex 16)
+          echo "::add-mask::$token"
+          docker run -d --name orch \
+            -e "SERVICE_TOKEN=$token" \
+            -p 127.0.0.1:3000:3000 \
+            "$REF"
+
+          # HEALTHCHECK has a 20s start period and a 30s interval, so `healthy`
+          # legitimately takes up to ~50s on a cold SQLite init.
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' orch)
+            case "$status" in
+              healthy) break ;;
+              unhealthy) echo "container reported unhealthy"; exit 1 ;;
+            esac
+            if [ "$(docker inspect -f '{{.State.Running}}' orch)" != "true" ]; then
+              echo "container exited before becoming healthy"; exit 1
+            fi
+            sleep 3
+          done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' orch)" = healthy ] \
+            || { echo "timed out waiting for healthy"; exit 1; }
+
+          # The healthcheck runs inside the container; confirm the port is
+          # actually published and that /api/version reports THIS build.
+          curl -fsS -H "x-service-token: $token" \
+            http://127.0.0.1:3000/api/instance/idle > /dev/null
+          version=$(curl -fsS -H "x-service-token: $token" http://127.0.0.1:3000/api/version)
+          echo "$version"
+          echo "$version" | grep -q "${GITHUB_SHA}" \
+            || { echo "/api/version did not report GIT_SHA=${GITHUB_SHA}"; exit 1; }
+          echo "${ARCH} healthy: ${version}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Container logs
+        if: always()
+        run: docker logs orch 2>&1 | tail -100 || true

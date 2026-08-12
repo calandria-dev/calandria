@@ -62,15 +62,26 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
+# The agent CLIs, pinned. Floating `@latest` installs would make two supply-chain
+# decisions per build and leave no two images alike; bump these deliberately
+# (`npm view <pkg> version`, then rebuild and exercise the agent) rather than
+# inheriting whatever published most recently. Both are ARGs so a one-off build
+# can test a candidate version without editing this file:
+#   docker build --build-arg CODEX_VERSION=0.147.0 .
+ARG CLAUDE_CODE_VERSION=2.1.228
+ARG CODEX_VERSION=0.146.0
+
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
 # volume). Pinned location via CLAUDE_CLI_PATH; updates ship as image rebuilds,
 # so the in-place autoupdater is disabled.
-RUN npm install -g @anthropic-ai/claude-code && claude --version
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && claude --version
 
 # The `codex` CLI (the Codex agent driver drives it via @openai/codex-sdk; login
 # state lives in ~/.codex on the volume). Installed globally so CODEX_CLI_PATH /
-# PATH lookup and the auth helpers resolve it next to `claude`.
-RUN npm install -g @openai/codex && codex --version
+# PATH lookup and the auth helpers resolve it next to `claude`. Keep this pin in
+# step with the @openai/codex-sdk version in package-lock.json — the SDK speaks
+# JSONL to this exact binary, so a minor skew between them is a real risk.
+RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
 # Replace the base image's `node` user so uid 1000 owns /home/orch — named
 # volumes initialize from this skeleton with correct ownership on first mount.
