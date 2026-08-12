@@ -159,7 +159,15 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 - **`lib/git.ts`** — per-task worktrees/branches, diffs, and merging (`mergeTask()`, plus
   `prepareWorktreeMerge()` / `completeWorktreeMerge()` / `abortWorktreeMerge()` for
   AI/manual conflict resolution; `worktreeSyncStatus()` / `fastForwardWorktree()` to catch
-  a stale branch up to base).
+  a stale branch up to base). It also holds the app's only remote awareness:
+  `fetchBase()` refreshes the base branch's remote-tracking ref best-effort (hard timeout,
+  no interactive prompting, per-repo cooldown, run *outside* the repo lock),
+  `remoteBaseStatus()` compares local base against it, and `advanceBaseBranch()` /
+  `pushBaseBranch()` are the forward-only, never-forced ways to move it. New worktrees are
+  cut from the fetched remote tip when local base is merely behind it — pinned to a SHA, so
+  the ref can't move underneath `worktree add` and the task branch gets no upstream. The
+  user's local base branch is only ever moved by an explicit click (or, as a tidy-up, by a
+  merge that would otherwise fold the remote's commits into the task's own).
 - **`lib/services.ts`** — the managed-services supervisor: starts/stops/restarts a
   project's configured `dev`/`setup`/`test` commands as detached process-group children
   **owned by the server** (not a turn or a tab), captures their stdout/stderr into a

@@ -103,6 +103,37 @@ export const INTERNAL_BASE_URL =
 export const ORCH_MCP_SCRIPT = path.join(process.cwd(), "scripts", "orch-mcp.mjs");
 
 /**
+ * Whether the app may talk to a project's git remote at all. On by default: a
+ * best-effort `git fetch` of the base branch is what keeps new task worktrees
+ * from branching off a tip that went stale the moment a PR merged on GitHub.
+ * Set to "off"/"0"/"false" for an air-gapped instance, a repo whose fetch is
+ * ruinously expensive, or anywhere the network should never be touched — every
+ * remote-aware surface then degrades to the purely local behaviour.
+ */
+export const GIT_FETCH_ENABLED = !["0", "off", "false", "no"].includes(
+  String(process.env.ORCH_GIT_FETCH || "").toLowerCase(),
+);
+
+/**
+ * Hard ceiling on a best-effort fetch. Fetching is never allowed to hold up a
+ * task launch, so the subprocess is killed at this deadline and the launch
+ * carries on from the best ref it already has locally. Keep it short — this is
+ * latency a user waits through when they click Start.
+ */
+export const GIT_FETCH_TIMEOUT_MS = process.env.ORCH_GIT_FETCH_TIMEOUT_MS
+  ? Number(process.env.ORCH_GIT_FETCH_TIMEOUT_MS)
+  : 10_000;
+
+/**
+ * How long a successful fetch of a repo counts as fresh. Opening a project and
+ * immediately launching five tasks should cost ONE fetch, not six; within this
+ * window the extra calls reuse the refs the first one wrote.
+ */
+export const GIT_FETCH_COOLDOWN_MS = process.env.ORCH_GIT_FETCH_COOLDOWN_MS
+  ? Number(process.env.ORCH_GIT_FETCH_COOLDOWN_MS)
+  : 15_000;
+
+/**
  * The public origin the app is served from (e.g. https://orch.example.com when
  * behind a tunnel/reverse proxy). Used by the client to build absolute
  * ws(s):// URLs. Empty = same-origin via window.location, which is correct for

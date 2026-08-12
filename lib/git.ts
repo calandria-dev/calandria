@@ -2,7 +2,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
-import { WORKTREES_DIR } from "./config";
+import {
+  WORKTREES_DIR,
+  GIT_FETCH_ENABLED,
+  GIT_FETCH_TIMEOUT_MS,
+  GIT_FETCH_COOLDOWN_MS,
+} from "./config";
 import { withRepoLock } from "./repoLock";
 
 const run = promisify(execFile);
@@ -94,6 +99,383 @@ export async function recentCommits(repoPath: string, n = 10): Promise<string> {
   }
 }
 
+// ---------- remote awareness ----------
+//
+// Everything above this line is purely local, and for a long time so was the
+// whole app. That only holds while every merge happens through the merge
+// button: the moment work lands on the remote instead — a PR merged on GitHub,
+// a teammate's push, a pull in another checkout — the local base branch goes
+// stale and every task cut afterwards silently branches off a dead tip. Worse,
+// the staleness is invisible, because the sync panel measures "behind" against
+// that same stale branch.
+//
+// The fix is a best-effort `git fetch` of the base branch and a base branch
+// that knows about its remote. Best-effort is load-bearing: no network, no
+// remote, an expired credential or a slow link must never stop a task from
+// launching, exactly like the greenfield/non-git fallback below.
+
+/** Where the base branch's remote counterpart lives. */
+export interface BaseRemote {
+  remote: string; // remote name — usually "origin", but a fork may fetch from "upstream"
+  remoteBranch: string; // the branch's name ON the remote (can differ from the local one)
+  trackingRef: string; // refs/remotes/<remote>/<remoteBranch>
+  label: string; // "origin/main" — what the UI says
+}
+
+// Refuse anything that can't be a branch name before it goes into a refspec.
+// `project.branch` is user input, and while execFile never involves a shell, a
+// name starting with "-" would still be read by git as a flag.
+function refNameSafe(name: string): boolean {
+  return (
+    !!name &&
+    /^[A-Za-z0-9._\-/]+$/.test(name) &&
+    !name.startsWith("-") &&
+    !name.startsWith("/") &&
+    !name.endsWith("/") &&
+    !name.endsWith(".lock") &&
+    !name.includes("..")
+  );
+}
+
+/**
+ * Resolve which remote (and which branch on it) the project's base branch
+ * corresponds to. Prefers the branch's configured upstream, so a fork whose
+ * `main` tracks `upstream/main` is followed correctly; falls back to `origin`
+ * with the same branch name, which is what a plain clone looks like. Returns
+ * null for a repo with no remote at all — including every project the app
+ * created itself — and that null is the "stay entirely local" signal.
+ */
+export async function baseRemote(repoPath: string, baseBranch: string): Promise<BaseRemote | null> {
+  if (!refNameSafe(baseBranch)) return null;
+
+  const cfg = (key: string) => git(repoPath, ["config", "--get", key]).catch(() => "");
+  let remote = (await cfg(`branch.${baseBranch}.remote`)).trim();
+  // "." is a valid upstream meaning "this same repo" — local-only, nothing to fetch.
+  if (remote === ".") return null;
+
+  let remoteBranch = baseBranch;
+  if (remote) {
+    const merge = (await cfg(`branch.${baseBranch}.merge`)).trim();
+    if (merge.startsWith("refs/heads/")) remoteBranch = merge.slice("refs/heads/".length);
+  } else {
+    const url = await git(repoPath, ["remote", "get-url", "origin"]).catch(() => "");
+    if (!url.trim()) return null;
+    remote = "origin";
+  }
+  if (!refNameSafe(remote) || !refNameSafe(remoteBranch)) return null;
+
+  return {
+    remote,
+    remoteBranch,
+    trackingRef: `refs/remotes/${remote}/${remoteBranch}`,
+    label: `${remote}/${remoteBranch}`,
+  };
+}
+
+// A git subprocess that may touch the network. Two guards the local `git()`
+// helper doesn't need: a hard deadline (the point of "best-effort" is that a
+// hung connection can't outlive it) and no interactive prompting, so a repo
+// with an expired credential fails fast instead of blocking on a password
+// prompt nobody is there to answer.
+async function gitNet(repoPath: string, args: string[], timeoutMs = GIT_FETCH_TIMEOUT_MS): Promise<string> {
+  const { stdout } = await run("git", ["-C", repoPath, ...args], {
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      // Only when the user hasn't set their own — theirs may carry keys/config we'd break.
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || "ssh -oBatchMode=yes",
+    },
+  });
+  return stdout.trim();
+}
+
+// The one line of git's stderr wall that says what actually failed — a rejected
+// push otherwise reaches the user as forty lines of hint text.
+function gitErrorLine(e: unknown, fallback: string): string {
+  const stderr = e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+  const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (
+    lines.find((l) => /^(fatal|error)[:\s]/i.test(l))?.replace(/^(fatal|error):\s*/i, "") ||
+    lines.find((l) => /rejected|denied|could not|not found|protected|non-fast-forward/i.test(l)) ||
+    lines[lines.length - 1] ||
+    (e instanceof Error ? e.message : fallback)
+  );
+}
+
+/** What a best-effort fetch managed to do. Never an exception. */
+export interface FetchOutcome {
+  attempted: boolean; // false = nothing to fetch (no remote, or fetching disabled)
+  ok: boolean; // the remote-tracking ref reflects a successful recent fetch
+  fetchedAt: number; // epoch ms of the fetch we're relying on (0 = never in this process)
+  error?: string;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __orchFetch: { last: Map<string, number>; inflight: Map<string, Promise<FetchOutcome>> } | undefined;
+}
+
+// Same globalThis pattern as lib/events.ts / lib/abort.ts, so dev HMR doesn't
+// reset the cooldown and turn every reload into a fetch storm.
+function fetchState() {
+  if (!global.__orchFetch) global.__orchFetch = { last: new Map(), inflight: new Map() };
+  return global.__orchFetch;
+}
+
+/**
+ * Update the base branch's remote-tracking ref, best-effort. Coalesced two ways:
+ * a fetch already in flight for this repo is awaited rather than duplicated, and
+ * one that finished within the cooldown is reused outright — so opening a project
+ * and immediately launching five tasks costs one fetch, not six.
+ *
+ * Deliberately fetches into an EXPLICIT destination refspec rather than trusting
+ * `git fetch <remote> <branch>` to update `<remote>/<branch>`: bare-branch fetch
+ * mainly writes FETCH_HEAD, and whether the tracking ref moves depends on the
+ * repo's configured `remote.<name>.fetch` — which a single-branch clone narrows.
+ */
+export async function fetchBase(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
+  const st = fetchState();
+  const last = st.last.get(repoPath) ?? 0;
+  // Turned off is not the same as failed: the user may still fetch by hand, so
+  // the remote-tracking ref can be perfectly current. Report nothing to report.
+  if (!GIT_FETCH_ENABLED) return { attempted: false, ok: false, fetchedAt: last };
+  if (last && Date.now() - last < GIT_FETCH_COOLDOWN_MS) return { attempted: true, ok: true, fetchedAt: last };
+
+  const inflight = st.inflight.get(repoPath);
+  if (inflight) return inflight;
+
+  const p = runFetch(repoPath, baseBranch).finally(() => st.inflight.delete(repoPath));
+  st.inflight.set(repoPath, p);
+  return p;
+}
+
+async function runFetch(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
+  const st = fetchState();
+  const prior = () => st.last.get(repoPath) ?? 0;
+  let up: BaseRemote | null = null;
+  try {
+    up = await baseRemote(repoPath, baseBranch);
+  } catch {
+    return { attempted: false, ok: false, fetchedAt: prior() };
+  }
+  if (!up) return { attempted: false, ok: false, fetchedAt: prior() };
+
+  try {
+    // Forced (+) because a remote-tracking ref must mirror the remote even when
+    // the remote branch was rewritten — it's a mirror, not history we own.
+    await gitNet(repoPath, [
+      "fetch",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--quiet",
+      up.remote,
+      `+refs/heads/${up.remoteBranch}:${up.trackingRef}`,
+    ]);
+    const at = Date.now();
+    st.last.set(repoPath, at);
+    return { attempted: true, ok: true, fetchedAt: at };
+  } catch (e) {
+    return { attempted: true, ok: false, fetchedAt: prior(), error: gitErrorLine(e, "git fetch failed") };
+  }
+}
+
+/** How the LOCAL base branch stands against the last successfully fetched remote tip. */
+export interface RemoteBaseStatus {
+  hasRemote: boolean;
+  label: string; // "origin/main" ("" when there's no remote)
+  tracked: boolean; // a remote-tracking ref exists to compare against
+  behind: number; // commits on the remote tip that the local branch doesn't have
+  ahead: number; // local commits the remote doesn't have
+  diverged: boolean; // both directions non-zero — no automatically correct move
+  unknown: boolean; // ancestry couldn't be computed (shallow clone, missing objects)
+  canFastForward: boolean; // behind, not ahead, and knowable → a one-click catch-up
+  localTip: string;
+  remoteTip: string;
+}
+
+const noRemoteStatus = (label = ""): RemoteBaseStatus => ({
+  hasRemote: false, label, tracked: false, behind: 0, ahead: 0, diverged: false,
+  unknown: false, canFastForward: false, localTip: "", remoteTip: "",
+});
+
+/**
+ * Read-only comparison of the local base branch against its remote-tracking
+ * ref. Never touches the network — call `fetchBase` first if freshness matters.
+ *
+ * "Unknown" is a distinct outcome on purpose. In a shallow clone the commits
+ * needed to establish ancestry simply aren't there, and the count fails; calling
+ * that zero would report a stale branch as up to date, which is the exact lie
+ * this whole feature exists to stop telling.
+ */
+export async function remoteBaseStatus(repoPath: string, baseBranch: string): Promise<RemoteBaseStatus> {
+  const up = await baseRemote(repoPath, baseBranch).catch(() => null);
+  if (!up) return noRemoteStatus();
+  const base = { ...noRemoteStatus(up.label), hasRemote: true };
+
+  const [localTip, remoteTip] = await Promise.all([
+    git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}`]).catch(() => ""),
+    git(repoPath, ["rev-parse", "--verify", `${up.trackingRef}^{commit}`]).catch(() => ""),
+  ]);
+  if (!localTip || !remoteTip) return { ...base, localTip, remoteTip, tracked: !!remoteTip };
+
+  if (localTip === remoteTip) return { ...base, tracked: true, localTip, remoteTip };
+
+  // `--left-right --count A...B` answers both directions in one subprocess:
+  // "<commits only on A>\t<commits only on B>".
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const [l, r] = (await git(repoPath, ["rev-list", "--left-right", "--count", `${localTip}...${remoteTip}`])).split(/\s+/);
+    ahead = parseInt(l, 10) || 0;
+    behind = parseInt(r, 10) || 0;
+  } catch {
+    return { ...base, tracked: true, localTip, remoteTip, unknown: true };
+  }
+
+  return {
+    ...base,
+    tracked: true,
+    localTip,
+    remoteTip,
+    ahead,
+    behind,
+    diverged: ahead > 0 && behind > 0,
+    canFastForward: behind > 0 && ahead === 0,
+  };
+}
+
+// Which worktree, if any, has `branch` checked out. `git worktree list
+// --porcelain` prints one blank-line-separated block per worktree, the main one
+// first. Moving a branch that some worktree has checked out would leave that
+// worktree's index and files describing a commit the branch no longer points at.
+async function worktreeForBranch(repoPath: string, branch: string): Promise<{ path: string; isMain: boolean } | null> {
+  const out = await git(repoPath, ["worktree", "list", "--porcelain"]).catch(() => "");
+  let current = "";
+  let seen = -1;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = line.slice("worktree ".length);
+      seen++;
+    } else if (line === `branch refs/heads/${branch}`) {
+      return { path: current, isMain: seen === 0 };
+    }
+  }
+  return null;
+}
+
+export interface AdvanceResult {
+  ok: boolean;
+  from?: string;
+  to?: string;
+  error?: string;
+}
+
+/**
+ * Move the local base branch forward to `toSha` — the one-click catch-up behind
+ * the project banner, and the tidy-up step before a merge that would otherwise
+ * drag the remote's commits in behind the task's own.
+ *
+ * Strictly forward-only: a branch holding commits `toSha` doesn't have needs a
+ * merge or rebase the user drives, and is refused here. How the branch moves
+ * depends on who's holding it — a raw ref update when nobody has it checked out
+ * (compare-and-swap on the tip we read, so a concurrent merge wins rather than
+ * being silently discarded), git's own fast-forward when it's the main checkout
+ * so files and index move with it, and a refusal when a linked worktree has it.
+ */
+export async function advanceBaseBranch(repoPath: string, baseBranch: string, toSha: string): Promise<AdvanceResult> {
+  return withRepoLock(repoPath, () => advanceBaseBranchLocked(repoPath, baseBranch, toSha));
+}
+
+// The body of `advanceBaseBranch`, minus the lock, so `mergeTask` can use it
+// from inside its own critical section — `withRepoLock` is a promise chain, and
+// re-entering it from within would wait on a lock that can't be released yet.
+async function advanceBaseBranchLocked(repoPath: string, baseBranch: string, toSha: string): Promise<AdvanceResult> {
+  if (!refNameSafe(baseBranch)) return { ok: false, error: `${baseBranch || "(empty)"} isn't a usable branch name` };
+
+  const from = await git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => "");
+  if (!from) return { ok: false, error: `base branch ${baseBranch} not found` };
+  const to = await git(repoPath, ["rev-parse", "--verify", `${toSha}^{commit}`]).catch(() => "");
+  if (!to) return { ok: false, from, error: "that commit isn't in this repo — fetch again and retry" };
+  if (from === to) return { ok: true, from, to };
+
+  const forward = await git(repoPath, ["merge-base", "--is-ancestor", from, to])
+    .then(() => true)
+    .catch(() => false);
+  if (!forward)
+    return { ok: false, from, error: `${baseBranch} has commits of its own — merge or rebase it yourself, this only fast-forwards` };
+
+  const holder = await worktreeForBranch(repoPath, baseBranch);
+  if (holder && !holder.isMain)
+    return { ok: false, from, error: `${baseBranch} is checked out in ${holder.path} — that worktree has to let go of it first` };
+
+  try {
+    if (holder) await git(holder.path, ["merge", "--ff-only", to]);
+    else await git(repoPath, ["update-ref", `refs/heads/${baseBranch}`, to, from]);
+  } catch (e) {
+    return { ok: false, from, error: gitErrorLine(e, `could not move ${baseBranch}`) };
+  }
+  return { ok: true, from, to };
+}
+
+export interface PushResult {
+  ok: boolean;
+  label?: string; // "origin/main"
+  error?: string;
+}
+
+// A push moves more data than a fetch of one branch, so it gets the same
+// generous ceiling the PR flow uses rather than the fetch deadline.
+const PUSH_TIMEOUT_MS = 120_000;
+
+/**
+ * Publish the local base branch to its remote. Plain, non-force, no `-u`: if the
+ * remote has moved on or branch protection says no, that's a rejection to report,
+ * never something to override. Offered after a merge lands, so the app-side loop
+ * and the GitHub-side loop stop drifting apart — but only ever on a click.
+ */
+export async function pushBaseBranch(repoPath: string, baseBranch: string): Promise<PushResult> {
+  if (!GIT_FETCH_ENABLED) return { ok: false, error: "remote access is turned off for this instance" };
+  const up = await baseRemote(repoPath, baseBranch).catch(() => null);
+  if (!up) return { ok: false, error: "this repo has no remote to push to" };
+
+  try {
+    await gitNet(repoPath, ["push", up.remote, `refs/heads/${baseBranch}:refs/heads/${up.remoteBranch}`], PUSH_TIMEOUT_MS);
+    return { ok: true, label: up.label };
+  } catch (e) {
+    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed") };
+  }
+}
+
+// The commit a NEW task should branch from. The remote tip when the local base
+// branch is merely behind it; the local tip in every other case — diverged (no
+// automatically correct answer), ahead (local has unpublished work the remote
+// would drop), or unknown. Resolved to a SHA, never handed on as a ref name: the
+// ref could move before `worktree add` runs, and starting a branch from a
+// remote-tracking NAME makes git set its upstream, after which a bare `git push`
+// inside the task's worktree would target the base branch.
+async function selectStartPoint(repoPath: string, localBase: string): Promise<string> {
+  const localTip = await git(repoPath, ["rev-parse", localBase || "HEAD"]);
+  if (!localBase) return localTip;
+  const st = await remoteBaseStatus(repoPath, localBase).catch(() => noRemoteStatus());
+  return st.canFastForward && st.remoteTip ? st.remoteTip : localTip;
+}
+
+// The commit an EXISTING task branch grew from. Used whenever the branch is
+// already here (a retried launch, or a reopened task whose merged worktree was
+// pruned): callers persist whatever we return as `base_sha`, so handing back
+// today's tip would move the goalposts and erase the task's own work from its
+// own diff. The fork point is the honest answer.
+async function forkPointSha(repoPath: string, branch: string, localBase: string): Promise<string> {
+  if (localBase) {
+    const fork = await git(repoPath, ["merge-base", branch, localBase]).catch(() => "");
+    if (fork) return fork;
+  }
+  return git(repoPath, ["rev-parse", localBase || "HEAD"]).catch(() => "");
+}
+
 /**
  * Create an isolated git worktree + branch for a task, branched from the
  * project's configured base branch (`baseBranch`) when it exists, else from the
@@ -103,12 +485,21 @@ export async function recentCommits(repoPath: string, n = 10): Promise<string> {
  * into another. Returns the worktree path and branch, or `null` when isolation
  * isn't possible (not a git repo, or no commits yet) — the caller then falls
  * back to running directly in the project's repo path.
+ *
+ * When the base branch has a remote and is simply behind it, the task is cut
+ * from the fetched remote tip instead — see `selectStartPoint`. The user's local
+ * base branch is never moved as a side effect of launching a task.
  */
 export async function ensureWorktree(
   repoPath: string,
   taskId: string,
   baseBranch?: string
 ): Promise<{ path: string; branch: string; baseSha: string } | null> {
+  // Refresh the remote-tracking ref BEFORE taking the lock. A fetch only writes
+  // refs/remotes/*, so it's safe alongside anything else in the repo, and holding
+  // the per-repo lock across a network round trip would park every other task
+  // launch behind one slow connection. Cannot throw; the guard is belt and braces.
+  if (baseBranch) await fetchBase(repoPath, baseBranch).catch(() => {});
   // Serialize with merges and other worktree creations on the same repo: both
   // touch the shared worktree registry / read HEAD for the base sha, and a merge
   // racing this could hand back a base_sha read off a transient HEAD.
@@ -130,20 +521,25 @@ async function ensureWorktreeLocked(
 
   const wtPath = path.join(WORKTREES_DIR, taskId);
   const branch = branchForTask(taskId);
-  // Start point: the configured base branch if it exists, else current HEAD.
-  // The fallback must stay — a freshly-initialized repo may have an unborn or
-  // differently-named default branch, and a misconfigured project shouldn't
-  // block task isolation entirely.
-  const start = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
-  // The commit the task branches from — the stable base for diff + merge.
-  const baseSha = await git(repoPath, ["rev-parse", start || "HEAD"]);
+  // The configured base branch if it exists, else current HEAD. The fallback
+  // must stay — a freshly-initialized repo may have an unborn or differently-named
+  // default branch, and a misconfigured project shouldn't block task isolation.
+  const localBase = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
+
+  // A branch already under this task's name means the task ran before, so this
+  // is a reattach, not a fresh start — and its base is where it forked, not the
+  // tip as of now.
+  const reattaching = await branchExists(repoPath, branch);
+  const baseSha = reattaching
+    ? await forkPointSha(repoPath, branch, localBase)
+    : await selectStartPoint(repoPath, localBase);
   fs.mkdirSync(WORKTREES_DIR, { recursive: true });
 
   // Already linked (e.g. retry after a failed first launch) — reuse it.
   if (fs.existsSync(wtPath)) return { path: wtPath, branch, baseSha };
 
   try {
-    await git(repoPath, ["worktree", "add", "-b", branch, wtPath, ...(start ? [start] : [])]);
+    await git(repoPath, ["worktree", "add", "-b", branch, wtPath, baseSha]);
   } catch {
     // Branch may already exist from a prior generation; attach to it instead.
     await git(repoPath, ["worktree", "add", wtPath, branch]);
@@ -701,6 +1097,13 @@ async function mergeIntoTargetWorktree(input: {
  * must be clean); a prior crash that stranded that tree mid-merge (MERGE_HEAD
  * set) is recovered with `merge --abort` instead of blocking forever. Conflicts
  * abort cleanly either way.
+ *
+ * `baseSha` — the commit the task was cut from — is optional but worth passing.
+ * A task branched from the remote tip (see `ensureWorktree`) carries the remote's
+ * commits as well as its own, and merging it wholesale would fold both into one
+ * commit whose line counts credit the task with everything that arrived from the
+ * remote. Given the base sha, the base branch is fast-forwarded to it first, so
+ * what lands afterwards is only the task's own work.
  */
 export async function mergeTask(input: {
   repoPath: string;
@@ -708,8 +1111,9 @@ export async function mergeTask(input: {
   workBranch: string;
   baseBranch: string;
   message: string;
+  baseSha?: string;
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, baseSha } = input;
 
   let committed = false;
   try {
@@ -735,6 +1139,19 @@ export async function mergeTask(input: {
     // Target: the configured base branch if it exists, else the repo's current branch.
     const current = await currentBranch(repoPath);
     const target = (await branchExists(repoPath, baseBranch)) ? baseBranch : current || baseBranch;
+
+    // Catch the target up to the commit the task was cut from, when that commit
+    // is already on the work branch and strictly ahead of the target — the shape
+    // a task cut from the remote tip leaves behind. Purely a tidy-up: it makes
+    // the merge below contain only the task's own work. Best-effort, because
+    // every reason it can fail (diverged branch, dirty checkout, a linked
+    // worktree holding the branch) is one the plain merge handles anyway.
+    if (baseSha) {
+      const onWorkBranch = await git(repoPath, ["merge-base", "--is-ancestor", baseSha, workBranch])
+        .then(() => true)
+        .catch(() => false);
+      if (onWorkBranch) await advanceBaseBranchLocked(repoPath, target, baseSha);
+    }
 
     // Nothing to land?
     try {

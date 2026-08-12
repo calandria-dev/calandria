@@ -45,6 +45,37 @@ export async function makeRepo(): Promise<string> {
   return repo;
 }
 
+/**
+ * A bare `origin` on `main`, a "colleague" clone that pushes to it, and the
+ * project clone under test — the minimum shape for exercising anything that
+ * reads or writes a remote. Advance the remote with `pushFromColleague`, then
+ * the project clone is stale exactly the way a PR merged on GitHub leaves it.
+ */
+export async function makeRepoWithOrigin(): Promise<{ origin: string; repo: string; colleague: string }> {
+  const origin = tmpDir("origin-");
+  await git(origin, "init", "--bare", "-b", "main");
+
+  const colleague = await makeRepo();
+  await git(colleague, "remote", "add", "origin", origin);
+  await git(colleague, "push", "-u", "origin", "main");
+
+  const repo = tmpDir("clone-");
+  await exec("git", ["clone", origin, repo]);
+  return { origin, repo, colleague };
+}
+
+/** Land a commit on the remote's `branch` from outside the project clone. */
+export async function pushFromColleague(
+  colleague: string,
+  file: string,
+  content: string,
+  branch = "main"
+): Promise<string> {
+  const sha = await commitFile(colleague, file, content, `remote: ${file}`);
+  await git(colleague, "push", "origin", `HEAD:refs/heads/${branch}`);
+  return sha;
+}
+
 /** Repo + task worktree via ensureWorktree, with the boilerplate unpacked. */
 export async function makeRepoWithWorktree(ensureWorktree: (repoPath: string, taskId: string) => Promise<{ path: string; branch: string; baseSha: string } | null>) {
   const repo = await makeRepo();

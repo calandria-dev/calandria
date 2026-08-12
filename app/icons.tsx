@@ -32,6 +32,7 @@ export const Icon = {
   send: (p?: P) => S(<><path d="M7 11l5-5 5 5" /><line x1={12} y1={6} x2={12} y2={18} /></>, p),
   spark: (p?: P) => S(<path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z" />, p),
   clock: (p?: P) => S(<><circle cx={12} cy={12} r={9} /><path d="M12 7v5l3 2" /></>, p),
+  cloudOff: (p?: P) => S(<><path d="M8.5 7.3A5 5 0 0 1 17 10h.5a3.5 3.5 0 0 1 2.6 5.8" /><path d="M15.5 18H6.5a3.5 3.5 0 0 1-.6-6.95" /><line x1={3} y1={3} x2={21} y2={21} /></>, p),
   clear: (p?: P) => S(<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v4h4" /></>, p),
   dots: (p?: P) => S(<><circle cx={5} cy={12} r={1} /><circle cx={12} cy={12} r={1} /><circle cx={19} cy={12} r={1} /></>, p),
   chevDown: (p?: P) => S(<path d="M6 9l6 6 6-6" />, p),

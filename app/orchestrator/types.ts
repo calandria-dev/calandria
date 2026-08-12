@@ -130,6 +130,24 @@ export interface SyncStatusResp {
   conflicts?: string[];
 }
 
+// How the project's LOCAL base branch stands against its remote — the thing
+// nothing in the app used to look at, so a PR merged on GitHub left every new
+// task branching off a dead tip while the sync panel said "up to date".
+export interface BaseBranchResp {
+  hasRemote: boolean;
+  label?: string; // "origin/main"
+  baseBranch?: string;
+  tracked?: boolean;
+  behind?: number;
+  ahead?: number;
+  diverged?: boolean;
+  unknown?: boolean; // ancestry couldn't be established (shallow clone)
+  canFastForward?: boolean;
+  remoteTip?: string;
+  fetchedAt?: number;
+  fetchError?: string;
+}
+
 export type FsListing = { path: string; parent: string | null; home: string; entries: { name: string; path: string }[] };
 
 // ---------- GitHub onboarding shapes ----------
