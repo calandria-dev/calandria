@@ -525,13 +525,22 @@ export function useOrchestrator() {
     setEditId(null);
   };
 
-  // Re-parent a misfiled task. Only unstarted tasks can move (the server
-  // refuses the rest — a worktree belongs to its project's repo) and every
-  // dependency edge touching it is dropped, since edges can't span projects.
-  // The row leaves this project's list right away; the published task_moved
-  // event re-syncs every other tab. Rejects on refusal — the modal shows why.
-  const moveTaskToProject = async (id: string, projectId: string) => {
-    await jsend<TaskRow>(`/api/tasks/${id}/move`, "POST", { project_id: projectId });
+  // Re-parent a misfiled task. Every dependency edge touching it is dropped,
+  // since edges can't span projects. The row leaves this project's list right
+  // away; the published tasks_moved event re-syncs every other tab. Rejects on
+  // refusal — the modal shows why.
+  //
+  // A started task carries a worktree cut from the OLD project's repo, so it
+  // moves only with `discardWorktree`: the server tears that checkout down and
+  // the next turn cuts a fresh one from the destination. `discardUnsafe` is the
+  // second answer, needed only when the worktree holds work removing it would
+  // lose — the modal asks for it after naming what that work is.
+  const moveTaskToProject = async (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => {
+    await jsend<TaskRow>(`/api/tasks/${id}/move`, "POST", {
+      project_id: projectId,
+      ...(opts?.discardWorktree ? { discard_worktree: true } : {}),
+      ...(opts?.discardUnsafe ? { discard_unsafe: true } : {}),
+    });
     setTasks((prev) => prev.filter((x) => x.id !== id));
     setEditId(null);
     setSelTask((cur) => (cur === id ? null : cur));

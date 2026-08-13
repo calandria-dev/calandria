@@ -142,45 +142,93 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
   return { switching, contextFlip };
 }
 
+// What a started task's move would destroy — GET /api/tasks/[id]/move, mirroring
+// lib/taskMove.ts DiscardPreview.
+type DiscardPreview = {
+  has_worktree: boolean;
+  safe: boolean;
+  dirty: boolean;
+  ahead: number;
+  reason: string | null;
+  branch: string;
+};
+
 // Re-parent a misfiled task. Acts immediately (like Delete below it) rather
 // than riding along with Save: a move isn't a field set — it renumbers the
 // task's order in the destination, re-derives what it inherited from the old
-// project, and drops the blocked-by links that would otherwise span projects.
-// Offered only while the task is unstarted; once it has a worktree, that
-// checkout belongs to the current project's repo and the server refuses.
+// project, re-points the sessions and spend recorded against the old one, and
+// drops the blocked-by links that would otherwise span projects.
+//
+// A STARTED task can move too, but only by throwing away the git worktree it
+// was working in — that checkout was cut from the current project's repo, and
+// no amount of re-parenting makes it belong to another one. So the field turns
+// into the same two-step confirmation Delete uses, and it names the cost first:
+// what's in that worktree is read from the server (uncommitted edits, commits
+// the base branch never took) rather than guessed at, because "merged and
+// clean" and "an afternoon of unsaved work" are the same button otherwise.
+//
 // (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
-// which can keep a link whose both ends are moving, as one task alone can't.)
+// which can keep a link whose both ends are moving, as one task alone can't.
+// Discarding worktrees is deliberately not offered there; see the bulk route.)
 function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle;
-  onMove: (id: string, projectId: string) => Promise<void>;
+  onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>;
 }) {
   const [target, setTarget] = useState("");
   const [moving, setMoving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const [preview, setPreview] = useState<DiscardPreview | null>(null);
   const targets = useMemo(() => projects.filter((p) => p.id !== task.project_id), [projects, task.project_id]);
-  if (targets.length === 0) return null;
   const dest = targets.find((p) => p.id === target) ?? null;
+
+  // What the teardown would cost, read once a destination is picked. Cheap for
+  // a task with no worktree (the route answers without touching git), so it's
+  // not worth gating on `started` — which is only half the story anyway: a
+  // failed launch can leave a worktree on a task that never opened a session.
+  const loadPreview = useCallback(() => {
+    jget<DiscardPreview>(`/api/tasks/${task.id}/move`).then(setPreview).catch(() => setPreview(null));
+  }, [task.id]);
+  useEffect(() => { if (target) loadPreview(); }, [target, loadPreview]);
+
+  if (targets.length === 0) return null;
   // Every edge touching this task goes — the ones it owns and the ones pointing
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
   const links = (task.depends_on?.length ?? 0) + dependents;
   const src = projects.find((p) => p.id === task.project_id);
   const { switching, contextFlip } = dest ? moveDerivation(task, src, dest) : { switching: null, contextFlip: null };
+  // The server refuses a started task without the acknowledgement even when its
+  // worktree is already gone, so `started` alone is enough to require one.
+  const needsAck = task.started === 1 || !!preview?.has_worktree;
+  const unsafe = !!preview && preview.has_worktree && !preview.safe;
+
   const move = async () => {
     if (!dest) return;
+    // Two-step, like Delete: the first click on a started task's button only
+    // arms it, so the cost below is on screen before anything is destroyed.
+    if (needsAck && !confirm) return setConfirm(true);
     setMoving(true);
     setErr(null);
     try {
-      await onMove(task.id, dest.id);
+      await onMove(task.id, dest.id, needsAck ? { discardWorktree: true, discardUnsafe: unsafe } : undefined);
     } catch (e) {
+      // The one refusal the user can answer: the worktree picked up unsaved work
+      // between the preview and the click (their own editor — no turn can run
+      // while this is held). Re-read it so the warning now names what's there,
+      // and disarm, so confirming again is a decision about the real state.
       setErr(e instanceof Error ? e.message : String(e));
+      setConfirm(false);
+      loadPreview();
       setMoving(false);
     }
   };
+
+  const label = !needsAck ? `Move to ${dest?.name}` : confirm ? "Move and discard the worktree" : "Discard worktree and move…";
   return (
     <div className="field">
-      <div className="lab">Move to project <span className="opt">— unstarted tasks only</span></div>
-      <ProjectTargetList targets={targets} value={target} name="move-project" onChange={(id) => { setTarget(id); setErr(null); }} />
+      <div className="lab">Move to project <span className="opt">{task.started === 1 ? "— discards this task's worktree" : "— transcript and history come along"}</span></div>
+      <ProjectTargetList targets={targets} value={target} name="move-project" onChange={(id) => { setTarget(id); setErr(null); setConfirm(false); }} />
       {dest ? (
         <>
           <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -190,8 +238,25 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
             {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
             {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
           </div>
-          <button className="btn btn-line" style={{ marginTop: 8 }} disabled={moving} onClick={move}>
-            {Icon.chevRight()} {moving ? "Moving…" : `Move to ${dest.name}`}
+          {needsAck && (
+            <div className="hlp" style={{ color: unsafe ? "var(--red)" : "var(--amber)", marginTop: 8 }}>
+              {preview?.has_worktree ? (
+                <>
+                  This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belong to{" "}
+                  {src?.name ?? "its current project"}&rsquo;s repo, so moving deletes them.{" "}
+                  {unsafe
+                    ? `That destroys ${preview.reason} — permanently, with no way back.`
+                    : "Nothing is lost: it's clean and everything on it is already in the base branch."}
+                </>
+              ) : (
+                <>This task has already run, so it moves as a started task: the next turn cuts a fresh worktree from {dest.name}&rsquo;s repo.</>
+              )}{" "}
+              The transcript, summaries and cost history come with it; the merge and PR it recorded against{" "}
+              {src?.name ?? "the old project"} do not.
+            </div>
+          )}
+          <button className={confirm ? "btn-danger on" : "btn btn-line"} style={{ marginTop: 8 }} disabled={moving} onClick={move}>
+            {confirm ? Icon.x() : Icon.chevRight()} {moving ? "Moving…" : label}
           </button>
         </>
       ) : (
@@ -350,7 +415,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   );
 }
 
-export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -392,13 +457,12 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
-      {/* Same gate as the agent picker, for the same reason: once a task has a
-          session it has a worktree cut from THIS project's repo. (The server
-          also refuses a worktree left by a failed launch — a state the client
-          row doesn't carry — and the field surfaces that error.) */}
-      {canChangeAgent && (
-        <MoveProjectField task={task} tasks={tasks} projects={projects} agents={agents} onMove={onMove} />
-      )}
+      {/* Unlike the agent picker above, this is NOT gated on the task being
+          unstarted: a started one can move by discarding the worktree it cut
+          from this project's repo, which the field asks for explicitly. Only a
+          live turn is refused outright, and the field surfaces the server's
+          reason. */}
+      <MoveProjectField task={task} tasks={tasks} projects={projects} agents={agents} onMove={onMove} />
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
           This permanently removes “{task.title}”, its agent session and git worktree from the orchestrator. Any unmerged work in the worktree is discarded.

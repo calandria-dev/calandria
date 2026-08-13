@@ -389,13 +389,19 @@ export function reorderTasks(ids: string[]) {
 // Why a task may not change projects right now — null when it may. A task with
 // a worktree holds a checkout cut from its CURRENT project's repo: re-parenting
 // the row would leave it diffing against one repository and merging into
-// another. Rather than tear the worktree down behind the user's back, the move
-// is refused; delete-and-recreate is still the answer for started work.
+// another. So a plain move is refused for started work.
 // (`started`, `running` and the worktree columns are checked together — a task
 // can be flagged started before its worktree exists, and a merged task keeps
 // `started` after its worktree is reclaimed.)
-export function moveTaskBlockedReason(task: Task): string | null {
+//
+// `resetCheckout` is the caller saying that checkout is being thrown away —
+// lib/taskMove.ts tears the worktree down and this write clears the columns, so
+// the next turn cuts a fresh one from the DESTINATION repo. The started-task
+// reason then no longer applies; a LIVE turn still refuses either way, because
+// nothing may delete a worktree an agent is writing into.
+export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolean } = {}): string | null {
   if (task.running === 1) return "a task with a running turn can't be moved";
+  if (opts.resetCheckout) return null;
   if (task.started === 1 || task.worktree_path || task.work_branch || task.base_sha)
     return "a started task can't be moved — its git worktree belongs to the current project's repo";
   return null;
@@ -458,15 +464,23 @@ export interface TaskMoveBatch {
  *
  * The tasks' own child rows (messages, summaries, uploads) are task-keyed, so
  * they simply come along. The project-keyed ones — sessions, task_usage,
- * task_merges — are deliberately NOT re-pointed: every one of them is written
- * by a turn that has already opened a session, which is exactly the state this
- * refuses to move. Loosening the guard means revisiting that.
+ * task_merges — are re-pointed at the destination, unconditionally: a task's
+ * sessions and its spend are the task's, and leaving them behind would bill the
+ * old project for work its new owner did. (For an unstarted task there are no
+ * such rows at all, which is why this used to be skipped — a started task
+ * couldn't move. `resetCheckout` is what ended that.)
+ *
+ * `resetCheckout` moves a STARTED task by throwing its checkout away: the
+ * caller (lib/taskMove.ts) has already removed the worktree and branch from the
+ * old repo, and this clears every column that described them so the next turn
+ * cuts a fresh worktree from the destination — see the `clearCheckout` statement
+ * below for exactly what that covers and why.
  *
  * Liveness is NOT checked here: a turn can be in flight with the row still
  * reading running=0 (POST /messages claims the abort slot before it locks), so
  * the caller screens for that under the task locks — see lib/taskMove.ts.
  */
-export function moveTasks(ids: string[], projectId: string): TaskMoveBatch {
+export function moveTasks(ids: string[], projectId: string, opts: { resetCheckout?: boolean } = {}): TaskMoveBatch {
   const db = getDb();
   const dest = getProject(projectId);
   if (!dest) throw new Error("project not found");
@@ -481,7 +495,7 @@ export function moveTasks(ids: string[], projectId: string): TaskMoveBatch {
     if (!task) skipped.push({ id, reason: "task not found" });
     else if (task.project_id === projectId) unchanged.push(id);
     else {
-      const blocked = moveTaskBlockedReason(task);
+      const blocked = moveTaskBlockedReason(task, opts);
       if (blocked) skipped.push({ id, reason: blocked });
       else movers.push({ ...task, picked });
     }
@@ -527,8 +541,48 @@ export function moveTasks(ids: string[], projectId: string): TaskMoveBatch {
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
         reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
     );
+    // Everything that described the checkout being thrown away. Its own
+    // statement, run AFTER the reparent: it's the exception rather than part of
+    // every move, so the ordinary unstarted move still writes exactly the
+    // columns it always has.
+    //
+    // The worktree/branch/base triple is the obvious part — they name a
+    // directory and a branch in the OLD repo, both gone by the time this runs,
+    // and emptying them is what makes the next turn cut a fresh worktree from
+    // the destination (POST /messages and lib/autoStart both read a missing
+    // worktree_path as "create one").
+    //
+    // The other three are current-state fields about that same checkout, and
+    // only clearing them keeps the row honest in its new home:
+    //   - session_id resumes an agent thread whose entire context — files read,
+    //     commands run, the repo it believes it's in — is the old project's.
+    //     Worse, worktrees are keyed by TASK id, so the fresh one lands at the
+    //     very path that session remembers, with different contents. The next
+    //     turn opens a new session instead. (deriveMoved already nulls this on
+    //     an agent switch, for the same "what it was attached to is gone"
+    //     reason.) The transcript, summaries and usage are task-keyed and all
+    //     survive — losing them is what the move exists to avoid.
+    //   - merged_at / pr_url claim this task's work sits in the base branch,
+    //     and under review, of a repo it has just left. The merge itself isn't
+    //     forgotten: task_merges keeps the event, its line counts and its date,
+    //     and is re-pointed at the destination below.
+    // `started` and `generation` are deliberately untouched — the task really
+    // did start and its transcript is still here, so it stays a resume.
+    const clearCheckout = db.prepare(
+      `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
+        session_id = NULL WHERE id = ?`
+    );
+    // Project-keyed child rows follow their task. These are the tables that
+    // denormalize project ownership for per-project rollups (spend, session
+    // counts, the merged-per-day charts) — left behind, they'd keep billing the
+    // source project for a task it no longer owns.
+    const repoint = ["sessions", "task_usage", "task_merges"].map((t) =>
+      db.prepare(`UPDATE ${t} SET project_id = ? WHERE task_id = ?`)
+    );
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
+      if (opts.resetCheckout) clearCheckout.run(r.id);
+      for (const stmt of repoint) stmt.run(projectId, r.id);
     }
     // A blocker-less task can never auto-start (lib/autoStart.ts selects through
     // task_dependencies), so the opt-in would be a dead flag — clear it. Read

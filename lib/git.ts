@@ -506,6 +506,36 @@ export async function ensureWorktree(
   return withRepoLock(repoPath, () => ensureWorktreeLocked(repoPath, taskId, baseBranch));
 }
 
+/**
+ * Whether `wtPath` is a worktree `repoPath` currently has linked. Compared by
+ * real path, since either side can reach the same directory through a symlink
+ * (on macOS /var is one, and TMPDIR lives under it).
+ *
+ * Conservative on failure: if the registry can't be read, the answer is "yes,
+ * it's ours" — the caller reacts to a `false` by deleting the directory, and a
+ * git hiccup must never be grounds for that.
+ */
+async function isLinkedWorktree(repoPath: string, wtPath: string): Promise<boolean> {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  let listed: string;
+  try {
+    listed = await git(repoPath, ["worktree", "list", "--porcelain"]);
+  } catch {
+    return true;
+  }
+  const target = real(wtPath);
+  return listed
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => real(line.slice("worktree ".length).trim()) === target);
+}
+
 async function ensureWorktreeLocked(
   repoPath: string,
   taskId: string,
@@ -535,8 +565,24 @@ async function ensureWorktreeLocked(
     : await selectStartPoint(repoPath, localBase);
   fs.mkdirSync(WORKTREES_DIR, { recursive: true });
 
-  // Already linked (e.g. retry after a failed first launch) — reuse it.
-  if (fs.existsSync(wtPath)) return { path: wtPath, branch, baseSha };
+  // Already linked (e.g. retry after a failed first launch) — reuse it, but
+  // only once it's THIS repo's. Worktree paths are keyed by task id and nothing
+  // else, so a task that changed projects (POST /move with the worktree torn
+  // down) can find the old project's checkout still sitting at the path it
+  // wants — if teardown half-failed, or the process died between removing it
+  // and committing the move. Reusing that would run the agent against the repo
+  // the task just left, and diff and merge against it too. A leftover that
+  // isn't registered here is an orphan by definition: clear it and cut fresh.
+  if (fs.existsSync(wtPath)) {
+    if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha };
+    try {
+      fs.rmSync(wtPath, { recursive: true, force: true });
+    } catch {
+      // Can't clear it and can't trust it; running in repo_path unisolated is
+      // the lesser evil versus committing into someone else's repo.
+      return null;
+    }
+  }
 
   try {
     await git(repoPath, ["worktree", "add", "-b", branch, wtPath, baseSha]);
@@ -555,6 +601,9 @@ async function ensureWorktreeLocked(
  * while preserving the branch — that's what the "prune merged worktrees"
  * cleanup does, since the branch is the diff base for reopening an old task and
  * deleting it would lose the ability to view that task's changes.
+ *
+ * The two halves are independent: a task pruned that way has a branch and no
+ * worktree, and full teardown of THAT still has to delete the branch.
  */
 export async function removeWorktree(
   repoPath: string,
@@ -562,15 +611,17 @@ export async function removeWorktree(
   branch: string,
   opts: { keepBranch?: boolean } = {}
 ): Promise<void> {
-  if (!wtPath) return;
-  try {
-    await git(repoPath, ["worktree", "remove", "--force", wtPath]);
-  } catch {
-    // Fall back to removing the directory and pruning the stale registration.
+  if (!wtPath && !branch) return;
+  if (wtPath) {
     try {
-      fs.rmSync(wtPath, { recursive: true, force: true });
-      await git(repoPath, ["worktree", "prune"]);
-    } catch {}
+      await git(repoPath, ["worktree", "remove", "--force", wtPath]);
+    } catch {
+      // Fall back to removing the directory and pruning the stale registration.
+      try {
+        fs.rmSync(wtPath, { recursive: true, force: true });
+        await git(repoPath, ["worktree", "prune"]);
+      } catch {}
+    }
   }
   if (branch && !opts.keepBranch) {
     try {
@@ -618,6 +669,11 @@ export interface PruneSafety {
  *
  * Unsafe when the worktree is dirty (uncommitted edits) OR the work branch is
  * ahead of the base branch (commits not yet merged). Read-only; never mutates.
+ *
+ * The two halves are independent: with no worktree there are no uncommitted
+ * edits to lose, but the BRANCH can still be carrying unmerged commits — the
+ * exact shape a task left in by "prune merged worktrees" (worktree reclaimed,
+ * branch kept), whose commits a later full teardown would orphan.
  */
 export async function worktreePruneSafety(input: {
   repoPath: string;
@@ -626,9 +682,10 @@ export async function worktreePruneSafety(input: {
   baseBranch: string;
 }): Promise<PruneSafety> {
   const { repoPath, worktreePath, workBranch, baseBranch } = input;
-  if (!worktreePath) return { safe: true, isDirty: false, ahead: 0 };
 
-  const isDirty = (await git(worktreePath, ["status", "--porcelain"]).catch(() => "")).trim().length > 0;
+  const isDirty = worktreePath
+    ? (await git(worktreePath, ["status", "--porcelain"]).catch(() => "")).trim().length > 0
+    : false;
 
   // Commits on the work branch that the base branch hasn't yet absorbed. Compared
   // against the base BRANCH (not the recorded base_sha) so it reflects git reality

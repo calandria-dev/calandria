@@ -50,6 +50,9 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
 | `03-views.spec.ts` | list ⇄ board (kanban) toggle, status columns, card placement |
 | `04-turn-behaviors.spec.ts` | mid-turn queueing, Stop, failed-turn notices, suggestions tray, session resume |
 | `05-api-smoke.spec.ts` | REST contracts: diff/sync shapes, `/clear` generation lineage, agent registry, hard deletes |
+| `06-move-task.spec.ts` | re-filing an unstarted task to another project from the Edit modal |
+| `07-move-tasks-bulk.spec.ts` | multi-select + Move to project… : one request for a whole selection, refusals reported |
+| `08-move-started-task.spec.ts` | re-filing a task that has RUN: the worktree it must discard is named, confirmed twice, reclaimed — and its next turn lands in the destination repo |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named
