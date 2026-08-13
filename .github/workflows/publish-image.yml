@@ -14,10 +14,11 @@
 # belt to that brace by never running docker/login-action on the PR path.
 # PRs still build both arches, so a broken Dockerfile fails before merge.
 #
-# It is also gated on the unit suite (the `test` job below calls test.yml).
-# A green `docker build` only proves the Dockerfile is sound — it says nothing
-# about the code inside the image, and without this the registry would happily
-# accept a `latest` whose tests are red.
+# It is also gated on the unit suite and the typecheck (the `test` job below
+# calls test.yml, and waits on every job in it). A green `docker build` only
+# proves the Dockerfile is sound — it says nothing about the code inside the
+# image, and without this the registry would happily accept a `latest` whose
+# tests are red.
 #
 # Every `uses:` here is pinned to a full commit SHA with the release tag in a
 # trailing comment. `@v7` is a MUTABLE ref — whoever can move that tag can run
@@ -135,6 +136,15 @@ jobs:
   # exactly one definition of "the tests pass". `build` needs it, so a red suite
   # burns ~2 minutes of runner instead of ~20 and nothing reaches ghcr.io — not
   # even the untagged by-digest blobs the matrix pushes ahead of the manifest.
+  #
+  # This job IS the whole called workflow, not one job inside it: it finishes
+  # only when every job in test.yml finishes, and fails if any of them fails.
+  # So test.yml's `typecheck` gates `build` too, automatically — there is no
+  # `needs:` syntax that could reach a single job inside a called workflow
+  # anyway. That duplicates what the Docker build already type-checks, and it
+  # is kept on purpose: it fails in seconds instead of after a two-arch image
+  # build, and the gate survives any future change to how the Dockerfile
+  # builds. It is NOT worth a `typecheck: off` input to skip here.
   #
   # e2e: off — it already runs in test.yml on this same push, and the publish
   # path has its own end-of-pipeline proof in `verify` (which boots the actual

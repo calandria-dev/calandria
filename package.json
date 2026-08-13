@@ -11,6 +11,7 @@
     "pty": "node pty-server.js",
     "build": "NODE_ENV=production next build --turbopack",
     "start": "NODE_ENV=production concurrently -k -n app,pty -c blue,green \"node server.js\" \"node pty-server.js\"",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:only": "playwright test",
