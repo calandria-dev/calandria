@@ -1,0 +1,44 @@
+# Keeps the two pinned supply-chain inputs from rotting.
+#
+# publish-image.yml/test.yml pin every action to a full commit SHA, and the
+# Dockerfile pins its base image by digest. Both are immutable by design — and
+# immutable means a published security fix never reaches this repo on its own.
+# SHA pinning WITHOUT this file is strictly worse than tag pinning: `@v7` at
+# least drifts onto patches. Dependabot is the half that makes the pin safe.
+#
+# It reads the `# v7.3.0` trailing comments in the workflows to know which
+# release a SHA corresponds to, so keep those comments accurate when a pin is
+# ever touched by hand.
+#
+# npm is deliberately not listed. The lockfile pins ~1k transitive packages and
+# a personal fork does not want that PR volume; `npm audit` covers the security
+# case. The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
+# Dockerfile) are bumped deliberately by hand — see the comment there.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" means .github/workflows/, not the repo root, for this ecosystem.
+    directory: /
+    schedule:
+      interval: weekly
+    # One PR for the batch. Actions move together and each is a one-line SHA
+    # swap; seven separate PRs for a weekly bump is how this gets muted.
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+    labels: [dependencies]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    # node:22-bookworm-slim is pinned tag@digest; Dependabot rewrites the digest
+    # (and the tag, if the 22.x line moves) in both FROM lines.
+    groups:
+      base-image:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"
+    labels: [dependencies]

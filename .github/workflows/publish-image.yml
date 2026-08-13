@@ -18,6 +18,14 @@
 # A green `docker build` only proves the Dockerfile is sound — it says nothing
 # about the code inside the image, and without this the registry would happily
 # accept a `latest` whose tests are red.
+#
+# Every `uses:` here is pinned to a full commit SHA with the release tag in a
+# trailing comment. `@v7` is a MUTABLE ref — whoever can move that tag can run
+# code in a job that holds `packages: write`, and a SHA is the only immutable
+# action reference GitHub offers. The tags are not decoration: they are what
+# .github/dependabot.yml reads to know which pin is stale, and a SHA pin with
+# no update bot behind it is strictly worse than a tag pin (it rots silently
+# and stops collecting security fixes). Bump these via Dependabot, not by hand.
 name: Publish image
 
 on:
@@ -73,7 +81,7 @@ jobs:
 
       - name: Derive tags and labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         env:
           # imagetools applies these to the manifest list, not the per-arch images.
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
@@ -120,13 +128,13 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to ghcr.io
         if: needs.prepare.outputs.publish == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -134,7 +142,7 @@ jobs:
 
       - name: Build ${{ matrix.platform }}
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -157,9 +165,9 @@ jobs:
           cache-to: ${{ needs.prepare.outputs.publish == 'true' && format('type=gha,mode=max,scope={0}', matrix.arch) || '' }}
           # BuildKit's default attestation would make each leg push an index
           # rather than a plain manifest, which is the wrong input shape for the
-          # imagetools merge below. Signing belongs on the merged index instead
-          # (actions/attest with the digest the merge job outputs) — not done
-          # here, but that is the upgrade path, not "turn provenance back on".
+          # imagetools merge below. Signing belongs on the merged index instead,
+          # which is exactly what the `attest` job does with the digest the
+          # merge job outputs. Do NOT "fix" this by turning provenance back on.
           provenance: false
           # Publish path: an untagged by-digest blob, claimed by the merge job.
           # PR path: build everything, materialize nothing.
@@ -177,7 +185,7 @@ jobs:
 
       - name: Upload digest
         if: needs.prepare.outputs.publish == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -195,16 +203,16 @@ jobs:
       digest: ${{ steps.manifest.outputs.digest }}
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -244,6 +252,59 @@ jobs:
           echo "Published ${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
           docker buildx imagetools inspect "${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
 
+  # Signs the merged index with SLSA build provenance — the "who built this,
+  # from which commit, on which workflow" claim that `gh attestation verify`
+  # checks. This is a separate job rather than a step in `merge` because the
+  # per-arch legs cannot produce it: BuildKit's attestation makes each leg push
+  # an index, which `imagetools create` cannot consume (see `provenance: false`
+  # above). The merged index is the only artifact a user actually pulls, and it
+  # is the thing worth signing.
+  #
+  # It runs off `needs.merge.outputs.digest` — the index digest taken from
+  # `imagetools create --metadata-file`, NOT from a re-inspection of a mutable
+  # tag — so the signature is bound to precisely the bytes this run published.
+  #
+  # Parallel with `verify` on purpose: neither needs the other, and an image
+  # that fails to boot is caught by `verify` regardless of whether it got
+  # signed. (Attestations are free on public repos; on a private repo they
+  # would need GitHub Enterprise Cloud.)
+  attest:
+    needs: [prepare, merge]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Mint the OIDC token Sigstore exchanges for a short-lived signing cert.
+      id-token: write
+      # Persist the attestation to the repo's attestations API.
+      attestations: write
+      # push-to-registry uploads the signature bundle as an OCI artifact
+      # alongside the image, so this job writes to the package too.
+      packages: write
+    steps:
+      # Required even though the action does the pushing: @sigstore/oci reads
+      # the registry credentials out of the docker config this step writes.
+      # Without it the attestation is signed and then fails to upload.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest the published index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          # No predicate/sbom input, so the action's default mode applies:
+          # auto-generated SLSA build provenance.
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ needs.merge.outputs.digest }}
+          push-to-registry: true
+          # Linked-artifact storage records are an organization-only API and
+          # jgSephora is a personal account, so asking for one buys a warning
+          # and nothing else. This is also why `artifact-metadata: write` is
+          # absent from the permissions above — it would have no effect here.
+          create-storage-record: false
+
   # Proves the published artifact runs, on each architecture in the manifest.
   # A green build is not evidence of a working image: the runtime stage COPYs
   # its plain-Node .mjs files by name, so a new one that nobody added to the
@@ -264,7 +325,7 @@ jobs:
       packages: read
     steps:
       - name: Log in to ghcr.io
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
