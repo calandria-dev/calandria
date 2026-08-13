@@ -21,6 +21,14 @@ export const dynamic = "force-dynamic";
  * in the selection — a chain that moves together stays intra-project, so
  * nothing has to be dropped.
  *
+ * Deliberately NOT on offer here: the single route's `discard_worktree`, which
+ * moves a started task by destroying its checkout. The operation supports a
+ * selection, but the acknowledgement doesn't — each worktree is a different
+ * irreversible answer ("yes, throw away these three uncommitted files") and one
+ * checkbox over eleven of them isn't consent, it's a shrug. A started task in a
+ * bulk selection is still reported in `skipped`, and the user re-files it from
+ * the Edit modal where the cost is named.
+ *
  * Responds with ids, not rows: the client refetches the trays either way (the
  * move changes both projects' counts and its neighbours' dependency links), so
  * what it needs here is the account of what happened, not the new rows.

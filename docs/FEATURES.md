@@ -62,15 +62,25 @@ Needs input, and Done states. Tasks can depend on other tasks; **Start when unbl
 launches an opted-in task as soon as its final blocker is marked done.
 
 A misfiled task can be moved to another project from **Edit task**, keeping its description
-and transcript. Only tasks that haven't started can move — once a task has run, its git
-worktree belongs to the current project's repository — and the move drops any blocked-by
-links it had, since dependencies can't span projects.
+and transcript. The move drops any blocked-by links it had, since dependencies can't span
+projects.
+
+A task that has already run can move too, but its git worktree can't come along — that
+checkout was cut from the current project's repository. So moving one discards the worktree
+and its branch, and the modal asks for that explicitly, after telling you what's in there:
+a clean, merged worktree loses nothing, while uncommitted edits or commits your base branch
+never took are named and need a second confirmation. Everything else follows the task — the
+transcript, the summaries, the cost history and the sessions and merges recorded against the
+old project — and the next turn cuts a fresh worktree from the new project's repository.
+A task with a live turn is refused outright; stop it first.
 
 A whole batch can go at once: tick the checkboxes in the task list (shift-click for a range,
 the Suggested tray included) and use **Move to project…** in the selection bar. They move
 under one transaction, and a blocked-by link whose *both* ends are in the selection survives
 the trip — select a whole dependency chain and it arrives intact. Anything that can't move
-is named in a report rather than quietly left behind.
+is named in a report rather than quietly left behind. Bulk moves never discard worktrees:
+each one is its own irreversible answer, so started tasks are reported and re-filed one at a
+time from **Edit task**.
 
 Agents can also suggest follow-up tasks while they work — into their own project, or into
 any other one. When you spot work in a session that belongs to a different repo, the agent

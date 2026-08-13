@@ -434,6 +434,15 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 </Popover>
               )}
             </div>
+            {/* The counterpart to TaskHero's Edit button, which only exists
+                before the first session. Everything in that modal still applies
+                to a task that has run — its title and description are the
+                agent's task context on every future turn, its dependencies
+                still gate it, and it can still be re-filed under another
+                project (by discarding the worktree it cut from this one). */}
+            {hasSession && (
+              <button className="btn btn-line btn-sm" title="Edit title, description, dependencies — or move this task to another project" onClick={onEdit} disabled={running}>{Icon.edit()} Edit</button>
+            )}
             {hasSession && task.started === 1 && (
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
             )}
