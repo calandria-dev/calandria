@@ -74,6 +74,13 @@ unrecognized name is refused rather than filed in the wrong place. Blocked-by li
 can't span projects, so they have to point at tasks in whichever project the new task lands
 in. Project recaps help restore your mental context when you return later.
 
+Agents can read the board as well as add to it: they can list the tasks in a project, see
+what each one is blocked by, and open any task in full — including the brief they were
+started with. Changing a task is deliberately narrower. An agent can retitle, re-describe,
+reprioritize or close **its own** task, and nothing else: no session can rearrange the board
+around it, and cancelling stays your call. When an agent marks its own task done, anything
+set to **Start when unblocked** behind it launches just as it would have from your click.
+
 ## Workspace tools
 
 The integrated terminal provides a real shell for each project. Managed `dev`, `setup`, and

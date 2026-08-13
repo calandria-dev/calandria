@@ -75,6 +75,10 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       const filedInto = ev.suggestedProjectId ?? ev.projectId;
       if (selProjRef.current === filedInto) void loadTasks(filedInto, false);
     }
+    // An agent rewrote its own task's title/description/priority (update_task).
+    // The snapshot above only carries running/awaiting_input/status, so the rest
+    // would stay stale until a reload — refetch the tray it lives in.
+    if (ev.event === "task_edited" && selProjRef.current === ev.projectId) void loadTasks(ev.projectId, false);
   };
   // Route through a ref so the EventSource effect never re-subscribes.
   const handleRef = useRef(handle);

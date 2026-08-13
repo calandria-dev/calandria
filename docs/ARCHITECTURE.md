@@ -61,7 +61,8 @@ The app talks to coding agents only through the `AgentDriver` interface.
 ### The Claude driver (`lib/agents/claude/driver.ts`)
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
-the Claude Code system prompt), the `suggest_task` + `list_projects` + `expose_service` MCP tools,
+the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `list_tasks` +
+`get_task` + `update_task` + `list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
 `lib/claude-auth.ts`. Sessions run `permissionMode: "bypassPermissions"`.
@@ -123,15 +124,16 @@ controls show their run count and API-price-equivalent cost without polling.
 
 ### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
 
-`suggest_task` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
+`suggest_task` / `list_tasks` / `get_task` / `update_task` / `list_projects` /
+`expose_service` / `ask_user` are the same orchestrator
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,list-projects,expose-service,ask-user}`, gated
-by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
+(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,list-projects,expose-service,ask-user}`,
+gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort
 signal), and the bridge **polls** the sibling `ask-user/wait` endpoint for the settled
@@ -150,6 +152,22 @@ target too: `blocked_by` refs must resolve inside it (`setTaskDeps` is project-s
 refs that don't are now reported back rather than dropped in silence), and the `suggested`
 event carries the target's project id so `GET /api/events` can tell a client which tray to
 refresh — the receiving project is usually not the one on screen.
+
+Reading and writing EXISTING tasks splits along blast radius. Reads are inert, so they range
+as widely as suggestion filing does: `list_tasks` takes the same optional `project` (resolved
+by the same strict `resolveTargetProject`) and flags the caller's own row `current: true`;
+`get_task` reads any row by id, defaulting to the session's own — that's how an agent
+re-reads the brief it was started with. Writes are not inert: a turn runs detached for as
+long as it likes, so `update_task` is scoped to the **calling task's own row** and takes no
+task id at all (the Claude driver closes over the task; the bridge's endpoint writes
+`ORCH_TASK_ID` and nothing else). It covers title, description, priority and status —
+minus `cancelled`, which calls `abortTurn()` and would tear down the very turn making the
+call. Like `createSuggestedTask`, `updateOwnTask()` re-reads the row before writing, because
+a detached turn's snapshot can outlive the row. Marking done fires
+`maybeAutoStartDependents()`, which lives with the callers rather than in `lib/agentTools.ts`
+— that module is pinned SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches
+the runner. Cross-task writes are deliberately not offered; `suggest_task` is how an agent
+proposes work it doesn't own.
 
 ### Adding a third agent (e.g. Gemini, Cursor)
 

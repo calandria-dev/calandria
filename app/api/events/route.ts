@@ -30,6 +30,10 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
       return "turn_end";
     case "task_updated":
       return "task_updated";
+    // The `update_task` agent tool rewrote the row's title/description/priority
+    // too. The payload below can't carry those, so the client refetches on it.
+    case "task_edited":
+      return "task_edited";
     default:
       return null;
   }
