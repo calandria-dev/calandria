@@ -1,8 +1,16 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Two jobs, deliberately on different schedules:
+# Three jobs, deliberately on different schedules:
 #
+#   typecheck — `npm run typecheck` (next typegen + tsc --noEmit). Seconds.
+#           Runs on everything, always. This repo has no lint script, so tsc IS
+#           the static gate — and it otherwise only runs as a side effect of
+#           `next build` (next.config.mjs does not set ignoreBuildErrors). That
+#           build happens only in `e2e` below, which is main-only/label-gated,
+#           and in the Docker build. Without this job an ordinary PR goes fully
+#           green with a type error in it and the failure lands after merge, on
+#           main, in a job that takes twenty times as long to tell you.
 #   unit  — `npm test` (vitest). ~1-2 minutes. Runs on everything, always.
 #   e2e   — `npm run test:e2e` (build + Playwright against the real prod server).
 #           Many minutes: it does a full `next build`, boots server.js + the pty
@@ -11,8 +19,14 @@
 #           dispatch, and on a PR that carries the `e2e` label — the escape
 #           hatch for a change that obviously touches the app's core flow.
 #
+# The three are independent jobs, not steps in one: they run concurrently, each
+# reports its own red/green, and a type error does not hide behind a two-minute
+# vitest run. Each does its own `npm ci` — setup-node caches npm's download
+# cache (not node_modules), so the copies are isolated and concurrent restores
+# of the same key are safe.
+#
 # `npm run preflight` (unit + e2e) is the documented pre-push gate locally; this
-# file is the same pair, split so the fast half reports fast.
+# file is the same pair plus the typecheck, split so the fast parts report fast.
 name: Test
 
 on:
@@ -53,6 +67,46 @@ permissions:
   contents: read
 
 jobs:
+  typecheck:
+    name: Types (tsc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # `npm run typecheck`, not an inline `npx tsc --noEmit`: the script is the
+      # single definition of what "types are fine" means, so what a contributor
+      # runs locally and what CI enforces cannot drift apart.
+      #
+      # The script's `next typegen` half matters on a cold checkout. Both
+      # next-env.d.ts and .next/ are gitignored, and tsconfig.json's `include`
+      # lists next-env.d.ts and .next/types/**/*.ts — which a fresh clone simply
+      # does not have. tsc silently ignores a missing include entry rather than
+      # erroring, so without typegen this job would quietly check LESS than
+      # `next build` does while looking just as green. Two concrete gaps, both
+      # verified against this tree:
+      #
+      #   - .next/types/validator.ts is what type-checks every App Router
+      #     handler against its own route. Give app/api/tasks/[id]/route.ts a
+      #     `params: Promise<{ wrongParamName: string }>` and bare tsc is happy;
+      #     with typegen it fails, which is the whole point of the job.
+      #   - The first `PageProps<'/x'>` anyone writes compiles under
+      #     `next build` and fails here with "Cannot find name 'PageProps'" —
+      #     a red PR caused by CI's setup rather than by the code.
+      #
+      # `next typegen` (Next 15.5+) writes both files with no bundling and takes
+      # well under a second, so the job checks exactly the inputs the build
+      # does. It is not a substitute for the build — bundler and runtime errors
+      # still surface in `e2e` and in the Docker build.
+      - run: npm run typecheck
+
   unit:
     name: Unit (vitest)
     runs-on: ubuntu-24.04

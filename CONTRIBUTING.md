@@ -12,13 +12,17 @@ map, see the [community guide](docs/COMMUNITY.md).
 ```bash
 npm install
 npm run dev       # app on :3000, pty sidecar on 127.0.0.1:3001
+npm run typecheck # next typegen + tsc --noEmit; seconds, and CI runs exactly this
 npm test          # vitest — serial on purpose; tests spawn real git subprocesses
 npm run test:e2e
 npm run preflight # unit + end-to-end suite; the pre-push gate
 ```
 
 `CLAUDE.md` is the codebase map (architecture, conventions, gotchas) — read it before a
-nontrivial change. TypeScript is strict; there is no lint script.
+nontrivial change. TypeScript is strict and there is no lint script, so `npm run typecheck`
+is the only static check there is. (`next typegen` writes the gitignored `next-env.d.ts`
+and `.next/types` that `tsconfig.json` includes, so a fresh clone checks the same files
+`next build` does.)
 
 The end-to-end suite builds the production app and drives onboarding, project/task
 creation, turns, diff, merge, and workspace views against a disposable instance. It uses
@@ -27,8 +31,9 @@ the deterministic mock agent, so no agent CLI or login is required. See
 
 ## Continuous integration
 
-`.github/workflows/test.yml` runs `npm test` on every pull request and every push to
-`main`, and the image publish gates on it — a red suite never reaches the registry.
+`.github/workflows/test.yml` runs `npm run typecheck` and `npm test` on every pull request
+and every push to `main`, as two independent jobs, and the image publish gates on both — a
+red suite never reaches the registry.
 
 The e2e suite is much slower, so it does **not** run on every push. It runs on `main`, and
 on a pull request labelled `e2e` — add that label when a change touches the core flow
