@@ -10,10 +10,24 @@
 # release a SHA corresponds to, so keep those comments accurate when a pin is
 # ever touched by hand.
 #
-# npm is deliberately not listed. The lockfile pins ~1k transitive packages and
-# a personal fork does not want that PR volume; `npm audit` covers the security
-# case. The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
-# Dockerfile) are bumped deliberately by hand — see the comment there.
+# DELIBERATELY NOT COVERED:
+#
+# - npm. The lockfile pins ~1k transitive packages and a personal fork does not
+#   want that PR volume; `npm audit` covers the security case.
+# - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
+#   Dockerfile), bumped deliberately by hand — see the comment there.
+# - The build engine (buildx + BuildKit) in publish-image.yml. This one is not
+#   a choice so much as a limit: Dependabot's docker ecosystem reads
+#   Dockerfiles, Compose files and k8s manifests, and its github-actions
+#   ecosystem reads `uses:` refs. Neither reads a `driver-opts:
+#   image=moby/buildkit:...` string inside a workflow (dependabot-core#5541,
+#   #5819, #6892). So the engine CANNOT be pinned here without creating exactly
+#   the unbotted SHA pin this file exists to prevent, and publish-image.yml
+#   deliberately leaves it on Docker's `buildx-stable-1` channel instead. Its
+#   header explains the full reasoning and the two mitigations that replace the
+#   pin. If a bot for it is ever wanted, that means adopting Renovate (it has
+#   custom managers that can match arbitrary workflow strings) — a second bot
+#   is the real cost of pinning the engine, and it is why we don't.
 version: 2
 updates:
   - package-ecosystem: github-actions
