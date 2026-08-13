@@ -26,6 +26,40 @@
 # .github/dependabot.yml reads to know which pin is stale, and a SHA pin with
 # no update bot behind it is strictly worse than a tag pin (it rots silently
 # and stops collecting security fixes). Bump these via Dependabot, not by hand.
+#
+# The BUILD ENGINE is the deliberate exception. docker/setup-buildx-action with
+# the default docker-container driver boots `moby/buildkit:buildx-stable-1` — a
+# mutable tag, running privileged, holding the ghcr token, assembling the very
+# layers `attest` then signs. That is a real trust surface, and it is NOT pinned
+# here. Three reasons, in order of weight:
+#
+#   1. Nothing can bump it. Dependabot's docker ecosystem reads Dockerfiles,
+#      Compose files and k8s manifests — not `driver-opts` strings in a
+#      workflow (dependabot-core#5541, #5819, #6892 are the standing requests).
+#      A BuildKit digest here would be exactly the unbotted SHA pin the comment
+#      above calls strictly worse than a tag.
+#   2. This pin rots dangerously, not gently. `cache-to: type=gha` speaks a
+#      GitHub-side API that has already been retired once: the v1 cache service
+#      was shut off 2025-04-15, and the v2 backend needs buildx >= v0.21.0 and
+#      BuildKit >= v0.20.0. Since `cache-to` has no `ignore-error=true`, an
+#      engine stranded below that floor fails the build outright. A digest
+#      pinned here in early 2025 would have broken the pipeline on a date
+#      nobody in this repo chose.
+#   3. `buildx-stable-1` is Docker's curated stable channel, not `latest` or
+#      `master`, and it is the same trust root as docker/build-push-action —
+#      which this job already runs. Pinning the engine while trusting the
+#      action that drives it buys less than it looks like it does.
+#
+# What is done instead: the engine surface is REMOVED where it is free (the
+# merge job needs no BuildKit at all — see `driver: docker` there) and made
+# OBSERVABLE where it is load-bearing (the build job records the engine version
+# and digest, and hard-fails below the cache floor). "Mutable but recorded and
+# floored" is the honest position; do not upgrade it to a silent digest pin.
+#
+# Note this is not a reproducibility story either way. BUILT_AT is a per-run
+# timestamp and `npm ci`/apt fetch live upstreams, so two builds of one commit
+# already differ. Pinning BuildKit would freeze one input to a build that has
+# several other unfrozen ones.
 name: Publish image
 
 on:
@@ -130,7 +164,51 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # No `version:` on purpose. Setting it makes the action stop using the
+      # buildx that GitHub built into the runner image and instead download a
+      # release binary from github.com/docker/buildx at job time — a fetch that
+      # is version-pinned but not digest-pinned. That trades a binary GitHub
+      # ships for one this job pulls over the network, which is the wrong
+      # direction, and adds a second unbotted pin. Engine rationale: see header.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        id: buildx
+
+      # The engine is not pinned, so record which one ran. This is the only
+      # place the buildx/BuildKit that produced the signed layers is written
+      # down; without it "which engine built ghcr.io/...@sha256:x" is
+      # unanswerable after the fact. The floor check is the fail-closed half:
+      # `type=gha` needs buildx >= v0.21.0 / BuildKit >= v0.20.0 since the v1
+      # cache service was retired, and a runner or channel that ever regressed
+      # below that should say so here rather than in a confusing cache error.
+      - name: Record and floor-check the build engine
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          buildx=$(docker buildx version | awk '{print $2}')
+          # buildx >= 0.12 prints "BuildKit version: vX.Y.Z"; older builds used
+          # "Buildkit: vX.Y.Z". Match either and take the last field, so a label
+          # rename upstream degrades to the explicit error below rather than to
+          # an empty string that silently fails the floor check.
+          buildkit=$(docker buildx inspect --builder "$BUILDER" \
+            | awk '/^[[:space:]]*(BuildKit version|Buildkit):/ {print $NF; exit}')
+          [ -n "$buildx" ] && [ -n "$buildkit" ] \
+            || { echo "could not read engine versions (buildx='$buildx' BuildKit='$buildkit')"; exit 1; }
+          # Best-effort: the digest is provenance, not a gate, so never fail on it.
+          digest=$(docker image inspect moby/buildkit:buildx-stable-1 \
+            --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' 2>/dev/null || true)
+
+          # `sort -V` orders these correctly with the leading v; if the smaller
+          # of the pair is the floor itself, the installed version is >= floor.
+          at_least() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
+          at_least "$buildx" v0.21.0 \
+            || { echo "buildx $buildx is below v0.21.0, the floor for type=gha cache"; exit 1; }
+          at_least "$buildkit" v0.20.0 \
+            || { echo "BuildKit $buildkit is below v0.20.0, the floor for type=gha cache"; exit 1; }
+
+          echo "${ARCH} engine: buildx ${buildx}, BuildKit ${buildkit} ${digest:-(digest unavailable)}" \
+            >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log in to ghcr.io
         if: needs.prepare.outputs.publish == 'true'
@@ -209,7 +287,21 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
+      # `driver: docker` — NOT the default docker-container. This job never
+      # builds anything: `imagetools create` resolves and pushes manifests
+      # through registry clients inside the buildx CLI process, with no
+      # BuildKit daemon involved. The action nevertheless boots its builder
+      # unconditionally (`docker buildx inspect --bootstrap`), so the default
+      # driver would pull and start privileged moby/buildkit here purely to sit
+      # idle next to a ghcr push token. The docker driver skips builder
+      # creation entirely and binds to the local daemon, which deletes that
+      # surface outright instead of pinning it — strictly better than a
+      # `driver-opts` digest nothing in this repo can update. Do not "restore"
+      # the default driver: it would add back a privileged container that this
+      # job has no use for.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver: docker
 
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
