@@ -1,26 +1,30 @@
 // The Claude Code driver — the Agent SDK behind the AgentDriver seam
 // (lib/agents/types.ts). This is the moved lib/claude.ts: runTurn() drives one
 // user turn (resume or fresh session; project context appended to the Claude
-// Code system prompt), mounts the suggest_task / list_projects / expose_service MCP tools, and
+// Code system prompt), mounts the orchestrator MCP tools (suggest_task /
+// list_projects / list_tasks / get_task / update_task / expose_service), and
 // normalizes SDK messages into the StreamEvent contract. The one-shot helpers
 // (summarize / draft / recap) and the wizard's auth flow (delegating to
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Project, Task, StreamEvent, AskQuestion, TurnUsage } from "../../types";
+import type { Project, Task, StreamEvent, AskQuestion, TurnUsage, Priority, Status as TaskStatus } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
 import { getSetting } from "../../store";
 import {
   createSuggestedTask,
+  getTaskForAgent,
   listProjectsForAgent,
+  listTasksForAgent,
   registerExposedService,
   rememberSuggestedTitle,
   resolveTargetProject,
   resolveTitleRefs,
+  updateOwnTask,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
 import { CLAUDE_CLI_PATH as CLAUDE_PATH } from "../../config";
 import { isUsageLimit } from "../../usageLimit";
@@ -47,6 +51,7 @@ import { claudeUsage } from "./usage";
 
 function orchestratorServer(
   project: Project,
+  task: Task,
   onSuggest: (s: { title: string; projectId: string }) => void,
   onExpose: (info: { name: string; url: string }) => void
 ) {
@@ -110,6 +115,60 @@ function orchestratorServer(
             onSuggest({ title: args.title, projectId: target.project.id });
           }
           return { content: [{ type: "text", text }] };
+        }
+      ),
+      tool(
+        LIST_TASKS.name,
+        LIST_TASKS.description,
+        {
+          project: z.string().optional().describe(LIST_TASKS.params.project),
+          include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
+        },
+        async (args: { project?: string; include_done?: boolean }) => {
+          // Same strict resolution suggest_task uses — reads are inert, but a
+          // board silently listed from the wrong project is still a lie.
+          const target = resolveTargetProject(project, args.project);
+          if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
+          const tasks = listTasksForAgent(target.project, task.id, args.include_done ?? false);
+          return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, tasks }, null, 2) }] };
+        }
+      ),
+      tool(
+        GET_TASK.name,
+        GET_TASK.description,
+        { task: z.string().optional().describe(GET_TASK.params.task) },
+        async (args: { task?: string }) => {
+          const id = args.task?.trim() || task.id;
+          const detail = getTaskForAgent(id, task.id);
+          if (!detail) return { content: [{ type: "text", text: `No task with id "${id}". Call list_tasks for the ids.` }], isError: true };
+          return { content: [{ type: "text", text: JSON.stringify(detail, null, 2) }] };
+        }
+      ),
+      tool(
+        UPDATE_TASK.name,
+        UPDATE_TASK.description,
+        {
+          title: z.string().optional().describe(UPDATE_TASK.params.title),
+          description: z.string().optional().describe(UPDATE_TASK.params.description),
+          // Spelled out rather than read from UPDATE_TASK.priorities/.statuses:
+          // the defs are plain .mjs, so TS widens those arrays to string[] and
+          // z.enum loses the literal union. Same trade suggest_task makes above;
+          // tests/codexMcpBridge.test.ts pins these against the shared arrays.
+          priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_TASK.params.priority),
+          status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
+        },
+        async (args: { title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
+          // `task` is the snapshot taken at turn start; updateOwnTask re-reads
+          // the row before writing, so a task deleted mid-turn is a refusal.
+          const { task: updated, text, autoStartDependents } = updateOwnTask(task, args);
+          if (autoStartDependents && updated) {
+            // Imported at CALL time, not module load: lib/autoStart reaches
+            // lib/runner, which imports the driver registry, which imports this
+            // file — a static import would close that cycle at init.
+            const { maybeAutoStartDependents } = await import("../../autoStart");
+            maybeAutoStartDependents(updated.id);
+          }
+          return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
     ],
@@ -217,6 +276,7 @@ async function* runTurn(
       mcpServers: {
         orchestrator: orchestratorServer(
           project,
+          task,
           // Straight onto the queue, like expose_service's notice below: the
           // suggestion is already committed, and holding it until the turn ends
           // would keep the receiving tray stale for as long as the turn runs —
