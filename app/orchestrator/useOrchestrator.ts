@@ -6,7 +6,7 @@ import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { loadPersist, readUrlSel } from "./persist";
-import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type OnboardingT, type ProjectRow, type TaskRow } from "./types";
+import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type TaskRow } from "./types";
 import { agentLabel } from "./agents";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
@@ -539,6 +539,21 @@ export function useOrchestrator() {
     jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
   };
 
+  // Re-parent a whole selection at once — the bulk sibling of the above, and
+  // the reason the batch endpoint exists: one request, one transaction, one
+  // task_moved event for every other tab. Unlike the single move it does NOT
+  // reject on a refusal; a task that couldn't move comes back in `skipped` and
+  // stays where it is, so the caller can report it and keep it selected.
+  const moveTasksToProject = async (ids: string[], projectId: string): Promise<BulkMoveResult> => {
+    const res = await jsend<BulkMoveResult>("/api/tasks/move", "POST", { ids, project_id: projectId });
+    const gone = new Set(res.moved);
+    setTasks((prev) => prev.filter((x) => !gone.has(x.id)));
+    setSelTask((cur) => (cur && gone.has(cur) ? null : cur));
+    // Both projects' task counts changed; the badge sums come from the server.
+    if (res.moved.length) jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
+    return res;
+  };
+
   // Hard-deletes the task (and its worktree/branch server-side), closes the edit
   // modal, and drops it from the selection if it was the one being viewed.
   const removeTask = async (id: string) => {
@@ -648,7 +663,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, fetchRecap, runTurn, answerQuestion, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
-    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

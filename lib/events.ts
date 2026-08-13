@@ -17,9 +17,11 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // listeners only (publishGlobal) — per-task /messages streams never see them.
 // task_deleted carries its project id + freshly recomputed awaiting count
 // itself: by the time a listener sees it the row is gone, so the usual
-// re-read-the-task enrichment (GET /api/events) is impossible. task_moved
-// carries BOTH project ids because the row only remembers where it landed,
-// and the tray it left has to lose it.
+// re-read-the-task enrichment (GET /api/events) is impossible. tasks_moved
+// carries BOTH ends because the rows only remember where they landed, and the
+// trays they left have to lose them. It is plural even for one task: moving a
+// selection is one event, so eleven misfiled tasks cost every other tab one
+// re-sync instead of eleven, and there's one shape to handle either way.
 // task_edited is the wider cousin of task_updated: the row's user-visible
 // fields (title, description, priority) changed, not just the status/awaiting
 // pair the coarse wire payload carries. Listeners can't patch what isn't on the
@@ -29,7 +31,7 @@ export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
-  | { type: "task_moved"; fromProjectId: string; toProjectId: string };
+  | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -48,16 +50,18 @@ export type TaskDeletedWireEvent = {
   /** The project's awaiting count recomputed AFTER the row was deleted. */
   awaiting_count: number;
 };
-// A task changed projects. Deliberately count-free, unlike task_deleted: a move
+// Tasks changed projects. Deliberately count-free, unlike task_deleted: a move
 // also changes both projects' task_count, which no event carries, so clients
 // refetch the project list once — cheap for a rare, hand-driven mutation.
-export type TaskMovedWireEvent = {
-  type: "task_moved";
-  taskId: string;
-  fromProjectId: string;
+// `fromProjectIds` is the DISTINCT set of trays that lost rows (a selection can
+// span projects), not one entry per moved task — nothing needs the pairing.
+export type TasksMovedWireEvent = {
+  type: "tasks_moved";
+  taskIds: string[];
+  fromProjectIds: string[];
   toProjectId: string;
 };
-export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | TaskMovedWireEvent | AgentAuthEvent;
+export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | TasksMovedWireEvent | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
 type GlobalListener = (taskId: string, ev: BusEvent) => void;

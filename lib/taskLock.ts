@@ -51,6 +51,25 @@ export async function withTaskLock<T>(taskId: string, fn: () => Promise<T> | T):
   }
 }
 
+/**
+ * Run `fn` holding the locks of EVERY task in `ids` at once — what a batch
+ * mutation needs, since its state check has to be atomic with a write that
+ * spans all of them.
+ *
+ * Acquired in sorted id order, deduplicated: two batches with overlapping
+ * selections can then only ever wait on each other in one direction, so they
+ * can't deadlock. (A single-task holder is just the one-element case of the
+ * same ordering.) Nested rather than parallel — withTaskLock is not reentrant,
+ * so each lock is taken inside the previous one's tenure and released by
+ * unwinding.
+ */
+export async function withTaskLocks<T>(ids: string[], fn: () => Promise<T> | T): Promise<T> {
+  const sorted = [...new Set(ids)].sort();
+  const acquire = (i: number): Promise<T> =>
+    i === sorted.length ? Promise.resolve(fn()) : withTaskLock(sorted[i], () => acquire(i + 1));
+  return acquire(0);
+}
+
 /** Whether anyone currently holds (or is queued on) this task's lock. */
 export function isTaskLocked(taskId: string): boolean {
   return locks().has(taskId);

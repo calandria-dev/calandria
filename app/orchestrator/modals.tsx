@@ -5,7 +5,7 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
+import { SLABEL, type BulkMoveResult, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -105,12 +105,51 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   );
 }
 
+// The destination radio list, shared by the single-task field below and the
+// bulk MoveTasksModal — one rendering of "which project", so the two paths
+// can't drift on what a destination looks like.
+function ProjectTargetList({ targets, value, onChange, name }: {
+  targets: ProjectRow[]; value: string; onChange: (id: string) => void; name: string;
+}) {
+  return (
+    <div className="dep-list">
+      {targets.map((p) => (
+        <label key={p.id} className={`dep-row ${value === p.id ? "on" : ""}`}>
+          <input type="radio" name={name} checked={value === p.id} onChange={() => onChange(p.id)} />
+          <span aria-hidden style={{ width: 15, height: 15, borderRadius: 5, background: p.color, flex: "0 0 auto" }} />
+          <span className="dep-title">{p.name}</span>
+          <span className="dep-status">{p.task_count} task{p.task_count !== 1 ? "s" : ""}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Whether a task moving into `dest` would have its inherited settings
+ * re-derived, and what to. Mirrors moveTask's rule server-side (lib/store.ts
+ * deriveMoved): a value that still matches the CURRENT project's default reads
+ * as inherited, so it re-derives in the destination — an explicit choice
+ * travels with the task. Previewed rather than sprung on the user, since the
+ * guess can only ever be a guess.
+ */
+function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: ProjectRow) {
+  const destAgent = dest.default_agent || "claude";
+  const switching = task.agent === (src?.default_agent || "claude") && destAgent !== task.agent ? destAgent : null;
+  const srcSend = src ? (src.send_context !== 0 ? 1 : 0) : 1;
+  const destSend = dest.send_context !== 0 ? 1 : 0;
+  const contextFlip = task.send_context === srcSend && destSend !== task.send_context ? destSend : null;
+  return { switching, contextFlip };
+}
+
 // Re-parent a misfiled task. Acts immediately (like Delete below it) rather
 // than riding along with Save: a move isn't a field set — it renumbers the
 // task's order in the destination, re-derives what it inherited from the old
 // project, and drops the blocked-by links that would otherwise span projects.
 // Offered only while the task is unstarted; once it has a worktree, that
 // checkout belongs to the current project's repo and the server refuses.
+// (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
+// which can keep a link whose both ends are moving, as one task alone can't.)
 function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle;
   onMove: (id: string, projectId: string) => Promise<void>;
@@ -125,16 +164,8 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
   const links = (task.depends_on?.length ?? 0) + dependents;
-  // Mirrors moveTask's rule server-side: a value that still matches the current
-  // project's default reads as inherited, so it re-derives in the destination —
-  // an explicit choice travels with the task. Previewed rather than sprung on
-  // the user, since the guess can only ever be a guess.
   const src = projects.find((p) => p.id === task.project_id);
-  const destAgent = dest ? dest.default_agent || "claude" : null;
-  const switching = !!dest && task.agent === (src?.default_agent || "claude") && destAgent !== task.agent ? destAgent : null;
-  const srcSend = src ? (src.send_context !== 0 ? 1 : 0) : 1;
-  const destSend = dest ? (dest.send_context !== 0 ? 1 : 0) : null;
-  const contextFlip = dest && task.send_context === srcSend && destSend !== task.send_context ? destSend : null;
+  const { switching, contextFlip } = dest ? moveDerivation(task, src, dest) : { switching: null, contextFlip: null };
   const move = async () => {
     if (!dest) return;
     setMoving(true);
@@ -149,16 +180,7 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   return (
     <div className="field">
       <div className="lab">Move to project <span className="opt">— unstarted tasks only</span></div>
-      <div className="dep-list">
-        {targets.map((p) => (
-          <label key={p.id} className={`dep-row ${target === p.id ? "on" : ""}`}>
-            <input type="radio" name="move-project" checked={target === p.id} onChange={() => { setTarget(p.id); setErr(null); }} />
-            <span aria-hidden style={{ width: 15, height: 15, borderRadius: 5, background: p.color, flex: "0 0 auto" }} />
-            <span className="dep-title">{p.name}</span>
-            <span className="dep-status">{p.task_count} task{p.task_count !== 1 ? "s" : ""}</span>
-          </label>
-        ))}
-      </div>
+      <ProjectTargetList targets={targets} value={target} name="move-project" onChange={(id) => { setTarget(id); setErr(null); }} />
       {dest ? (
         <>
           <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -177,6 +199,154 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
       )}
       {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
     </div>
+  );
+}
+
+/**
+ * Re-file a whole selection at once — the answer to a handful of tasks landing
+ * in the wrong project, which used to be one open-edit-pick-move round trip
+ * each. One request, one transaction, one event for the other tabs.
+ *
+ * Two things it says that the single-task field can't. Dependencies: a link
+ * whose BOTH ends are in the selection SURVIVES the move (it stays inside one
+ * project, so nothing is violated) — the count of what's kept is previewed
+ * beside the count of what drops, because "select the whole chain" is the
+ * difference between the two. And refusals are per task: a started one in the
+ * selection is reported by name afterwards rather than quietly left behind, so
+ * the modal stays open on a partial result instead of closing on a half-truth.
+ */
+export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjectId, onClose, onMove, onMoved }: {
+  /** The picked rows, in list order. */
+  selected: TaskRow[];
+  /** Every task in the source project — needed to see links pointing INTO the selection. */
+  tasks: TaskRow[];
+  projects: ProjectRow[]; agents: AgentsBundle; sourceProjectId: string;
+  onClose: () => void;
+  onMove: (ids: string[], projectId: string) => Promise<BulkMoveResult>;
+  /** Ids that actually moved, so the caller can drop them from the selection. */
+  onMoved: (movedIds: string[]) => void;
+}) {
+  const [target, setTarget] = useState("");
+  const [moving, setMoving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<BulkMoveResult | null>(null);
+  const targets = useMemo(() => projects.filter((p) => p.id !== sourceProjectId), [projects, sourceProjectId]);
+  const dest = targets.find((p) => p.id === target) ?? null;
+  const src = projects.find((p) => p.id === sourceProjectId);
+
+  // The server's own eligibility rule, as far as the client can see it (it also
+  // refuses a task whose turn is merely in flight — hence the skip report).
+  const movable = selected.filter((t) => t.started === 0 && t.running === 0);
+  const stuck = selected.length - movable.length;
+  const moving_ = new Set(movable.map((t) => t.id));
+  // Every blocked-by link with at least one end in the moving set. Both ends
+  // moving means it survives; one end means it would span projects, so it goes.
+  let kept = 0;
+  let dropped = 0;
+  for (const t of tasks) {
+    for (const dep of t.depends_on ?? []) {
+      const from = moving_.has(t.id);
+      const to = moving_.has(dep);
+      if (from && to) kept++;
+      else if (from || to) dropped++;
+    }
+  }
+  const switching = dest ? movable.filter((t) => moveDerivation(t, src, dest).switching).length : 0;
+  const contextFlips = dest ? movable.filter((t) => moveDerivation(t, src, dest).contextFlip !== null).length : 0;
+
+  const move = async () => {
+    if (!dest) return;
+    setMoving(true);
+    setErr(null);
+    try {
+      // Every selected id, not the locally movable subset: the client's view of
+      // what can move is a snapshot that can be stale by now (a task the user
+      // started while this was open, or one whose turn is merely in flight,
+      // which the client can't see at all). Sending them all means the server
+      // reports what it refused instead of us quietly dropping it.
+      const res = await onMove(selected.map((t) => t.id), dest.id);
+      onMoved(res.moved);
+      // A clean sweep needs no report — anything left behind does.
+      if (res.skipped.length === 0) onClose();
+      else setResult(res);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const byId = new Map(selected.map((t) => [t.id, t]));
+  const n = selected.length;
+  return (
+    <Modal title={`Move ${n} task${n !== 1 ? "s" : ""}`} sub="Re-file the selection under another project" onClose={onClose}
+      footer={<>
+        <span className="spacer" />
+        <button className="btn btn-ghost" onClick={onClose}>{result ? "Done" : "Cancel"}</button>
+        {!result && (
+          <button className="btn btn-accent" disabled={!dest || moving || movable.length === 0} onClick={move}>
+            {Icon.check()} {moving ? "Moving…" : dest ? `Move to ${dest.name}` : "Move"}
+          </button>
+        )}
+      </>}>
+      {result ? (
+        <div className="field">
+          <div className="lab">Result</div>
+          <div className="hlp">{result.moved.length} task{result.moved.length !== 1 ? "s" : ""} moved to {dest?.name}.</div>
+          <div className="hlp" style={{ color: "var(--amber)", marginTop: 8 }}>
+            {result.skipped.length} stayed behind:
+          </div>
+          <div className="dep-list" style={{ marginTop: 6 }}>
+            {result.skipped.map((s) => (
+              <div key={s.id} className="dep-row" style={{ cursor: "default" }}>
+                <span className="dep-title">{byId.get(s.id)?.title ?? s.id}</span>
+                <span className="dep-status">{s.reason.split(" — ")[0]}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="field">
+            <div className="lab">Moving <span className="opt">— unstarted tasks only</span></div>
+            <div className="dep-list">
+              {selected.map((t) => {
+                const can = moving_.has(t.id);
+                return (
+                  <div key={t.id} className="dep-row" style={{ cursor: "default", opacity: can ? 1 : 0.55 }}>
+                    <StatusDot status={t.status} />
+                    <span className="dep-title">{t.title}</span>
+                    {!can && <span className="dep-status" style={{ color: "var(--amber)" }}>started — stays</span>}
+                  </div>
+                );
+              })}
+            </div>
+            {stuck > 0 && (
+              <div className="hlp" style={{ color: "var(--amber)" }}>
+                {stuck} of these {stuck === 1 ? "has" : "have"} a git worktree cut from {src?.name ?? "this project"}&rsquo;s repo, so
+                {stuck === 1 ? " it stays" : " they stay"} put. The rest still move.
+              </div>
+            )}
+          </div>
+          <div className="field">
+            <div className="lab">Destination</div>
+            <ProjectTargetList targets={targets} value={target} name="move-tasks-project" onChange={(id) => { setTarget(id); setErr(null); }} />
+            {dest ? (
+              <div className="hlp" style={{ color: "var(--amber)" }}>
+                Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.
+                {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""} — the other end isn't coming.`}
+                {kept > 0 && ` ${kept} link${kept !== 1 ? "s" : ""} survive${kept === 1 ? "s" : ""}: both ends are moving together.`}
+                {switching > 0 && ` ${switching} will switch to ${agentLabel(agents, dest.default_agent || "claude")}, ${dest.name}'s default agent.`}
+                {contextFlips > 0 && ` ${contextFlips} will follow ${dest.name}'s project-context setting.`}
+              </div>
+            ) : (
+              <div className="hlp">Pick a project to re-file these under. Transcripts and descriptions come with them.</div>
+            )}
+          </div>
+          {err && <ErrNote>{err}</ErrNote>}
+        </>
+      )}
+    </Modal>
   );
 }
 

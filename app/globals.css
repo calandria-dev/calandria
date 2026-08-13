@@ -379,6 +379,24 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-foot .activity{font-family:var(--mono);font-size:10px;color:var(--ink-3);display:flex;align-items:center;gap:5px;}
 .task-foot .spacer{flex:1;}
 
+/* multi-select (bulk move) ------------------------------------------- */
+/* Each row is a card plus a fixed left gutter for its checkbox. The gutter is
+   ALWAYS reserved, even while the box is invisible, so nothing shifts on hover. */
+.task-row{display:flex;align-items:flex-start;gap:2px;}
+.task-row .task{flex:1;min-width:0;}
+.pickbox{flex:0 0 20px;display:grid;place-items:center;height:34px;cursor:pointer;opacity:0;transition:opacity .12s;}
+.pickbox input{cursor:pointer;margin:0;}
+.pickbox input:disabled{cursor:not-allowed;}
+/* Visible on hover, once picked, or anywhere in a list that has a selection
+   going — so the affordance is discoverable without making the list a form. */
+.task-row:hover .pickbox,.task-row.picked .pickbox,.sug:hover .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
+.task-row.picked .task,.sug.picked{background:var(--accent-soft);}
+.sug .pickbox{height:22px;flex-basis:18px;}
+/* Docked action bar for the current selection. */
+.pick-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--line-strong);background:var(--raise);box-shadow:0 -3px 12px rgba(0,0,0,.06);}
+.pick-bar .pb-count{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
+.pick-bar .spacer{flex:1;}
+
 /* task dependencies (ordering) -------------------------------------- */
 /* "blocked by" chip on a task card */
 .blocked-chip{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}

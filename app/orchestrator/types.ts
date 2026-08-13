@@ -118,6 +118,21 @@ export interface RecapInfo {
   error?: string;
 }
 
+// What POST /api/tasks/move did with a selection. Ids rather than rows: the
+// trays get refetched either way (the move changes both projects' counts and
+// the moved tasks' neighbours), so what the client needs back is the account.
+// `skipped` is the whole reason the endpoint reports instead of refusing —
+// a started task in the selection is named, not silently left behind.
+export interface BulkMoveResult {
+  moved: string[];
+  unchanged: string[];
+  skipped: { id: string; reason: string }[];
+  /** Blocked-by edges severed because only one end moved. */
+  dropped: { task_id: string; depends_on_id: string }[];
+  /** Edges that survived because both ends moved together. */
+  kept: { task_id: string; depends_on_id: string }[];
+}
+
 // Divergence status for the reopened-task sync banner (GET /api/tasks/:id/sync).
 export interface SyncStatusResp {
   isolated: boolean;

@@ -235,7 +235,7 @@ describe("POST /api/tasks/[id]/move", () => {
     expect(getTask(task.id)?.project_id).toBe(to.id);
   });
 
-  it("publishes task_moved with both project ids so either tray can re-sync", async () => {
+  it("publishes tasks_moved with both project ids so either tray can re-sync", async () => {
     const { from, to, task } = pair("Publish");
     const seen: [string, BusEvent][] = [];
     const unsub = subscribeGlobal((taskId, ev) => seen.push([taskId, ev]));
@@ -244,7 +244,9 @@ describe("POST /api/tasks/[id]/move", () => {
     } finally {
       unsub();
     }
-    expect(seen).toEqual([[task.id, { type: "task_moved", fromProjectId: from.id, toProjectId: to.id }]]);
+    // One shape on the wire for one task and for eleven — a single move is just
+    // the batch event with one-element lists (see tests/taskMoveBulk.test.ts).
+    expect(seen).toEqual([[task.id, { type: "tasks_moved", taskIds: [task.id], fromProjectIds: [from.id], toProjectId: to.id }]]);
   });
 
   it("409s on a started task, leaving it where it was", async () => {

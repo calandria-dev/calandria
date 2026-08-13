@@ -16,7 +16,7 @@ import { AppearancePanel } from "./orchestrator/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./orchestrator/Layout";
 import { ServicesDrawer } from "./orchestrator/Services";
 import { clientFeatures } from "@/lib/features";
-import { NewTaskModal, EditTaskModal, ContextModal, NewProjectModal, SessionsModal } from "./orchestrator/modals";
+import { NewTaskModal, EditTaskModal, MoveTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./orchestrator/modals";
 import { OnboardingWizard } from "./orchestrator/OnboardingWizard";
 import { AgentNudge, AgentAuthBanner } from "./orchestrator/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./orchestrator/Welcome";
@@ -108,6 +108,11 @@ export default function Orchestrator() {
   // ⌘K / Ctrl-K command palette. Same flag as the top-bar omni button, so
   // re-enabling the feature turns on both the visual affordance and the shortcut.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Ids handed up by the task list's multi-select when "Move to project…" is
+  // pressed. Held here rather than in the column because every modal is mounted
+  // by the shell; the column keeps owning the selection itself, so a task the
+  // server refuses stays picked when the modal closes.
+  const [bulkMoveIds, setBulkMoveIds] = useState<string[] | null>(null);
   const [clearRequest, setClearRequest] = useState<string | null>(null);
   useEffect(() => setClearRequest(null), [selTask]);
   const requestClear = (taskId: string) => setClearRequest(taskId);
@@ -207,6 +212,7 @@ export default function Orchestrator() {
       onSelectTask={o.setSelTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onShowRecap={() => o.setSelTask(null)} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
+      onBulkMove={setBulkMoveIds}
       baseBranchTick={o.baseBranchTick}
     />
   );
@@ -553,6 +559,17 @@ export default function Orchestrator() {
       {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} onClose={() => o.setModal(null)} onCreate={o.createTask} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
         <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onOpenSetup={o.rerunOnboarding} />
+      )}
+      {bulkMoveIds && project && (
+        <MoveTasksModal
+          // Resolved from the live rows in list order, so the modal shows what
+          // the tray shows — and so a task that vanished under the selection
+          // (moved in another tab, deleted) simply isn't in it.
+          selected={o.tasks.filter((t) => bulkMoveIds.includes(t.id))}
+          tasks={o.tasks} projects={o.activeProjects} agents={o.agents} sourceProjectId={project.id}
+          onClose={() => setBulkMoveIds(null)} onMove={o.moveTasksToProject}
+          onMoved={(moved) => setBulkMoveIds((ids) => (ids ?? []).filter((id) => !moved.includes(id)))}
+        />
       )}
       {o.modal === "context" && project && <ContextModal project={project} agents={o.agents} onSetDefaultAgent={o.setProjectDefaultAgent} onClose={() => o.setModal(null)} onSave={o.saveContext} onDelete={() => o.removeProject(project.id)} onDeprecate={() => o.setDeprecated(project.id, true)} />}
       {o.modal === "project" && <NewProjectModal onClose={() => o.setModal(null)} onCreate={o.createProject} />}
