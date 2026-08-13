@@ -15,6 +15,8 @@
 //   e2e:suggest-into=<proj>|<title> …but file it into ANOTHER project (by id or
 //                                   name), through the same strict resolution the
 //                                   real suggest_task tool uses
+//   e2e:retitle=<title>             rename the RUNNING task through the same
+//                                   shared logic the real update_task tool calls
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
@@ -29,7 +31,7 @@ import type {
   AgentVerifyResult,
   StreamEvent,
 } from "../types";
-import { createSuggestedTask, resolveTargetProject } from "@/lib/agentTools";
+import { createSuggestedTask, resolveTargetProject, updateOwnTask } from "@/lib/agentTools";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
@@ -138,6 +140,13 @@ export const mockDriver: AgentDriver = {
       createSuggestedTask(target.project, { title, description: "Suggested by the mock agent (e2e)." });
       yield { type: "suggested", title, projectId: target.project.id };
     }
+
+    // A turn editing its OWN row — the update_task tool's one legal target.
+    // Nothing is yielded onto the task's stream: the write publishes
+    // "task_edited" globally from updateOwnTask, and that's precisely what the
+    // e2e asserts, so a stream event here would mask a broken global path.
+    const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
+    if (retitle) updateOwnTask(task, { title: retitle.trim() });
 
     yield {
       type: "assistant",

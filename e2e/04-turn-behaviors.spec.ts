@@ -178,3 +178,25 @@ test("a second turn resumes the same session", async ({ request }) => {
   const afterSecond = await getTask(request, task.id);
   expect(afterSecond.session_id).toBe(afterFirst.session_id);
 });
+
+test("a task an agent renames updates the list live, with no reload", async ({ page, request }) => {
+  // The update_task path. Unlike a status change, a retitle carries no field the
+  // coarse /api/events payload knows about, so this only works if the write
+  // publishes "task_edited" and the client refetches the tray on it. Sitting on
+  // the project WITHOUT selecting the task keeps the transcript stream shut, so
+  // the global stream is the only thing that can deliver it.
+  const task = await createTask(request, {
+    projectId,
+    title: "Working title",
+    description: "e2e:retitle=Renamed by the agent",
+  });
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await expect(page.locator(".ttitle").filter({ hasText: "Working title" })).toBeVisible();
+
+  await sendMessage(request, task.id);
+
+  await expect(page.locator(".ttitle").filter({ hasText: "Renamed by the agent" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".ttitle").filter({ hasText: "Working title" })).toBeHidden();
+  expect((await getTask(request, task.id)).title).toBe("Renamed by the agent");
+});

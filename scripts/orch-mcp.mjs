@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
- * future one) the orchestrator's suggest_task / list_projects / expose_service tools.
+ * future one) the orchestrator's task tools (suggest_task / list_tasks /
+ * get_task / update_task), list_projects, expose_service and ask_user.
  *
  * The Claude driver mounts these as an in-process SDK MCP server, a construct
  * that only exists inside the Claude Agent SDK. This is the portable equivalent:
@@ -23,7 +24,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.ORCH_TASK_ID || "";
 const PROJECT_ID = process.env.ORCH_PROJECT_ID || "";
@@ -131,6 +132,51 @@ server.registerTool(
         createdByTitle.set(key, createdByTitle.has(key) ? AMBIGUOUS : data.id);
       }
     }
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  LIST_TASKS.name,
+  {
+    description: LIST_TASKS.description,
+    inputSchema: {
+      project: z.string().optional().describe(LIST_TASKS.params.project),
+      include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
+    },
+  },
+  async ({ project, include_done }) => {
+    const data = await callInternal("list-tasks", { project, include_done });
+    return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tasks: data.tasks ?? [] }, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  GET_TASK.name,
+  { description: GET_TASK.description, inputSchema: { task: z.string().optional().describe(GET_TASK.params.task) } },
+  async ({ task }) => {
+    // Omitted `task` means "my own", which only the server can resolve — the
+    // endpoint falls back to ORCH_TASK_ID, sent on every call by callInternal.
+    const data = await callInternal("get-task", { task });
+    return { content: [{ type: "text", text: JSON.stringify(data.task, null, 2) }] };
+  }
+);
+
+server.registerTool(
+  UPDATE_TASK.name,
+  {
+    description: UPDATE_TASK.description,
+    inputSchema: {
+      title: z.string().optional().describe(UPDATE_TASK.params.title),
+      description: z.string().optional().describe(UPDATE_TASK.params.description),
+      priority: z.enum(UPDATE_TASK.priorities).optional().describe(UPDATE_TASK.params.priority),
+      status: z.enum(UPDATE_TASK.statuses).optional().describe(UPDATE_TASK.params.status),
+    },
+  },
+  async ({ title, description, priority, status }) => {
+    // No task id crosses the wire: the endpoint writes ORCH_TASK_ID and nothing
+    // else, so this turn can only ever edit its own row.
+    const data = await callInternal("update-task", { title, description, priority, status });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

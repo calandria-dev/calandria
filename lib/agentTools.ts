@@ -1,5 +1,6 @@
 // Shared implementations of the orchestrator's agent-facing tools
-// (suggest_task / expose_service). One home for the LOGIC so both callers agree:
+// (suggest_task / list_tasks / get_task / update_task / expose_service / ask_user).
+// One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
 //     (app/api/internal/agent-tools/*), which serve Codex and any future CLI
@@ -10,10 +11,21 @@
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
-import type { Project, Task, ServiceInfo, Priority, AskQuestion, ToolData } from "./types";
-import { createTask, setTaskDeps, addMessage, updateMessage, updateTask, getProject, getTask, listProjectsPlain } from "./store";
+import type { Project, Task, ServiceInfo, Priority, Status, AskQuestion, ToolData } from "./types";
+import {
+  createTask,
+  setTaskDeps,
+  addMessage,
+  updateMessage,
+  updateTask,
+  getProject,
+  getTask,
+  getTaskDeps,
+  listProjectsPlain,
+  listTasks,
+} from "./store";
 import { exposeService } from "./services";
-import { publish } from "./events";
+import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
@@ -200,12 +212,230 @@ function depNote(task: Task, project: Project, refs: string[] | undefined): stri
   return note;
 }
 
-/**
- * Register a service the agent just started (the expose_service tool). Records
- * the port/url so it shows in the Services panel and returns the URL to hand the
- * user, plus the confirmation text. We don't own the process — this entry is
- * informational (see lib/services.ts exposeService).
+/* ── Reading and updating tasks ──────────────────────────────────────────────
+ *
+ * Reads are inert, so they range over the board the same way suggest_task can
+ * file into any project. WRITES are not: a turn runs detached for as long as it
+ * likes, and letting one retitle or close somebody else's row would let an agent
+ * rearrange the board mid-flight. So update_task is scoped to the CALLING task's
+ * own row — the one thing the session unambiguously owns. Cross-task writes are
+ * a separate decision, not an extra argument.
  */
+
+/** One row of `list_tasks`: enough to reason about the board, no prose. */
+export interface AgentTaskInfo {
+  id: string;
+  title: string;
+  status: Status;
+  priority: Priority;
+  /** Still sitting unreviewed in the Suggested tray. */
+  suggested: boolean;
+  agent: string;
+  /** A turn is streaming right now. */
+  running: boolean;
+  /** Ids this task is blocked by (edges never leave the project). */
+  blocked_by: string[];
+  /** True for the task the calling session is running in. */
+  current: boolean;
+}
+
+/** A blocker, resolved to something readable — an id alone says nothing useful. */
+export interface AgentTaskBlocker {
+  id: string;
+  title: string;
+  status: Status;
+  /** Terminal, i.e. no longer holding the dependent back (mirrors lib/autoStart.ts). */
+  cleared: boolean;
+}
+
+/** What `get_task` hands back: the whole brief, plus its blockers spelled out. */
+export interface AgentTaskDetail extends Omit<AgentTaskInfo, "blocked_by"> {
+  description: string;
+  project_id: string;
+  project_name: string;
+  started: boolean;
+  awaiting_input: boolean;
+  /** Starts by itself once its last blocker is marked done (lib/autoStart.ts). */
+  auto_start: boolean;
+  work_branch: string;
+  worktree_path: string;
+  merged: boolean;
+  created_at: number;
+  updated_at: number;
+  blocked_by: AgentTaskBlocker[];
+}
+
+// done and cancelled are the terminal statuses — the same pair lib/autoStart.ts
+// treats as "no longer blocking". Hidden from list_tasks by default so a long-
+// lived board doesn't bury the open work under everything ever finished.
+const TERMINAL: Status[] = ["done", "cancelled"];
+
+function taskInfo(t: Task, deps: string[], currentTaskId: string): AgentTaskInfo {
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    priority: t.priority,
+    suggested: t.suggested === 1,
+    agent: t.agent,
+    running: t.running === 1,
+    blocked_by: deps,
+    current: t.id === currentTaskId,
+  };
+}
+
+/**
+ * The `list_tasks` tool. `project` is the TARGET board (already resolved by
+ * resolveTargetProject, so it may not be the session's own) and `currentTaskId`
+ * only flags which row is the caller's — it can perfectly well be a task in
+ * another project, in which case nothing is flagged.
+ *
+ * The caller's own row is exempt from the terminal-status filter: a session that
+ * has just marked itself done should still see itself in the list it gets back.
+ */
+export function listTasksForAgent(project: Project, currentTaskId: string, includeDone = false): AgentTaskInfo[] {
+  return listTasks(project.id)
+    .filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId)
+    .map((t) => taskInfo(t, t.depends_on, currentTaskId));
+}
+
+/**
+ * The `get_task` tool. Reads by id across projects (reads are inert), so the
+ * project name travels with the row — otherwise an agent reading a task it found
+ * via list_projects has no idea which board it's looking at.
+ */
+export function getTaskForAgent(taskId: string, currentTaskId: string): AgentTaskDetail | null {
+  const t = getTask(taskId);
+  if (!t) return null;
+  const project = getProject(t.project_id);
+  const blocked_by: AgentTaskBlocker[] = getTaskDeps(t.id).flatMap((id) => {
+    const dep = getTask(id);
+    // A deleted blocker's edge cascades away with it, so this is belt-and-braces
+    // — but reporting a bare id with no title would be worse than omitting it.
+    return dep ? [{ id: dep.id, title: dep.title, status: dep.status, cleared: TERMINAL.includes(dep.status) }] : [];
+  });
+  return {
+    ...taskInfo(t, [], currentTaskId),
+    blocked_by,
+    description: t.description,
+    project_id: t.project_id,
+    project_name: project?.name ?? "(deleted project)",
+    started: t.started === 1,
+    awaiting_input: t.awaiting_input === 1,
+    auto_start: t.auto_start === 1,
+    work_branch: t.work_branch,
+    worktree_path: t.worktree_path,
+    merged: t.merged_at > 0,
+    created_at: t.created_at,
+    updated_at: t.updated_at,
+  };
+}
+
+/** The subset of a task row `update_task` will write. Every field is optional. */
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string;
+  priority?: Priority;
+  status?: Status;
+}
+
+const PRIORITIES: Priority[] = ["hi", "med", "lo"];
+// "cancelled" is deliberately absent. PATCH /api/tasks/[id] calls abortTurn() on
+// it, which would tear down the very turn making the tool call — the agent would
+// kill itself mid-sentence and never see the result. Abandoning a task is the
+// user's call anyway; an agent that thinks it should be dropped can ask_user.
+const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done"];
+
+/**
+ * Update the CALLING task's own row (the `update_task` tool). Mirrors the
+ * user-facing PATCH /api/tasks/[id] over the fields it accepts, minus the
+ * run-control and dependency plumbing that belongs to the UI.
+ *
+ * `task` may be the snapshot captured at turn START (the Claude driver's MCP
+ * server closes over it), so the row is re-read here before anything is written
+ * — same defence createSuggestedTask takes against a project deleted mid-turn.
+ * A null task back means the row vanished and nothing was written.
+ *
+ * `autoStartDependents` is returned rather than acted on: firing it needs
+ * lib/autoStart.ts, which reaches the runner and the agent SDKs, and this module
+ * is pinned SDK-free (tests/importGraph.test.ts) because the internal HTTP
+ * routes behind the stdio bridge import it. Callers that can, do.
+ */
+export function updateOwnTask(
+  task: Task,
+  input: UpdateTaskInput
+): { task: Task | null; text: string; autoStartDependents: boolean } {
+  const cur = getTask(task.id);
+  if (!cur) return { task: null, text: "Could not update this task: its row no longer exists.", autoStartDependents: false };
+
+  const patch: Partial<Task> = {};
+  const changed: string[] = [];
+  const fail = (text: string) => ({ task: null, text, autoStartDependents: false });
+
+  if (input.title !== undefined) {
+    const title = input.title.trim();
+    if (!title) return fail("Could not update this task: `title` was empty. Nothing was changed.");
+    if (title !== cur.title) {
+      patch.title = title;
+      changed.push(`title → "${title}"`);
+    }
+  }
+  if (input.description !== undefined && input.description !== cur.description) {
+    patch.description = input.description;
+    changed.push("description rewritten");
+  }
+  if (input.priority !== undefined) {
+    if (!PRIORITIES.includes(input.priority))
+      return fail(`Could not update this task: "${input.priority}" isn't a priority. Use one of: ${PRIORITIES.join(", ")}. Nothing was changed.`);
+    if (input.priority !== cur.priority) {
+      patch.priority = input.priority;
+      changed.push(`priority → ${input.priority}`);
+    }
+  }
+  if (input.status !== undefined) {
+    if (input.status === "cancelled")
+      return fail(
+        "Could not update this task: cancelling a task is the user's call, and it would abort this turn mid-flight. " +
+          `Use one of: ${STATUSES.join(", ")}, or ask the user. Nothing was changed.`
+      );
+    if (!STATUSES.includes(input.status))
+      return fail(`Could not update this task: "${input.status}" isn't a status. Use one of: ${STATUSES.join(", ")}. Nothing was changed.`);
+    if (input.status !== cur.status) {
+      patch.status = input.status;
+      // Same reasoning as the PATCH route: a deliberate status change settles
+      // the "needs you" flag. In practice it's already 0 — a turn parked on an
+      // ask can't be calling this — but leaving a stale 1 behind a "done" would
+      // keep the task in the project's awaiting count forever.
+      patch.awaiting_input = 0;
+      changed.push(`status → ${input.status}`);
+    }
+  }
+
+  if (!changed.length) {
+    return {
+      task: cur,
+      text: `No change: "${cur.title}" already matches what you passed (status ${cur.status}, priority ${cur.priority}).`,
+      autoStartDependents: false,
+    };
+  }
+
+  const updated = updateTask(cur.id, patch);
+  if (!updated) return fail("Could not update this task: its row no longer exists.");
+
+  // Announce it: the board is live and nothing else will publish for this write.
+  // "task_edited" rather than "task_updated" because title/description/priority
+  // moved too, and the coarse snapshot on the wire only carries status —
+  // listeners have to refetch the row to see the rest (app/api/events/route.ts).
+  publishGlobal(updated.id, { type: "task_edited" });
+
+  const done = updated.status === "done" && cur.status !== "done";
+  return {
+    task: updated,
+    text: `Updated "${updated.title}": ${changed.join(", ")}.${done ? " Any task set to start when unblocked by this one will now launch." : ""}`,
+    autoStartDependents: done,
+  };
+}
+
 /**
  * Surface an ask_user question card and wait for the answer — the bridge-served
  * counterpart of the Claude driver's AskUserQuestion hook. Unlike suggest_task /
@@ -244,6 +474,12 @@ export function startAskUser(task: Task, questions: AskQuestion[]): { askId: str
   return { askId };
 }
 
+/**
+ * Register a service the agent just started (the expose_service tool). Records
+ * the port/url so it shows in the Services panel and returns the URL to hand the
+ * user, plus the confirmation text. We don't own the process — this entry is
+ * informational (see lib/services.ts exposeService).
+ */
 export function registerExposedService(project: Project, name: string, port: number): { info: ServiceInfo; url: string; text: string } {
   const info = exposeService(project, name.trim() || "dev", port);
   const url = info.url ?? `http://localhost:${port}`;

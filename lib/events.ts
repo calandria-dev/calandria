@@ -20,8 +20,14 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // re-read-the-task enrichment (GET /api/events) is impossible. task_moved
 // carries BOTH project ids because the row only remembers where it landed,
 // and the tray it left has to lose it.
+// task_edited is the wider cousin of task_updated: the row's user-visible
+// fields (title, description, priority) changed, not just the status/awaiting
+// pair the coarse wire payload carries. Listeners can't patch what isn't on the
+// wire, so it tells them to refetch the row — see the `update_task` agent tool
+// (lib/agentTools.ts updateOwnTask), the one writer that isn't the user.
 export type TaskMutationEvent =
   | { type: "task_updated" }
+  | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "task_moved"; fromProjectId: string; toProjectId: string };
 
@@ -33,7 +39,7 @@ export type BusEvent = TaskStreamEvent | TaskMutationEvent;
 // deletion event. Defined here — beside the bus events that produce them —
 // rather than in lib/types.ts.
 export type GlobalTaskWireEvent = Omit<GlobalTaskEvent, "event"> & {
-  event: GlobalTaskEvent["event"] | "task_updated";
+  event: GlobalTaskEvent["event"] | "task_updated" | "task_edited";
 };
 export type TaskDeletedWireEvent = {
   type: "task_deleted";

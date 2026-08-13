@@ -1,9 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { createProject, getTask, getTaskDeps } from "@/lib/store";
-import { createSuggestedTask, registerExposedService, resolveTitleRefs, titleKey } from "@/lib/agentTools";
+import { createProject, createTask, deleteTask, getTask, getTaskDeps, setTaskDeps, updateTask } from "@/lib/store";
+import {
+  createSuggestedTask,
+  getTaskForAgent,
+  listTasksForAgent,
+  registerExposedService,
+  resolveTitleRefs,
+  titleKey,
+  updateOwnTask,
+} from "@/lib/agentTools";
+import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
 import { POST as exposeService } from "@/app/api/internal/agent-tools/expose-service/route";
+import { POST as listTasksEp } from "@/app/api/internal/agent-tools/list-tasks/route";
+import { POST as getTaskEp } from "@/app/api/internal/agent-tools/get-task/route";
+import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { instanceServiceTokenOk } from "@/lib/cf-access.mjs";
 
 function post(handler: (req: NextRequest) => Promise<Response>, url: string, body: unknown) {
@@ -58,6 +70,128 @@ describe("agentTools shared logic", () => {
   });
 });
 
+describe("list_tasks / get_task (reads)", () => {
+  it("lists the board, flags the caller's row, and hides finished work by default", () => {
+    const project = createProject({ name: "Board" });
+    const open = createTask({ project_id: project.id, title: "Open", description: "" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const shut = createTask({ project_id: project.id, title: "Shut", description: "" });
+    updateTask(shut.id, { status: "done" });
+    setTaskDeps(mine.id, [open.id]);
+
+    const rows = listTasksForAgent(project, mine.id);
+    expect(rows.map((t) => t.title).sort()).toEqual(["Mine", "Open"]);
+    expect(rows.find((t) => t.id === mine.id)).toMatchObject({ current: true, blocked_by: [open.id], suggested: false });
+    expect(rows.find((t) => t.id === open.id)!.current).toBe(false);
+
+    // include_done widens it to the whole board.
+    expect(listTasksForAgent(project, mine.id, true).map((t) => t.title).sort()).toEqual(["Mine", "Open", "Shut"]);
+  });
+
+  it("always lists the caller's own row, even once it has closed itself", () => {
+    const project = createProject({ name: "SelfDone" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    updateTask(mine.id, { status: "done" });
+    // An agent that has just marked itself done must still see itself — the
+    // terminal-status filter is about board noise, not about hiding the caller.
+    expect(listTasksForAgent(project, mine.id).map((t) => t.id)).toEqual([mine.id]);
+    expect(listTasksForAgent(project, "someone-else")).toEqual([]);
+  });
+
+  it("get_task returns the full brief with its blockers resolved to titles", () => {
+    const project = createProject({ name: "Detail" });
+    const blocker = createTask({ project_id: project.id, title: "First", description: "" });
+    const task = createTask({ project_id: project.id, title: "Second", description: "the brief" });
+    setTaskDeps(task.id, [blocker.id]);
+    updateTask(blocker.id, { status: "done" });
+
+    const detail = getTaskForAgent(task.id, task.id)!;
+    expect(detail).toMatchObject({ title: "Second", description: "the brief", project_name: "Detail", current: true });
+    expect(detail.blocked_by).toEqual([{ id: blocker.id, title: "First", status: "done", cleared: true }]);
+    expect(getTaskForAgent("ghost", task.id)).toBeNull();
+  });
+});
+
+describe("update_task (writes, scoped to the calling task)", () => {
+  const own = (projectName: string) => {
+    const project = createProject({ name: projectName });
+    return createTask({ project_id: project.id, title: "Original", description: "old brief", priority: "med" });
+  };
+
+  it("retitles, reprioritizes and restates the task, reporting only what changed", () => {
+    const task = own("Upd");
+    const { task: updated, text } = updateOwnTask(task, { title: "  Renamed  ", priority: "hi", description: "new brief" });
+    expect(getTask(task.id)).toMatchObject({ title: "Renamed", priority: "hi", description: "new brief" });
+    expect(updated!.title).toBe("Renamed");
+    expect(text).toContain('title → "Renamed"');
+    expect(text).toContain("priority → hi");
+    expect(text).toContain("description rewritten");
+    // Untouched fields are left alone, not defaulted.
+    expect(getTask(task.id)!.status).toBe("not_started");
+  });
+
+  it("refuses to cancel — it would abort the very turn making the call", () => {
+    const task = own("NoCancel");
+    const { task: updated, text } = updateOwnTask(task, { status: "cancelled" });
+    expect(updated).toBeNull();
+    expect(text).toContain("Nothing was changed");
+    expect(getTask(task.id)!.status).toBe("not_started");
+  });
+
+  it("rejects an unknown status/priority and an empty title without writing", () => {
+    const task = own("Invalid");
+    for (const bad of [{ status: "shipped" as never }, { priority: "urgent" as never }, { title: "   " }]) {
+      const { task: updated } = updateOwnTask(task, bad);
+      expect(updated).toBeNull();
+    }
+    expect(getTask(task.id)).toMatchObject({ title: "Original", priority: "med", status: "not_started" });
+  });
+
+  it("re-reads the row before writing, so a task deleted mid-turn is a refusal", () => {
+    // Turns run detached and the driver's MCP server closes over the task
+    // snapshot taken at turn start — the row can vanish underneath it.
+    const stale = own("Vanished");
+    deleteTask(stale.id);
+    const { task: updated, text } = updateOwnTask(stale, { title: "Too late" });
+    expect(updated).toBeNull();
+    expect(text).toContain("no longer exists");
+  });
+
+  it("reports a no-op instead of a spurious write when nothing differs", () => {
+    const task = own("Noop");
+    const before = getTask(task.id)!.updated_at;
+    const { task: updated, text, autoStartDependents } = updateOwnTask(task, { title: "Original", priority: "med" });
+    expect(updated!.id).toBe(task.id);
+    expect(text).toContain("No change");
+    expect(autoStartDependents).toBe(false);
+    expect(getTask(task.id)!.updated_at).toBe(before);
+  });
+
+  it("signals auto-start only on the transition into done, and clears awaiting_input", () => {
+    const task = own("Done");
+    updateTask(task.id, { awaiting_input: 1 });
+    const first = updateOwnTask(task, { status: "done" });
+    expect(first.autoStartDependents).toBe(true);
+    expect(getTask(task.id)).toMatchObject({ status: "done", awaiting_input: 0 });
+    // Already done — no second launch of whatever was waiting on it.
+    expect(updateOwnTask(task, { status: "done" }).autoStartDependents).toBe(false);
+  });
+
+  it("announces the edit on the global bus so other tabs refetch the row", () => {
+    const task = own("Bus");
+    const seen: { taskId: string; ev: BusEvent }[] = [];
+    const unsub = subscribeGlobal((taskId, ev) => seen.push({ taskId, ev }));
+    try {
+      updateOwnTask(task, { title: "Announced" });
+    } finally {
+      unsub();
+    }
+    // task_edited, not task_updated: title/description/priority aren't on the
+    // coarse wire payload, so listeners have to refetch rather than patch.
+    expect(seen).toContainEqual({ taskId: task.id, ev: { type: "task_edited" } });
+  });
+});
+
 describe("internal agent-tool endpoints", () => {
   it("suggest-task creates a task and returns its id + text", async () => {
     const project = createProject({ name: "EP-Suggest" });
@@ -108,6 +242,76 @@ describe("internal agent-tool endpoints", () => {
     expect(json.name).toBe("api");
     expect(json.url).toContain("5555");
     expect(json.text).toContain("5555");
+  });
+
+  it("list-tasks serves the session's own board and flags the calling task", async () => {
+    const project = createProject({ name: "EP-List" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    createTask({ project_id: project.id, title: "Other", description: "" });
+    const res = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, taskId: mine.id });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { project: string; tasks: { id: string; current: boolean }[] };
+    expect(json.project).toBe("EP-List");
+    expect(json.tasks).toHaveLength(2);
+    expect(json.tasks.find((t) => t.id === mine.id)!.current).toBe(true);
+  });
+
+  it("list-tasks reads another project by name and refuses an unrecognized one (400)", async () => {
+    const here = createProject({ name: "EP-Here" });
+    const there = createProject({ name: "EP-There" });
+    createTask({ project_id: there.id, title: "Theirs", description: "" });
+    const ok = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: here.id, project: "ep-there" });
+    const json = (await ok.json()) as { project: string; tasks: { title: string }[] };
+    expect(json.project).toBe("EP-There");
+    expect(json.tasks.map((t) => t.title)).toEqual(["Theirs"]);
+
+    const bad = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: here.id, project: "nope" });
+    expect(bad.status).toBe(400);
+  });
+
+  it("get-task defaults to the calling task and 404s an unknown id", async () => {
+    const project = createProject({ name: "EP-Get" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "my brief" });
+    const res = await post(getTaskEp, "/api/internal/agent-tools/get-task", { projectId: project.id, taskId: mine.id });
+    const json = (await res.json()) as { task: { id: string; description: string; current: boolean } };
+    expect(json.task).toMatchObject({ id: mine.id, description: "my brief", current: true });
+
+    const miss = await post(getTaskEp, "/api/internal/agent-tools/get-task", { projectId: project.id, taskId: mine.id, task: "ghost" });
+    expect(miss.status).toBe(404);
+  });
+
+  it("update-task writes the calling task and ignores any other id the model sends", async () => {
+    const project = createProject({ name: "EP-Update" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const theirs = createTask({ project_id: project.id, title: "Theirs", description: "" });
+    // `task`/`id` are not part of the endpoint's contract — the target is
+    // ORCH_TASK_ID, injected into the bridge's env, and nothing else.
+    const res = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
+      projectId: project.id,
+      taskId: mine.id,
+      task: theirs.id,
+      id: theirs.id,
+      title: "Renamed",
+      status: "in_progress",
+    });
+    expect(res.status).toBe(200);
+    expect(getTask(mine.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
+    expect(getTask(theirs.id)).toMatchObject({ title: "Theirs", status: "not_started" });
+  });
+
+  it("update-task rejects cancelling (400) and an unknown task (404)", async () => {
+    const project = createProject({ name: "EP-UpdateBad" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const cancel = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
+      projectId: project.id,
+      taskId: mine.id,
+      status: "cancelled",
+    });
+    expect(cancel.status).toBe(400);
+    expect(getTask(mine.id)!.status).toBe("not_started");
+
+    const ghost = await post(updateTaskEp, "/api/internal/agent-tools/update-task", { projectId: project.id, taskId: "ghost", title: "x" });
+    expect(ghost.status).toBe(404);
   });
 
   it("expose-service rejects a non-positive / non-integer port (400)", async () => {
