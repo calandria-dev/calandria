@@ -45,6 +45,19 @@ beforeAll(async () => {
       } else if (req.url?.endsWith("/expose-service")) {
         const url = `http://localhost:${body.port}`;
         res.end(JSON.stringify({ ok: true, name: body.name, url, text: `Registered "${body.name}" at ${url}.` }));
+      } else if (req.url?.endsWith("/list-tasks")) {
+        res.end(
+          JSON.stringify({
+            ok: true,
+            project: body.project ? "Other Project" : "Here",
+            tasks: [{ id: "task-xyz", title: "Mine", status: "in_progress", current: true }],
+          })
+        );
+      } else if (req.url?.endsWith("/get-task")) {
+        // Mirrors the real endpoint's default: no `task` means the caller's own.
+        res.end(JSON.stringify({ ok: true, task: { id: body.task || body.taskId, title: "Mine", description: "my brief" } }));
+      } else if (req.url?.endsWith("/update-task")) {
+        res.end(JSON.stringify({ ok: true, id: body.taskId, title: body.title, text: `Updated "${body.title}".` }));
       } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: "not found" }));
@@ -76,13 +89,101 @@ async function connectBridge() {
 }
 
 describe("orch-mcp stdio bridge", () => {
-  it("exposes suggest_task, list_projects, expose_service and ask_user over stdio", async () => {
+  it("exposes the full orchestrator tool set over stdio", async () => {
     const { client, close } = await connectBridge();
     try {
       const { tools } = await client.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual(["ask_user", "expose_service", "list_projects", "suggest_task"]);
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "ask_user",
+        "expose_service",
+        "get_task",
+        "list_projects",
+        "list_tasks",
+        "suggest_task",
+        "update_task",
+      ]);
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
+    } finally {
+      await close();
+    }
+  });
+
+  it("offers no way to name the task update_task writes — the target is env-injected", async () => {
+    const { client, close } = await connectBridge();
+    try {
+      const { tools } = await client.listTools();
+      // The blast-radius rule, visible in the wire contract: a turn can edit its
+      // own row and nothing else, so there is no task id to pass. (The endpoint
+      // enforces it too — it only ever writes ORCH_TASK_ID.)
+      const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
+        properties?: Record<string, { enum?: string[] }>;
+      };
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["description", "priority", "status", "title"]);
+      // Cancelling is the user's call: it would abort the turn making the call.
+      expect(schema.properties!.status.enum).not.toContain("cancelled");
+      expect(schema.properties!.status.enum).toContain("done");
+    } finally {
+      await close();
+    }
+  });
+
+  it("proxies list_tasks, defaulting to this session's own board", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      const res = (await client.callTool({ name: "list_tasks", arguments: {} })) as { content: { text: string }[] };
+      const call = calls.find((c) => c.path.endsWith("/list-tasks"))!;
+      expect(call.body).toMatchObject({ projectId: "proj-abc", taskId: "task-xyz" });
+      expect(call.token).toBe("smoke-token");
+      const parsed = JSON.parse(res.content[0].text) as { project: string; tasks: { current: boolean }[] };
+      expect(parsed.project).toBe("Here");
+      expect(parsed.tasks[0].current).toBe(true);
+
+      // A `project` ref travels through for the server to resolve strictly.
+      await client.callTool({ name: "list_tasks", arguments: { project: "Other Project", include_done: true } });
+      expect(calls.filter((c) => c.path.endsWith("/list-tasks"))[1].body).toMatchObject({
+        project: "Other Project",
+        include_done: true,
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("proxies get_task, leaving the 'my own task' default to the server", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      const res = (await client.callTool({ name: "get_task", arguments: {} })) as { content: { text: string }[] };
+      // The bridge doesn't substitute ORCH_TASK_ID itself — it always sends it
+      // as `taskId`, and the endpoint falls back to it when `task` is absent.
+      expect(calls.find((c) => c.path.endsWith("/get-task"))!.body).toMatchObject({ taskId: "task-xyz" });
+      expect(JSON.parse(res.content[0].text)).toMatchObject({ id: "task-xyz", description: "my brief" });
+
+      await client.callTool({ name: "get_task", arguments: { task: "task-other" } });
+      expect(calls.filter((c) => c.path.endsWith("/get-task"))[1].body).toMatchObject({ task: "task-other" });
+    } finally {
+      await close();
+    }
+  });
+
+  it("proxies update_task with only the fields the model set", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      const res = (await client.callTool({
+        name: "update_task",
+        arguments: { title: "Renamed", status: "done" },
+      })) as { content: { text: string }[] };
+      expect(res.content[0].text).toContain('Updated "Renamed"');
+      const call = calls.find((c) => c.path.endsWith("/update-task"))!;
+      expect(call.body).toMatchObject({ taskId: "task-xyz", title: "Renamed", status: "done" });
+      expect(call.token).toBe("smoke-token");
+      // Omitted fields must not travel as nulls — the endpoint treats
+      // "field present" as "write this", so a null would blank the column.
+      expect(call.body.priority).toBeUndefined();
+      expect(call.body.description).toBeUndefined();
     } finally {
       await close();
     }
