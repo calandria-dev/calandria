@@ -85,11 +85,13 @@ export async function GET(req: Request) {
           send({ type: "task_deleted", taskId, projectId: ev.projectId, awaiting_count: ev.awaiting_count });
           return;
         }
-        // A task was re-parented. The row still exists, but re-reading it can
-        // only say where it landed — the project it LEFT has to drop it from
-        // its tray, so both ids travel with the event.
-        if (ev.type === "task_moved") {
-          send({ type: "task_moved", taskId, fromProjectId: ev.fromProjectId, toProjectId: ev.toProjectId });
+        // Tasks were re-parented. The rows still exist, but re-reading them can
+        // only say where they landed — the projects they LEFT have to drop them
+        // from their trays, so both ends travel with the event. Relayed whole:
+        // the bus key is one arbitrary member of the set, so `taskId` is
+        // deliberately ignored here.
+        if (ev.type === "tasks_moved") {
+          send({ type: "tasks_moved", taskIds: ev.taskIds, fromProjectIds: ev.fromProjectIds, toProjectId: ev.toProjectId });
           return;
         }
         const event = coarse(ev);

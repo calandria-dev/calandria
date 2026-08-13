@@ -401,8 +401,8 @@ export function moveTaskBlockedReason(task: Task): string | null {
   return null;
 }
 
-// What a move left behind, so the caller can tell the user (dependency edges
-// can't span projects — see setTaskDeps — so every edge touching the task goes).
+// What a move left behind, so the caller can tell the user (an edge whose other
+// end stayed behind would span projects — see setTaskDeps — so it goes).
 export interface TaskMove {
   task: Task;
   /** Tasks this one was blocked by. */
@@ -411,80 +411,192 @@ export interface TaskMove {
   dropped_dependents: string[];
 }
 
+/** A blocked-by edge: `task_id` is blocked until `depends_on_id` is done. */
+export interface TaskEdge {
+  task_id: string;
+  depends_on_id: string;
+}
+
+/** The outcome of moving a selection of tasks — see moveTasks. */
+export interface TaskMoveBatch {
+  /** Rows that changed project, in the order they were appended. */
+  moved: Task[];
+  /**
+   * The distinct projects that LOST rows. Captured before the write — the moved
+   * rows themselves only remember where they landed, and a tray that lost a task
+   * has to hear about it too.
+   */
+  from_project_ids: string[];
+  /** Ids already filed in the destination: nothing to do, and nothing to refuse. */
+  unchanged: string[];
+  /** Ids that couldn't move, each with the reason to show the user. */
+  skipped: { id: string; reason: string }[];
+  /** Edges severed because only one of their ends moved. */
+  dropped: TaskEdge[];
+  /** Edges that survived because both of their ends moved together. */
+  kept: TaskEdge[];
+}
+
 /**
- * Re-parent an unstarted task to another project — the one path that changes
+ * Re-parent unstarted tasks to another project — the one path that changes
  * `project_id` after creation (a misfiled task used to mean delete + recreate,
- * losing its transcript). Throws when the task/project is missing or the task
- * is past the point of no return (see moveTaskBlockedReason); moving a task to
- * the project it's already in is a no-op.
+ * losing its transcript). One transaction for the whole selection, so eleven
+ * misfiled tasks are one write and one event rather than eleven of each.
  *
- * The task's own child rows (messages, summaries, uploads) are task-keyed, so
+ * Throws only on the caller's own mistake (an unknown destination). A task that
+ * can't move — missing, or past the point of no return per moveTaskBlockedReason
+ * — is REPORTED in `skipped` rather than failing its eleven innocent neighbours;
+ * one already in the destination is `unchanged`, which is not a refusal either.
+ *
+ * Dependency edges: an edge survives iff BOTH its ends are in the moving set.
+ * Those land in the destination together, so they stay intra-project and the
+ * invariant setTaskDeps enforces still holds — a whole chain moving together
+ * keeps its shape. Every other edge touching a mover would end up spanning
+ * projects, and nothing else revalidates them, so it goes. Locally decided per
+ * edge on purpose: one skipped task mid-chain costs its own two edges, not the
+ * whole component's.
+ *
+ * The tasks' own child rows (messages, summaries, uploads) are task-keyed, so
  * they simply come along. The project-keyed ones — sessions, task_usage,
  * task_merges — are deliberately NOT re-pointed: every one of them is written
  * by a turn that has already opened a session, which is exactly the state this
  * refuses to move. Loosening the guard means revisiting that.
+ *
+ * Liveness is NOT checked here: a turn can be in flight with the row still
+ * reading running=0 (POST /messages claims the abort slot before it locks), so
+ * the caller screens for that under the task locks — see lib/taskMove.ts.
  */
-export function moveTask(taskId: string, projectId: string): TaskMove {
+export function moveTasks(ids: string[], projectId: string): TaskMoveBatch {
   const db = getDb();
-  const task = getTask(taskId);
-  if (!task) throw new Error("task not found");
   const dest = getProject(projectId);
   if (!dest) throw new Error("project not found");
-  if (task.project_id === projectId) return { task, dropped_blockers: [], dropped_dependents: [] };
-  const blocked = moveTaskBlockedReason(task);
-  if (blocked) throw new Error(blocked);
 
+  const unchanged: string[] = [];
+  const skipped: { id: string; reason: string }[] = [];
+  const movers: (Task & { picked: number })[] = [];
+  // Input order is the click order; classify in it so the skip report reads the
+  // way the user's selection did.
+  [...new Set(ids)].forEach((id, picked) => {
+    const task = getTask(id);
+    if (!task) skipped.push({ id, reason: "task not found" });
+    else if (task.project_id === projectId) unchanged.push(id);
+    else {
+      const blocked = moveTaskBlockedReason(task);
+      if (blocked) skipped.push({ id, reason: blocked });
+      else movers.push({ ...task, picked });
+    }
+  });
+  if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [] };
+
+  // Append in SOURCE order, not click order, so a selection keeps the shape it
+  // had in the tray it left. Positions only mean something WITHIN a project — a
+  // task at 2 in one tray is not "after" a task at 0 in another — so a selection
+  // spanning several sources keeps each source's run whole, ordered by when the
+  // caller first named that source. Arbitrary across trays, but deterministic,
+  // which sorting two unrelated orderings together isn't.
+  const sourceRank = new Map<string, number>();
+  for (const t of movers) if (!sourceRank.has(t.project_id)) sourceRank.set(t.project_id, sourceRank.size);
+  movers.sort((a, b) =>
+    sourceRank.get(a.project_id)! - sourceRank.get(b.project_id)! || a.position - b.position || a.picked - b.picked);
+  const moving = new Set(movers.map((t) => t.id));
+
+  // Whole-table read, as setTaskDeps' cycle guard already does: task_dependencies
+  // is small, and partitioning in JS is clearer than an IN-list built twice.
+  const edges = db.prepare("SELECT task_id, depends_on_id FROM task_dependencies").all() as TaskEdge[];
+  const touching = edges.filter((e) => moving.has(e.task_id) || moving.has(e.depends_on_id));
+  const kept = touching.filter((e) => moving.has(e.task_id) && moving.has(e.depends_on_id));
+  const dropped = touching.filter((e) => !(moving.has(e.task_id) && moving.has(e.depends_on_id)));
+
+  // Position is per-project (createTask appends at MAX+1 within the project), so
+  // the movers need fresh ones or they collide with the destination's order.
+  let position = (
+    db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(projectId) as { n: number }
+  ).n;
+  const rows = movers.map((task) => ({ ...deriveMoved(task, dest), id: task.id, position: position++ }));
+  // Whose blocker list just got shorter: the movers, and the DEPENDENT end of
+  // every severed edge. Not the blocker end — a task that something else was
+  // waiting on lost nothing when that edge went, and reaping its (already dead)
+  // auto_start would bump an updated_at on a row this move never touched.
+  const touched = new Set([...moving, ...dropped.map((e) => e.task_id)]);
+  const now = Date.now();
+
+  db.transaction(() => {
+    const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
+    for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
+    const reparent = db.prepare(
+      `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
+        reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
+    );
+    for (const r of rows) {
+      reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
+    }
+    // A blocker-less task can never auto-start (lib/autoStart.ts selects through
+    // task_dependencies), so the opt-in would be a dead flag — clear it. Read
+    // off the FINAL graph, which is what makes the batch worth having: a task
+    // whose blocker came along still has an edge here, so its opt-in survives.
+    const clearAutoStart = db.prepare(
+      `UPDATE tasks SET auto_start = 0, updated_at = ? WHERE id = ? AND auto_start = 1
+         AND NOT EXISTS (SELECT 1 FROM task_dependencies WHERE task_id = ?)`
+    );
+    for (const id of touched) clearAutoStart.run(now, id, id);
+  })();
+
+  return {
+    moved: rows.map((r) => getTask(r.id)!),
+    from_project_ids: [...new Set(movers.map((t) => t.project_id))],
+    unchanged,
+    skipped,
+    dropped,
+    kept,
+  };
+}
+
+/**
+ * The columns a task carries INTO `dest`. `agent` and `send_context` are both
+ * DERIVED from the owning project at creation (see createTask) but stored as
+ * plain columns, so nothing records whether a value was the user's explicit pick
+ * or the project's default. A value that still matches the SOURCE project's
+ * default is treated as inherited and re-derived from the destination; anything
+ * else is an explicit choice and travels with the task.
+ */
+function deriveMoved(task: Task, dest: Project) {
   const src = getProject(task.project_id);
-  // `agent` and `send_context` are both DERIVED from the owning project at
-  // creation (see createTask) but stored as plain columns, so nothing records
-  // whether a value was the user's explicit pick or the project's default. A
-  // value that still matches the SOURCE project's default is treated as
-  // inherited and re-derived from the destination; anything else is an explicit
-  // choice and travels with the task.
   const srcAgent = src?.default_agent || "claude";
   const agent = task.agent === srcAgent ? dest.default_agent || "claude" : task.agent;
   const srcSend = src ? (src.send_context !== 0 ? 1 : 0) : 1;
-  const sendContext = task.send_context === srcSend ? (dest.send_context !== 0 ? 1 : 0) : task.send_context;
+  const send_context = task.send_context === srcSend ? (dest.send_context !== 0 ? 1 : 0) : task.send_context;
   // Re-deriving the agent switches drivers, so the same rule the PATCH route
   // applies to a manual switch holds here: run controls are provider-specific,
   // and only an inherited/default choice is safe for the new driver.
   const switched = agent !== task.agent;
-  const model = switched ? null : task.model;
-  const resolvedModel = switched ? null : task.resolved_model;
-  const reasoning = switched ? null : task.reasoning;
-  const permissionMode = switched ? null : task.permission_mode;
-  const sessionId = switched ? null : task.session_id;
+  return {
+    agent,
+    send_context,
+    model: switched ? null : task.model,
+    resolved_model: switched ? null : task.resolved_model,
+    reasoning: switched ? null : task.reasoning,
+    permission_mode: switched ? null : task.permission_mode,
+    session_id: switched ? null : task.session_id,
+  };
+}
 
-  // Position is per-project (createTask appends at MAX+1 within the project), so
-  // the moved task needs a fresh one or it collides with the destination's order.
-  const position = (
-    db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(projectId) as { n: number }
-  ).n;
-  const droppedBlockers = getTaskDeps(taskId);
-  const droppedDependents = (
-    db.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?").all(taskId) as { task_id: string }[]
-  ).map((r) => r.task_id);
-  // A blocker-less task can never auto-start (lib/autoStart.ts selects through
-  // task_dependencies), so the opt-in would be a dead flag — clear it.
-  const autoStart = droppedBlockers.length ? 0 : task.auto_start;
-  const now = Date.now();
-
-  db.transaction(() => {
-    db.prepare("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_id = ?").run(taskId, taskId);
-    db.prepare(
-      `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, auto_start = ?, updated_at = ? WHERE id = ?`
-    ).run(projectId, position, agent, sendContext, model, resolvedModel, reasoning, permissionMode, sessionId, autoStart, now, taskId);
-    // Same dead-flag rule for the tasks left behind: one that just lost its last
-    // blocker has nothing left to auto-start from.
-    const clearDependent = db.prepare(
-      `UPDATE tasks SET auto_start = 0, updated_at = ? WHERE id = ? AND auto_start = 1
-         AND NOT EXISTS (SELECT 1 FROM task_dependencies WHERE task_id = ?)`
-    );
-    for (const id of droppedDependents) clearDependent.run(now, id, id);
-  })();
-
-  return { task: getTask(taskId)!, dropped_blockers: droppedBlockers, dropped_dependents: droppedDependents };
+/**
+ * Move one task, the strict way: what the single-task route needs. Throws the
+ * reason instead of reporting it, and reports the severed edges as the two id
+ * lists that route has always returned. A task moving alone can never have both
+ * ends of an edge in its set, so every edge touching it still drops.
+ */
+export function moveTask(taskId: string, projectId: string): TaskMove {
+  const result = moveTasks([taskId], projectId);
+  const refused = result.skipped[0];
+  if (refused) throw new Error(refused.reason);
+  // Already in the destination — a no-op, not a move.
+  if (result.unchanged.length) return { task: getTask(taskId)!, dropped_blockers: [], dropped_dependents: [] };
+  return {
+    task: result.moved[0],
+    dropped_blockers: result.dropped.filter((e) => e.task_id === taskId).map((e) => e.depends_on_id),
+    dropped_dependents: result.dropped.filter((e) => e.depends_on_id === taskId).map((e) => e.task_id),
+  };
 }
 
 export function updateTask(id: string, patch: Partial<Task>): Task | undefined {

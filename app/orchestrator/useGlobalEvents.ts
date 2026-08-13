@@ -40,17 +40,18 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       setProjects((prev) => prev.map((p) => (p.id === ev.projectId ? { ...p, awaiting_count: ev.awaiting_count } : p)));
       return;
     }
-    // A task was re-parented (possibly in another tab). Both projects' task
-    // counts and badges moved, and no event carries task_count — so refetch the
-    // project list once; a move is a rare, hand-driven mutation. Either tray on
-    // screen is refetched rather than patched: the destination gains a row it
-    // has never seen, and the source doesn't just lose one — the move drops
-    // every dependency edge touching it, so its neighbours' depends_on and
-    // auto_start are stale too.
-    if (ev.type === "task_moved") {
+    // Tasks were re-parented (possibly in another tab). Every affected project's
+    // task count and badge moved, and no event carries task_count — so refetch
+    // the project list once; a move is a rare, hand-driven mutation. A tray on
+    // screen is refetched rather than patched: the destination gains rows it has
+    // never seen, and a source doesn't just lose them — the move severs every
+    // dependency edge with one end left behind, so its neighbours' depends_on
+    // and auto_start are stale too. One event for the whole selection, so
+    // eleven tasks re-filed at once cost this tab one re-sync, not eleven.
+    if (ev.type === "tasks_moved") {
       jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
       const sel = selProjRef.current;
-      if (sel === ev.fromProjectId || sel === ev.toProjectId) void loadTasks(sel, false);
+      if (sel && (sel === ev.toProjectId || ev.fromProjectIds.includes(sel))) void loadTasks(sel, false);
       return;
     }
     if (ev.type !== "task") return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { isAwaiting, relTime } from "./format";
 import { SLABEL, AWAIT_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
@@ -10,7 +10,25 @@ import { TaskCardSkeleton } from "./Layout";
 import { TaskBoard } from "./TaskBoard";
 import { BaseBranchBanner } from "./BaseBranchBanner";
 
-function TaskCard({ task, agents, selected, running, blockedBy, onSelect }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void }) {
+// The multi-select checkbox that sits in every row's left gutter. Rendered
+// outside the card (a checkbox inside a <button> is invalid, and the card IS a
+// button) and faded until the row is hovered or anything is picked, so the
+// affordance is there without turning the list into a form.
+//
+// Wired through onClick rather than onChange because the SHIFT key is the whole
+// range gesture and only a mouse event carries it; onChange keeps React from
+// warning about a controlled input with no handler.
+function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: boolean; onPick: (range: boolean) => void }) {
+  return (
+    <label className="pickbox" onClick={(e) => e.stopPropagation()}
+      title={pickable ? "Select — shift-click to extend the range" : "Started tasks can't be re-filed: the worktree belongs to this project's repo"}>
+      <input type="checkbox" checked={picked} disabled={!pickable} onChange={() => {}}
+        onClick={(e) => { e.stopPropagation(); onPick(e.shiftKey); }} />
+    </label>
+  );
+}
+
+function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const awaiting = isAwaiting(task);
   const blocked = !!blockedBy?.length && !task.started;
@@ -22,7 +40,9 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect }: { ta
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
   return (
-    <button className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} onClick={onSelect}>
+    <div className={`task-row ${picked ? "picked" : ""}`}>
+      <PickBox picked={picked} pickable={canPick(task)} onPick={(range) => onPick(task.id, range)} />
+      <button className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} onClick={onSelect}>
       <div className="task-top">
         <StatusDot status={task.status} running={running} awaiting={awaiting} />
         <span className="ttitle">{task.title}</span>
@@ -47,12 +67,23 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect }: { ta
         <span className="spacer" />
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
-    </button>
+      </button>
+    </div>
   );
 }
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, accent, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; accent?: boolean; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+// Whether a task can be picked for a bulk move, as far as the client can tell.
+// The server decides for real (it also refuses one whose turn is merely in
+// flight, and reports that as a skip) — this only keeps the obvious cases from
+// being selectable at all.
+const canPick = (t: TaskRow) => t.started === 0 && t.running === 0;
+
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, accent, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; accent?: boolean; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
+  const cards = tasks.map((t) => (
+    <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
+      blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick} />
+  ));
   if (collapsible) {
     return (
       <>
@@ -60,16 +91,71 @@ function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSele
           {Icon.chevDown({ className: "tgh-chev" })}
           {label} <span className="gcount">{tasks.length}</span><span className="gline" />
         </button>
-        {!collapsed && tasks.map((t) => <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)} blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} />)}
+        {!collapsed && cards}
       </>
     );
   }
   return (
     <>
       <div className={`task-group-h ${accent ? "needs-you" : ""}`}>{label} <span className="gcount">{tasks.length}</span><span className="gline" /></div>
-      {tasks.map((t) => <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)} blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} />)}
+      {cards}
     </>
   );
+}
+
+/**
+ * The multi-select: which task ids are picked for a bulk action, and the
+ * shift-click range gesture over `order` — the ids as they are actually
+ * rendered, top to bottom.
+ *
+ * Deliberately NOT persisted, and dropped whenever the project or the view
+ * changes: a selection is a gesture in progress, and one surviving a navigation
+ * would act on rows that are no longer on screen — worse, the board doesn't
+ * render the action bar, so a selection carried into it would be invisible.
+ * Pruned against `order` on every render for the same reason — a picked task
+ * that got moved, deleted, started, or filtered out by the search box must leave
+ * the selection with it.
+ */
+function usePicked(scope: string, order: string[]) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Where the last plain click landed: a shift-click selects from there to here,
+  // the way every list with checkboxes has always behaved.
+  const anchor = useRef<string | null>(null);
+  useEffect(() => { setPicked(new Set()); anchor.current = null; }, [scope]);
+
+  const live = order.filter((id) => picked.has(id));
+  useEffect(() => {
+    if (live.length !== picked.size) setPicked(new Set(live));
+    // Compared by value: `live` is a fresh array every render.
+  }, [live.join(","), picked.size]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pick = (id: string, range: boolean) => {
+    // Resolve the range BEFORE touching the ref: a setState updater runs at
+    // render time, so a ref read inside it would see the value written on the
+    // line below rather than the anchor this click is extending from.
+    const from = anchor.current ? order.indexOf(anchor.current) : -1;
+    const to = order.indexOf(id);
+    // Always re-anchor, including on a shift-click. A shift-click with no anchor
+    // yet (the first gesture, or after the anchor was pruned) can only toggle
+    // itself — if it didn't leave an anchor behind, every later range gesture
+    // would degrade to the same single toggle and the list would be stuck going
+    // one task at a time. Re-anchoring costs nothing here because the range is
+    // additive: extending from the last click never un-picks anything.
+    anchor.current = id;
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (range && from >= 0 && to >= 0) {
+        // Extending: everything between the anchor and here joins the selection.
+        // Additive, never subtractive — a range gesture that silently deselected
+        // rows above it would be a nasty surprise on a long list.
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        for (const between of order.slice(lo, hi + 1)) next.add(between);
+      } else if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  return { picked, pick, clearPicked: () => { setPicked(new Set()); anchor.current = null; } };
 }
 
 // Per-group collapsed flag, persisted in localStorage under `key`.
@@ -89,13 +175,16 @@ function useCollapsed(key: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onCollapse, mobile, onBack, baseBranchTick }: {
+export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBulkMove, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: Partial<Pick<TaskRow, "status" | "suggested">>, orderedIds: string[]) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
+  // Hand a multi-select off to the bulk-move modal. Owned by the shell (it owns
+  // every modal) — this column only decides WHAT is selected.
+  onBulkMove: (ids: string[]) => void;
   mobile?: boolean; onBack?: () => void;
   // Bumped when a merge lands, so the base-branch banner re-reads a branch the merge just moved.
   baseBranchTick?: number;
@@ -121,6 +210,22 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
   };
   const canSearch = tasks.length + suggested.length >= SEARCH_MIN;
   const noMatches = q && shown.length === 0 && shownSuggested.length === 0;
+
+  // The rows a shift-click range runs over: every group in render order, then
+  // the Suggested tray. Collapsed groups are excluded — a range must not sweep
+  // up tasks the user can't see — and so are started ones, which can't be
+  // re-filed at all, so a range spanning one skips it rather than selecting
+  // something the server will only refuse. Suggested rows are ordinary unstarted
+  // task rows server-side, so a range crossing into the tray is a real
+  // selection, not a category error.
+  const order = [
+    ...needsYou, ...groups.a, ...groups.h, ...groups.r,
+    ...(doneCollapsed && !q ? [] : groups.g),
+    ...(cancelledCollapsed && !q ? [] : groups.x),
+    ...shownSuggested,
+  ].filter(canPick).map((t) => t.id);
+  const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}`, order);
+
   return (
     <div className="col col-tasks" style={{ flexBasis: width }}>
       <div className="proj-banner">
@@ -170,18 +275,19 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
         <div className="task-scroll">
           {tasks.length === 0 && <div className="empty" style={{ padding: "30px 16px" }}><div className="e-t">No tasks yet</div><div className="e-s">Create one to start an agent session.</div></div>}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} accent />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} accent />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">
             <div className="suggest-h">{Icon.spark()} Suggested by agents<span className="sp">{shownSuggested.length}</span></div>
             {shownSuggested.map((s) => (
-              <div key={s.id} className="sug">
+              <div key={s.id} className={`sug ${picked.has(s.id) ? "picked" : ""}`}>
+                <PickBox picked={picked.has(s.id)} pickable={canPick(s)} onPick={(range) => pick(s.id, range)} />
                 <StatusDot status="not_started" />
                 <div className="sg-meta">
                   <div className="sg-name">{s.title}</div>
@@ -196,6 +302,20 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
           </div>
         )}
       </div>
+      )}
+      {/* The multi-select action bar. Only in list view — the board's cards are
+          drag targets, and a second selection model over them would fight the
+          drag. Docked to the bottom of the column so a long list can scroll
+          under it while the count and the action stay put. */}
+      {view === "list" && picked.size > 0 && (
+        <div className="pick-bar">
+          <span className="pb-count">{picked.size} selected</span>
+          <span className="spacer" />
+          <button className="btn btn-line btn-sm" onClick={() => onBulkMove([...picked])} title="Re-file every selected task under another project">
+            {Icon.chevRight()} Move to project…
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={clearPicked}>Clear</button>
+        </div>
       )}
     </div>
   );

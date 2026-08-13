@@ -66,6 +66,12 @@ and transcript. Only tasks that haven't started can move — once a task has run
 worktree belongs to the current project's repository — and the move drops any blocked-by
 links it had, since dependencies can't span projects.
 
+A whole batch can go at once: tick the checkboxes in the task list (shift-click for a range,
+the Suggested tray included) and use **Move to project…** in the selection bar. They move
+under one transaction, and a blocked-by link whose *both* ends are in the selection survives
+the trip — select a whole dependency chain and it arrives intact. Anything that can't move
+is named in a report rather than quietly left behind.
+
 Agents can also suggest follow-up tasks while they work — into their own project, or into
 any other one. When you spot work in a session that belongs to a different repo, the agent
 looks up the project and files the suggestion straight into that tray, with that project's
