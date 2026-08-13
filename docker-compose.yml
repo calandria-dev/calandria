@@ -11,7 +11,12 @@
 services:
   orchestrator:
     build: .
-    image: agent-orchestrator:latest
+    # Defaults to the image `docker build -t agent-orchestrator .` produces from this
+    # checkout. To run the published multi-arch build instead of building anything:
+    #   ORCH_IMAGE=ghcr.io/jgsephora/operator-oss:latest docker compose ... pull
+    #   ORCH_IMAGE=ghcr.io/jgsephora/operator-oss:latest docker compose ... up -d --no-build
+    # The build stanza stays so a plain checkout still works with no env set.
+    image: ${ORCH_IMAGE:-agent-orchestrator:latest}
     container_name: orch-u-${ORCH_USER:?set ORCH_USER (e.g. alice)}
     restart: unless-stopped
     # gVisor: untrusted-user containers should run on a userspace kernel

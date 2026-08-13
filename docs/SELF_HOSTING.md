@@ -10,14 +10,78 @@ build (a stopped container starts in seconds) bundling Node 22, git, and the `cl
 CLI, with [`docker/entrypoint.sh`](../docker/entrypoint.sh) running both processes (app
 server + pty sidecar) under tini. All state lives under `/home/orch` — one named volume
 captures the SQLite db, worktrees, project repos, and claude login.
-[`docker-compose.yml`](../docker-compose.yml) is the parameterized runner:
+
+You don't have to build it yourself: the same image is published on every push to `main`.
+
+### The published image
 
 ```bash
+docker pull ghcr.io/jgsephora/operator-oss:latest
+```
+
+The package is public — no `docker login`, no token.
+[`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml) publishes
+it, gated on the unit suite, so a red test run never reaches the registry.
+
+**Architectures:** one manifest covering `linux/amd64` and `linux/arm64`, so `docker pull`
+picks yours. Each arch is built on a native runner (no QEMU), and the workflow then boots
+the *published* image on both and waits for its HEALTHCHECK before the run goes green.
+
+| Tag | Points at |
+|-|-|
+| `latest` | The newest build of `main` |
+| `sha-<short>` | One immutable tag per commit — `sha-337ea62`, the 7-char SHA |
+| `<version>` | A pushed `v*` git tag with the `v` stripped — `v1.4.2` → `1.4.2` |
+| `<major>.<minor>` | The newest patch on that line — `1.4` |
+
+`latest` tracks `main` and **only ever moves forward**. A `v*` tag deliberately does not
+move it (`flavor: latest=false` in the workflow): releases are cut from `main`, so a patch
+back-published onto an older line would otherwise silently roll `latest` *backwards* for
+everyone pulling it. Pin `sha-<short>` when you want a tag that can never change under you.
+
+### Verify the image's provenance
+
+The `attest` job signs the merged multi-arch index with SLSA build provenance (Sigstore,
+keyless) — the "this digest was built by this workflow, from this commit" claim. Check it
+before you run it:
+
+```bash
+gh attestation verify oci://ghcr.io/jgsephora/operator-oss:latest \
+  --repo jgSephora/operator-oss
+```
+
+Use `--repo`, not `--owner`: `gh` scopes `--owner` to a GitHub **organization**
+(`/orgs/<owner>/attestations`), and `jgSephora` is a personal account, so
+`--owner jgSephora` 404s no matter what is published. The signature is pushed to the
+registry alongside the image as well, so `--bundle-from-oci` verifies it without touching
+the GitHub API.
+
+Only digests published by a run that included the `attest` job carry a signature; anything
+older reports `no attestations found`.
+
+### Running it
+
+[`docker-compose.yml`](../docker-compose.yml) is the parameterized runner. It builds from
+this checkout by default; set `ORCH_IMAGE` to run the published image instead.
+
+```bash
+export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
+
+# A) build from this checkout (the default)
 docker build -t agent-orchestrator .
-ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc \
-  docker compose -p orch-alice up -d
+docker compose -p orch-alice up -d
+
+# B) or run the published image, nothing to build
+export ORCH_IMAGE=ghcr.io/jgsephora/operator-oss:latest
+docker compose -p orch-alice pull
+docker compose -p orch-alice up -d --no-build
+
 # open http://127.0.0.1:10001
 ```
+
+The explicit `pull` + `--no-build` is belt and braces: the service keeps its `build: .`
+stanza so a checkout still works with no env at all, and Compose versions differ on
+whether a missing image with a build context gets pulled or built.
 
 The container publishes its port on the **host's loopback only**. To reach it from
 elsewhere, put an authenticated tunnel or reverse proxy in front — this app hands out a

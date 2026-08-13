@@ -87,8 +87,16 @@ npm start
 Open <http://localhost:3000>. The first-run wizard connects Claude Code or Codex and takes
 you through a short hands-on tutorial.
 
-Use `npm run dev` only when developing Operator itself. For Docker, authentication,
-networking, and secure access from anywhere, see the [self-hosting guide](docs/SELF_HOSTING.md).
+Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is published
+publicly on every push to `main` — no login needed to pull it:
+
+```bash
+docker pull ghcr.io/jgsephora/operator-oss:latest
+```
+
+Use `npm run dev` only when developing Operator itself. For Docker tags and provenance,
+authentication, networking, and secure access from anywhere, see the
+[self-hosting guide](docs/SELF_HOSTING.md).
 
 ## Hosted
 
