@@ -42,14 +42,19 @@ export function buildProjectContext(project: Project, task: Task): string {
   }
 
   lines.push(
-    `\n---\nYou have an "orchestrator" MCP tool \`suggest_task\` that creates a task in ` +
-      `THIS project. New tasks land in the user's "Suggested" tray for them to review and ` +
-      `start later as their own Claude session. Use it two ways:\n` +
+    `\n---\nYou have an "orchestrator" MCP tool \`suggest_task\` that creates a task. By ` +
+      `default it files into THIS project. New tasks land in the user's "Suggested" tray for ` +
+      `them to review and start later as their own session. Use it two ways:\n` +
       `1. On request — when the user asks you to plan, break down, scope, or roadmap work, ` +
       `call \`suggest_task\` once per task you propose (set a sensible priority for each). ` +
       `Create as many as the plan needs.\n` +
       `2. Proactively — if you notice follow-up work that is out of scope for the CURRENT ` +
-      `task, don't do it now; propose it with \`suggest_task\` instead.`
+      `task, don't do it now; propose it with \`suggest_task\` instead.\n` +
+      `When the work belongs to a DIFFERENT project (another repo the user manages here), ` +
+      `pass \`project\` — the id or exact name of the target. Call \`list_projects\` first to ` +
+      `get the real ids and names: an unrecognized value is refused outright rather than ` +
+      `filed into this project, so don't guess. \`blocked_by\` refs must be tasks in the same ` +
+      `project the new task is filed into.`
   );
   lines.push(
     `\nYou also have an \`expose_service\` MCP tool. When you start a long-running server ` +

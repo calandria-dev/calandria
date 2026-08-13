@@ -61,7 +61,7 @@ The app talks to coding agents only through the `AgentDriver` interface.
 ### The Claude driver (`lib/agents/claude/driver.ts`)
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
-the Claude Code system prompt), the `suggest_task` + `expose_service` MCP tools,
+the Claude Code system prompt), the `suggest_task` + `list_projects` + `expose_service` MCP tools,
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
 `lib/claude-auth.ts`. Sessions run `permissionMode: "bypassPermissions"`.
@@ -123,15 +123,15 @@ controls show their run count and API-price-equivalent cost without polling.
 
 ### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
 
-`suggest_task` / `expose_service` / `ask_user` are the same orchestrator tools every driver
-exposes. The Claude driver mounts the first two as an in-process SDK MCP server
+`suggest_task` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
+tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,expose-service,ask-user}`, gated by the strict
-per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
+(`app/api/internal/agent-tools/{suggest-task,list-projects,expose-service,ask-user}`, gated
+by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort
 signal), and the bridge **polls** the sibling `ask-user/wait` endpoint for the settled
@@ -139,6 +139,17 @@ outcome — no long-held HTTP request, and the ask survives page reloads because
 lives in the transcript. Both the in-process server and the endpoints call the SAME shared
 logic in **`lib/agentTools.ts`**, and both build their tool defs from the SAME constants in
 **`lib/agentToolDefs.mjs`**, so the two paths can't drift.
+
+`suggest_task` can file into ANY project, not just the session's — `list_projects` exists so
+the agent can name one without guessing. `resolveTargetProject()` matches an exact id, else
+a case-insensitive exact name, else refuses and lists the candidates; there is deliberately
+no fallback to the calling project, because a silently misfiled task is worse than an error
+the agent can retry. Resolution happens *before* the insert, so the task's agent,
+`send_context` and board position all come from the **target**. Two consequences follow the
+target too: `blocked_by` refs must resolve inside it (`setTaskDeps` is project-scoped, and
+refs that don't are now reported back rather than dropped in silence), and the `suggested`
+event carries the target's project id so `GET /api/events` can tell a client which tray to
+refresh — the receiving project is usually not the one on screen.
 
 ### Adding a third agent (e.g. Gemini, Cursor)
 

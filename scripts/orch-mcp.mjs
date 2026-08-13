@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
- * future one) the orchestrator's suggest_task / expose_service tools.
+ * future one) the orchestrator's suggest_task / list_projects / expose_service tools.
  *
  * The Claude driver mounts these as an in-process SDK MCP server, a construct
  * that only exists inside the Claude Agent SDK. This is the portable equivalent:
@@ -23,7 +23,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.ORCH_TASK_ID || "";
 const PROJECT_ID = process.env.ORCH_PROJECT_ID || "";
@@ -33,7 +33,21 @@ const SERVICE_TOKEN = process.env.SERVICE_TOKEN || "";
 // Titles created this turn → their task ids, so `blocked_by` can reference an
 // earlier suggestion by title (mirrors the in-process server's per-turn map).
 // This process lives exactly one turn, so the map is naturally turn-scoped.
+//
+// Keyed by (project, title), because a suggestion can be filed into ANY project
+// and dependencies never cross one — the same title in two projects is two
+// unrelated tasks. Unlike the in-process server this bridge only knows the
+// project REF the model typed (an id, a name, or nothing for "here"), not the
+// row it resolves to, so each title is recorded under every alias of its target
+// (the ref as typed, the resolved id, the resolved name, and "" when the target
+// is the session's own project). A ref that still misses simply passes through
+// as a literal and the server reports it as unusable — never a silent bad dep.
+// Two suggestions sharing a title in one project store AMBIGUOUS instead of an
+// id, so the ref resolves to nothing rather than to a coin flip.
 const createdByTitle = new Map();
+const AMBIGUOUS = "\u0000ambiguous";
+const norm = (s) => (s ?? "").trim().toLowerCase();
+const titleKey = (projectAlias, title) => `${norm(projectAlias)}\u0000${title}`;
 
 /** POST a tool call to an internal endpoint; return its `text` (thrown on error). */
 async function callInternal(path, payload) {
@@ -75,6 +89,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  LIST_PROJECTS.name,
+  { description: LIST_PROJECTS.description, inputSchema: {} },
+  async () => {
+    const data = await callInternal("list-projects", {});
+    return { content: [{ type: "text", text: JSON.stringify(data.projects ?? [], null, 2) }] };
+  }
+);
+
+server.registerTool(
   SUGGEST_TASK.name,
   {
     description: SUGGEST_TASK.description,
@@ -82,15 +105,32 @@ server.registerTool(
       title: z.string().describe(SUGGEST_TASK.params.title),
       description: z.string().describe(SUGGEST_TASK.params.description),
       priority: z.enum(SUGGEST_TASK.priorities).default(SUGGEST_TASK.defaultPriority),
+      project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
     },
   },
-  async ({ title, description, priority, blocked_by }) => {
-    // Resolve refs (id passes through; a title from earlier this turn → its id)
-    // before handing off — the endpoint just forwards ids to setTaskDeps.
-    const deps = (blocked_by ?? []).map((ref) => createdByTitle.get(ref) ?? ref);
-    const data = await callInternal("suggest-task", { title, description, priority, blocked_by: deps });
-    if (data.id) createdByTitle.set(title, data.id);
+  async ({ title, description, priority, project, blocked_by }) => {
+    // Resolve refs (id passes through; a title from earlier this turn, filed
+    // into the same project → its id) before handing off — the endpoint just
+    // forwards ids to setTaskDeps, which only keeps same-project ones.
+    const deps = (blocked_by ?? []).map((ref) => {
+      const hit = createdByTitle.get(titleKey(project, ref));
+      return hit && hit !== AMBIGUOUS ? hit : ref;
+    });
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps });
+    if (data.id) {
+      // The ref as typed is the alias that always exists ("" when omitted); the
+      // resolved id/name (echoed by the endpoint) additionally let a later call
+      // name the same project a different way, and "" lets it drop `project`
+      // entirely when the target was this session's own project.
+      // Deduped: the aliases overlap (filing into this session's own project
+      // without naming it yields "" twice), and a repeat would look like two
+      // tasks sharing a title and poison the entry.
+      const aliases = [project ?? "", data.projectId, data.projectName, data.projectId === PROJECT_ID ? "" : null];
+      for (const key of new Set(aliases.filter((a) => a != null).map((a) => titleKey(a, title)))) {
+        createdByTitle.set(key, createdByTitle.has(key) ? AMBIGUOUS : data.id);
+      }
+    }
     return { content: [{ type: "text", text: data.text }] };
   }
 );

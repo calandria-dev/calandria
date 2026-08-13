@@ -12,6 +12,9 @@
 //   e2e:sleep=<ms>                  hold the turn open (Stop / queue tests)
 //   e2e:fail=<message>              end the turn with an error event
 //   e2e:suggest=<title>             create a suggested task + emit "suggested"
+//   e2e:suggest-into=<proj>|<title> …but file it into ANOTHER project (by id or
+//                                   name), through the same strict resolution the
+//                                   real suggest_task tool uses
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
@@ -26,7 +29,7 @@ import type {
   AgentVerifyResult,
   StreamEvent,
 } from "../types";
-import { createSuggestedTask } from "@/lib/agentTools";
+import { createSuggestedTask, resolveTargetProject } from "@/lib/agentTools";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
@@ -120,7 +123,20 @@ export const mockDriver: AgentDriver = {
     for (const m of instructionText.matchAll(/e2e:suggest=([^\n]+)/g)) {
       const title = m[1].trim();
       createSuggestedTask(project, { title, description: "Suggested by the mock agent (e2e)." });
-      yield { type: "suggested", title };
+      yield { type: "suggested", title, projectId: project.id };
+    }
+
+    // Cross-project filing, through the SAME resolver the real tool calls — a
+    // bad project ref surfaces as an error event, exactly as the tool refuses it.
+    for (const m of instructionText.matchAll(/e2e:suggest-into=([^|\n]+)\|([^\n]+)/g)) {
+      const [ref, title] = [m[1].trim(), m[2].trim()];
+      const target = resolveTargetProject(project, ref);
+      if ("error" in target) {
+        yield { type: "error", content: target.error };
+        continue;
+      }
+      createSuggestedTask(target.project, { title, description: "Suggested by the mock agent (e2e)." });
+      yield { type: "suggested", title, projectId: target.project.id };
     }
 
     yield {

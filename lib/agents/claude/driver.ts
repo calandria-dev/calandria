@@ -1,7 +1,7 @@
 // The Claude Code driver — the Agent SDK behind the AgentDriver seam
 // (lib/agents/types.ts). This is the moved lib/claude.ts: runTurn() drives one
 // user turn (resume or fresh session; project context appended to the Claude
-// Code system prompt), mounts the suggest_task / expose_service MCP tools, and
+// Code system prompt), mounts the suggest_task / list_projects / expose_service MCP tools, and
 // normalizes SDK messages into the StreamEvent contract. The one-shot helpers
 // (summarize / draft / recap) and the wizard's auth flow (delegating to
 // lib/claude-auth.ts) round out the interface.
@@ -12,8 +12,15 @@ import type { Project, Task, StreamEvent, AskQuestion, TurnUsage } from "../../t
 import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
 import { getSetting } from "../../store";
-import { createSuggestedTask, registerExposedService, resolveTitleRefs } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE } from "../../agentToolDefs.mjs";
+import {
+  createSuggestedTask,
+  listProjectsForAgent,
+  registerExposedService,
+  rememberSuggestedTitle,
+  resolveTargetProject,
+  resolveTitleRefs,
+} from "../../agentTools";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
 import { CLAUDE_CLI_PATH as CLAUDE_PATH } from "../../config";
 import { isUsageLimit } from "../../usageLimit";
@@ -38,9 +45,16 @@ import {
 } from "../../claude-auth";
 import { claudeUsage } from "./usage";
 
-function orchestratorServer(project: Project, onSuggest: (title: string) => void, onExpose: (info: { name: string; url: string }) => void) {
+function orchestratorServer(
+  project: Project,
+  onSuggest: (s: { title: string; projectId: string }) => void,
+  onExpose: (info: { name: string; url: string }) => void
+) {
   // Titles created this session, so `blocked_by` can reference earlier suggestions
   // by title (not just id) — friendlier for the model when planning a roadmap.
+  // Keyed by (target project, title): a suggestion can be filed into any project
+  // and dependencies never cross one, so the same title in two projects is two
+  // unrelated tasks rather than an ambiguous ref.
   const createdByTitle = new Map<string, string>();
   return createSdkMcpServer({
     name: "orchestrator",
@@ -59,6 +73,9 @@ function orchestratorServer(project: Project, onSuggest: (title: string) => void
           return { content: [{ type: "text", text }] };
         }
       ),
+      tool(LIST_PROJECTS.name, LIST_PROJECTS.description, {}, async () => ({
+        content: [{ type: "text", text: JSON.stringify(listProjectsForAgent(project.id), null, 2) }],
+      })),
       tool(
         SUGGEST_TASK.name,
         SUGGEST_TASK.description,
@@ -66,22 +83,31 @@ function orchestratorServer(project: Project, onSuggest: (title: string) => void
           title: z.string().describe(SUGGEST_TASK.params.title),
           description: z.string().describe(SUGGEST_TASK.params.description),
           priority: z.enum(["hi", "med", "lo"]).default("med"),
+          project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; blocked_by?: string[] }) => {
-          // Resolve refs (id passes through; a title from earlier this session maps
-          // to its id) then create + wire deps via the shared logic. Record this
-          // task's title→id so later suggestions can reference it by title.
-          const { task, text } = createSuggestedTask(project, {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[] }) => {
+          // Which project this lands in, before anything else: the task's agent,
+          // send_context and board position all come from it, and a wrong answer
+          // is a misfiled task rather than a visible failure. Strict — an
+          // unrecognized name is refused, never quietly treated as "here".
+          const target = resolveTargetProject(project, args.project);
+          if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
+
+          // Resolve refs (id passes through; a title from earlier this session,
+          // filed into the SAME project, maps to its id) then create + wire deps
+          // via the shared logic. Record this task's title→id so later
+          // suggestions into that project can reference it by title.
+          const { task, text } = createSuggestedTask(target.project, {
             title: args.title,
             description: args.description,
             priority: args.priority,
-            blocked_by: resolveTitleRefs(args.blocked_by, createdByTitle),
+            blocked_by: resolveTitleRefs(args.blocked_by, createdByTitle, target.project.id),
           });
           // A null task = the project was deleted mid-turn; `text` already says so.
           if (task) {
-            createdByTitle.set(args.title, task.id);
-            onSuggest(args.title);
+            rememberSuggestedTitle(createdByTitle, target.project.id, args.title, task.id);
+            onSuggest({ title: args.title, projectId: target.project.id });
           }
           return { content: [{ type: "text", text }] };
         }
@@ -128,7 +154,6 @@ async function* runTurn(
   abortController?: AbortController
 ): AsyncGenerator<StreamEvent> {
   let sessionId: string | null = task.session_id;
-  const suggested: string[] = [];
   // AskUserQuestion tool_use ids — surfaced as interactive "ask" cards by the
   // hook, so their generic tool_use / tool_result blocks are suppressed below.
   const askIds = new Set<string>();
@@ -192,7 +217,11 @@ async function* runTurn(
       mcpServers: {
         orchestrator: orchestratorServer(
           project,
-          (t) => suggested.push(t),
+          // Straight onto the queue, like expose_service's notice below: the
+          // suggestion is already committed, and holding it until the turn ends
+          // would keep the receiving tray stale for as long as the turn runs —
+          // hours, if it parks on a question.
+          ({ title, projectId }) => queue.push({ type: "suggested", title, projectId }),
           ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` })
         ),
       },
@@ -316,7 +345,6 @@ async function* runTurn(
   for await (const ev of queue.drain()) yield ev;
   await pump;
 
-  for (const t of suggested) yield { type: "suggested", title: t };
   yield { type: "done", sessionId };
 }
 

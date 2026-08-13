@@ -33,7 +33,15 @@ beforeAll(async () => {
       res.setHeader("content-type", "application/json");
       if (req.url?.endsWith("/suggest-task")) {
         const id = `id-${nextId++}`;
-        res.end(JSON.stringify({ ok: true, id, title: body.title, text: `Suggested "${body.title}" (id: ${id}).` }));
+        // Stand in for resolveTargetProject: any `project` ref resolves to the
+        // one "other" project, and omitting it means the session's own. The
+        // bridge keys its title map off what comes back here.
+        const other = { projectId: "proj-other", projectName: "Other Project" };
+        const here = { projectId: "proj-abc", projectName: "Here" };
+        const resolved = body.project ? other : here;
+        res.end(JSON.stringify({ ok: true, id, title: body.title, ...resolved, text: `Suggested "${body.title}" (id: ${id}).` }));
+      } else if (req.url?.endsWith("/list-projects")) {
+        res.end(JSON.stringify({ ok: true, projects: [{ id: "proj-abc", name: "Here", repo_path: "/repos/here", current: true }] }));
       } else if (req.url?.endsWith("/expose-service")) {
         const url = `http://localhost:${body.port}`;
         res.end(JSON.stringify({ ok: true, name: body.name, url, text: `Registered "${body.name}" at ${url}.` }));
@@ -68,11 +76,11 @@ async function connectBridge() {
 }
 
 describe("orch-mcp stdio bridge", () => {
-  it("exposes suggest_task, expose_service and ask_user over stdio", async () => {
+  it("exposes suggest_task, list_projects, expose_service and ask_user over stdio", async () => {
     const { client, close } = await connectBridge();
     try {
       const { tools } = await client.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual(["ask_user", "expose_service", "suggest_task"]);
+      expect(tools.map((t) => t.name).sort()).toEqual(["ask_user", "expose_service", "list_projects", "suggest_task"]);
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
     } finally {
@@ -104,6 +112,76 @@ describe("orch-mcp stdio bridge", () => {
 
       const second = calls.find((c) => c.body.title === "Second")!;
       expect(second.body.blocked_by).toEqual(["id-0"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("forwards the target project and keeps title refs from crossing projects", async () => {
+    calls.length = 0;
+    nextId = 0;
+    const { client, close } = await connectBridge();
+    try {
+      // File a blocker into ANOTHER project, naming it the way the model would.
+      await client.callTool({
+        name: "suggest_task",
+        arguments: { title: "Blocker", description: "", project: "Other Project" },
+      });
+      const blocker = calls.find((c) => c.body.title === "Blocker")!;
+      expect(blocker.body.project).toBe("Other Project");
+
+      // Same title, same project — resolves to the id the endpoint returned,
+      // even though this call names the project by ID rather than by name.
+      await client.callTool({
+        name: "suggest_task",
+        arguments: { title: "Same project", description: "", project: "proj-other", blocked_by: ["Blocker"] },
+      });
+      expect(calls.find((c) => c.body.title === "Same project")!.body.blocked_by).toEqual(["id-0"]);
+
+      // Same title, DIFFERENT project (this session's own): must NOT resolve —
+      // dependencies never cross projects, so it travels on as a literal for
+      // the server to report as unusable.
+      await client.callTool({
+        name: "suggest_task",
+        arguments: { title: "Other project", description: "", blocked_by: ["Blocker"] },
+      });
+      expect(calls.find((c) => c.body.title === "Other project")!.body.blocked_by).toEqual(["Blocker"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("stops resolving a title once two tasks in one project share it", async () => {
+    calls.length = 0;
+    nextId = 0;
+    const { client, close } = await connectBridge();
+    try {
+      for (const description of ["one", "two"]) {
+        await client.callTool({ name: "suggest_task", arguments: { title: "Dup", description } });
+      }
+      await client.callTool({
+        name: "suggest_task",
+        arguments: { title: "Dependent", description: "", blocked_by: ["Dup"] },
+      });
+      // Neither id would be more correct than the other, so the ref travels on
+      // as a literal for the server to report as unusable.
+      expect(calls.find((c) => c.body.title === "Dependent")!.body.blocked_by).toEqual(["Dup"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("proxies list_projects and returns the project list as text", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      const res = (await client.callTool({ name: "list_projects", arguments: {} })) as {
+        content: { type: string; text: string }[];
+      };
+      expect(calls.find((c) => c.path.endsWith("/list-projects"))!.body).toMatchObject({ projectId: "proj-abc" });
+      expect(JSON.parse(res.content[0].text)).toEqual([
+        { id: "proj-abc", name: "Here", repo_path: "/repos/here", current: true },
+      ]);
     } finally {
       await close();
     }

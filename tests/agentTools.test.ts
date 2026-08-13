@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
 import { createProject, getTask, getTaskDeps } from "@/lib/store";
-import { createSuggestedTask, registerExposedService, resolveTitleRefs } from "@/lib/agentTools";
+import { createSuggestedTask, registerExposedService, resolveTitleRefs, titleKey } from "@/lib/agentTools";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
 import { POST as exposeService } from "@/app/api/internal/agent-tools/expose-service/route";
 import { instanceServiceTokenOk } from "@/lib/cf-access.mjs";
@@ -41,9 +41,11 @@ describe("agentTools shared logic", () => {
   });
 
   it("resolveTitleRefs maps session titles to ids and passes ids through", () => {
-    const map = new Map<string, string>([["First task", "id-1"]]);
-    expect(resolveTitleRefs(["First task", "id-2"], map)).toEqual(["id-1", "id-2"]);
-    expect(resolveTitleRefs(undefined, map)).toEqual([]);
+    // Entries are keyed by (project, title) — see crossProjectSuggest.test.ts
+    // for why, and for the cross-project scoping this keying buys.
+    const map = new Map<string, string>([[titleKey("proj-1", "First task"), "id-1"]]);
+    expect(resolveTitleRefs(["First task", "id-2"], map, "proj-1")).toEqual(["id-1", "id-2"]);
+    expect(resolveTitleRefs(undefined, map, "proj-1")).toEqual([]);
   });
 
   it("registerExposedService records the port and returns a URL + text", () => {
