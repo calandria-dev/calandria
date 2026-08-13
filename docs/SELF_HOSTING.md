@@ -38,6 +38,8 @@ the *published* image on both and waits for its HEALTHCHECK before the run goes 
 move it (`flavor: latest=false` in the workflow): releases are cut from `main`, so a patch
 back-published onto an older line would otherwise silently roll `latest` *backwards* for
 everyone pulling it. Pin `sha-<short>` when you want a tag that can never change under you.
+A manual `workflow_dispatch` run doesn't move it either: `latest` is conditioned on the
+default branch, so test-publishing a branch adds its `sha-<short>` tag and nothing else.
 
 ### Verify the image's provenance
 
@@ -46,18 +48,23 @@ keyless) — the "this digest was built by this workflow, from this commit" clai
 before you run it:
 
 ```bash
-gh attestation verify oci://ghcr.io/jgsephora/operator-oss:latest \
-  --repo jgSephora/operator-oss
+gh attestation verify oci://ghcr.io/jgsephora/operator-oss:latest --owner jgSephora
 ```
 
-Use `--repo`, not `--owner`: `gh` scopes `--owner` to a GitHub **organization**
-(`/orgs/<owner>/attestations`), and `jgSephora` is a personal account, so
-`--owner jgSephora` 404s no matter what is published. The signature is pushed to the
-registry alongside the image as well, so `--bundle-from-oci` verifies it without touching
-the GitHub API.
+Success is the **exit status** — `gh` prints nothing when its output isn't a terminal.
+Add `--format json` for the parsed statement and signing certificate. Useful variations:
 
-Only digests published by a run that included the `attest` job carry a signature; anything
-older reports `no attestations found`.
+| Flag | Why |
+|-|-|
+| `--repo jgSephora/operator-oss` | Instead of `--owner`; scopes the claim to this one repo rather than anything the account publishes |
+| `--signer-workflow jgSephora/operator-oss/.github/workflows/publish-image.yml` | Pins *which* workflow was allowed to sign, the check actually worth making |
+| `--bundle-from-oci` | Reads the signature from the registry (the `attest` job pushes it there) instead of the GitHub API |
+
+The subject is the **multi-arch index** digest, not a per-arch one: the index is the thing
+you pull, and the per-arch legs are built with `provenance: false` so their digests are
+plain manifests the merge step can stitch together. Only digests published by a run that
+included the `attest` job carry a signature — anything older reports
+`no attestations found`.
 
 ### Running it
 
