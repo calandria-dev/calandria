@@ -103,6 +103,10 @@ export async function GET(req: Request) {
           awaiting_input: !!t.awaiting_input,
           status: t.status,
           awaiting_count: countAwaiting(t.project_id),
+          // A suggestion can be filed into a project other than the one the
+          // turn runs in, and then every field above describes the WRONG
+          // project as far as the tray is concerned. Carry the target too.
+          ...(ev.type === "suggested" ? { suggestedProjectId: ev.projectId } : {}),
         };
         send(payload);
       });

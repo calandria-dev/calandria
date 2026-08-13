@@ -40,6 +40,15 @@ export function listProjects(): (Project & { task_count: number; last_activity: 
     .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[];
 }
 
+// Every project row in sidebar order, WITHOUT listProjects' per-project
+// aggregate subqueries. The agent-facing project tools (lib/agentTools.ts) only
+// need id/name/repo_path to let a session name a target project, and they run
+// on the turn's hot path — counting tasks and summing usage for each project to
+// answer "which project is called X" is pure waste.
+export function listProjectsPlain(): Project[] {
+  return getDb().prepare("SELECT * FROM projects ORDER BY position ASC, created_at ASC").all() as Project[];
+}
+
 export function getProject(id: string): Project | undefined {
   return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as Project | undefined;
 }

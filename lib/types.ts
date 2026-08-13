@@ -206,7 +206,10 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
-  | { type: "suggested"; title: string }
+  // A suggested task was filed. `projectId` is the project it landed IN, which
+  // is not necessarily the one the turn is running in (suggest_task can target
+  // any project) — the receiving tray is the one that has to refresh.
+  | { type: "suggested"; title: string; projectId: string }
   | { type: "usage"; usage: TurnUsage }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
   | { type: "error"; content: string }
@@ -264,6 +267,13 @@ export type GlobalTaskEvent = {
   status: Status;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
+  /**
+   * On a "suggested" event only: the project the new task was filed INTO.
+   * Usually the same as `projectId`, but suggest_task can target any project,
+   * and then it's the only field naming the tray that gained a row — every
+   * other field on this payload describes the task that DID the suggesting.
+   */
+  suggestedProjectId?: string;
 };
 
 // Everything GET /api/events can send. Task lifecycle is the bulk of it;

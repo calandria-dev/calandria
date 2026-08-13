@@ -67,9 +67,14 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // Project badge + titlebar pill: the event carries the project's fresh
     // awaiting count, so no /api/projects refetch is needed.
     setProjects((prev) => prev.map((p) => (p.id === ev.projectId ? { ...p, awaiting_count: ev.awaiting_count } : p)));
-    // A suggested task was created (by a turn in that project) — surface it in
-    // the Suggested tray right away if that project is on screen.
-    if (ev.event === "suggested" && selProjRef.current === ev.projectId) void loadTasks(ev.projectId, false);
+    // A suggested task was created — surface it in the Suggested tray right
+    // away if that project is on screen. The turn that filed it may have been
+    // running in a DIFFERENT project (suggest_task can target any of them), so
+    // the tray to refresh is the one the event names, not the caller's.
+    if (ev.event === "suggested") {
+      const filedInto = ev.suggestedProjectId ?? ev.projectId;
+      if (selProjRef.current === filedInto) void loadTasks(filedInto, false);
+    }
   };
   // Route through a ref so the EventSource effect never re-subscribes.
   const handleRef = useRef(handle);

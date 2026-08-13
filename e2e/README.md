@@ -38,6 +38,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
   | `e2e:fail=<message>` | end the turn with an error event |
   | `e2e:suggest=<title>` | create a suggested task + emit the event |
+  | `e2e:suggest-into=<project>\|<title>` | file the suggestion into ANOTHER project (id or name), through the real strict resolver — an unknown ref yields an error event |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs

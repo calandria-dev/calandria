@@ -17,6 +17,8 @@ import {
 } from "./helpers";
 
 const PROJECT = `Behaviors ${uid()}`;
+// A second project, so a suggestion can be filed somewhere the running turn isn't.
+const OTHER = `Behaviors Elsewhere ${uid()}`;
 let projectId: string;
 
 test.beforeAll(async ({ request }) => {
@@ -112,6 +114,52 @@ test("agent suggestions land in the Suggested tray", async ({ page, request }) =
   // Scoped to the tray's name element — the originating task's description
   // contains the same words, so a bare text match is ambiguous.
   await expect(page.locator(".sg-name").filter({ hasText: "Refactor the widget factory" })).toBeVisible();
+});
+
+test("a suggestion filed into another project reaches that project's tray live", async ({ page, request }) => {
+  // The cross-project fan-out: the turn runs in PROJECT, the task lands in
+  // OTHER. The receiving tray is the one that has to refresh, and it belongs to
+  // a project the running task knows nothing about — so this is the path that
+  // only works if the `suggested` event carries the TARGET project id.
+  const other = await createProject(request, { name: OTHER, repoPath: makeFixtureRepo("behaviors-other") });
+
+  // Sit on the RECEIVING project with no transcript stream open for the turn
+  // that's about to run — only the global /api/events stream can deliver this.
+  await gotoApp(page);
+  await page.getByText(OTHER).first().click();
+  await expect(page.getByText("Suggested by agents")).toBeHidden();
+
+  const task = await createTask(request, {
+    projectId,
+    title: "Filing elsewhere",
+    description: `e2e:suggest-into=${OTHER}|Fix the other repo's build`,
+  });
+  await sendMessage(request, task.id);
+
+  // No reload: the tray appears because the event named the target project.
+  await expect(page.locator(".sg-name").filter({ hasText: "Fix the other repo's build" })).toBeVisible({ timeout: 20_000 });
+
+  const detail = await (await request.get(`/api/projects/${other.id}`)).json();
+  expect(detail.tasks.find((t: { title: string }) => t.title === "Fix the other repo's build")?.suggested).toBe(1);
+});
+
+test("an unrecognized project ref is refused instead of filed into the current project", async ({ request }) => {
+  const before = await (await request.get(`/api/projects/${projectId}`)).json();
+  const task = await createTask(request, {
+    projectId,
+    title: "Bad target",
+    description: "e2e:suggest-into=no-such-project|Should never exist",
+  });
+  await sendMessage(request, task.id);
+  await waitForIdle(request, task.id);
+
+  const detail = await (await request.get(`/api/projects/${projectId}`)).json();
+  // Nothing created anywhere — in particular NOT quietly in the calling project.
+  expect(detail.tasks.some((t: { title: string }) => t.title === "Should never exist")).toBe(false);
+  expect(detail.tasks.length).toBe(before.tasks.length + 1); // just the task we made
+  // …and the agent was told why, so it can retry with a real name.
+  const t = await getTask(request, task.id);
+  expect(t.messages.some((m: { content: string }) => m.content.includes("no-such-project"))).toBe(true);
 });
 
 test("a second turn resumes the same session", async ({ request }) => {

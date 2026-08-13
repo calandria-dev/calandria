@@ -66,8 +66,13 @@ and transcript. Only tasks that haven't started can move — once a task has run
 worktree belongs to the current project's repository — and the move drops any blocked-by
 links it had, since dependencies can't span projects.
 
-Agents can also suggest follow-up tasks while they work. Project recaps help restore your
-mental context when you return later.
+Agents can also suggest follow-up tasks while they work — into their own project, or into
+any other one. When you spot work in a session that belongs to a different repo, the agent
+looks up the project and files the suggestion straight into that tray, with that project's
+default agent and settings. It has to name the project exactly (by name or id); an
+unrecognized name is refused rather than filed in the wrong place. Blocked-by links still
+can't span projects, so they have to point at tasks in whichever project the new task lands
+in. Project recaps help restore your mental context when you return later.
 
 ## Workspace tools
 
