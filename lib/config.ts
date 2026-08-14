@@ -55,6 +55,24 @@ export const CODEX_APPROVAL_POLICY = (() => {
 })();
 
 /**
+ * Whether Codex tasks inherit the MCP servers configured in the user's
+ * ~/.codex/config.toml, alongside the orchestrator's own bridge. Off by default,
+ * and deliberately asymmetric with the Claude driver (which inherits ~/.claude
+ * MCP servers) — see "Agent MCP inheritance" in CLAUDE.md.
+ *
+ * The short version: `codex exec` has no approver, so an inherited server's
+ * tools are visible to the model but every call comes straight back as
+ * `user cancelled MCP tool call` (verified on codex-cli 0.146.0). Mounting them
+ * only spends context and turns on tools that cannot work, so the driver
+ * disables them per-server. Set to 1/true/on to mount them anyway — the escape
+ * hatch for a future CLI that can auto-approve them, or for a user who has set
+ * `default_tools_approval_mode = "approve"` on their own servers.
+ */
+export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
+  String(process.env.CODEX_INHERIT_MCP || "").toLowerCase(),
+);
+
+/**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
  * ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY). Off by default: both entrypoints
  * strip those vars at boot (lib/env-keys.mjs — server.js and pty-server.js read

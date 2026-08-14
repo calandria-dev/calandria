@@ -31,6 +31,12 @@ for (const v of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", 
   delete process.env[v];
 }
 
+// Hermetic agent config: CODEX_INHERIT_MCP is read at import time by
+// lib/config.ts and flips whether the Codex driver unmounts the user's own MCP
+// servers, so a developer who set it in their shell would otherwise invert
+// tests/codexMcpBridge.test.ts. Same reasoning as the credential strip above.
+delete process.env.CODEX_INHERIT_MCP;
+
 // Hermetic git: pin all config to a file we control so the suite never depends
 // on (or mutates) the user's identity, hooks, signing, or default-branch setup.
 const gitconfig = path.join(root, "gitconfig");

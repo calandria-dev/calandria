@@ -35,19 +35,30 @@ Task sessions run unattended inside their isolated worktrees. Operator is a cont
 not an additional security sandbox; review [the security model](../SECURITY.md) before
 exposing an instance.
 
+A task session also loads your own Claude Code configuration — `~/.claude` settings, MCP
+servers, plugins and skills, plus the repository's `CLAUDE.md` — so it behaves like the
+`claude` CLI you already use, with Operator's own tools added on top.
+
 ## OpenAI Codex
 
 Codex supports parallel tasks, diff review and merge, `/clear` lineage, project context,
 interactive questions, and usage tracking. Operator supplies interactive questions through
 its MCP bridge because the upstream non-interactive CLI does not provide that hook itself.
 
-Two upstream differences are visible:
+Three upstream differences are visible:
 
 - ChatGPT-plan authentication reports tokens but not dollar cost, so Operator estimates
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
   mid-turn approval mode.
+- Codex tasks get Operator's own tools but **not** the MCP servers from your
+  `~/.codex/config.toml`, where a Claude task does get yours. Same root cause as the
+  point above: the non-interactive CLI has no approver, so an inherited server's tools
+  are offered to the model and every call returns `user cancelled MCP tool call`.
+  Operator unmounts them rather than dangle tools that cannot work. Set
+  `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you have set
+  `default_tools_approval_mode = "approve"` on your own servers.
 
 ## Adding another agent
 

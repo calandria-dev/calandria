@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { orchestratorMcpConfig } from "@/lib/agents/codex/driver";
+import { disableInheritedServers, ORCHESTRATOR_SERVER } from "@/lib/agents/codex/mcp";
+import { getCapabilities } from "@/lib/agents/capabilities";
 import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
 import type { Project, Task } from "@/lib/types";
 
@@ -40,6 +42,53 @@ describe("codex orchestrator MCP bridge config", () => {
   it("spawns the bridge with an absolute node binary (no PATH dependency)", () => {
     expect(server.command).toBe(process.execPath);
     expect(server.args[0]).toMatch(/scripts[/\\]orch-mcp\.mjs$/);
+  });
+
+  it("keeps the auto-approval scoped to the bridge, never a global default", () => {
+    // The one thing that must NOT drift into a blanket policy: `approve` is
+    // right for our own first-party loopback proxy and wrong as a top-level
+    // codex setting, which would auto-approve anything else that gets mounted.
+    const cfg = orchestratorMcpConfig(project, task) as Record<string, unknown>;
+    expect(cfg).not.toHaveProperty("default_tools_approval_mode");
+    expect(cfg).not.toHaveProperty("tools");
+    expect(Object.keys(cfg)).toEqual(["mcp_servers"]);
+  });
+});
+
+// The agents differ here, on purpose, and the difference is invisible unless
+// something pins it: a Claude task gets the user's own MCP servers, a Codex task
+// gets only the bridge. See lib/agents/codex/mcp.ts for the why (codex exec has
+// no approver, so inherited tools are offered but every call is cancelled —
+// verified live on codex-cli 0.146.0).
+describe("codex does not inherit the user's MCP servers", () => {
+  it("unmounts each of the user's servers alongside the bridge", () => {
+    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers(["userthing", "another"])) as Record<string, any>;
+    expect(cfg.mcp_servers.userthing).toEqual({ enabled: false });
+    expect(cfg.mcp_servers.another).toEqual({ enabled: false });
+    // …without touching the bridge, which is the whole point of the exercise.
+    expect(cfg.mcp_servers.orchestrator.command).toBe(process.execPath);
+    expect(cfg.mcp_servers.orchestrator.default_tools_approval_mode).toBe("approve");
+  });
+
+  it("never disables the bridge, even if the user has a server by that name", () => {
+    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers([ORCHESTRATOR_SERVER])) as Record<string, any>;
+    expect(cfg.mcp_servers.orchestrator.enabled).toBeUndefined();
+    expect(cfg.mcp_servers.orchestrator.command).toBe(process.execPath);
+  });
+
+  it("skips names that aren't safe as a --config dotted-path segment", () => {
+    // The SDK builds `mcp_servers.<name>.enabled` by string concatenation with
+    // no quoting, so a dotted or spaced name would address the wrong table.
+    // Skipping leaves that server mounted (the pre-existing behavior) instead of
+    // emitting an override that silently means something else.
+    expect(disableInheritedServers(["ok-1", "has.dot", "has space", 'has"quote'])).toEqual({ "ok-1": { enabled: false } });
+  });
+
+  it("is declared in the capability descriptors, both ways", () => {
+    // app/api/agents hands these to the client, so the asymmetry is data rather
+    // than per-agent knowledge hardcoded in a driver or the UI.
+    expect(getCapabilities("codex").inheritsUserMcpServers).toBe(false);
+    expect(getCapabilities("claude").inheritsUserMcpServers).toBe(true);
   });
 });
 
