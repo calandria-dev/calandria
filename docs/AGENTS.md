@@ -72,6 +72,16 @@ servers, plugins and skills, plus the repository's `CLAUDE.md` — so it behaves
 `claude` CLI you already use, with Operator's own tools added on top. Your MCP servers'
 tools go through the permission modes above like everything else.
 
+Operator's own background jobs deliberately do not. A `/clear` handoff note, a project
+recap and a "Refresh with AI" context draft are internal transformations, not sessions you
+are sitting in, so they run with your MCP servers, plugins, skills and hooks switched off —
+otherwise every four-bullet recap would start your entire MCP fleet to offer tools it can
+never call. They still read `~/.claude/settings.json`, because that is also where a
+Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they authenticate
+exactly the way your ordinary turns do. The context draft additionally loads the
+repository's `CLAUDE.md` — describing the repo is its job — and can read, search and list
+files, but not run commands or write anything.
+
 ## OpenAI Codex
 
 Codex supports parallel tasks, diff review and merge, `/clear` lineage, project context,

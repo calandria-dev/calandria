@@ -67,6 +67,23 @@ the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `li
 that explores the repo to refresh a project's saved context). Auth delegates to
 `lib/claude-auth.ts`.
 
+A **turn** pins `settingSources: ["user", "project", "local"]` — the SDK's own default when
+the option is omitted, written out so an SDK bump can't silently strip the user's MCP
+servers, plugins, skills and the repo's `CLAUDE.md` from every session. The **one-shots**
+take the opposite policy: isolate capability, inherit config. Each sets `tools` (the real
+restriction — `allowedTools` only pre-approves, and `bypassPermissions` pre-approves
+everything anyway, so all three helpers used to run with the full toolset), plus
+`strictMcpConfig: true` to drop the user's MCP fleet, `skills: []`,
+`settings: { disableAllHooks: true, autoMemoryEnabled: false }` to close the surfaces the
+tool list doesn't cover, and `persistSession: false` because nothing records their session
+id. What they keep is `settingSources: ["user"]`: `~/.claude/settings.json` is also where a
+Bedrock/Vertex/proxy user's `env` block and `apiKeyHelper` live, so full isolation there
+fails the run with "Not logged in" while ordinary turns keep working. The two text-only
+helpers get `tools: []` and one turn; `draftProjectContext` adds `project` to the sources
+(that is what loads `CLAUDE.md`) and gets `["Read", "Grep", "Glob"]` — no Bash, which under
+`bypassPermissions` was unreviewed execution in the user's checkout to produce prose.
+`tests/claudeSettingSources.test.ts` pins both policies.
+
 Sessions default to `permissionMode: "auto"` — the CLI's classifier screens each call and
 escalates what it won't vouch for — and the picker offers `bypassPermissions`,
 `acceptEdits`, `default` and `plan` alongside it. Every mode but `bypassPermissions` is a
