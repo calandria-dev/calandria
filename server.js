@@ -217,6 +217,10 @@ Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImpo
         upgradeHandler(req, socket, head);
       }
     };
+    const deny = () => {
+      try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {}
+      socket.destroy();
+    };
     if (!cfAccess.originAuthEnabled()) {
       // WebSockets are not protected by the browser's same-origin policy. In
       // local mode, validate both Host (DNS-rebinding defense) and Origin before
@@ -227,17 +231,21 @@ Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImpo
       })) {
         return route();
       }
-      try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {}
-      socket.destroy();
-      return;
+      return deny();
     }
-    cfAccess
-      .verifyOriginNodeRequest(req)
-      .then(route)
-      .catch(() => {
-        try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {}
-        socket.destroy();
-      });
+    // Authenticated mode still needs an origin check, for a different reason
+    // than local mode does. The Access cookie is SameSite=None by default, so a
+    // hostile page can open wss://<your tunnel>/pty in the victim's browser and
+    // the edge will hand us a genuinely valid assertion for the real user —
+    // identity proven, intent not. Same-origin is what proves intent. (See
+    // lib/auth/local-origin.mjs; the sidecar repeats both checks.)
+    if (!localOrigin.sameOriginWebSocketRequestAllowed({
+      host: req.headers.host,
+      origin: req.headers.origin,
+    })) {
+      return deny();
+    }
+    cfAccess.verifyOriginNodeRequest(req).then(route).catch(deny);
   });
 
   // Managed services are detached process-group children; they are cleaned up
@@ -274,6 +282,31 @@ Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImpo
       console.warn(
         `[server] WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
           `this port gets the app and a shell. Set CF_ACCESS_*, or unset ORCH_HOSTNAME.`,
+      );
+    }
+    // Half-configured Access is the dangerous shape: enforcement is ON iff BOTH
+    // variables are set, so setting one and typo'ing the other leaves the origin
+    // wide open while the operator believes it is gated. The generic warning
+    // above only fires past loopback, and the container binds 0.0.0.0 either
+    // way, so say this explicitly.
+    const cfSet = ["CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"].filter((k) => (process.env[k] || "").trim());
+    if (cfSet.length === 1) {
+      console.warn(
+        `[server] WARN: ${cfSet[0]} is set but the other CF_ACCESS_* variable is not — ` +
+          `Cloudflare Access enforcement needs BOTH and is currently OFF.`,
+      );
+    }
+    // SERVICE_TOKEN is documented as optional, and it is — except in Access
+    // mode, where it is the only credential the non-browser callers inside the
+    // box can present. Without it the Docker HEALTHCHECK 403s (container never
+    // reports healthy), boot restore of managed services 403s, and the stdio MCP
+    // bridge the non-Claude agents use 403s. docker/entrypoint.sh generates one
+    // so a container never lands here; a bare-node deploy has to be told.
+    if (cfAccess.originAuthEnabled() && !(process.env.SERVICE_TOKEN || "").trim()) {
+      console.warn(
+        `[server] WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset — health probes, ` +
+          `boot restore of managed services, and the agent-tool bridge have no way to ` +
+          `authenticate and will get 403. Generate one: openssl rand -hex 32`,
       );
     }
     if (dev) {

@@ -489,6 +489,45 @@ jobs:
             || { echo "/api/version did not report GIT_SHA=${GITHUB_SHA}"; exit 1; }
           echo "${ARCH} healthy: ${version}" >> "$GITHUB_STEP_SUMMARY"
 
+      # The step above always hands the container a SERVICE_TOKEN, which is
+      # exactly what hid this: with Cloudflare Access on and no token supplied,
+      # the HEALTHCHECK's probe fell through to JWT verification that nothing
+      # inside the container can satisfy, so it 403'd forever and the container
+      # never reported healthy. docker/entrypoint.sh now mints a per-boot token
+      # into /tmp and the HEALTHCHECK reads env-or-file. The Access config below
+      # is deliberately bogus — the health path never contacts Cloudflare, and
+      # anything that DID would fail, which is the point.
+      - name: Boot under Cloudflare Access with no SERVICE_TOKEN and wait for HEALTHCHECK
+        run: |
+          set -euo pipefail
+          docker run -d --name orch-access \
+            -e "CF_ACCESS_TEAM_DOMAIN=example-team.cloudflareaccess.com" \
+            -e "CF_ACCESS_AUD=ci-smoke-aud" \
+            "$REF"
+
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' orch-access)
+            case "$status" in
+              healthy) break ;;
+              unhealthy) echo "container reported unhealthy under Access with no SERVICE_TOKEN"; exit 1 ;;
+            esac
+            if [ "$(docker inspect -f '{{.State.Running}}' orch-access)" != "true" ]; then
+              echo "container exited before becoming healthy"; exit 1
+            fi
+            sleep 3
+          done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' orch-access)" = healthy ] \
+            || { echo "timed out waiting for healthy under Access"; exit 1; }
+
+          # And the gate is genuinely on: an unauthenticated app route must 403.
+          docker exec orch-access node -e "
+            fetch('http://127.0.0.1:3000/api/projects')
+              .then(r => { console.log('status', r.status); process.exit(r.status === 403 ? 0 : 1) },
+                    e => { console.error(e); process.exit(1) })
+          "
+
       - name: Container logs
         if: always()
-        run: docker logs orch 2>&1 | tail -100 || true
+        run: |
+          docker logs orch 2>&1 | tail -100 || true
+          docker logs orch-access 2>&1 | tail -50 || true

@@ -107,6 +107,16 @@ WebSocket upgrade** (`server.js`, in front of the `/pty` terminal proxy). No val
 assertion → 403. [`lib/cf-access.mjs`](../lib/cf-access.mjs) is the single shared
 verifier; the titlebar shows the authenticated email.
 
+WebSocket upgrades get a **second** check on top of the JWT: the browser's `Origin` must
+match the `Host` the request was aimed at. Access proves *who* is calling, not that they
+meant to call — the `CF_Authorization` cookie is `SameSite=None` by default, so a hostile
+page could otherwise open `wss://your-host/pty` in a logged-in user's browser and be
+handed a shell with a perfectly valid assertion. `PUBLIC_BASE_URL` is **not** required for
+this; the check compares the request's own two headers. Set it only if your proxy rewrites
+`Host` (Cloudflare Tunnel's `httpHostHeader`), which would otherwise make the two
+disagree. The pty sidecar independently repeats both checks, so reaching `PTY_PORT`
+directly grants nothing either.
+
 Unset (the local default), the app has no login, but it still enforces a browser-origin
 boundary: loopback hosts are accepted, cross-site requests are rejected, and `/pty`
 WebSocket upgrades require a matching browser `Origin`. This prevents an unrelated
@@ -118,6 +128,22 @@ it raw to the internet.
 The one Access-mode exception is `SERVICE_TOKEN`: a shared secret letting health probes
 read the documented service-token routes without an Access JWT
 (`x-service-token` header).
+
+It is optional in the sense that nothing *requires* you to choose a value, but in Access
+mode something has to present one — it is also how the three callers that live inside the
+box authenticate, none of which has an Access JWT: the image's `HEALTHCHECK`, the boot
+restore of managed services, and the stdio MCP bridge the non-Claude agents' tool calls go
+through. So [`docker/entrypoint.sh`](../docker/entrypoint.sh) mints a per-boot token into
+`/tmp/orch-service-token` when `CF_ACCESS_*` is set and you supplied none; the
+`HEALTHCHECK` reads env-or-file (a healthcheck runs as a separate exec with the *image's*
+environment, so the file is the only way a generated token reaches it). Supply your own
+when a monitor outside the container needs to poll. Running bare Node behind Access with
+no token, `server.js` warns loudly at startup instead.
+
+`ORCH_FLEET_TOKEN` is a second, optional secret for the same three read-only routes,
+shared fleet-wide so one dashboard can poll many boxes without learning each one's private
+`SERVICE_TOKEN`. It is deliberately **not** accepted on the mutating internal agent-tool
+endpoints. Unset — the default — it grants nothing.
 
 ## Idle signal
 
@@ -148,12 +174,13 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `ORCH_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
-| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment |
+| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
 | `ORCH_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
 | `ORCH_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
-| `SERVICE_TOKEN` | *(empty)* | Shared secret for the idle/health route; see above |
+| `SERVICE_TOKEN` | *(empty)* | Shared secret for the idle/health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
+| `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same three read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
 | `ORCH_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
 | `ORCH_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `ORCH_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |

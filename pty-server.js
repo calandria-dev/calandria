@@ -40,11 +40,23 @@ const server = http.createServer((_req, res) => {
   res.end("orchestrator pty-server");
 });
 
+// The sidecar's gate mirrors the app's, mode for mode. It must not simply
+// assume it is sitting behind server.js's gate — anything that completes a
+// handshake here gets a shell, so a browser page on this box that reaches
+// PTY_PORT directly has to be turned away on its own merits. But it also must
+// not enforce the WRONG mode's policy: applying the local-mode Host allowlist
+// while the app runs behind Cloudflare Access is what used to kill the terminal
+// on every Access deployment that left PUBLIC_BASE_URL empty (the tunnel Host
+// is in no allowlist), and the log line said only "rejected connection".
+// jose is ESM-only, hence the dynamic imports from this CommonJS file.
+const localOriginImport = import("./lib/auth/local-origin.mjs");
+const originImport = import("./lib/auth/origin.mjs");
+
 const wss = new WebSocketServer({
   server,
   verifyClient: (info, callback) => {
-    import("./lib/auth/local-origin.mjs")
-      .then((localOrigin) => {
+    Promise.all([localOriginImport, originImport])
+      .then(async ([localOrigin, origin]) => {
         // Peer address first: it is the one thing in this handshake the caller
         // cannot forge. server.js proxies from this same machine, so a
         // non-loopback peer found PTY_PORT directly.
@@ -53,15 +65,30 @@ const wss = new WebSocketServer({
           console.warn(`[pty-server] rejected connection from ${peer} (not loopback)`);
           return callback(false, 401, "Unauthorized");
         }
-        const allowed = localOrigin.localWebSocketRequestAllowed({
-          host: info.req.headers.host,
-          origin: info.origin,
-        });
-        if (!allowed) console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"}`);
-        callback(allowed);
+        const headers = { host: info.req.headers.host, origin: info.origin };
+        if (!origin.originAuthEnabled()) {
+          const allowed = localOrigin.localWebSocketRequestAllowed(headers);
+          if (!allowed) console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"} not allowed in local mode`);
+          return callback(allowed);
+        }
+        // Access mode. Same two checks the app makes, for the same two reasons:
+        // same-origin proves the handshake wasn't initiated by a hostile page
+        // (the Access cookie is SameSite=None), the assertion proves who it is.
+        // server.js forwards the upgrade's headers verbatim, so both are here.
+        if (!localOrigin.sameOriginWebSocketRequestAllowed(headers)) {
+          console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"} does not match host ${headers.host || "(none)"}`);
+          return callback(false, 401, "Unauthorized");
+        }
+        try {
+          await origin.verifyOriginNodeRequest(info.req);
+        } catch (err) {
+          console.warn(`[pty-server] rejected connection — no valid Access assertion (${err?.message || err})`);
+          return callback(false, 401, "Unauthorized");
+        }
+        callback(true);
       })
       .catch((err) => {
-        console.error("[pty-server] Failed to load local-origin.mjs", err);
+        console.error("[pty-server] Failed to evaluate the connection gate", err);
         callback(false);
       });
   },
