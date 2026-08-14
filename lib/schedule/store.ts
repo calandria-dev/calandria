@@ -77,19 +77,33 @@ export function updateSchedule(
   const before = getSchedule(id);
   if (!before) return null;
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
-  if (entries.length) {
-    getDb()
-      .prepare(`UPDATE schedules SET ${entries.map(([k]) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
-      .run(...entries.map(([, v]) => v as string | number | null), Date.now(), id);
-  }
-  const after = getSchedule(id)!;
-  // Recompute when the spec moved, and whenever a paused schedule resumes: on
+  if (!entries.length) return before;
+
+  // Recompute when the spec moves, and whenever a paused schedule resumes: on
   // resume the next occurrence is strictly after NOW, so unpausing something
   // parked for a month doesn't greet the user with a month of missed rows.
-  const specChanged = SPEC_FIELDS.some((f) => f in fields && before[f] !== after[f]);
-  const resumed = "enabled" in fields && !before.enabled && !!after.enabled;
-  if (specChanged || resumed) return refreshNextFire(after);
-  return after;
+  // Decided from the INCOMING fields against the CURRENT row, not from a
+  // before/after diff — the previous shape wrote first and validated after,
+  // so a bad timezone or day_mask landed in the row (with next_fire_at frozen
+  // stale) even though the route reported 400. Validating the merged spec
+  // before any write means a bad edit can never be partially committed.
+  const specChanged = SPEC_FIELDS.some((f) => f in fields && fields[f] !== before[f]);
+  const resumed = "enabled" in fields && !before.enabled && !!fields.enabled;
+  const setEntries: [string, unknown][] = [...entries];
+  if (specChanged || resumed) {
+    const mergedSpec: ScheduleSpec = {
+      daysMask: fields.days_mask ?? before.days_mask,
+      timeOfDay: fields.time_of_day ?? before.time_of_day,
+      timezone: fields.timezone ?? before.timezone,
+    };
+    // Throws on an unusable spec — this must happen BEFORE the UPDATE below.
+    setEntries.push(["next_fire_at", nextFireAt(mergedSpec, Date.now()).ms]);
+  }
+
+  getDb()
+    .prepare(`UPDATE schedules SET ${setEntries.map(([k]) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
+    .run(...setEntries.map(([, v]) => v as string | number | null), Date.now(), id);
+  return getSchedule(id)!;
 }
 
 /** Recompute and persist next_fire_at from the spec. Also the boot revalidation. */

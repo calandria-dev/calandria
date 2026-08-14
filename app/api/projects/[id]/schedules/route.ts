@@ -19,8 +19,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   if (!getProject(id)) return NextResponse.json({ error: "no such project" }, { status: 404 });
   const body = await req.json();
-  if (!body?.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
-  if (!body?.prompt?.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
+  // Type-checked, not just optional-chained: `body?.name?.trim()` only guards
+  // nullish values, so a non-string `name` (e.g. a number from a malformed
+  // client) would sail past it into `.trim()` and throw OUTSIDE this function's
+  // try/catch below, turning a 400 into an unhandled 500.
+  if (typeof body?.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
+  if (typeof body?.prompt !== "string" || !body.prompt.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
   try {
     // createSchedule computes next_fire_at and throws on an unusable spec — a
     // 400 now beats a schedule that silently never fires.
