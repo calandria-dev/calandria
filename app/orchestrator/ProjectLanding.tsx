@@ -3,6 +3,7 @@
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { relTime } from "./format";
+import { Schedules } from "./Schedules";
 import { ErrNote } from "./shared";
 import type { ProjectRow, RecapInfo } from "./types";
 
@@ -70,17 +71,23 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
               <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} New task</button>
             </div>
           </div>
+          <Schedules projectId={project.id} />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="empty" style={{ margin: "auto" }}>
-      <div className="e-ic">{Icon.bolt()}</div>
-      <div className="e-t">No task selected</div>
-      <div className="e-s">Create a task to start an agent session.</div>
-      <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
+    <div className="transcript">
+      <div className="tw" style={{ maxWidth: 720 }}>
+        <div className="empty" style={{ margin: "auto" }}>
+          <div className="e-ic">{Icon.bolt()}</div>
+          <div className="e-t">No task selected</div>
+          <div className="e-s">Create a task to start an agent session.</div>
+          <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
+        </div>
+        <Schedules projectId={project.id} />
+      </div>
     </div>
   );
 }

@@ -308,3 +308,40 @@ export const DEFAULT_LAYOUT: Layout = { projW: 236, taskW: 352, railW: 430, proj
 export const PROJ_W = { min: 170, max: 460 };
 export const TASK_W = { min: 240, max: 620 };
 export const RAIL_W = { min: 320, max: 760 };
+
+// ---------- scheduled tasks (project landing "Schedules" card) ----------
+// Mirrors lib/store.ts's schedule + schedule_run rows as served by
+// GET /api/projects/[id]/schedules (Task 10). `last_run`/`runs` are joined in
+// server-side so the card never needs a second round trip to show an outcome.
+export interface ScheduleRunRow {
+  id: string;
+  scheduled_for: number;
+  fired_at: number;
+  finished_at: number;
+  task_id: string | null;
+  status: "claimed" | "running" | "succeeded" | "failed" | "stopped" | "interrupted" | "missed" | "skipped_overlap";
+  trigger: "scheduled" | "catch_up" | "manual";
+  detail: string;
+  dst_adjusted: string;
+}
+
+export interface ScheduleRow {
+  id: string;
+  project_id: string;
+  name: string;
+  prompt: string;
+  days_mask: number;
+  time_of_day: string;
+  timezone: string;
+  enabled: number;
+  agent: string;
+  permission_mode: string | null;
+  next_fire_at: number;
+  last_run: ScheduleRunRow | null;
+  runs: ScheduleRunRow[];
+}
+
+export interface SchedulesResponse {
+  schedules: ScheduleRow[];
+  scheduler: { started: boolean; lastTickAt: number; lastError: string };
+}
