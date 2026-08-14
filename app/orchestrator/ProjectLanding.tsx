@@ -77,9 +77,21 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
     );
   }
 
+  // `.empty`'s centering (used above too) is a single-flex-item auto-margin
+  // trick — it only works when its parent both establishes a flex context and
+  // has real height to give away, which is why `.session-body` (flex:1;
+  // display:flex) was doing the centering directly before Schedules needed
+  // somewhere to sit below it. `.transcript`/`.tw` are plain scrolling blocks
+  // (shared with the real chat transcript, so their own CSS can't change), so
+  // that flex context is rebuilt here with inline styles: `.transcript` becomes
+  // the flex column, `.tw` stretches to fill it (`flex: 1`) so there's height
+  // to center within, and `.empty`'s own `margin: auto` centers it in
+  // whatever's left over — the full height when Schedules renders nothing
+  // (today, and always once Task 12 removes that early return, for a project
+  // with zero schedules), or the space above the card once it has content.
   return (
-    <div className="transcript">
-      <div className="tw" style={{ maxWidth: 720 }}>
+    <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
+      <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
         <div className="empty" style={{ margin: "auto" }}>
           <div className="e-ic">{Icon.bolt()}</div>
           <div className="e-t">No task selected</div>

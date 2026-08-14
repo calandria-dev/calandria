@@ -102,13 +102,21 @@ export function Schedules({ projectId }: { projectId: string }) {
     <section className="sched-card">
       <h3>Schedules</h3>
       {/* A dead ticker is worse than no schedule, so say so rather than showing
-          a next-run time that will never arrive. */}
+          a next-run time that will never arrive. A ticker that's alive but
+          whose last tick threw is the same lie in a different shape — a
+          confident "next run tomorrow 08:30" with nothing actually watching
+          for it — so it gets the same banner treatment. */}
       {!data.scheduler.started ? (
         <div className="sched-alert">{Icon.cloudOff()} The scheduler is not running on this instance — nothing will fire.</div>
+      ) : data.scheduler.lastError ? (
+        <div className="sched-alert">{Icon.cloudOff()} The last scheduler tick failed: {data.scheduler.lastError} — next-run times may be stale.</div>
       ) : null}
       {error ? <div className="sched-alert sched-alert-bad">{error}</div> : null}
       {data.schedules.map((s: ScheduleRow) => {
-        const blocking = s.last_run?.status === "skipped_overlap" ? s.runs.find((r) => r.status === "running") : undefined;
+        // `runs` is a truncated history window — the run actually blocking
+        // future occurrences can age out of it after enough skips pile up on
+        // top. `active_run` is served explicitly by the API for exactly this.
+        const blocking = s.last_run?.status === "skipped_overlap" ? s.active_run : null;
         return (
           <div key={s.id} className={`sched-row${s.enabled ? "" : " sched-paused"}`}>
             <div className="sched-head">

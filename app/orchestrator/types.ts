@@ -339,6 +339,10 @@ export interface ScheduleRow {
   next_fire_at: number;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
+  // The row still `claimed`/`running` for this schedule, if any — served
+  // explicitly rather than left for the client to find inside `runs`, which is
+  // a 5-row history window a long-wedged run can fall out of entirely.
+  active_run: ScheduleRunRow | null;
 }
 
 export interface SchedulesResponse {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
-import { createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
+import { activeRun, createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // Lazily start the ticker: a dev boot that missed the self-ping still works.
   const { startScheduler, schedulerHealth } = await import("@/lib/scheduler");
   startScheduler();
-  const schedules = listSchedules(id).map((s) => ({ ...s, last_run: lastRun(s.id), runs: listRuns(s.id, 5) }));
+  // `runs` is a 5-row history window (scheduled_for DESC) — after enough skips
+  // pile up on top of it, the actually-running row that's blocking them falls
+  // out of that window entirely. The client's Stop control needs the live run
+  // named explicitly rather than found by scanning a truncated list.
+  const schedules = listSchedules(id).map((s) => ({ ...s, last_run: lastRun(s.id), runs: listRuns(s.id, 5), active_run: activeRun(s.id) }));
   return NextResponse.json({ schedules, scheduler: schedulerHealth() });
 }
 
