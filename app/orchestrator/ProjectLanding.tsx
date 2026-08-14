@@ -5,13 +5,13 @@ import { Markdown } from "../Markdown";
 import { relTime } from "./format";
 import { Schedules } from "./Schedules";
 import { ErrNote } from "./shared";
-import type { ProjectRow, RecapInfo } from "./types";
+import type { AgentsBundle, ProjectRow, RecapInfo } from "./types";
 
 // Shown in the session pane when a project is open but no task is selected.
 // Surfaces the auto-generated "where you left off" recap when one exists / is
 // brewing; otherwise the plain create-a-task prompt.
-export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
-  project: ProjectRow; recap?: RecapInfo; onNewTask: () => void; onRefreshRecap: () => void;
+export function ProjectLanding({ project, agents, recap, onNewTask, onRefreshRecap }: {
+  project: ProjectRow; agents: AgentsBundle; recap?: RecapInfo; onNewTask: () => void; onRefreshRecap: () => void;
 }) {
   const generating = recap?.generating && !recap?.recap;
   const hasRecap = !!recap?.recap;
@@ -71,7 +71,7 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
               <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} New task</button>
             </div>
           </div>
-          <Schedules projectId={project.id} />
+          <Schedules project={project} agents={agents} />
         </div>
       </div>
     );
@@ -86,9 +86,11 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
   // that flex context is rebuilt here with inline styles: `.transcript` becomes
   // the flex column, `.tw` stretches to fill it (`flex: 1`) so there's height
   // to center within, and `.empty`'s own `margin: auto` centers it in
-  // whatever's left over — the full height when Schedules renders nothing
-  // (today, and always once Task 12 removes that early return, for a project
-  // with zero schedules), or the space above the card once it has content.
+  // whatever's left over — the full height for the brief flash before
+  // Schedules' own fetch resolves (it still renders nothing until then), or
+  // the space above the card once the card has loaded (Task 12: the card
+  // itself always renders now, even for a project with zero schedules, so
+  // there's somewhere to click "New schedule" from).
   return (
     <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
       <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
@@ -98,7 +100,7 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
           <div className="e-s">Create a task to start an agent session.</div>
           <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
         </div>
-        <Schedules projectId={project.id} />
+        <Schedules project={project} agents={agents} />
       </div>
     </div>
   );

@@ -110,6 +110,51 @@ anything set to **Start when unblocked** behind it launches just as it would hav
 click. Cancelling counts because a cancelled task will never finish: waiting on one would
 leave the task behind it blocked forever.
 
+## Scheduled tasks
+
+A schedule is a saved prompt plus a recurring day/time, owned by the project it lives in —
+found on the project landing pane (select the project with no task open) under **Schedules**.
+Unlike everything else in Operator, a schedule's firing needs no browser tab open: it's the
+app's only server-owned periodic work, driven by a ticker in the server process itself, not a
+timer in your browser.
+
+Each firing **mints a fresh task** — its own transcript, worktree, and turn — rather than
+reusing one across occurrences, so every run is reviewable exactly like a task you started by
+hand, and a bad run never contaminates the next one's context.
+
+**Timezone** is picked explicitly (defaulting to your browser's), not inferred from the
+server, because the server may run in a different zone (a container on UTC, a user on
+Pacific) than the person who set the schedule up. The time is wall-clock, so "08:30" keeps
+meaning 08:30 across a Daylight Saving transition — the underlying instant moves by an hour
+twice a year so the wall time doesn't. The editor previews the next three occurrences as you
+set the days, time and timezone, specifically so a mistake in any of them is visible while
+you're still looking at the form, not the following Monday.
+
+**Catching up**: if the app was asleep or down when a firing was due (the machine slept, the
+container restarted), the next tick runs the most recent missed slot once, marked `catch_up`
+— useful for a morning run discovered at noon, not one that starts at 6pm. Anything older
+than that window is recorded `missed` rather than skipped silently, so a quiet schedule shows
+*why* it's quiet instead of just going dark. **Overlap** is handled the same way: if the
+previous firing's turn is still running when the next one comes due, the new slot is recorded
+`skipped_overlap` rather than piling a second turn on top of the first.
+
+**Permission mode is a required, explicit choice** — not inherited from some other default —
+because a scheduled run cannot answer a permission prompt: nobody is there. Anything other
+than **Auto-run** still declines every prompt automatically rather than parking, which means
+the turn can stop early with the job half done. Auto-run is the only mode that runs a
+schedule all the way through unattended; pick it deliberately, not by default.
+
+**The slash-command gotcha**: a prompt like `/jira-tasks` is expanded by the CLI before the
+model ever sees it, which is what makes it suitable for unattended work — but an unrecognized
+command is not an error. The CLI answers "Unknown command: /x" as a *success*, with no tool
+calls, so a typo'd schedule would report green every morning having quietly done nothing. The
+editor checks the prompt against the project's real command registry before you save and
+shows the failure with one-click suggestions — but the check is a typo catcher, not an
+authority on what's valid, so it never blocks Save. (It also can't tell a genuine unknown
+command from a prompt that merely *starts* with something that looks like one, such as a
+file path — `/etc/passwd, tell me what's in it` reads as the command `etc`. Non-blocking is
+what keeps that case from refusing a perfectly good prompt.)
+
 ## Workspace tools
 
 The integrated terminal provides a real shell for each project. Managed `dev`, `setup`, and

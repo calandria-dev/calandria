@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { nextFireAt } from "@/lib/schedule/time";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import type { ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
+import { defaultAgentFor } from "./agents";
+import { ErrNote } from "./shared";
+import type { AgentsBundle, ProjectRow, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAYS = 62; // Mon–Fri: bits 1..5
@@ -62,15 +65,236 @@ function RunLine({ run, timezone }: { run: ScheduleRunRow; timezone: string }) {
   );
 }
 
+// What the mock/real slash-command validator can return, mirrored from
+// lib/schedule/commands.ts's PromptValidation.
+type Check = { ok: boolean; error?: string; suggestions?: string[]; unchecked?: boolean };
+
+// Replace the leading slash command in a prompt with a suggested one, keeping
+// whatever follows it — "/jira, triage" + "plugin:jira" -> "/plugin:jira, triage".
+function withCommand(prompt: string, command: string): string {
+  return prompt.replace(/^(\s*)\/[A-Za-z0-9_:-]+/, `$1/${command}`);
+}
+
+/**
+ * Create/edit form for a schedule. Two behaviours are the point, not the
+ * fields: validating a slash prompt against the project's real command
+ * registry before saving (an unknown command reports SUCCESS at run time, so
+ * this is the only cheap place to catch it), and previewing the next three
+ * occurrences so a timezone or day-mask mistake is visible now, not next
+ * Monday.
+ *
+ * Validation never blocks Save. `slashCommandOf` (lib/schedule/commands.ts)
+ * over-matches a prompt that merely STARTS with a filesystem path (e.g.
+ * "/etc/passwd, tell me what's in it" reads as the command "etc"), so a hard
+ * block here would refuse a perfectly good prompt on a false positive. The
+ * check is a typo catcher, not an authority — a failure is shown prominently,
+ * with suggestions one click away, but Save always stays live.
+ */
+function ScheduleForm({
+  projectId, project, agents, initial, onCancel, onSaved,
+}: {
+  projectId: string;
+  project: ProjectRow;
+  agents: AgentsBundle;
+  /** Present = editing this schedule; absent = creating a new one. */
+  initial?: ScheduleRow;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const uid = useId();
+  const [name, setName] = useState(initial?.name ?? "");
+  const [prompt, setPrompt] = useState(initial?.prompt ?? "");
+  const [mask, setMask] = useState(initial?.days_mask ?? WEEKDAYS);
+  const [time, setTime] = useState(initial?.time_of_day ?? "09:00");
+  const [tz, setTz] = useState(initial?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [agent, setAgent] = useState(initial?.agent ?? defaultAgentFor(agents, project.default_agent));
+  const [permissionMode, setPermissionMode] = useState(initial?.permission_mode ?? "bypassPermissions");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Validate a slash prompt BEFORE saving. An unknown command does not fail at
+  // run time — it returns "Unknown command: /x" as a SUCCESS — so catching it
+  // here is the difference between a working schedule and one that reports
+  // green every morning having done nothing.
+  const [check, setCheck] = useState<Check | null>(null);
+  const [checking, setChecking] = useState(false);
+  const validate = useCallback(async (p: string, a: string) => {
+    if (!p.trim().startsWith("/")) { setCheck(null); return; }
+    setChecking(true);
+    try {
+      setCheck(await jsend<Check>(`/api/schedules/validate`, "POST", { project_id: projectId, prompt: p, agent: a }));
+    } catch {
+      setCheck(null);
+    } finally {
+      setChecking(false);
+    }
+  }, [projectId]);
+  // Check immediately when opening the editor on an existing slash prompt, so
+  // the warning (if any) is visible without the user touching the field.
+  useEffect(() => { void validate(prompt, agent); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applySuggestion = (command: string) => {
+    const next = withCommand(prompt, command);
+    setPrompt(next);
+    void validate(next, agent);
+  };
+
+  // Preview the next three occurrences. A timezone or day-mask mistake should
+  // be visible while the user is still looking at the form, not the following
+  // Monday.
+  const preview = useMemo(() => {
+    try {
+      const spec = { daysMask: mask, timeOfDay: time, timezone: tz };
+      const out: number[] = [];
+      let cursor = Date.now();
+      for (let i = 0; i < 3; i++) {
+        cursor = nextFireAt(spec, cursor).ms;
+        out.push(cursor);
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }, [mask, time, tz]);
+
+  const toggleDay = (i: number) => setMask((m) => (m & (1 << i) ? m & ~(1 << i) : m | (1 << i)));
+
+  const canSave = name.trim().length > 0 && prompt.trim().length > 0 && mask > 0 && /^\d{2}:\d{2}$/.test(time) && tz.trim().length > 0 && !saving;
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setErr("");
+    const body = { name: name.trim(), prompt, days_mask: mask, time_of_day: time, timezone: tz, agent, permission_mode: permissionMode };
+    try {
+      if (initial) await jsend(`/api/schedules/${initial.id}`, "PATCH", body);
+      else await jsend(`/api/projects/${projectId}/schedules`, "POST", body);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="sched-form">
+      <div className="field">
+        <label className="lab" htmlFor={`${uid}-name`}>Name</label>
+        <input id={`${uid}-name`} type="text" value={name} placeholder="e.g. Morning triage"
+          onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label className="lab" htmlFor={`${uid}-prompt`}>Prompt</label>
+        <textarea id={`${uid}-prompt`} value={prompt} placeholder="/jira-tasks, or plain instructions"
+          onChange={(e) => setPrompt(e.target.value)}
+          onBlur={() => void validate(prompt, agent)} />
+        {checking && <div className="hlp">Checking this project&rsquo;s slash commands…</div>}
+        {check && !check.ok && (
+          <div className="sched-check bad" role="alert">
+            <div>{check.error}</div>
+            {check.suggestions && check.suggestions.length > 0 && (
+              <div className="sched-suggestions">
+                Did you mean:
+                {check.suggestions.map((s) => (
+                  <button key={s} type="button" className="btn btn-line btn-sm" onClick={() => applySuggestion(s)}>/{s}</button>
+                ))}
+              </div>
+            )}
+            <div className="sched-note">This is a typo check, not a hard rule — Save still works.</div>
+          </div>
+        )}
+        {check?.ok && check.unchecked && (
+          <div className="hlp">Couldn&rsquo;t reach this project&rsquo;s command registry to check — saving without verifying.</div>
+        )}
+        {check?.ok && !check.unchecked && !!prompt.trim().startsWith("/") && (
+          <div className="hlp">{Icon.check()} recognized command</div>
+        )}
+      </div>
+      <div className="field">
+        <label className="lab" id={`${uid}-days-lab`}>Days</label>
+        <div className="sched-days" role="group" aria-labelledby={`${uid}-days-lab`}>
+          {DAYS.map((d, i) => (
+            <label key={d} className="sched-day">
+              <input type="checkbox" checked={!!(mask & (1 << i))} onChange={() => toggleDay(i)} />
+              {d}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 14 }}>
+        <div className="field" style={{ flex: "0 0 150px" }}>
+          <label className="lab" htmlFor={`${uid}-time`}>Time</label>
+          <input id={`${uid}-time`} type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          {/* Not "Timezone" — Playwright's getByLabel does a substring match,
+              and "Time" (the field beside it) would then match both. */}
+          <label className="lab" htmlFor={`${uid}-tz`}>Zone</label>
+          <input id={`${uid}-tz`} type="text" className="ctx-mono" value={tz} onChange={(e) => setTz(e.target.value)} />
+        </div>
+      </div>
+      <div className="sched-preview">
+        {preview.length === 0 ? (
+          <div className="sched-note">Enter a valid time, day and timezone to preview upcoming runs.</div>
+        ) : (
+          preview.map((ms, i) => <div key={i} className="sched-note">next {whenLabel(ms, tz)}{zoneSuffix(tz)}</div>)
+        )}
+      </div>
+      <div className="field">
+        <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
+        <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
+          {agents.agents.map((a) => (
+            <option key={a.id} value={a.id}>{a.label}{a.authenticated ? "" : " (not connected)"}</option>
+          ))}
+        </select>
+      </div>
+      {/* A scheduled run cannot answer a permission prompt: nobody is there, so
+          the gate declines and the turn degrades. Saying so beside the picker
+          is the difference between a considered choice and a surprise.
+          Deliberately not driven by the selected agent's capability list (the
+          way NewTaskModal's picker is): these three values are what the
+          Claude driver understands, and scheduling's own showcase (a slash
+          skill like /jira-tasks) is Claude-only anyway. A Codex-run schedule
+          would still take "acceptEdits" without erroring — its driver treats
+          anything but "plan" as full auto-run — so that combination reads a
+          little optimistic there; flagged rather than special-cased per
+          agent, which would need its own pass. */}
+      <div className="field">
+        <label className="lab" htmlFor={`${uid}-perm`}>Permission mode</label>
+        <select id={`${uid}-perm`} value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)}>
+          <option value="bypassPermissions">Auto-run — no prompts, full tool access</option>
+          <option value="acceptEdits">Accept edits — prompts are declined automatically</option>
+          <option value="plan">Plan mode — prompts are declined automatically</option>
+        </select>
+        <p className="sched-note">
+          {permissionMode === "bypassPermissions"
+            ? "This run does whatever the prompt needs without asking. Nobody is around to approve anything when it fires."
+            : "Anything needing approval will be declined automatically, and the run may stop early."}
+        </p>
+      </div>
+      {err && <ErrNote>{err}</ErrNote>}
+      <div className="sched-actions">
+        <button className="btn btn-ghost" onClick={onCancel} disabled={saving}>Cancel</button>
+        <button className="btn btn-accent" disabled={!canSave} onClick={save}>
+          {Icon.check()} {saving ? "Saving…" : initial ? "Save changes" : "Create schedule"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Read/pause/run-now surface for a project's recurring prompts (lib/scheduler.ts
-// runs them unattended). This is what decides whether a user trusts the
-// feature, so it leads with the outcomes that matter most: a dead ticker, a
-// missed or overlap-skipped run, and a wedged run blocking future occurrences.
-// The create/edit form is a separate surface (Task 12).
-export function Schedules({ projectId }: { projectId: string }) {
+// runs them unattended), plus the create/edit form above. This is what decides
+// whether a user trusts the feature, so it leads with the outcomes that matter
+// most: a dead ticker, a missed or overlap-skipped run, and a wedged run
+// blocking future occurrences.
+export function Schedules({ project, agents }: { project: ProjectRow; agents: AgentsBundle }) {
+  const projectId = project.id;
   const [data, setData] = useState<SchedulesResponse | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -96,11 +320,18 @@ export function Schedules({ projectId }: { projectId: string }) {
   };
 
   if (!data) return null;
-  if (!data.schedules.length) return null; // the editor lives in project settings (Task 12); nothing to show yet
 
   return (
     <section className="sched-card">
-      <h3>Schedules</h3>
+      <div className="sched-header">
+        <h3>Schedules</h3>
+        <span className="spacer" />
+        {!creating && (
+          <button className="btn btn-line btn-sm" onClick={() => { setCreating(true); setEditingId(null); }}>
+            {Icon.plus()} New schedule
+          </button>
+        )}
+      </div>
       {/* A dead ticker is worse than no schedule, so say so rather than showing
           a next-run time that will never arrive. A ticker that's alive but
           whose last tick threw is the same lie in a different shape — a
@@ -112,7 +343,32 @@ export function Schedules({ projectId }: { projectId: string }) {
         <div className="sched-alert">{Icon.cloudOff()} The last scheduler tick failed: {data.scheduler.lastError} — next-run times may be stale.</div>
       ) : null}
       {error ? <div className="sched-alert sched-alert-bad">{error}</div> : null}
+      {creating && (
+        <ScheduleForm
+          projectId={projectId}
+          project={project}
+          agents={agents}
+          onCancel={() => setCreating(false)}
+          onSaved={() => { setCreating(false); void load(); }}
+        />
+      )}
+      {data.schedules.length === 0 && !creating ? (
+        <div className="sched-note">No schedules yet — run a saved prompt on a recurring time even when nobody is logged in.</div>
+      ) : null}
       {data.schedules.map((s: ScheduleRow) => {
+        if (editingId === s.id) {
+          return (
+            <ScheduleForm
+              key={s.id}
+              projectId={projectId}
+              project={project}
+              agents={agents}
+              initial={s}
+              onCancel={() => setEditingId(null)}
+              onSaved={() => { setEditingId(null); void load(); }}
+            />
+          );
+        }
         // `runs` is a truncated history window — the run actually blocking
         // future occurrences can age out of it after enough skips pile up on
         // top. `active_run` is served explicitly by the API for exactly this.
@@ -125,6 +381,13 @@ export function Schedules({ projectId }: { projectId: string }) {
               <span className="sched-next">
                 {s.enabled ? `next ${whenLabel(s.next_fire_at, s.timezone)}${zoneSuffix(s.timezone)}` : "paused"}
               </span>
+              <button
+                className="btn btn-line btn-sm"
+                disabled={busy === s.id}
+                onClick={() => { setEditingId(s.id); setCreating(false); }}
+              >
+                {Icon.edit()} Edit
+              </button>
               <button
                 className="btn btn-line btn-sm"
                 disabled={busy === s.id}
