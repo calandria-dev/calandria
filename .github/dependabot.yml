@@ -16,18 +16,64 @@
 #   want that PR volume; `npm audit` covers the security case.
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
-# - The build engine (buildx + BuildKit) in publish-image.yml. This one is not
-#   a choice so much as a limit: Dependabot's docker ecosystem reads
-#   Dockerfiles, Compose files and k8s manifests, and its github-actions
-#   ecosystem reads `uses:` refs. Neither reads a `driver-opts:
-#   image=moby/buildkit:...` string inside a workflow (dependabot-core#5541,
-#   #5819, #6892). So the engine CANNOT be pinned here without creating exactly
-#   the unbotted SHA pin this file exists to prevent, and publish-image.yml
-#   deliberately leaves it on Docker's `buildx-stable-1` channel instead. Its
-#   header explains the full reasoning and the two mitigations that replace the
-#   pin. If a bot for it is ever wanted, that means adopting Renovate (it has
-#   custom managers that can match arbitrary workflow strings) — a second bot
-#   is the real cost of pinning the engine, and it is why we don't.
+# - The build engine (buildx + BuildKit) in publish-image.yml. Dependabot's
+#   docker ecosystem reads Dockerfiles, Compose files and k8s manifests, and
+#   its github-actions ecosystem reads `uses:` refs. Neither reads a
+#   `driver-opts: image=moby/buildkit:...` string inside a workflow
+#   (dependabot-core#5541, #5819, #6892). publish-image.yml therefore leaves
+#   the engine on Docker's `buildx-stable-1` channel; its header explains the
+#   full reasoning and the two mitigations that replace the pin.
+#
+# RENOVATE: PROTOTYPED AND DECLINED. Do not re-open on the tooling argument
+# alone — that argument is now spent.
+#
+# Renovate's regex customManagers CAN see what Dependabot cannot, so "no bot
+# could bump it" is NOT why the engine is unpinned. A working prototype was
+# built and run against this repo (`renovate --platform=local`): two custom
+# managers extracted all four invisible pins — the moby/buildkit tag+digest in
+# `driver-opts`, a `version:` input on setup-buildx-action, and both Dockerfile
+# ARGs — and proposed correct bumps with correctly scoped replace anchors.
+# `enabledManagers: ["custom.regex"]` disabled every native manager, so a
+# scoped Renovate provably would NOT duplicate this file's action/FROM PRs.
+# It works. It is still not worth it, for three reasons:
+#
+#   1. It trades a loud limitation for a silent one. Verified in the prototype:
+#      give the image an explicit registry prefix (a `docker.io/` in front of
+#      `moby/buildkit`) and the regex stops matching, the dependency vanishes
+#      from the run, and Renovate reports NO warning — the other deps still
+#      resolve, so even the debug-level "enabled but found no results" hint
+#      never fires.
+#      That lands on exactly the unbotted digest pin this file exists to
+#      prevent, except the config still looks healthy. Renovate has no "fail if
+#      matchStrings matched nothing" option, so catching it needs a CI
+#      assertion on the extracted dependency count — a test whose only job is
+#      keeping the bot honest. (Config upkeep is not free either: fileMatch ->
+#      managerFilePatterns was already one breaking migration.)
+#   2. The Dockerfile ARGs are a trap, not a bonus. CODEX_VERSION has to move
+#      in step with @openai/codex-sdk in package-lock.json, and npm is excluded
+#      above, so Renovate would open CLI bumps that are unsafe to merge as
+#      written. @anthropic-ai/claude-code ships ~21 stable releases a month, so
+#      that PR would be rewritten several times a week. Both ARGs are bumped by
+#      hand BECAUSE the upgrade is a behavioural decision, not because no bot
+#      could see them.
+#   3. The coverage bought is one image that is already recorded (versions plus
+#      resolved digest, to the run summary), floored (hard-fails below the
+#      type=gha minimums), and removed outright from the merge job.
+#
+# The strongest argument FOR pinning, recorded so it is not lost: a digest pin
+# would buy temporal trust the pinned action SHA does not already cover. The
+# BuildKit image and docker/setup-buildx-action are separate late-bound
+# artifacts, so a registry-side tag retarget moves the engine without touching
+# the action SHA. That gain is real. It is outweighed here because collecting
+# it needs a second bot whose failure mode is silence, plus either prompt
+# manual merges (which reintroduce the staleness the pin was meant to remove)
+# or automerge (which removes the human gate the pin was meant to add).
+#
+# Re-open only if: Renovate is adopted for repo-wide coverage anyway — in which
+# case it takes EVERYTHING and this file is deleted, since one pin must have
+# exactly one owner and two bots on the same SHA is the real failure mode;
+# deterministic builder identity becomes a compliance requirement; or
+# `buildx-stable-1` actually causes an incident.
 version: 2
 updates:
   - package-ecosystem: github-actions
