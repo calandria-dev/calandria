@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
-import type { ToolData, ToolPeek, AskQuestion, AskAnswers } from "@/lib/types";
+import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
@@ -149,6 +149,58 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
   );
 }
 
+// Interactive tool-permission card — the canUseTool gate under "Accept edits"
+// and "Plan mode" (lib/permissions.ts). Unlike a question card this isn't a
+// multiple choice: the user needs the ACTION, so the request's detail (the full
+// Bash command, the file path, the plan) is shown verbatim, with the diff when
+// the call would write. "Always allow" spells out the exact rule it will store,
+// so nobody grants more than they read.
+function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string) => void }) {
+  const req = data.permission?.request;
+  const outcome = data.permission?.outcome;
+  const [note, setNote] = useState("");
+  const [sent, setSent] = useState(false);
+  if (!req) return null;
+
+  if (outcome) {
+    const allowed = outcome.decision !== "deny";
+    const what = outcome.decision === "allow_always"
+      ? `Allowed — ${outcome.remembered ?? "remembered for this project"}`
+      : outcome.decision === "allow_once"
+        ? "You allowed this once"
+        : outcome.auto ? "Declined automatically" : "You declined this";
+    return (
+      <div className={`perm settled ${allowed ? "ok" : "no"}`}>
+        <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
+        <div className="perm-what">{req.title}</div>
+        {outcome.note && <div className="perm-note">{outcome.note}</div>}
+      </div>
+    );
+  }
+
+  const decide = (d: PermissionDecision) => { if (!sent) { setSent(true); onDecide(d, note); } };
+  return (
+    <div className="perm">
+      <div className="perm-head">{Icon.lock()} {agentLabel} needs permission</div>
+      <div className="perm-what">{req.title}</div>
+      {req.description && <div className="perm-sub">{req.description}</div>}
+      {req.detail && <pre className="perm-pre">{req.detail}</pre>}
+      {!!req.diff?.length && (
+        <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
+      )}
+      <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
+      <div className="perm-foot">
+        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>Allow once</button>
+        {req.scope && (
+          <button className="btn btn-sm" onClick={() => decide("allow_always")} disabled={sent} title={req.scope.label}>{req.scope.label}</button>
+        )}
+        <button className="btn btn-sm btn-danger" onClick={() => decide("deny")} disabled={sent}>Decline</button>
+      </div>
+      <div className="perm-hint">Declines automatically if nobody responds — the session keeps running either way.</div>
+    </div>
+  );
+}
+
 // Attachment chips parsed out of a user message's markers: image thumbnails
 // (click opens full size) and text-file chips (a big paste diverted to a file;
 // click opens it). Both are served from the task's uploads dir.
@@ -177,7 +229,7 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
 // changes), so unchanged messages skip re-rendering — and re-parsing their
 // markdown — entirely. Callers must pass identity-stable handlers or the memo
 // is defeated (SessionView wraps its handlers for exactly this reason).
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onCancelQueued, onClear, onReconnect }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -198,6 +250,9 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     try { data = JSON.parse(m.content) as ToolData; } catch { data = { title: m.content }; }
     if (data.ask) {
       return <div className="msg msg-tool"><AskView data={data} agentLabel={agentLabel} onAnswer={(answers) => onAnswer?.(data.ask?.id || m.toolId || "", data.ask?.questions ?? [], answers)} /></div>;
+    }
+    if (data.permission) {
+      return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
     return <div className="msg msg-tool"><ToolView data={data} /></div>;
   }
