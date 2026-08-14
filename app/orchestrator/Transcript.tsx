@@ -149,12 +149,32 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
   );
 }
 
-// Interactive tool-permission card — the canUseTool gate under "Accept edits"
-// and "Plan mode" (lib/permissions.ts). Unlike a question card this isn't a
-// multiple choice: the user needs the ACTION, so the request's detail (the full
-// Bash command, the file path, the plan) is shown verbatim, with the diff when
-// the call would write. "Always allow" spells out the exact rule it will store,
-// so nobody grants more than they read.
+// Who refused, for a card that arrives already settled because Claude Code
+// blocked the call itself (PermissionOutcome.reason === "blocked"). Keyed by the
+// SDK's decision_reason_type, which is stored raw precisely so this mapping can
+// grow: the CLI mints values the SDK's docs don't list, and an unmapped one is
+// shown verbatim rather than swallowed — "Blocked by Claude Code" alone would
+// hide the only clue about which check fired.
+const BLOCKED_BY: Record<string, string> = {
+  classifier: "Blocked by Claude Code's safety classifier",
+  mode: "Blocked by this task's permission mode",
+  rule: "Blocked by a deny rule in your Claude Code settings",
+  asyncAgent: "Blocked by Claude Code's background-agent policy",
+  subcommandResults: "Blocked by Claude Code — one of the command's subcommands isn't allowed",
+};
+const blockedHead = (by?: string): string =>
+  (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
+
+// Tool-permission card — the canUseTool gate under "Accept edits" and "Plan
+// mode" (lib/permissions.ts). Unlike a question card this isn't a multiple
+// choice: the user needs the ACTION, so the request's detail (the full Bash
+// command, the file path, the plan) is shown verbatim, with the diff when the
+// call would write. "Always allow" spells out the exact rule it will store, so
+// nobody grants more than they read.
+//
+// The same card also renders read-only, with no buttons, for a call Claude Code
+// refused on its own (the "auto" classifier, a deny rule) — that decision is
+// already made, and it arrives settled.
 function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string) => void }) {
   const req = data.permission?.request;
   const outcome = data.permission?.outcome;
@@ -164,16 +184,27 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
 
   if (outcome) {
     const allowed = outcome.decision !== "deny";
-    const what = outcome.decision === "allow_always"
-      ? `Allowed — ${outcome.remembered ?? "remembered for this project"}`
-      : outcome.decision === "allow_once"
-        ? "You allowed this once"
-        : outcome.auto ? "Declined automatically" : "You declined this";
+    const blocked = outcome.reason === "blocked";
+    const what = blocked
+      ? blockedHead(outcome.blockedBy)
+      : outcome.decision === "allow_always"
+        ? `Allowed — ${outcome.remembered ?? "remembered for this project"}`
+        : outcome.decision === "allow_once"
+          ? "You allowed this once"
+          : outcome.auto ? "Declined automatically" : "You declined this";
     return (
       <div className={`perm settled ${allowed ? "ok" : "no"}`}>
         <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
         <div className="perm-what">{req.title}</div>
+        {/* Only on a block: this card was never open, so it's the one place the
+            user gets to see what the agent was actually about to run. Every
+            other outcome had the input on screen before it settled. */}
+        {blocked && req.detail && <pre className="perm-pre">{req.detail}</pre>}
+        {blocked && !!req.diff?.length && (
+          <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
+        )}
         {outcome.note && <div className="perm-note">{outcome.note}</div>}
+        {blocked && <div className="perm-hint">You weren&apos;t asked — change this task&apos;s permission mode if it should have been allowed.</div>}
       </div>
     );
   }

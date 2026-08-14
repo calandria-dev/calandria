@@ -202,3 +202,139 @@ describe("permission prompts through the runner", () => {
     await vi.waitFor(() => expect(listPendingMessages(task.id)).toHaveLength(0));
   });
 });
+
+// A refusal the CLI makes on its OWN — the "auto" classifier vetoing a call, a
+// deny rule, `dontAsk` — never reaches canUseTool, so no card was ever raised
+// and there is nothing for the user to answer. The runner's job is to make sure
+// that decision still lands somewhere honest instead of reading as an ordinary
+// tool failure: as an already-settled permission card on the very tool call it
+// killed. The wire shape is pinned in tests/claudePermissionMode.test.ts against
+// messages captured from the live CLI.
+describe("a refusal the CLI made without a card", () => {
+  const TOOL: StreamEvent = { type: "tool", id: "tu_rm", title: "❯ rm -rf build", detail: "rm -rf build" };
+  const DENIED: StreamEvent = {
+    type: "permission_denied",
+    id: "tu_rm",
+    tool: "Bash",
+    reasonType: "subcommandResults",
+    reason: "Permission to use Bash with command rm -rf build has been denied.",
+  };
+
+  it("settles a decided card onto the tool call, carrying the input nobody got to judge", async () => {
+    const { project, task } = fixture();
+    scriptParked(
+      [{ type: "session", sessionId: "s1" }, TOOL, DENIED, { type: "done", sessionId: "s1" }],
+      Promise.resolve([])
+    );
+
+    const { done } = collect(task.id);
+    startTurn(task, project, "go", "");
+    await done;
+
+    // ONE row, not a tool card plus a notice floating beside it.
+    const rows = toolRows(task.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].permission).toEqual({
+      request: { id: "tu_rm", tool: "Bash", title: "❯ rm -rf build", detail: "rm -rf build", diff: undefined, expiresAt: 0 },
+      outcome: {
+        decision: "deny",
+        auto: true,
+        reason: "blocked",
+        blockedBy: "subcommandResults",
+        note: "Permission to use Bash with command rm -rf build has been denied.",
+      },
+    });
+    expect(listMessages(task.id).some((m) => m.role === "system")).toBe(false);
+  });
+
+  it("never parks the task on the user mid-turn — the decision is already made", async () => {
+    // The distinction that matters against an ordinary `permission`: this card
+    // has no buttons, so flagging "Needs your input" while the turn is still
+    // running would wedge the row on something nobody can ever answer. Checked
+    // with the turn held open, since a completed turn flags the task anyway.
+    const { project, task } = fixture();
+    let release!: (evs: StreamEvent[]) => void;
+    const gate = new Promise<StreamEvent[]>((r) => (release = r));
+    scriptParked([{ type: "session", sessionId: "s1" }, TOOL, DENIED], gate, [{ type: "done", sessionId: "s1" }]);
+
+    const { events, done } = collect(task.id);
+    startTurn(task, project, "go", "");
+    await vi.waitFor(() => expect(toolRows(task.id)[0]?.permission?.outcome).toBeTruthy());
+
+    expect(getTask(task.id)!.awaiting_input).toBe(0);
+    release([]);
+    await done;
+    expect(events.some((e) => e.type === "permission")).toBe(false);
+  });
+
+  it("gives three refusals in one turn three cards, each on its own call", async () => {
+    const { project, task } = fixture();
+    scriptParked(
+      [
+        { type: "session", sessionId: "s1" },
+        ...["a", "b", "c"].flatMap((k): StreamEvent[] => [
+          { type: "tool", id: `tu_${k}`, title: `❯ cmd ${k}`, detail: `cmd ${k}` },
+          { type: "permission_denied", id: `tu_${k}`, tool: "Bash", reasonType: "classifier" },
+        ]),
+        { type: "done", sessionId: "s1" },
+      ],
+      Promise.resolve([])
+    );
+
+    const { done } = collect(task.id);
+    startTurn(task, project, "go", "");
+    await done;
+
+    const rows = toolRows(task.id);
+    expect(rows.map((r) => r.permission?.request.detail)).toEqual(["cmd a", "cmd b", "cmd c"]);
+    expect(rows.every((r) => r.permission?.outcome?.reason === "blocked")).toBe(true);
+  });
+
+  it("still shows a refusal from inside a subagent, whose tool call never reached us", async () => {
+    const { project, task } = fixture();
+    scriptParked(
+      [
+        { type: "session", sessionId: "s1" },
+        { type: "permission_denied", id: "tu_sub", tool: "Write", reasonType: "classifier", agentId: "agent_7" },
+        { type: "done", sessionId: "s1" },
+      ],
+      Promise.resolve([])
+    );
+
+    const { done } = collect(task.id);
+    startTurn(task, project, "go", "");
+    await done;
+
+    const rows = toolRows(task.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("Write (in a subagent)");
+    // No input to show — saying so beats inventing one.
+    expect(rows[0].permission?.request.detail).toBe("");
+    expect(rows[0].permission?.outcome?.reason).toBe("blocked");
+  });
+
+  it("hides the CLI's is_error tool_result behind the card rather than showing both", async () => {
+    // The tool_result still arrives and is still recorded; the card just wins
+    // the render, so "rm: Permission to use Bash has been denied" doesn't read
+    // as the command having been run and failed.
+    const { project, task } = fixture();
+    scriptParked(
+      [
+        { type: "session", sessionId: "s1" },
+        TOOL,
+        DENIED,
+        { type: "tool_result", id: "tu_rm", content: "Permission to use Bash has been denied.", isError: true },
+        { type: "done", sessionId: "s1" },
+      ],
+      Promise.resolve([])
+    );
+
+    const { done } = collect(task.id);
+    startTurn(task, project, "go", "");
+    await done;
+
+    const row = toolRows(task.id)[0];
+    expect(row.isError).toBe(true);
+    expect(row.permission?.outcome?.reason).toBe("blocked");
+  });
+});

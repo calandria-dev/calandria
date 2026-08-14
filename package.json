@@ -16,6 +16,10 @@
     "test:e2e": "npm run build && playwright test",
     "test:e2e:only": "playwright test",
     "preflight": "npm test && npm run test:e2e",
+    "test:docker": "scripts/docker-test.sh npm test",
+    "typecheck:docker": "scripts/docker-test.sh npm run typecheck",
+    "test:e2e:docker": "scripts/docker-test.sh --e2e npm run test:e2e",
+    "preflight:docker": "scripts/docker-test.sh --e2e npm run preflight",
     "postinstall": "node scripts/fix-pty.js"
   },
   "dependencies": {

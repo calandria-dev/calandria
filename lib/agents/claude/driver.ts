@@ -41,6 +41,7 @@ import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDA
 import { waitForAnswer } from "../../asks";
 import {
   allowedByRules,
+  blockedReason,
   denyMessage,
   describePermission,
   isAlwaysAllowed,
@@ -413,6 +414,10 @@ async function* runTurn(
   // Fallback-id uniquifier for permission prompts, for the same reason as
   // askSeq: the SDK normally supplies a toolUseID, but the registry keys on it.
   let permSeq = 0;
+  // Same again for a CLI-side refusal. tool_use_id is required by the SDK type,
+  // so this only fires if a build ever ships one without — and an undefined id
+  // would collapse every denial in the turn onto one transcript card.
+  let deniedSeq = 0;
   const queue = makeQueue<StreamEvent>();
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
@@ -652,17 +657,22 @@ async function* runTurn(
           // unsafe; it can also be a deny rule in the loaded settings. Reachable
           // in normal use now that "auto" is the default mode, and the only
           // other trace is an is_error tool_result the transcript renders as a
-          // plain tool failure — so say who denied it and why.
-          const why = message.decision_reason?.trim() || message.message?.trim();
+          // plain tool failure.
+          //
+          // Carries the tool_use id, which is the whole point: the runner
+          // settles this onto the transcript card the call ALREADY created, so
+          // it reads as "this call, refused, here's what it was" instead of a
+          // notice floating beside it — and three denials in a turn are three
+          // decided cards, not three identical loose lines.
           queue.push({
-            type: "notice",
-            content: clip(
-              `Claude Code blocked ${message.tool_name} without asking` +
-                `${message.decision_reason_type ? ` (${message.decision_reason_type})` : ""}` +
-                `${why ? `: ${why.replace(/\.?$/, ".")}` : "."} ` +
-                `You weren't given the choice — change this task's permission mode if it should have been allowed.`,
-              2_000
-            ),
+            type: "permission_denied",
+            id: message.tool_use_id || `denied-${sessionId ?? "x"}-${deniedSeq++}`,
+            tool: message.tool_name,
+            reasonType: message.decision_reason_type,
+            // NOT message.message verbatim — that field is written for the
+            // model, and the `mode` denial is ~700 chars of instruction.
+            reason: blockedReason(message.decision_reason, message.message),
+            ...(message.agent_id ? { agentId: message.agent_id } : {}),
           });
         } else if (message.type === "assistant") {
           for (const block of message.message.content) {

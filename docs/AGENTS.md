@@ -50,8 +50,19 @@ auto-started task can't sit wedged waiting for someone who isn't there — which
 trade-off of the default: unattended work that trips the classifier stops and says so
 rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
 
-The SDK also has a `dontAsk` mode; Operator doesn't offer it, because it denies without
-raising a card, so a task would keep losing tool calls with no way to approve any of them.
+Claude Code can also refuse a call by itself, without asking Operator first — the Guarded
+auto classifier vetoing something, or a deny rule in your own `~/.claude` settings. That
+shows up in the transcript as a permission card that arrives already decided, sitting on
+the call it stopped: what the agent was about to run, who refused it, and why. There are no
+buttons, because the decision is already made; if it should have been allowed, change the
+task's permission mode.
+
+The SDK also has a `dontAsk` mode ("deny anything not pre-approved, don't prompt"); Operator
+doesn't offer it. Under `dontAsk` the CLI decides everything itself and never asks Operator
+at all, so none of the above applies: not the read-only allowlist, not your remembered
+approvals, not the cards. "Pre-approved" would mean allow rules in your own Claude Code
+settings file. "Ask when needed" plus **Always allow** already gives you deny-unless-allowed,
+with a prompt when you want one and a revocable record of everything you granted.
 
 Operator is a control layer, not an additional security sandbox; review
 [the security model](../SECURITY.md) before exposing an instance.

@@ -108,8 +108,18 @@ The CLI can also refuse a call *without* consulting `canUseTool` — the `auto` 
 vetoing something, or a deny rule in the loaded settings — which arrives as a
 `system`/`permission_denied` message rather than a card. There is nothing to answer, but
 the model just lost a tool call and the only other trace is an `is_error` tool_result that
-reads like an ordinary failure, so the driver surfaces it as a `notice` naming the tool and
-the reason.
+reads like an ordinary failure. It carries the `tool_use_id`, so the driver yields a
+`permission_denied` StreamEvent and the runner settles an already-decided permission card
+onto the transcript row that call already created — the same component, read-only: the
+tool, its input, who refused, and why. A turn denied three times gets three decided cards,
+each on its own call. Nothing is parked on the user (`awaiting_input` is untouched), and
+our own `canUseTool` denials don't emit this message, so the two paths can't double-render.
+
+The message's `decision_reason` is the field documented as human-readable, but live
+CLI 2.1.x leaves it unset and fills only `message` — which is written *for the model*
+("IMPORTANT: You *may* attempt to accomplish this action using other tools…"), so
+`blockedReason()` takes the head of it. `decision_reason_type` is stored raw and phrased at
+render time, because the CLI emits values the SDK's own docs don't list.
 
 ### The Codex driver (`lib/agents/codex/driver.ts`)
 
