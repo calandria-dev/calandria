@@ -22,7 +22,7 @@ import {
   rememberSuggestedTitle,
   resolveTargetProject,
   resolveTitleRefs,
-  updateOwnTask,
+  updateTaskForAgent,
 } from "../../agentTools";
 import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
@@ -148,6 +148,7 @@ function orchestratorServer(
         UPDATE_TASK.name,
         UPDATE_TASK.description,
         {
+          task: z.string().optional().describe(UPDATE_TASK.params.task),
           title: z.string().optional().describe(UPDATE_TASK.params.title),
           description: z.string().optional().describe(UPDATE_TASK.params.description),
           // Spelled out rather than read from UPDATE_TASK.priorities/.statuses:
@@ -157,10 +158,13 @@ function orchestratorServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_TASK.params.priority),
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
         },
-        async (args: { title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
-          // `task` is the snapshot taken at turn start; updateOwnTask re-reads
-          // the row before writing, so a task deleted mid-turn is a refusal.
-          const { task: updated, text, autoStartDependents } = updateOwnTask(task, args);
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
+          // The closed-over `task` is the CALLER — the snapshot taken at turn
+          // start, and the one identity the model can't influence. `args.task`
+          // is the target it named; updateTaskForAgent decides whether that may
+          // be written and re-reads both rows first, so a task deleted or
+          // started mid-turn is a refusal rather than a stale write.
+          const { task: updated, text, autoStartDependents } = updateTaskForAgent(task, args.task, args);
           if (autoStartDependents && updated) {
             // Imported at CALL time, not module load: lib/autoStart reaches
             // lib/runner, which imports the driver registry, which imports this

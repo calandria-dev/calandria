@@ -27,7 +27,8 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // the status/awaiting pair the coarse wire payload carries. Listeners can't
 // patch what isn't on the wire, so it tells them to refetch the row instead.
 // Both writers publish it — the user editing a task (PATCH /api/tasks/[id]) and
-// the `update_task` agent tool (lib/agentTools.ts updateOwnTask) — and it
+// the `update_task` agent tool (lib/agentTools.ts updateTaskForAgent, which may
+// be announcing a row other than the calling task's) — and it
 // SUPERSEDES task_updated when one write is both (a refetch settles the status
 // too, so the pair would be a duplicate).
 export type TaskMutationEvent =

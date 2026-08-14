@@ -215,11 +215,18 @@ function depNote(task: Task, project: Project, refs: string[] | undefined): stri
 /* ── Reading and updating tasks ──────────────────────────────────────────────
  *
  * Reads are inert, so they range over the board the same way suggest_task can
- * file into any project. WRITES are not: a turn runs detached for as long as it
- * likes, and letting one retitle or close somebody else's row would let an agent
- * rearrange the board mid-flight. So update_task is scoped to the CALLING task's
- * own row — the one thing the session unambiguously owns. Cross-task writes are
- * a separate decision, not an extra argument.
+ * file into any project. WRITES are bounded by what nobody else is holding: a
+ * turn runs detached for as long as it likes, and letting one retitle or close a
+ * row another session is mid-flight on would let an agent rearrange live work.
+ *
+ * So update_task writes exactly two kinds of row: the CALLING task's own (the
+ * one thing the session unambiguously owns), and any INERT TRAY SUGGESTION
+ * (isInertSuggestion below) in any project. The second is what makes a planning
+ * turn honest — an agent that files eight suggestions and then learns something
+ * can go back and sharpen them instead of narrating a correction the user has to
+ * apply by hand. It ranges across projects because suggest_task already files
+ * across projects; a task you can create in project B but not fix there is a
+ * seam, not a boundary.
  */
 
 /** One row of `list_tasks`: enough to reason about the board, no prose. */
@@ -340,41 +347,104 @@ export interface UpdateTaskInput {
 }
 
 const PRIORITIES: Priority[] = ["hi", "med", "lo"];
-// "cancelled" is deliberately absent. PATCH /api/tasks/[id] calls abortTurn() on
-// it, which would tear down the very turn making the tool call — the agent would
-// kill itself mid-sentence and never see the result. Abandoning a task is the
-// user's call anyway; an agent that thinks it should be dropped can ask_user.
+// "cancelled" is deliberately absent, for a reason that holds whichever row is
+// being written. On the caller's OWN row it's self-destruction: PATCH
+// /api/tasks/[id] calls abortTurn() on cancel, which would tear down the very
+// turn making the tool call — the agent would kill itself mid-sentence and never
+// see the result. On anyone else's, abortTurn is a no-op (only inert rows are
+// eligible) but abandoning a task the user hasn't reviewed yet is still their
+// call. An agent that thinks a task should be dropped can say so and ask_user.
 const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done"];
 
 /**
- * Update the CALLING task's own row (the `update_task` tool). Mirrors the
- * user-facing PATCH /api/tasks/[id] over the fields it accepts, minus the
- * run-control and dependency plumbing that belongs to the UI.
+ * Is this a row an agent other than its owner may write?
  *
- * `task` may be the snapshot captured at turn START (the Claude driver's MCP
- * server closes over it), so the row is re-read here before anything is written
- * — same defence createSuggestedTask takes against a project deleted mid-turn.
- * A null task back means the row vanished and nothing was written.
+ * Exactly one thing makes a task safe to edit from outside: nobody has started
+ * it. `suggested` is that signal and it's a single flag, not a heuristic —
+ * suggest_task is what sets it, and every path that puts a task to work clears
+ * it in the SAME write that starts it (POST /api/tasks/[id]/messages sets
+ * `suggested: 0, running: 1` together; the tray's Add does it without starting).
+ * So `suggested === 1` already implies no session, no worktree and no turn.
+ *
+ * `started`/`running` are checked anyway rather than trusted as implications.
+ * The user-facing PATCH route lets `suggested` be written directly, so the pair
+ * can in principle be reconstructed on a live row — and this is the one place
+ * where being wrong hands an agent somebody else's work.
+ */
+function isInertSuggestion(t: Task): boolean {
+  return t.suggested === 1 && t.started === 0 && t.running === 0;
+}
+
+/**
+ * The `update_task` tool. Mirrors the user-facing PATCH /api/tasks/[id] over the
+ * fields it accepts, minus the run-control and dependency plumbing that belongs
+ * to the UI.
+ *
+ * `caller` is the session's own task and is TRUSTED — it never comes from the
+ * model. The Claude driver closes over it; the bridge's endpoint reads it from
+ * the env-injected ORCH_TASK_ID. `targetRef` is the opposite: the id the MODEL
+ * named, or undefined for "my own row". Everything that decides whether that id
+ * may be written lives here, so the in-process server and the HTTP endpoint
+ * behind the stdio bridge cannot drift into two different policies.
+ *
+ * Both rows are re-read before anything is written. `caller` may be the snapshot
+ * captured at turn START, and a target read a moment ago may have been started
+ * since — same defence createSuggestedTask takes against a project deleted
+ * mid-turn. A null task back means nothing was written; `text` says why.
+ *
+ * The eligibility check and the write sit in one synchronous block with no
+ * `await` between them. better-sqlite3 is synchronous and the app is a single
+ * Node process, so nothing can interleave — the check-then-write is atomic
+ * without a WHERE-guarded UPDATE.
  *
  * `autoStartDependents` is returned rather than acted on: firing it needs
  * lib/autoStart.ts, which reaches the runner and the agent SDKs, and this module
  * is pinned SDK-free (tests/importGraph.test.ts) because the internal HTTP
- * routes behind the stdio bridge import it. Callers that can, do.
+ * routes behind the stdio bridge import it. Callers that can, do — against the
+ * returned task's id, which is the TARGET's, not the caller's.
  */
-export function updateOwnTask(
-  task: Task,
+export function updateTaskForAgent(
+  caller: Task,
+  targetRef: string | undefined,
   input: UpdateTaskInput
 ): { task: Task | null; text: string; autoStartDependents: boolean } {
-  const cur = getTask(task.id);
-  if (!cur) return { task: null, text: "Could not update this task: its row no longer exists.", autoStartDependents: false };
+  const wanted = targetRef?.trim() ?? "";
+  const own = !wanted || wanted === caller.id;
 
+  const cur = getTask(own ? caller.id : wanted);
+  if (!cur) {
+    return own
+      ? { task: null, text: "Could not update this task: its row no longer exists.", autoStartDependents: false }
+      : {
+          task: null,
+          text: `No task with id "${wanted}". Call list_tasks for the ids. Nothing was changed.`,
+          autoStartDependents: false,
+        };
+  }
+  // The whole cross-task boundary, in one place. Refuse with the reason the
+  // agent needs to pick a different move — a bare "not allowed" invites a retry
+  // with the same id.
+  if (!own && !isInertSuggestion(cur)) {
+    return {
+      task: null,
+      text:
+        `Could not update "${cur.title}": it isn't an unreviewed suggestion, so it belongs to the user or to another session ` +
+        `that may be working in it right now. Only tasks still sitting in the Suggested tray can be edited from outside. ` +
+        `Use suggest_task to propose new work, or ask the user. Nothing was changed.`,
+      autoStartDependents: false,
+    };
+  }
+  // Past this point the target is writable and the field rules are identical
+  // either way — only the noun in the refusals changes, so the agent can tell
+  // which row it just failed to write.
+  const what = own ? "this task" : `"${cur.title}"`;
   const patch: Partial<Task> = {};
   const changed: string[] = [];
   const fail = (text: string) => ({ task: null, text, autoStartDependents: false });
 
   if (input.title !== undefined) {
     const title = input.title.trim();
-    if (!title) return fail("Could not update this task: `title` was empty. Nothing was changed.");
+    if (!title) return fail(`Could not update ${what}: \`title\` was empty. Nothing was changed.`);
     if (title !== cur.title) {
       patch.title = title;
       changed.push(`title → "${title}"`);
@@ -386,7 +456,7 @@ export function updateOwnTask(
   }
   if (input.priority !== undefined) {
     if (!PRIORITIES.includes(input.priority))
-      return fail(`Could not update this task: "${input.priority}" isn't a priority. Use one of: ${PRIORITIES.join(", ")}. Nothing was changed.`);
+      return fail(`Could not update ${what}: "${input.priority}" isn't a priority. Use one of: ${PRIORITIES.join(", ")}. Nothing was changed.`);
     if (input.priority !== cur.priority) {
       patch.priority = input.priority;
       changed.push(`priority → ${input.priority}`);
@@ -395,11 +465,12 @@ export function updateOwnTask(
   if (input.status !== undefined) {
     if (input.status === "cancelled")
       return fail(
-        "Could not update this task: cancelling a task is the user's call, and it would abort this turn mid-flight. " +
-          `Use one of: ${STATUSES.join(", ")}, or ask the user. Nothing was changed.`
+        `Could not update ${what}: cancelling a task is the user's call` +
+          (own ? ", and it would abort this turn mid-flight" : "") +
+          `. Use one of: ${STATUSES.join(", ")}, or ask the user. Nothing was changed.`
       );
     if (!STATUSES.includes(input.status))
-      return fail(`Could not update this task: "${input.status}" isn't a status. Use one of: ${STATUSES.join(", ")}. Nothing was changed.`);
+      return fail(`Could not update ${what}: "${input.status}" isn't a status. Use one of: ${STATUSES.join(", ")}. Nothing was changed.`);
     if (input.status !== cur.status) {
       patch.status = input.status;
       // Same reasoning as the PATCH route: a deliberate status change settles
@@ -420,7 +491,7 @@ export function updateOwnTask(
   }
 
   const updated = updateTask(cur.id, patch);
-  if (!updated) return fail("Could not update this task: its row no longer exists.");
+  if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 
   // Announce it: the board is live and nothing else will publish for this write.
   // "task_edited" rather than "task_updated" because title/description/priority

@@ -157,17 +157,36 @@ Reading and writing EXISTING tasks splits along blast radius. Reads are inert, s
 as widely as suggestion filing does: `list_tasks` takes the same optional `project` (resolved
 by the same strict `resolveTargetProject`) and flags the caller's own row `current: true`;
 `get_task` reads any row by id, defaulting to the session's own — that's how an agent
-re-reads the brief it was started with. Writes are not inert: a turn runs detached for as
-long as it likes, so `update_task` is scoped to the **calling task's own row** and takes no
-task id at all (the Claude driver closes over the task; the bridge's endpoint writes
-`ORCH_TASK_ID` and nothing else). It covers title, description, priority and status —
-minus `cancelled`, which calls `abortTurn()` and would tear down the very turn making the
-call. Like `createSuggestedTask`, `updateOwnTask()` re-reads the row before writing, because
-a detached turn's snapshot can outlive the row. Marking done fires
-`maybeAutoStartDependents()`, which lives with the callers rather than in `lib/agentTools.ts`
-— that module is pinned SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches
-the runner. Cross-task writes are deliberately not offered; `suggest_task` is how an agent
-proposes work it doesn't own.
+re-reads the brief it was started with. Writes are bounded by what nobody else is holding:
+`update_task` writes the **calling task's own row** (the default, when its optional `task`
+param is omitted) and, beyond that, only an **inert tray suggestion** — `suggested = 1 AND
+started = 0 AND running = 0` — in any project. That second target is what lets a planning
+turn go back and sharpen the roadmap it just filed; it ranges across projects because
+`suggest_task` already files across them, and a task you can create in project B but not fix
+there is a seam rather than a boundary. Everything else on the board is refused: a task the
+user has accepted, or one another session has started, belongs to them. `suggested` carries
+that whole rule because every path that puts a task to work clears it in the same write
+(`POST /api/tasks/[id]/messages` sets `suggested: 0, running: 1` together), though
+`updateTaskForAgent()` checks `started`/`running` anyway rather than trusting the
+implication — the user-facing PATCH can write `suggested` directly.
+
+Fields are title, description, priority and status, minus `cancelled` — on the caller's own
+row that calls `abortTurn()` and would tear down the very turn making the call, and on
+anyone else's it's the user's call regardless. Like `createSuggestedTask`,
+`updateTaskForAgent()` re-reads both rows before writing, because a detached turn's snapshot
+can outlive the row and a target read a moment ago may have been started since; the
+eligibility check and the write share one synchronous block, which is atomic given
+better-sqlite3 and a single Node process. Marking done fires `maybeAutoStartDependents()`
+against the **target's** id, and that call lives with the callers rather than in
+`lib/agentTools.ts` — that module is pinned SDK-free (`tests/importGraph.test.ts`) and
+`lib/autoStart.ts` reaches the runner.
+
+The policy lives in `updateTaskForAgent()` alone, because the two paths differ in who names
+the target: the Claude driver closes over the caller and hands the model's `task` argument
+straight through, while the bridge's endpoint takes the caller from the env-injected
+`ORCH_TASK_ID` and the target from the request body — model-supplied, and the reason
+`tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
+asserts on the database rather than on the refusal text.
 
 ### Adding a third agent (e.g. Gemini, Cursor)
 

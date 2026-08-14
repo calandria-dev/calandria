@@ -8,7 +8,7 @@ import {
   registerExposedService,
   resolveTitleRefs,
   titleKey,
-  updateOwnTask,
+  updateTaskForAgent,
 } from "@/lib/agentTools";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
@@ -120,7 +120,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
 
   it("retitles, reprioritizes and restates the task, reporting only what changed", () => {
     const task = own("Upd");
-    const { task: updated, text } = updateOwnTask(task, { title: "  Renamed  ", priority: "hi", description: "new brief" });
+    const { task: updated, text } = updateTaskForAgent(task, undefined,{ title: "  Renamed  ", priority: "hi", description: "new brief" });
     expect(getTask(task.id)).toMatchObject({ title: "Renamed", priority: "hi", description: "new brief" });
     expect(updated!.title).toBe("Renamed");
     expect(text).toContain('title → "Renamed"');
@@ -132,7 +132,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
 
   it("refuses to cancel — it would abort the very turn making the call", () => {
     const task = own("NoCancel");
-    const { task: updated, text } = updateOwnTask(task, { status: "cancelled" });
+    const { task: updated, text } = updateTaskForAgent(task, undefined,{ status: "cancelled" });
     expect(updated).toBeNull();
     expect(text).toContain("Nothing was changed");
     expect(getTask(task.id)!.status).toBe("not_started");
@@ -141,7 +141,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
   it("rejects an unknown status/priority and an empty title without writing", () => {
     const task = own("Invalid");
     for (const bad of [{ status: "shipped" as never }, { priority: "urgent" as never }, { title: "   " }]) {
-      const { task: updated } = updateOwnTask(task, bad);
+      const { task: updated } = updateTaskForAgent(task, undefined,bad);
       expect(updated).toBeNull();
     }
     expect(getTask(task.id)).toMatchObject({ title: "Original", priority: "med", status: "not_started" });
@@ -152,7 +152,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
     // snapshot taken at turn start — the row can vanish underneath it.
     const stale = own("Vanished");
     deleteTask(stale.id);
-    const { task: updated, text } = updateOwnTask(stale, { title: "Too late" });
+    const { task: updated, text } = updateTaskForAgent(stale, undefined, { title: "Too late" });
     expect(updated).toBeNull();
     expect(text).toContain("no longer exists");
   });
@@ -160,7 +160,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
   it("reports a no-op instead of a spurious write when nothing differs", () => {
     const task = own("Noop");
     const before = getTask(task.id)!.updated_at;
-    const { task: updated, text, autoStartDependents } = updateOwnTask(task, { title: "Original", priority: "med" });
+    const { task: updated, text, autoStartDependents } = updateTaskForAgent(task, undefined,{ title: "Original", priority: "med" });
     expect(updated!.id).toBe(task.id);
     expect(text).toContain("No change");
     expect(autoStartDependents).toBe(false);
@@ -170,11 +170,11 @@ describe("update_task (writes, scoped to the calling task)", () => {
   it("signals auto-start only on the transition into done, and clears awaiting_input", () => {
     const task = own("Done");
     updateTask(task.id, { awaiting_input: 1 });
-    const first = updateOwnTask(task, { status: "done" });
+    const first = updateTaskForAgent(task, undefined,{ status: "done" });
     expect(first.autoStartDependents).toBe(true);
     expect(getTask(task.id)).toMatchObject({ status: "done", awaiting_input: 0 });
     // Already done — no second launch of whatever was waiting on it.
-    expect(updateOwnTask(task, { status: "done" }).autoStartDependents).toBe(false);
+    expect(updateTaskForAgent(task, undefined,{ status: "done" }).autoStartDependents).toBe(false);
   });
 
   it("announces the edit on the global bus so other tabs refetch the row", () => {
@@ -182,13 +182,119 @@ describe("update_task (writes, scoped to the calling task)", () => {
     const seen: { taskId: string; ev: BusEvent }[] = [];
     const unsub = subscribeGlobal((taskId, ev) => seen.push({ taskId, ev }));
     try {
-      updateOwnTask(task, { title: "Announced" });
+      updateTaskForAgent(task, undefined,{ title: "Announced" });
     } finally {
       unsub();
     }
     // task_edited, not task_updated: title/description/priority aren't on the
     // coarse wire payload, so listeners have to refetch rather than patch.
     expect(seen).toContainEqual({ taskId: task.id, ev: { type: "task_edited" } });
+  });
+
+  it("treats an explicit self-reference exactly like omitting the target", () => {
+    const task = own("Self");
+    const { task: updated } = updateTaskForAgent(task, task.id, { status: "in_progress" });
+    expect(updated!.status).toBe("in_progress");
+  });
+});
+
+describe("update_task (writes to another row, scoped to inert tray suggestions)", () => {
+  // The caller and an inert suggestion sharing a board. `suggested=1` is the
+  // whole eligibility story: starting a task clears it in the same write, so a
+  // suggestion has no session, no worktree and no turn that could be running.
+  const board = (name: string) => {
+    const project = createProject({ name });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const { task: inert } = createSuggestedTask(project, { title: "Proposed", description: "old brief", priority: "med" });
+    return { project, caller, inert: inert! };
+  };
+
+  it("edits an inert suggestion's title, description, priority and status", () => {
+    const { caller, inert } = board("Foreign-Ok");
+    const { task: updated, text } = updateTaskForAgent(caller, inert.id, {
+      title: "Sharpened",
+      description: "new brief",
+      priority: "hi",
+      status: "on_hold",
+    });
+    expect(updated!.id).toBe(inert.id);
+    expect(getTask(inert.id)).toMatchObject({ title: "Sharpened", description: "new brief", priority: "hi", status: "on_hold" });
+    expect(text).toContain("Sharpened");
+    // The caller's own row is untouched — the write went where it was aimed.
+    expect(getTask(caller.id)).toMatchObject({ title: "Caller", status: "not_started" });
+  });
+
+  it("edits an inert suggestion in ANOTHER project — writes range as widely as suggest_task files", () => {
+    const { caller } = board("Foreign-Here");
+    const there = createProject({ name: "Foreign-There" });
+    const theirs = createSuggestedTask(there, { title: "Theirs", description: "" }).task!;
+    const { task: updated } = updateTaskForAgent(caller, theirs.id, { priority: "lo" });
+    expect(updated!.id).toBe(theirs.id);
+    expect(getTask(theirs.id)!.priority).toBe("lo");
+  });
+
+  it("refuses a STARTED task — another session owns it", () => {
+    const { caller, inert } = board("Foreign-Started");
+    // What starting a suggestion does (POST /api/tasks/[id]/messages).
+    updateTask(inert.id, { suggested: 0, started: 1 });
+    const { task: updated, text } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
+    expect(updated).toBeNull();
+    expect(text).toContain("Nothing was changed");
+    expect(getTask(inert.id)!.title).toBe("Proposed");
+  });
+
+  it("refuses a RUNNING task even if it somehow still reads as a suggestion", () => {
+    const { caller, inert } = board("Foreign-Running");
+    updateTask(inert.id, { running: 1 });
+    const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
+    expect(updated).toBeNull();
+    expect(getTask(inert.id)!.title).toBe("Proposed");
+  });
+
+  it("refuses an accepted (no longer suggested) task that never started", () => {
+    // "Add" in the tray clears `suggested` without starting anything. The row is
+    // still inert, but the user has adopted it — it's their backlog item now.
+    const { caller, inert } = board("Foreign-Accepted");
+    updateTask(inert.id, { suggested: 0 });
+    const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
+    expect(updated).toBeNull();
+    expect(getTask(inert.id)!.title).toBe("Proposed");
+  });
+
+  it("refuses to cancel another row, exactly as it refuses to cancel its own", () => {
+    const { caller, inert } = board("Foreign-Cancel");
+    const { task: updated, text } = updateTaskForAgent(caller, inert.id, { status: "cancelled" });
+    expect(updated).toBeNull();
+    expect(text).toContain("Nothing was changed");
+    expect(getTask(inert.id)!.status).toBe("not_started");
+  });
+
+  it("refuses an unknown id and points at list_tasks", () => {
+    const { caller } = board("Foreign-Ghost");
+    const { task: updated, text } = updateTaskForAgent(caller, "ghost", { title: "x" });
+    expect(updated).toBeNull();
+    expect(text).toContain("list_tasks");
+  });
+
+  it("announces the edit against the TARGET's id, not the caller's", () => {
+    const { caller, inert } = board("Foreign-Bus");
+    const seen: { taskId: string; ev: BusEvent }[] = [];
+    const unsub = subscribeGlobal((taskId, ev) => seen.push({ taskId, ev }));
+    try {
+      updateTaskForAgent(caller, inert.id, { title: "Announced" });
+    } finally {
+      unsub();
+    }
+    expect(seen).toContainEqual({ taskId: inert.id, ev: { type: "task_edited" } });
+    expect(seen.some((s) => s.taskId === caller.id)).toBe(false);
+  });
+
+  it("signals auto-start when a foreign suggestion is marked done", () => {
+    // The flag rides the target, so the caller fires the sweep for the right row.
+    const { caller, inert } = board("Foreign-Done");
+    const { task: updated, autoStartDependents } = updateTaskForAgent(caller, inert.id, { status: "done" });
+    expect(updated!.id).toBe(inert.id);
+    expect(autoStartDependents).toBe(true);
   });
 });
 
@@ -280,23 +386,52 @@ describe("internal agent-tool endpoints", () => {
     expect(miss.status).toBe(404);
   });
 
-  it("update-task writes the calling task and ignores any other id the model sends", async () => {
+  it("update-task defaults to the calling task when the model names no target", async () => {
     const project = createProject({ name: "EP-Update" });
     const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
     const theirs = createTask({ project_id: project.id, title: "Theirs", description: "" });
-    // `task`/`id` are not part of the endpoint's contract — the target is
-    // ORCH_TASK_ID, injected into the bridge's env, and nothing else.
     const res = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
       projectId: project.id,
       taskId: mine.id,
-      task: theirs.id,
-      id: theirs.id,
       title: "Renamed",
       status: "in_progress",
     });
     expect(res.status).toBe(200);
     expect(getTask(mine.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
     expect(getTask(theirs.id)).toMatchObject({ title: "Theirs", status: "not_started" });
+  });
+
+  it("update-task honours a model-named inert suggestion but never lets it become the CALLER", async () => {
+    const project = createProject({ name: "EP-Update-Target" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const inert = createSuggestedTask(project, { title: "Proposed", description: "" }).task!;
+    // `taskId` is the trusted, env-injected caller identity; `task` is the
+    // untrusted target the MODEL chose. Only the latter may be aimed elsewhere.
+    const res = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
+      projectId: project.id,
+      taskId: mine.id,
+      task: inert.id,
+      title: "Sharpened",
+    });
+    expect(res.status).toBe(200);
+    expect(getTask(inert.id)!.title).toBe("Sharpened");
+    expect(getTask(mine.id)!.title).toBe("Mine");
+  });
+
+  it("update-task refuses (400) a model-named target another session owns", async () => {
+    const project = createProject({ name: "EP-Update-Live" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const live = createTask({ project_id: project.id, title: "Live", description: "" });
+    updateTask(live.id, { started: 1, running: 1 });
+    const res = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
+      projectId: project.id,
+      taskId: mine.id,
+      task: live.id,
+      title: "Hijacked",
+      status: "done",
+    });
+    expect(res.status).toBe(400);
+    expect(getTask(live.id)).toMatchObject({ title: "Live", status: "not_started" });
   });
 
   it("update-task rejects cancelling (400) and an unknown task (404)", async () => {
