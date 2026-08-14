@@ -137,6 +137,27 @@ describe("maybeAutoStartDependents (the launch)", () => {
     expect(getTask(b.id)!.running).toBe(0);
   });
 
+  // The sweep used to fire only on the transition into done, which left a
+  // whole class of task stranded: blocks() has always treated CANCELLED as
+  // terminal (waiting on a task that will never finish would deadlock), so
+  // cancelling the last blocker unblocked the dependent without launching it —
+  // Start button live, nothing to ever press it. Both ways of cancelling reach
+  // this: the user's PATCH /api/tasks/[id] and the withdraw_suggestion tool.
+  it("cancelling the last blocker starts the dependent too, not just marking it done", async () => {
+    const { a, b } = makeChain();
+    updateTask(a.id, { status: "cancelled" });
+    expect(readyAutoStartDependents(a.id).map((t) => t.id)).toEqual([b.id]);
+    maybeAutoStartDependents(a.id);
+    await vi.waitFor(() => expect(startTurnMock).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+
+    const [task, , , note] = startTurnMock.mock.calls[0];
+    expect(task.id).toBe(b.id);
+    // The cause travels into the transcript rather than being flattened to
+    // "is done": an agent about to build on a CANCELLED blocker should know.
+    expect(note).toContain('"A" was cancelled');
+    expect(note).not.toContain("is done");
+  });
+
   it("a task started in the race window isn't double-launched", () => {
     const { a, b } = makeChain();
     updateTask(a.id, { status: "done" });

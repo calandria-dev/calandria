@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
-import { isAwaiting, relTime } from "./format";
+import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
@@ -102,8 +102,12 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   const awaiting = isAwaiting(task);
   const blocked = !!blockedBy?.length && !task.started;
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
+  // A suggestion the filing agent retracted. It reads "withdrawn", not
+  // "cancelled": nothing was ever started, so nothing was called off.
+  const withdrawn = isWithdrawn(task);
   const activity = awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : running ? "live · working"
+    : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.status === "on_hold" ? `held · ${relTime(task.updated_at)}`
@@ -111,7 +115,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   return (
     <article
       role="button" tabIndex={0}
-      className={`bcard ${mini ? "mini" : ""} ${selected ? "sel" : ""} ${awaiting ? "needs" : ""} ${running ? "working" : ""} ${dragging ? "dragging" : ""}`}
+      className={`bcard ${mini ? "mini" : ""} ${selected ? "sel" : ""} ${awaiting ? "needs" : ""} ${running ? "working" : ""} ${dragging ? "dragging" : ""} ${withdrawn ? "withdrawn" : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
       draggable={canDrag}
@@ -131,6 +135,11 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         <span className={`bc-act ${awaiting ? "need" : running ? "on" : ""}`}>{activity}</span>
       </div>
       {running && <div className="bc-bar"><i /></div>}
+      {/* The reason IS the card's content once it's withdrawn — a struck-through
+          title with no explanation gives the user nothing to judge. */}
+      {withdrawn && task.withdrawn_reason && (
+        <div className="bc-withdrawn" title={task.withdrawn_reason}>{task.withdrawn_reason}</div>
+      )}
       {actions}
       {(blocked || sessionCount > 0) && !mini && (
         <div className="bc-foot">
@@ -168,7 +177,13 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   const all = [...suggested, ...tasks];
   const dragTask = dragId ? all.find((x) => x.id === dragId) : undefined;
   // Position-order membership per column — the source of truth for drag math.
-  const cols = new Map<ColKey, TaskRow[]>(COL_ORDER.map((k) => [k, all.filter(COLS[k].member)]));
+  // Suggested is the one column with a second sort on top: withdrawn cards sink
+  // below live ones. Applied HERE rather than at render time on purpose — drop
+  // indices are computed against these lists, so a display-only sort would make
+  // a reorder land somewhere other than where it was dropped.
+  const cols = new Map<ColKey, TaskRow[]>(
+    COL_ORDER.map((k) => [k, k === "suggested" ? all.filter(COLS[k].member).sort(withdrawnLast) : all.filter(COLS[k].member)])
+  );
   const reset = () => { setDragId(null); setOver(null); };
 
   const drop = (colKey: ColKey, index: number) => {
@@ -264,7 +279,13 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
                           <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
-                          <button onClick={() => onAcceptSuggestion(t.id)} title="Add to list to start later">{Icon.plus()} Add</button>
+                          {/* Same button either way — accepting a withdrawn
+                              suggestion IS reviving it (the server clears the
+                              cancel and the reason together) — but the label has
+                              to say which of the two you're doing. */}
+                          <button onClick={() => onAcceptSuggestion(t.id)} title={isWithdrawn(t) ? "Disagree — restore it to the list" : "Add to list to start later"}>
+                            {Icon.plus()} {isWithdrawn(t) ? "Restore" : "Add"}
+                          </button>
                           <button className="no" onClick={() => onDismissSuggestion(t.id)} title="Dismiss">{Icon.x()}</button>
                         </div>
                       ) : undefined}

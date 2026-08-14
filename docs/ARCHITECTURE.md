@@ -62,7 +62,7 @@ The app talks to coding agents only through the `AgentDriver` interface.
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
 the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `list_tasks` +
-`get_task` + `update_task` + `list_projects` + `expose_service`),
+`get_task` + `update_task` + `withdraw_suggestion` + `list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
 `lib/claude-auth.ts`.
@@ -151,15 +151,15 @@ controls show their run count and API-price-equivalent cost without polling.
 
 ### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
 
-`suggest_task` / `list_tasks` / `get_task` / `update_task` / `list_projects` /
-`expose_service` / `ask_user` are the same orchestrator
+`suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
+`list_projects` / `expose_service` / `ask_user` are the same orchestrator
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,list-projects,expose-service,ask-user}`,
+(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort
@@ -199,14 +199,14 @@ implication — the user-facing PATCH can write `suggested` directly.
 
 Fields are title, description, priority and status, minus `cancelled` — on the caller's own
 row that calls `abortTurn()` and would tear down the very turn making the call, and on
-anyone else's it's the user's call regardless. Like `createSuggestedTask`,
-`updateTaskForAgent()` re-reads both rows before writing, because a detached turn's snapshot
-can outlive the row and a target read a moment ago may have been started since; the
-eligibility check and the write share one synchronous block, which is atomic given
-better-sqlite3 and a single Node process. Marking done fires `maybeAutoStartDependents()`
-against the **target's** id, and that call lives with the callers rather than in
-`lib/agentTools.ts` — that module is pinned SDK-free (`tests/importGraph.test.ts`) and
-`lib/autoStart.ts` reaches the runner.
+anyone else's it's a decision that needs a stated reason a bare status write has nowhere to
+put (see `withdraw_suggestion` below). Like `createSuggestedTask`, `updateTaskForAgent()`
+re-reads both rows before writing, because a detached turn's snapshot can outlive the row
+and a target read a moment ago may have been started since; the eligibility check and the
+write share one synchronous block, which is atomic given better-sqlite3 and a single Node
+process. Marking done fires `maybeAutoStartDependents()` against the **target's** id, and
+that call lives with the callers rather than in `lib/agentTools.ts` — that module is pinned
+SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches the runner.
 
 The policy lives in `updateTaskForAgent()` alone, because the two paths differ in who names
 the target: the Claude driver closes over the caller and hands the model's `task` argument
@@ -214,6 +214,38 @@ straight through, while the bridge's endpoint takes the caller from the env-inje
 `ORCH_TASK_ID` and the target from the request body — model-supplied, and the reason
 `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
 asserts on the database rather than on the refusal text.
+
+**`withdraw_suggestion(task, reason)`** is the retraction verb, and it exists because the
+nearest alternative was wrong twice over: an agent reaching for `status: "done"` to mean
+"this one's redundant" both claims work nobody started is finished AND hits the exact
+transition that fires `maybeAutoStartDependents()`, silently launching real sessions behind
+it. Eligibility is the SAME `isInertSuggestion()` helper `update_task` uses — shared so the
+two can't drift into "editable but not withdrawable" — and `reason` is required and must be
+non-empty, because a retraction the user can't understand is worse than none. It is
+deliberately **not** a delete: the tray's Dismiss button already hard-deletes via
+`DELETE /api/tasks/:id` with no undo anywhere in this app, and destroying a proposal the user
+hasn't read is not a call an agent gets to make. So the row is set to `cancelled` while
+`suggested` stays `1` — it remains in the tray, struck through with `tasks.withdrawn_reason`
+beside it and sorted below the live suggestions (`isWithdrawn` / `withdrawnLast` in
+`app/orchestrator/format.ts`, honored by both the list tray and the board's Suggested
+column) — and `task_edited` is published so other tabs refetch a field the coarse wire
+payload can't carry. Reviving is centralised in `PATCH /api/tasks/[id]`, which clears the
+reason and the cancelled status together whenever a withdrawn row leaves that state: three
+callers reach it (the tray's Add and Start both patch `suggested: 0` and nothing else, the
+board's drag sends a status too, the edit dialog re-statuses in place) and each would
+otherwise have to remember both halves.
+
+Withdrawing forced a change on a shared path. `lib/autoStart.ts`'s `blocks()` has always
+counted **cancelled** as terminal — a dependent waiting on a task that will never finish
+would deadlock — but the sweep only ever fired on the transition into `done`. Cancelling the
+last blocker therefore cleared the edge and launched nothing, leaving an `auto_start`
+dependent unblocked-but-never-started, forever. `maybeAutoStartDependents()` now fires on
+any non-terminal → terminal transition, from `withdraw_suggestion` **and** from the
+user-facing PATCH, so the scheduling decision follows from the resulting state rather than
+from which endpoint produced it; the transcript note distinguishes `"X" is done` from
+`"X" was cancelled`. Cancelling a task can now start work, which is what
+**Start when unblocked** already promised — pinned in `tests/autoStart.test.ts` and
+`tests/withdrawSuggestion.test.ts` so it can't quietly regress either way.
 
 ### Adding a third agent (e.g. Gemini, Cursor)
 

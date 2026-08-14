@@ -54,6 +54,7 @@ export interface TaskRow {
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
   depends_on: string[]; // task ids this task is blocked by until they're done
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
+  withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
 }

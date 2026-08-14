@@ -217,6 +217,22 @@ export function duration(start: number, end: number | null): string {
 export const isAwaiting = (t: TaskRow) =>
   t.status === "in_progress" && !!t.awaiting_input;
 
+// A tray suggestion an agent has retracted (the withdraw_suggestion tool): still
+// `suggested`, so it stays in the tray for the user to revive or dismiss, but
+// cancelled — and therefore no longer proposing anything. Without this the tray
+// draws it identically to a live suggestion, which is the whole reason the tool
+// would be useless: a retraction nobody can see isn't one.
+//
+// Keyed on the STATE, not on withdrawn_reason: a suggestion cancelled any other
+// way (the edit dialog) is just as dead and should read the same. The reason is
+// what gets shown when there is one, not what qualifies a row.
+export const isWithdrawn = (t: TaskRow) => !!t.suggested && t.status === "cancelled";
+
+// Live suggestions first, withdrawn ones after — a stable partition, so within
+// each half the tray keeps its manual order. Retractions are the tail of the
+// tray rather than hidden: the user still has to decide whether to agree.
+export const withdrawnLast = (a: TaskRow, b: TaskRow) => Number(isWithdrawn(a)) - Number(isWithdrawn(b));
+
 // The titles of a task's unfinished blockers (dependencies not yet 'done'). A
 // task with any of these is "blocked" and can't be started until they complete.
 // A cancelled dependency doesn't block — it's terminal and will never finish,

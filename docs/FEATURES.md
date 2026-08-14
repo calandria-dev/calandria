@@ -93,9 +93,22 @@ in. Project recaps help restore your mental context when you return later.
 Agents can read the board as well as add to it: they can list the tasks in a project, see
 what each one is blocked by, and open any task in full — including the brief they were
 started with. Changing a task is deliberately narrower. An agent can retitle, re-describe,
-reprioritize or close **its own** task, and nothing else: no session can rearrange the board
-around it, and cancelling stays your call. When an agent marks its own task done, anything
-set to **Start when unblocked** behind it launches just as it would have from your click.
+reprioritize or close **its own** task, and beyond that only a suggestion still sitting
+unreviewed in a Suggested tray — in any project — so a planning turn can go back and sharpen
+the roadmap it just filed. Anything you've accepted, or another session has started, is
+refused: no session rearranges the board around it, and cancelling stays your call.
+
+An agent that decides one of its own suggestions was redundant can **withdraw** it, and has
+to say why. The card stays in your tray, struck through with the reason underneath and
+sorted below the live suggestions — a recommendation to drop it, not a deletion. **Restore**
+puts it back (clearing the strike-through and the note), **Start** runs it anyway, and the ✕
+dismisses it for good, exactly as before. Withdrawing is the only way an agent can retract
+work it proposed; it can't cancel or delete anything.
+
+When a task stops blocking — you mark it done, you cancel it, or an agent withdraws it —
+anything set to **Start when unblocked** behind it launches just as it would have from your
+click. Cancelling counts because a cancelled task will never finish: waiting on one would
+leave the task behind it blocked forever.
 
 ## Workspace tools
 

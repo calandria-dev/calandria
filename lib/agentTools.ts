@@ -1,5 +1,6 @@
 // Shared implementations of the orchestrator's agent-facing tools
-// (suggest_task / list_tasks / get_task / update_task / expose_service / ask_user).
+// (suggest_task / list_tasks / get_task / update_task / withdraw_suggestion /
+//  expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
@@ -351,9 +352,9 @@ const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 // being written. On the caller's OWN row it's self-destruction: PATCH
 // /api/tasks/[id] calls abortTurn() on cancel, which would tear down the very
 // turn making the tool call — the agent would kill itself mid-sentence and never
-// see the result. On anyone else's, abortTurn is a no-op (only inert rows are
-// eligible) but abandoning a task the user hasn't reviewed yet is still their
-// call. An agent that thinks a task should be dropped can say so and ask_user.
+// see the result. On anyone else's, abandoning a task the user hasn't reviewed
+// yet is a decision that needs a stated reason attached to it, which a bare
+// status write has nowhere to put — that's withdraw_suggestion below.
 const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done"];
 
 /**
@@ -371,7 +372,7 @@ const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done"];
  * can in principle be reconstructed on a live row — and this is the one place
  * where being wrong hands an agent somebody else's work.
  */
-function isInertSuggestion(t: Task): boolean {
+export function isInertSuggestion(t: Task): boolean {
   return t.suggested === 1 && t.started === 0 && t.running === 0;
 }
 
@@ -466,8 +467,10 @@ export function updateTaskForAgent(
     if (input.status === "cancelled")
       return fail(
         `Could not update ${what}: cancelling a task is the user's call` +
-          (own ? ", and it would abort this turn mid-flight" : "") +
-          `. Use one of: ${STATUSES.join(", ")}, or ask the user. Nothing was changed.`
+          (own
+            ? ", and it would abort this turn mid-flight. Use one of: " + STATUSES.join(", ") + ", or ask the user."
+            : ". Use one of: " + STATUSES.join(", ") + ", or withdraw_suggestion if this suggestion is redundant and you can say why.") +
+          ` Nothing was changed.`
       );
     if (!STATUSES.includes(input.status))
       return fail(`Could not update ${what}: "${input.status}" isn't a status. Use one of: ${STATUSES.join(", ")}. Nothing was changed.`);
@@ -504,6 +507,90 @@ export function updateTaskForAgent(
     task: updated,
     text: `Updated "${updated.title}": ${changed.join(", ")}.${done ? " Any task set to start when unblocked by this one will now launch." : ""}`,
     autoStartDependents: done,
+  };
+}
+
+/**
+ * The `withdraw_suggestion` tool: retract a tray suggestion that turned out to
+ * be redundant, recording WHY on the row.
+ *
+ * The verb exists because the nearest alternative was wrong twice over. An agent
+ * that wanted "get this off the board" had only `status: "done"`, which claims a
+ * task nobody started is finished — and, worse, is the exact transition that
+ * fires maybeAutoStartDependents(), so a tidy-up would silently launch real
+ * sessions for anything auto-starting behind it.
+ *
+ * Not a delete, deliberately. The tray's Dismiss button already hard-deletes
+ * (DELETE /api/tasks/[id]) and this app has no undo for that anywhere; an agent
+ * quietly destroying a proposal the user hasn't read yet is not a call it gets
+ * to make. So the row is cancelled but LEFT `suggested = 1`: it stays in the
+ * tray, struck through with the reason beside it, and the user can revive it or
+ * dismiss it for real. `cancelled` is already terminal and non-blocking in
+ * lib/autoStart.ts, so nothing downstream waits on it forever.
+ *
+ * Eligibility is isInertSuggestion — the SAME helper update_task uses, shared so
+ * the two policies cannot drift into "editable but not withdrawable" or worse.
+ * `caller`/`targetRef` carry the same trust split as updateTaskForAgent: the
+ * caller is the server's word, the target is the model's. There's no "my own
+ * row" default here, and no need for one — a task with a live turn calling this
+ * has running = 1, so it could never be eligible anyway.
+ *
+ * `autoStartDependents` rides back for the same reason it does on the done path,
+ * and for the same caller to fire (this module is pinned SDK-free): a suggestion
+ * can be another task's blocker, and cancelling it clears that edge. Firing the
+ * sweep on THIS transition is what stops a withdrawal from stranding an
+ * auto_start dependent unblocked-but-never-launched.
+ */
+export function withdrawSuggestionForAgent(
+  caller: Task,
+  targetRef: string | undefined,
+  reason: string
+): { task: Task | null; text: string; autoStartDependents: boolean } {
+  const wanted = targetRef?.trim() ?? "";
+  const fail = (text: string) => ({ task: null, text, autoStartDependents: false });
+
+  if (!wanted) return fail("Could not withdraw: `task` is required — pass the id of the suggestion to retract. Nothing was changed.");
+  // Required, and required to say something. An unexplained retraction leaves
+  // the user a struck-through card and no way to judge whether to revive it.
+  const why = reason?.trim() ?? "";
+  if (!why) return fail("Could not withdraw: `reason` is required — say why the suggestion should be dropped. Nothing was changed.");
+
+  if (wanted === caller.id)
+    return fail("Could not withdraw this task: it's the one this session is running in, not an unreviewed suggestion. Nothing was changed.");
+
+  // Read at WRITE time, never trusting what the model saw: the target may have
+  // been started since it read the board. The check and the write share one
+  // synchronous block (better-sqlite3, single process), so nothing interleaves.
+  const cur = getTask(wanted);
+  if (!cur) return fail(`No task with id "${wanted}". Call list_tasks for the ids. Nothing was changed.`);
+  if (!isInertSuggestion(cur))
+    return fail(
+      `Could not withdraw "${cur.title}": it isn't an unreviewed suggestion, so it belongs to the user or to another session ` +
+        `that may be working in it right now. Only tasks still sitting in the Suggested tray can be withdrawn. ` +
+        `Say what you think should happen and let the user decide. Nothing was changed.`
+    );
+  if (cur.status === "cancelled")
+    return { task: cur, text: `No change: "${cur.title}" is already withdrawn (${cur.withdrawn_reason || "no reason recorded"}).`, autoStartDependents: false };
+
+  // suggested stays 1 on purpose — that flag is what keeps the row in the tray.
+  // awaiting_input for the same reason update_task settles it on a status write:
+  // a terminal row must not keep counting toward the project's "needs you" pill.
+  const updated = updateTask(cur.id, { status: "cancelled", withdrawn_reason: why, awaiting_input: 0 });
+  if (!updated) return fail(`Could not withdraw "${cur.title}": its row no longer exists.`);
+
+  // task_edited, not task_updated: withdrawn_reason is a field the coarse
+  // /api/events payload can't carry, so listeners have to refetch the row to
+  // draw the struck-through card at all.
+  publishGlobal(updated.id, { type: "task_edited" });
+
+  return {
+    task: updated,
+    text:
+      `Withdrew "${updated.title}" — it stays in the user's Suggested tray, struck through, with your reason on it, ` +
+      `so they can revive it or dismiss it for good.`,
+    // Cancelling is a blocker clearing. Anything auto-starting behind this
+    // suggestion is now unblocked and must actually launch, or it waits forever.
+    autoStartDependents: true,
   };
 }
 
