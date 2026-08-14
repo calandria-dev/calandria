@@ -193,6 +193,23 @@ export function init(db: Database.Database) {
       PRIMARY KEY (task_id, depends_on_id)
     );
 
+    -- Remembered "always allow" answers to a tool-permission prompt (the
+    -- canUseTool gate under "Accept edits" / "Plan mode" — see lib/permissions.ts).
+    -- Project-scoped on purpose: approving "npm test" for one repo must not
+    -- approve it everywhere. match_kind is 'bash_prefix' (leading command
+    -- tokens) or 'bash_exact' (one literal command line) — Bash-only, because a
+    -- command is the one tool input a user can read in full and generalize.
+    -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
+    CREATE TABLE IF NOT EXISTS permission_rules (
+      id         TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      tool       TEXT NOT NULL,
+      match_kind TEXT NOT NULL,
+      value      TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(project_id, tool, match_kind, value)
+    );
+
     -- App-level key/value preferences that must be readable server-side (e.g. the
     -- default reasoning level + permission mode a task inherits when it hasn't
     -- overridden them). Distinct from the browser-local UI settings in localStorage.
@@ -243,6 +260,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_internal_usage_created ON internal_usage(created_at);
     CREATE INDEX IF NOT EXISTS idx_task_merges_project ON task_merges(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_merges_task ON task_merges(task_id);
+    CREATE INDEX IF NOT EXISTS idx_permission_rules_project ON permission_rules(project_id);
   `);
 
   migrate(db);
@@ -252,6 +270,22 @@ export function init(db: Database.Database) {
   // Drop any queued follow-ups: the turns they were lined up behind died with
   // the previous process, so there's nothing left to dequeue them.
   db.prepare("DELETE FROM pending_messages").run();
+  // Settle any tool-permission card still open. The turn parked on it died with
+  // the previous process and the pending-ask registry it was waiting on is
+  // in-memory, so the card can never be answered — left alone it would render
+  // as live buttons that resolve nothing. Same reasoning as the running reset
+  // above. (json_valid guards the handful of tool rows that predate JSON
+  // content; json_extract would raise on those.)
+  db.prepare(
+    `UPDATE messages
+        SET content = json_set(content, '$.permission.outcome',
+              json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
+      WHERE role = 'tool'
+        AND content LIKE '%"permission"%'
+        AND json_valid(content)
+        AND json_extract(content, '$.permission.request.id') IS NOT NULL
+        AND json_extract(content, '$.permission.outcome') IS NULL`
+  ).run();
 
   seedIfEmpty(db);
   ensureOnboardingFlag(db);

@@ -8,12 +8,22 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, PermissionMode, PermissionResult, SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Project, Task, StreamEvent, AskQuestion, TurnUsage, Priority, Status as TaskStatus } from "../../types";
+import type {
+  Project,
+  Task,
+  StreamEvent,
+  AskQuestion,
+  TurnUsage,
+  Priority,
+  Status as TaskStatus,
+  PermissionOutcome,
+  PermissionRequest,
+} from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
-import { getSetting } from "../../store";
+import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import {
   createSuggestedTask,
   getTaskForAgent,
@@ -23,11 +33,28 @@ import {
   rememberSuggestedTitle,
   resolveTargetProject,
   resolveTitleRefs,
-  updateOwnTask,
+  updateTaskForAgent,
 } from "../../agentTools";
 import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
-import { CLAUDE_CLI_PATH as CLAUDE_PATH } from "../../config";
+import {
+  allowedByRules,
+  denyMessage,
+  describePermission,
+  isAlwaysAllowed,
+  parseDecision,
+  promptDeadline,
+  scopeOfferFor,
+  waitForPermission,
+  DENIED_BY_USER,
+  DENIED_TIMED_OUT,
+  DENIED_UNATTENDED,
+} from "../../permissions";
+import {
+  CLAUDE_CLI_PATH as CLAUDE_PATH,
+  PERMISSION_PROMPT_TIMEOUT_MS,
+  PERMISSION_UNATTENDED_MS,
+} from "../../config";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
 import {
@@ -63,8 +90,11 @@ import { claudeUsage } from "./usage";
 //
 // 'project' is load-bearing twice over: it's what loads CLAUDE.md, and a task
 // runs in its own worktree, so ".claude/" here means the checked-out repo's.
-// Note this is settings inheritance only — tool permissions come from
-// permissionMode below (bypassPermissions), not from the loaded settings.
+//
+// This is settings inheritance only; it grants nothing. What an inherited MCP
+// server may actually DO is decided downstream by permissionMode + canUseTool
+// like any other tool — auto-approved under bypassPermissions, screened by the
+// classifier under the "auto" default, and a permission card otherwise.
 const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
 
 function orchestratorServer(
@@ -166,6 +196,7 @@ function orchestratorServer(
         UPDATE_TASK.name,
         UPDATE_TASK.description,
         {
+          task: z.string().optional().describe(UPDATE_TASK.params.task),
           title: z.string().optional().describe(UPDATE_TASK.params.title),
           description: z.string().optional().describe(UPDATE_TASK.params.description),
           // Spelled out rather than read from UPDATE_TASK.priorities/.statuses:
@@ -175,10 +206,13 @@ function orchestratorServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_TASK.params.priority),
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
         },
-        async (args: { title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
-          // `task` is the snapshot taken at turn start; updateOwnTask re-reads
-          // the row before writing, so a task deleted mid-turn is a refusal.
-          const { task: updated, text, autoStartDependents } = updateOwnTask(task, args);
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
+          // The closed-over `task` is the CALLER — the snapshot taken at turn
+          // start, and the one identity the model can't influence. `args.task`
+          // is the target it named; updateTaskForAgent decides whether that may
+          // be written and re-reads both rows first, so a task deleted or
+          // started mid-turn is a refusal rather than a stale write.
+          const { task: updated, text, autoStartDependents } = updateTaskForAgent(task, args.task, args);
           if (autoStartDependents && updated) {
             // Imported at CALL time, not module load: lib/autoStart reaches
             // lib/runner, which imports the driver registry, which imports this
@@ -212,11 +246,43 @@ function reasoningOptions(level: string | null): { maxThinkingTokens?: number; e
   return r.effort ? { maxThinkingTokens: r.maxThinkingTokens, effort: r.effort } : { maxThinkingTokens: r.maxThinkingTokens };
 }
 
-// The task's run permission. null (and any unknown value) keeps the app default of
-// bypassPermissions — sessions auto-approve tools and run unattended. "plan" makes
-// Claude propose a plan without editing; "acceptEdits" auto-accepts file edits only.
-function permissionModeFor(m: string | null): "bypassPermissions" | "acceptEdits" | "plan" {
-  return m === "acceptEdits" || m === "plan" ? m : "bypassPermissions";
+// Every permission mode this driver honors, as the SDK's own union so a value
+// the CLI would reject can't reach `--permission-mode`. Spelled out here rather
+// than derived from CLAUDE_CAPABILITIES because that module is deliberately
+// SDK-free and types its values as plain strings — the same trade the MCP tool
+// enums above make, and pinned the same way: tests/claudePermissionMode.test.ts
+// asserts this list and the picker's list are exactly each other.
+const PERMISSION_MODES: readonly PermissionMode[] = ["bypassPermissions", "auto", "acceptEdits", "default", "plan"];
+
+// What a task runs as when nothing else says. Reached by the picker's "Default"
+// head (task.permission_mode null) with no app-level default set, and by any
+// unrecognized value — a mode from another agent's list, or a stale row.
+//
+// "auto" rather than bypassPermissions: now that canUseTool is a real gate, the
+// classifier silently approves what it judges safe and escalates only the rest
+// to a card, so a task is screened without a click per Read. The cost is on
+// UNATTENDED work — an escalated call with nobody watching auto-denies after
+// PERMISSION_UNATTENDED_MS and parks the queue (lib/permissions.ts) instead of
+// running on. Fleets that must never stop to ask should set the app-level
+// default back to Auto-run in Settings.
+const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
+
+// The task's run permission, resolved to a mode the SDK accepts.
+function permissionModeFor(m: string | null): PermissionMode {
+  return PERMISSION_MODES.includes(m as PermissionMode) ? (m as PermissionMode) : DEFAULT_PERMISSION_MODE;
+}
+
+// One AbortSignal that trips when ANY of its inputs does, plus the teardown to
+// stop listening. A parked permission prompt has two ways to die — the turn's
+// Stop button and the SDK's own per-request cancellation — and must answer to
+// both; leaking the listeners would pile up one per prompt on a long turn.
+function linkSignals(...signals: (AbortSignal | undefined)[]): { signal: AbortSignal; dispose: () => void } {
+  const live = signals.filter((s): s is AbortSignal => !!s);
+  const ac = new AbortController();
+  const trip = () => ac.abort();
+  if (live.some((s) => s.aborted)) trip();
+  else for (const s of live) s.addEventListener("abort", trip, { once: true });
+  return { signal: ac.signal, dispose: () => { for (const s of live) s.removeEventListener("abort", trip); } };
 }
 
 /**
@@ -239,6 +305,9 @@ async function* runTurn(
   let askSeq = 0;
   // tool_use id -> how to summarize its eventual result into a peek.
   const resultKinds = new Map<string, ResultKind>();
+  // Fallback-id uniquifier for permission prompts, for the same reason as
+  // askSeq: the SDK normally supplies a toolUseID, but the registry keys on it.
+  let permSeq = 0;
   const queue = makeQueue<StreamEvent>();
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
@@ -274,6 +343,116 @@ async function* runTurn(
     ? `${userText}\n\n(Read each attached image/file with the Read tool before responding.)`
     : userText;
 
+  const permissionMode = permissionModeFor(permission);
+
+  // The permission gate. It must be PROVIDED in every mode, because CLI ≥2.1
+  // only puts AskUserQuestion in the model's tool list when the host signals it
+  // can field interactive prompts by passing canUseTool — without it the tool
+  // simply doesn't exist and Claude can never ask (verified against 2.1.198).
+  //
+  // Under "Auto-run" (bypassPermissions) the SDK never consults it, so it stays
+  // a blanket allow. In every OTHER mode each call the CLI doesn't auto-approve
+  // arrives here — and this is what makes those modes mean something rather than
+  // being Auto-run with a different label. What reaches the gate differs per
+  // mode, which is the whole point of offering them: "Guarded auto" escalates
+  // only what its classifier won't vouch for, "Accept edits" lets writes through
+  // and stops at commands, "Ask when needed" stops at anything not pre-approved,
+  // "Plan mode" stops at leaving the plan. Known-safe tools and calls already
+  // covered by a remembered project rule pass silently; anything else parks the
+  // turn on a card the user answers, through the very same registry + /answer
+  // route an AskUserQuestion uses (lib/permissions.ts).
+  const canUseTool: CanUseTool = async (toolName, input, opts) => {
+    const allow = (): PermissionResult => ({ behavior: "allow" as const, updatedInput: input });
+    if (permissionMode === "bypassPermissions") return allow();
+    // `blockedPath` is the CLI saying this call reaches somewhere it shouldn't
+    // (outside the worktree, typically) — the one case the read-only allowlist
+    // must NOT swallow, since it's the CLI's own warning.
+    if (isAlwaysAllowed(toolName, opts.blockedPath)) return allow();
+    // Re-read the rules per call, not per turn: an "always allow" answered
+    // earlier in THIS turn has to take effect immediately, and a rule the user
+    // revokes mid-turn has to stop applying just as fast.
+    if (!opts.blockedPath && allowedByRules(listPermissionRules(project.id), toolName, input)) return allow();
+
+    const described = describePermission(toolName, input);
+    // NAMESPACED, not the bare toolUseID: the runner keys its transcript rows
+    // by tool_use id, and the model's own tool_use block for this very call
+    // carries the same id — an un-prefixed key would let the two rows clobber
+    // each other and land the decision on the wrong card.
+    const id = `perm:${opts.toolUseID || `${sessionId ?? "x"}-${permSeq++}`}`;
+    // Durable rules are Bash-only (see lib/permissions.ts). For everything else
+    // the CLI's own `suggestions` payload is offered instead: it stops the
+    // re-asking for the rest of THIS session and is never persisted.
+    const scope = scopeOfferFor(toolName, input)
+      ?? (opts.suggestions?.length ? { scope: "session" as const, value: toolName, label: "Don't ask again this session" } : undefined);
+    const request: PermissionRequest = {
+      id,
+      tool: toolName,
+      // The CLI renders its own prompt sentence ("Claude wants to run …") and
+      // knows things we can't see from the input alone, so prefer it; fall back
+      // to the same title the transcript would give the tool call.
+      title: opts.title?.trim() || described.title,
+      detail: described.detail,
+      description: opts.blockedPath
+        ? `Reaches outside the task's working directory: ${opts.blockedPath}`
+        : opts.description?.trim() || opts.decisionReason?.trim() || undefined,
+      diff: described.diff,
+      scope,
+      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+    };
+    queue.push({ type: "permission", request });
+    const settle = (outcome: PermissionOutcome) => queue.push({ type: "permission_decided", id, outcome });
+
+    // Two signals matter: the turn's (Stop) and the SDK's per-request one — a
+    // cancelled control request must stop being answerable even if the turn
+    // itself lives on.
+    const linked = linkSignals(abortController?.signal, opts.signal);
+    let waited;
+    try {
+      waited = await waitForPermission({
+        taskId: task.id,
+        id,
+        signal: linked.signal,
+        attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+        unattendedMs: PERMISSION_UNATTENDED_MS,
+      });
+    } finally {
+      linked.dispose();
+    }
+
+    // Every non-answer path denies — the gate fails CLOSED, so a stopped,
+    // unwatched, or expired turn can never leak an unapproved tool call.
+    if ("aborted" in waited) {
+      const note = "The session was stopped before this was approved.";
+      settle({ decision: "deny", auto: true, reason: "interrupted", note });
+      return { behavior: "deny", message: note };
+    }
+    if ("expired" in waited) {
+      const note = waited.expired === "unattended" ? DENIED_UNATTENDED : DENIED_TIMED_OUT;
+      settle({ decision: "deny", auto: true, reason: waited.expired, note });
+      return { behavior: "deny", message: denyMessage(request.title, note) };
+    }
+
+    const { decision, note } = parseDecision(waited.answers);
+    if (decision === "deny") {
+      settle({ decision, note: note || undefined });
+      return { behavior: "deny", message: denyMessage(request.title, note || DENIED_BY_USER) };
+    }
+    let remembered: string | undefined;
+    if (decision === "allow_always" && scope?.scope === "project" && scope.match_kind) {
+      addPermissionRule({ project_id: project.id, tool: toolName, match_kind: scope.match_kind, value: scope.value });
+      remembered = scope.label;
+    } else if (decision === "allow_always" && scope?.scope === "session") {
+      remembered = scope.label;
+    }
+    settle({ decision, remembered });
+    // `suggestions` is the CLI's own "stop asking for this in this session"
+    // payload. Handing it back on an always-allow covers what our project rules
+    // deliberately can't: non-Bash tools, and path grants we don't model.
+    return decision === "allow_always" && opts.suggestions?.length
+      ? { behavior: "allow", updatedInput: input, updatedPermissions: opts.suggestions }
+      : allow();
+  };
+
   const response = query({
     prompt,
     options: {
@@ -291,7 +470,7 @@ async function* runTurn(
       // Inherit the user's own Claude Code configuration — see SETTING_SOURCES.
       settingSources: SETTING_SOURCES,
       // Permission mode (default bypassPermissions; "plan" proposes without editing).
-      permissionMode: permissionModeFor(permission),
+      permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       mcpServers: {
         orchestrator: orchestratorServer(
@@ -307,14 +486,11 @@ async function* runTurn(
       },
       // Lets the Stop button interrupt the stream mid-turn (see lib/abort.ts).
       abortController,
-      // Newer CLIs (≥2.1.x) only put AskUserQuestion in the model's tool list
-      // when the SDK signals it can field interactive prompts by providing
-      // canUseTool — without it the tool simply doesn't exist and Claude can
-      // never ask (verified against CLI 2.1.198). Under bypassPermissions this
-      // callback is otherwise never consulted, and an answered/dismissed ask is
-      // resolved by the PreToolUse hook below before permissions are checked,
-      // so a blanket allow changes nothing else.
-      canUseTool: async (_name: string, input: Record<string, unknown>) => ({ behavior: "allow" as const, updatedInput: input }),
+      // The real permission gate (defined above); also what makes the CLI
+      // expose AskUserQuestion at all. An answered/dismissed ask is resolved by
+      // the PreToolUse hook below before permissions are ever checked, so the
+      // two interactive paths never collide.
+      canUseTool,
       // bypassPermissions auto-resolves AskUserQuestion with no UI, so the
       // questions never reach the user. This hook intercepts that one tool: it
       // surfaces the questions to the UI (an "ask" event), parks until the user
@@ -364,6 +540,25 @@ async function* runTurn(
           // "default" maps to Opus). Surface it so the UI can badge the live model.
           const resolved = (message as { model?: string }).model;
           if (resolved) queue.push({ type: "model", model: resolved });
+        } else if (message.type === "system" && message.subtype === "permission_denied") {
+          // A tool call the CLI refused WITHOUT ever consulting canUseTool, so
+          // there was no card and the user was never given the choice. Under
+          // "Guarded auto" that's the classifier vetoing a call it judged
+          // unsafe; it can also be a deny rule in the loaded settings. Reachable
+          // in normal use now that "auto" is the default mode, and the only
+          // other trace is an is_error tool_result the transcript renders as a
+          // plain tool failure — so say who denied it and why.
+          const why = message.decision_reason?.trim() || message.message?.trim();
+          queue.push({
+            type: "notice",
+            content: clip(
+              `Claude Code blocked ${message.tool_name} without asking` +
+                `${message.decision_reason_type ? ` (${message.decision_reason_type})` : ""}` +
+                `${why ? `: ${why.replace(/\.?$/, ".")}` : "."} ` +
+                `You weren't given the choice — change this task's permission mode if it should have been allowed.`,
+              2_000
+            ),
+          });
         } else if (message.type === "assistant") {
           for (const block of message.message.content) {
             if (block.type === "text" && block.text.trim()) {

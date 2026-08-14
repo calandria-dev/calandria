@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Status, Priority, ToolData, AskQuestion, AskAnswers } from "@/lib/types";
+import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
@@ -139,7 +139,7 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -152,6 +152,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onAnswer: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void;
+  onDecidePermission: (permId: string, decision: PermissionDecision, note: string) => void;
   onCancelQueued: (pendingId: string) => void;
   onBack?: () => void; mobile?: boolean;
   railW: number; onRailWidth: (w: number) => void; onRailReset: () => void;
@@ -168,6 +169,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
   const stableAnswer = useStableHandler(onAnswer);
+  const stableDecidePermission = useStableHandler(onDecidePermission);
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
@@ -289,7 +291,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 const prev = s.messages[mi - 1];
                 // collapse the repeated "Claude Code" header across an assistant run (text → tool → text)
                 const hideWho = m.role === "assistant" && !!prev && (prev.role === "assistant" || prev.role === "tool");
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} />;
               })}
             </div>
           ))}
@@ -299,7 +301,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
           {/* Follow-ups queued mid-turn, pinned below the live turn — they
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onCancelQueued={stableCancelQueued} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} />
           ))}
         </div>
       </div>

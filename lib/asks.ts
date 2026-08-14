@@ -88,6 +88,20 @@ export function submitAnswer(taskId: string, id: string, answers: AskAnswers): b
   return true;
 }
 
+/**
+ * Settle a parked ask WITHOUT an answer — the waiter's promise rejects with
+ * `reason` and the entry is removed, so a late submitAnswer reports nothing
+ * waiting. Used by the permission gate to expire a prompt nobody answered
+ * (lib/permissions.ts); an ordinary question has no deadline and never needs it.
+ * Returns false when nothing was parked under that id.
+ */
+export function cancelAsk(taskId: string, id: string, reason: string): boolean {
+  const pending = remove(taskId, id);
+  if (!pending) return false;
+  pending.reject(new Error(reason));
+  return true;
+}
+
 // ---------- ask outcomes (the ask_user MCP bridge's poll target) ----------
 //
 // The Claude driver delivers an answered ask back to the model in-process (the

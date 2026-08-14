@@ -38,6 +38,34 @@ export const CLAUDE_CLI_PATH =
  */
 export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
 
+// Number of milliseconds from an env var, falling back to `def` for anything
+// unset, unparseable, or negative. (0 is meaningful for the knobs below — it
+// means "no deadline" — so it must survive.)
+const ms = (raw: string | undefined, def: number): number => {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n >= 0 ? n : def;
+};
+
+/**
+ * How long a tool-permission prompt parks waiting for a human who IS around
+ * (at least one browser tab is watching — see watcherCount() in lib/events.ts)
+ * before it gives up and denies the call. Generous by default: nobody should
+ * hit it mid-review, but a turn left parked overnight still releases its slot
+ * instead of holding the task "running" (and the instance busy) forever.
+ * Set to 0 to park indefinitely, exactly like an unanswered question card.
+ */
+export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMPT_TIMEOUT_MS, 4 * 60 * 60 * 1000);
+
+/**
+ * The same deadline when NOBODY is watching — an auto-started task
+ * (lib/autoStart.ts) or any turn running while the app is closed. There is no
+ * one to answer, so the prompt fails closed quickly rather than wedging the
+ * turn; the grace window exists only so a tab opening moments later still gets
+ * to decide (the gate re-checks and switches to the attended timeout above).
+ * 0 disables the unattended shortcut, making every prompt use the attended cap.
+ */
+export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDED_MS, 45_000);
+
 /**
  * The `approval_policy` the Codex driver passes to the CLI for turns and
  * one-shot helpers. Default "never" is the auto-run analog of Claude's

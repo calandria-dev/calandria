@@ -23,10 +23,14 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // selection is one event, so eleven misfiled tasks cost every other tab one
 // re-sync instead of eleven, and there's one shape to handle either way.
 // task_edited is the wider cousin of task_updated: the row's user-visible
-// fields (title, description, priority) changed, not just the status/awaiting
-// pair the coarse wire payload carries. Listeners can't patch what isn't on the
-// wire, so it tells them to refetch the row — see the `update_task` agent tool
-// (lib/agentTools.ts updateOwnTask), the one writer that isn't the user.
+// fields (title, description, priority, dependency edges, …) changed, not just
+// the status/awaiting pair the coarse wire payload carries. Listeners can't
+// patch what isn't on the wire, so it tells them to refetch the row instead.
+// Both writers publish it — the user editing a task (PATCH /api/tasks/[id]) and
+// the `update_task` agent tool (lib/agentTools.ts updateTaskForAgent, which may
+// be announcing a row other than the calling task's) — and it
+// SUPERSEDES task_updated when one write is both (a refetch settles the status
+// too, so the pair would be a duplicate).
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
@@ -109,6 +113,17 @@ export function subscribeGlobal(fn: GlobalListener): () => void {
   return () => {
     set.delete(fn);
   };
+}
+
+/**
+ * How many clients are watching the app right now — one global listener per
+ * open GET /api/events stream, i.e. roughly one per browser tab. Zero means
+ * nobody can SEE anything the server surfaces, let alone answer it, which is
+ * how the permission gate tells an unattended turn (an auto-started task at
+ * 3am) from one a human is sitting in front of. See lib/permissions.ts.
+ */
+export function watcherCount(): number {
+  return globalRegistry().size;
 }
 
 /** Fan an event out to every subscriber of this task. Safe with zero listeners. */

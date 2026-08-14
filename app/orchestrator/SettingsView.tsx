@@ -8,8 +8,9 @@ import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
 import { LoadNote } from "./shared";
-import { jget } from "./api";
+import { jget, jsend } from "./api";
 import type { AgentInfoT, AgentsResponseT } from "./types";
+import type { PermissionRule } from "@/lib/types";
 
 // Account / session panel. Shows who's signed in to this instance and a Logout
 // control — but only when an origin provider is actually gating the box (first-
@@ -142,6 +143,49 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
     <div className="hlp" style={{ marginTop: 8 }}>
       Running on <strong>{label}</strong>
       {u.fallback && <span className="opt"> (fallback — {agentLabel(agents, u.configured)} isn&apos;t connected)</span>}
+    </div>
+  );
+}
+
+// The "always allow" answers given to tool-permission prompts (lib/permissions.ts),
+// with a revoke on each. A grant nobody can find is a grant nobody can take
+// back, so this list is the other half of the "Always allow" button — without
+// it, one click in a transcript is permanent and invisible.
+function PermissionRules() {
+  const [rules, setRules] = useState<(PermissionRule & { project_name: string })[] | null>(null);
+  const load = () => jget<{ rules: (PermissionRule & { project_name: string })[] }>("/api/settings/permissions")
+    .then((d) => setRules(d.rules))
+    .catch(() => setRules([]));
+  useEffect(() => { void load(); }, []);
+
+  const revoke = async (id: string) => {
+    setRules((prev) => (prev ?? []).filter((r) => r.id !== id)); // optimistic
+    try { await jsend("/api/settings/permissions", "DELETE", { id }); } catch { void load(); }
+  };
+
+  return (
+    <div className="field">
+      <div className="lab">{Icon.check()} Remembered approvals</div>
+      <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+        Commands you chose <strong>Always allow</strong> for on a permission prompt. They apply to one project
+        and skip the prompt entirely, so revoke anything you no longer want run unattended. A remembered command
+        names a script, not a behaviour — <code>npm test</code> is whatever the project says it is today.
+      </div>
+      {rules === null ? (
+        <div className="hlp">Loading…</div>
+      ) : rules.length === 0 ? (
+        <div className="hlp">Nothing remembered yet.</div>
+      ) : (
+        <div className="perm-rules">
+          {rules.map((r) => (
+            <div className="perm-rule" key={r.id}>
+              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.value}</code>
+              <span className="opt">{r.project_name}</span>
+              <button className="btn btn-sm" onClick={() => void revoke(r.id)} title="Stop allowing this">Revoke</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -382,7 +426,9 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to the default. <strong>Plan mode</strong> proposes a plan without editing files.
+                    How tasks run when their own picker is set to the default. Every mode except <strong>Auto-run</strong>
+                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
+                    away, where an unanswered card declines itself. Pick <strong>Auto-run</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
                     {permissionOptions(caps).map((p) => (
@@ -397,6 +443,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                     ))}
                   </div>
                 </div>
+                <PermissionRules />
               </>
             )}
             {section === "agents" && <AgentsSection defaultAgent="claude" onChanged={onAgentsRefresh} />}

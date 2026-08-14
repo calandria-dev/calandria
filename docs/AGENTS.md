@@ -31,13 +31,35 @@ Claude Code is the reference driver and the first target for new agent-facing fe
 It supports parallel tasks, resume and `/clear` lineage, interactive questions, project
 context, diff workflows, and usage reporting.
 
-Task sessions run unattended inside their isolated worktrees. Operator is a control layer,
-not an additional security sandbox; review [the security model](../SECURITY.md) before
-exposing an instance.
+Task sessions run inside isolated worktrees under one of five permission modes, ordered
+here from most autonomous to least:
+
+| Mode | What it does |
+|-|-|
+| **Auto-run** | Never asks — bypasses every permission check. The only mode that never consults the gate. |
+| **Guarded auto** | *(the default)* A model classifier screens each call, silently approving what it judges safe and escalating the rest to a permission card. |
+| **Accept edits** | File edits auto-apply; commands and everything else prompt. |
+| **Ask when needed** | Claude Code's standard prompting — anything not already approved asks. |
+| **Plan mode** | Propose a plan without editing; leaving the plan asks. |
+
+Every mode except Auto-run is a real gate: whatever it doesn't auto-approve parks the turn
+on a permission card in the transcript. Read-only tools never prompt. "Always allow"
+remembers a command for that project only, and every remembered approval is listed and
+revocable in Settings → Run defaults. A prompt nobody answers declines itself, so an
+auto-started task can't sit wedged waiting for someone who isn't there — which is the
+trade-off of the default: unattended work that trips the classifier stops and says so
+rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
+
+The SDK also has a `dontAsk` mode; Operator doesn't offer it, because it denies without
+raising a card, so a task would keep losing tool calls with no way to approve any of them.
+
+Operator is a control layer, not an additional security sandbox; review
+[the security model](../SECURITY.md) before exposing an instance.
 
 A task session also loads your own Claude Code configuration — `~/.claude` settings, MCP
 servers, plugins and skills, plus the repository's `CLAUDE.md` — so it behaves like the
-`claude` CLI you already use, with Operator's own tools added on top.
+`claude` CLI you already use, with Operator's own tools added on top. Your MCP servers'
+tools go through the permission modes above like everything else.
 
 ## OpenAI Codex
 
@@ -51,14 +73,15 @@ Three upstream differences are visible:
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
-  mid-turn approval mode.
+  mid-turn approval mode. Claude's permission cards have no Codex equivalent yet: the
+  MCP bridge that carries `ask_user` could carry approvals the same way, but the CLI would
+  first have to route an approval request to a tool call instead of a terminal prompt.
 - Codex tasks get Operator's own tools but **not** the MCP servers from your
-  `~/.codex/config.toml`, where a Claude task does get yours. Same root cause as the
-  point above: the non-interactive CLI has no approver, so an inherited server's tools
-  are offered to the model and every call returns `user cancelled MCP tool call`.
-  Operator unmounts them rather than dangle tools that cannot work. Set
-  `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you have set
-  `default_tools_approval_mode = "approve"` on your own servers.
+  `~/.codex/config.toml`, where a Claude task does get yours. Same missing approver as
+  the point above: an inherited server's tools are offered to the model and every call
+  returns `user cancelled MCP tool call`. Operator unmounts them rather than dangle tools
+  that cannot work. Set `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you
+  have set `default_tools_approval_mode = "approve"` on your own servers.
 
 ## Adding another agent
 

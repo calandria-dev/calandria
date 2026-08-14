@@ -46,9 +46,26 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "think_hard", label: "Think hard", sub: "deeper reasoning" },
     { value: "ultrathink", label: "Ultrathink", sub: "maximum reasoning" },
   ],
+  // Ordered most autonomous → least. Each value is passed through to the CLI's
+  // `--permission-mode` verbatim (the SDK forwards the string unchanged), and
+  // all five are accepted by CLI 2.1.x. The list is the single source of truth
+  // for what the driver honors — permissionModeFor() in driver.ts is pinned
+  // against it by tests/claudePermissionMode.test.ts, so a mode can never be
+  // offered here and silently coerced to something else at run time.
+  //
+  // The subs describe what actually happens now that canUseTool is a real gate
+  // (lib/permissions.ts): anything a mode doesn't auto-approve parks the turn on
+  // a permission card. "Auto-run" is the one mode that never consults the gate.
+  //
+  // The SDK also defines "dontAsk" (deny anything not pre-approved, without
+  // prompting). It is deliberately NOT offered: it denies through the
+  // system/permission_denied path instead of the card, so a task would keep
+  // losing tool calls with no way for the user to approve any of them.
   permissionModes: [
-    { value: "bypassPermissions", label: "Auto-run", sub: "bypass permissions (default)" },
-    { value: "acceptEdits", label: "Accept edits", sub: "auto-accept file edits" },
+    { value: "bypassPermissions", label: "Auto-run", sub: "never asks — bypasses every permission check" },
+    { value: "auto", label: "Guarded auto", sub: "a model screens each call; risky ones ask you (default)" },
+    { value: "acceptEdits", label: "Accept edits", sub: "auto-accept file edits, ask before commands" },
+    { value: "default", label: "Ask when needed", sub: "ask before anything not already approved" },
     { value: "plan", label: "Plan mode", sub: "propose a plan, don't edit" },
   ],
   supportsAsks: true,
@@ -56,8 +73,10 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // A task session loads the user's own ~/.claude configuration — settings, MCP
   // servers, plugins, skills, CLAUDE.md — because the driver pins
   // settingSources to all three sources (see SETTING_SOURCES in ./driver.ts).
-  // bypassPermissions then auto-approves those servers' tools, so they actually
-  // work. Codex is the deliberate opposite; CLAUDE.md has the comparison.
+  // Their tools are then gated like any other: auto-approved under Auto-run,
+  // classifier-screened under the "auto" default, a permission card otherwise —
+  // reachable in every mode, which is what makes this differ from Codex, where
+  // an inherited tool call can never succeed. CLAUDE.md has the comparison.
   inheritsUserMcpServers: true,
   reportsCostUsd: true,
   costIsEstimated: false,
