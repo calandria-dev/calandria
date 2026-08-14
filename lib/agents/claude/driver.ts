@@ -8,7 +8,7 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, PermissionMode, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
   Project,
@@ -222,11 +222,30 @@ function reasoningOptions(level: string | null): { maxThinkingTokens?: number; e
   return r.effort ? { maxThinkingTokens: r.maxThinkingTokens, effort: r.effort } : { maxThinkingTokens: r.maxThinkingTokens };
 }
 
-// The task's run permission. null (and any unknown value) keeps the app default of
-// bypassPermissions — sessions auto-approve tools and run unattended. "plan" makes
-// Claude propose a plan without editing; "acceptEdits" auto-accepts file edits only.
-function permissionModeFor(m: string | null): "bypassPermissions" | "acceptEdits" | "plan" {
-  return m === "acceptEdits" || m === "plan" ? m : "bypassPermissions";
+// Every permission mode this driver honors, as the SDK's own union so a value
+// the CLI would reject can't reach `--permission-mode`. Spelled out here rather
+// than derived from CLAUDE_CAPABILITIES because that module is deliberately
+// SDK-free and types its values as plain strings — the same trade the MCP tool
+// enums above make, and pinned the same way: tests/claudePermissionMode.test.ts
+// asserts this list and the picker's list are exactly each other.
+const PERMISSION_MODES: readonly PermissionMode[] = ["bypassPermissions", "auto", "acceptEdits", "default", "plan"];
+
+// What a task runs as when nothing else says. Reached by the picker's "Default"
+// head (task.permission_mode null) with no app-level default set, and by any
+// unrecognized value — a mode from another agent's list, or a stale row.
+//
+// "auto" rather than bypassPermissions: now that canUseTool is a real gate, the
+// classifier silently approves what it judges safe and escalates only the rest
+// to a card, so a task is screened without a click per Read. The cost is on
+// UNATTENDED work — an escalated call with nobody watching auto-denies after
+// PERMISSION_UNATTENDED_MS and parks the queue (lib/permissions.ts) instead of
+// running on. Fleets that must never stop to ask should set the app-level
+// default back to Auto-run in Settings.
+const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
+
+// The task's run permission, resolved to a mode the SDK accepts.
+function permissionModeFor(m: string | null): PermissionMode {
+  return PERMISSION_MODES.includes(m as PermissionMode) ? (m as PermissionMode) : DEFAULT_PERMISSION_MODE;
 }
 
 // One AbortSignal that trips when ANY of its inputs does, plus the teardown to
@@ -308,12 +327,16 @@ async function* runTurn(
   // simply doesn't exist and Claude can never ask (verified against 2.1.198).
   //
   // Under "Auto-run" (bypassPermissions) the SDK never consults it, so it stays
-  // a blanket allow. Under "Accept edits" / "Plan mode" every call the SDK
-  // doesn't auto-approve arrives here — and this is what makes those modes mean
-  // something rather than being Auto-run with a different label. Known-safe
-  // tools and calls already covered by a remembered project rule pass silently;
-  // anything else parks the turn on a card the user answers, through the very
-  // same registry + /answer route an AskUserQuestion uses (lib/permissions.ts).
+  // a blanket allow. In every OTHER mode each call the CLI doesn't auto-approve
+  // arrives here — and this is what makes those modes mean something rather than
+  // being Auto-run with a different label. What reaches the gate differs per
+  // mode, which is the whole point of offering them: "Guarded auto" escalates
+  // only what its classifier won't vouch for, "Accept edits" lets writes through
+  // and stops at commands, "Ask when needed" stops at anything not pre-approved,
+  // "Plan mode" stops at leaving the plan. Known-safe tools and calls already
+  // covered by a remembered project rule pass silently; anything else parks the
+  // turn on a card the user answers, through the very same registry + /answer
+  // route an AskUserQuestion uses (lib/permissions.ts).
   const canUseTool: CanUseTool = async (toolName, input, opts) => {
     const allow = (): PermissionResult => ({ behavior: "allow" as const, updatedInput: input });
     if (permissionMode === "bypassPermissions") return allow();
@@ -491,6 +514,25 @@ async function* runTurn(
           // "default" maps to Opus). Surface it so the UI can badge the live model.
           const resolved = (message as { model?: string }).model;
           if (resolved) queue.push({ type: "model", model: resolved });
+        } else if (message.type === "system" && message.subtype === "permission_denied") {
+          // A tool call the CLI refused WITHOUT ever consulting canUseTool, so
+          // there was no card and the user was never given the choice. Under
+          // "Guarded auto" that's the classifier vetoing a call it judged
+          // unsafe; it can also be a deny rule in the loaded settings. Reachable
+          // in normal use now that "auto" is the default mode, and the only
+          // other trace is an is_error tool_result the transcript renders as a
+          // plain tool failure — so say who denied it and why.
+          const why = message.decision_reason?.trim() || message.message?.trim();
+          queue.push({
+            type: "notice",
+            content: clip(
+              `Claude Code blocked ${message.tool_name} without asking` +
+                `${message.decision_reason_type ? ` (${message.decision_reason_type})` : ""}` +
+                `${why ? `: ${why.replace(/\.?$/, ".")}` : "."} ` +
+                `You weren't given the choice — change this task's permission mode if it should have been allowed.`,
+              2_000
+            ),
+          });
         } else if (message.type === "assistant") {
           for (const block of message.message.content) {
             if (block.type === "text" && block.text.trim()) {

@@ -426,7 +426,9 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to the default. <strong>Plan mode</strong> proposes a plan without editing files.
+                    How tasks run when their own picker is set to the default. Every mode except <strong>Auto-run</strong>
+                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
+                    away, where an unanswered card declines itself. Pick <strong>Auto-run</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
                     {permissionOptions(caps).map((p) => (

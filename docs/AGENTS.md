@@ -31,13 +31,27 @@ Claude Code is the reference driver and the first target for new agent-facing fe
 It supports parallel tasks, resume and `/clear` lineage, interactive questions, project
 context, diff workflows, and usage reporting.
 
-Task sessions run unattended inside their isolated worktrees by default (Auto-run).
-**Accept edits** and **Plan mode** are real gates: file edits auto-apply under Accept
-edits, and everything else — commands, network fetches, subagents, leaving plan mode —
-parks the turn on a permission card in the transcript. Read-only tools never prompt.
-"Always allow" remembers a command for that project only, and every remembered approval is
-listed and revocable in Settings → Run defaults. A prompt nobody answers declines itself,
-so an auto-started task can't sit wedged waiting for someone who isn't there.
+Task sessions run inside isolated worktrees under one of five permission modes, ordered
+here from most autonomous to least:
+
+| Mode | What it does |
+|-|-|
+| **Auto-run** | Never asks — bypasses every permission check. The only mode that never consults the gate. |
+| **Guarded auto** | *(the default)* A model classifier screens each call, silently approving what it judges safe and escalating the rest to a permission card. |
+| **Accept edits** | File edits auto-apply; commands and everything else prompt. |
+| **Ask when needed** | Claude Code's standard prompting — anything not already approved asks. |
+| **Plan mode** | Propose a plan without editing; leaving the plan asks. |
+
+Every mode except Auto-run is a real gate: whatever it doesn't auto-approve parks the turn
+on a permission card in the transcript. Read-only tools never prompt. "Always allow"
+remembers a command for that project only, and every remembered approval is listed and
+revocable in Settings → Run defaults. A prompt nobody answers declines itself, so an
+auto-started task can't sit wedged waiting for someone who isn't there — which is the
+trade-off of the default: unattended work that trips the classifier stops and says so
+rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
+
+The SDK also has a `dontAsk` mode; Operator doesn't offer it, because it denies without
+raising a card, so a task would keep losing tool calls with no way to approve any of them.
 
 Operator is a control layer, not an additional security sandbox; review
 [the security model](../SECURITY.md) before exposing an instance.
