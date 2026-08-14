@@ -345,6 +345,8 @@ export function init(db: Database.Database) {
         AND json_extract(content, '$.permission.outcome') IS NULL`
   ).run();
 
+  reapInFlightScheduleRuns(db);
+
   seedIfEmpty(db);
   ensureOnboardingFlag(db);
 
@@ -354,6 +356,41 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
+}
+
+/**
+ * Settle any schedule run left mid-flight by the previous process.
+ *
+ * The same class of reason as the `tasks.running` reset above, and it lives
+ * beside it for the same reason: the turn that owned the row died with that
+ * process, and nothing else will ever come back for it. Here the consequence is
+ * worse than a stuck spinner, because a `claimed`/`running` row is what
+ * isScheduleBusy() reads for overlap detection: a row orphaned in the launch
+ * window (a crash between claimRun and startRun — the whole preflight, CLI
+ * probe included) makes the schedule look permanently busy, so every later
+ * occurrence records `skipped_overlap`, and the card's Stop control is gated on
+ * the blocking run having a task_id, which this one never got. The schedule
+ * goes quiet until retention prunes the row ~50 occurrences later.
+ *
+ * Deliberately here rather than in startScheduler(): this runs once per process
+ * before anything can read the ledger, whereas startScheduler() is skipped
+ * entirely when ORCH_SCHEDULER is off — the one configuration where nothing
+ * else would ever clear the wedge, while the API still serves it.
+ *
+ * Exported so tests/scheduleStore.test.ts can drive it directly; init below is
+ * the only production caller.
+ */
+export function reapInFlightScheduleRuns(db: Database.Database): number {
+  const info = db
+    .prepare(
+      `UPDATE schedule_runs
+          SET status = 'interrupted',
+              detail = CASE WHEN detail = '' THEN 'the app restarted while this run was in flight' ELSE detail END,
+              finished_at = ?
+        WHERE status IN ('claimed', 'running') AND finished_at = 0`
+    )
+    .run(Date.now());
+  return info.changes;
 }
 
 // The first-run wizard shows when `onboarding_complete` is unset. A brand-new DB

@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { getDb } from "@/lib/db";
-import { createProject } from "@/lib/store";
+import { getDb, reapInFlightScheduleRuns } from "@/lib/db";
+import { createProject, createTask } from "@/lib/store";
 import {
   createSchedule, getSchedule, listSchedules, listEnabledSchedules, updateSchedule,
-  deleteSchedule, claimRun, settleRun, recordMissedRun, listRuns, lastRun, specOf,
+  deleteSchedule, claimRun, settleRun, startRun, activeRun, recordMissedRun, listRuns, lastRun, specOf,
 } from "@/lib/schedule/store";
 
 const at = (iso: string) => Date.parse(iso);
@@ -73,6 +73,16 @@ describe("schedule store", () => {
     expect(listRuns(s.id, 10)).toHaveLength(1);
   });
 
+  it("reports a claim failure that ISN'T the durable claim, instead of eating it", () => {
+    // A bare `catch { return null }` read EVERY insert failure as "somebody
+    // else owns this slot": SQLITE_BUSY, a full disk, a foreign key pointing at
+    // a schedule that was just deleted. A lost race is silent by design — no
+    // row, no log, nothing in the ledger — so this was the one place in the
+    // feature where a skip left no trace at all. Only the unique index gets to
+    // mean that; anything else comes out.
+    expect(() => claimRun("no-such-schedule", at("2026-08-12T15:30:00Z"), "scheduled")).toThrow(/FOREIGN KEY/i);
+  });
+
   it("settles a run with a real outcome", () => {
     const s = schedule(pid);
     const run = claimRun(s.id, at("2026-08-12T15:30:00Z"), "scheduled")!;
@@ -105,5 +115,36 @@ describe("schedule store", () => {
     const base = at("2026-08-12T15:30:00Z");
     for (let i = 0; i < 55; i++) claimRun(s.id, base + i * 86_400_000, "scheduled");
     expect(listRuns(s.id, 200).length).toBeLessThanOrEqual(50);
+  });
+
+  it("settles a run left mid-flight by a crash, so overlap detection recovers", () => {
+    // isScheduleBusy() treats a `claimed` row with no task as "mid-launch", so
+    // a process that died between claimRun and startRun leaves the schedule
+    // permanently busy: every later occurrence records `skipped_overlap`, and
+    // the card's Stop control is gated on the blocking run having a task_id,
+    // which this one never got. Nothing recovered it until retention pruned the
+    // row ~50 occurrences later.
+    const s = schedule(pid);
+    const stuckClaim = claimRun(s.id, at("2026-08-12T15:30:00Z"), "scheduled")!;
+    const stuckRunning = claimRun(s.id, at("2026-08-13T15:30:00Z"), "scheduled")!;
+    startRun(stuckRunning.id, createTask({ project_id: pid, title: "in flight" }).id);
+    const finished = claimRun(s.id, at("2026-08-11T15:30:00Z"), "scheduled")!;
+    settleRun(finished.id, "succeeded");
+
+    expect(activeRun(s.id)).not.toBeNull();
+    // >= 2: earlier cases in this file leave claimed rows of their own behind,
+    // and the reaper is deliberately instance-wide.
+    expect(reapInFlightScheduleRuns(getDb())).toBeGreaterThanOrEqual(2);
+
+    for (const id of [stuckClaim.id, stuckRunning.id]) {
+      const row = listRuns(s.id, 10).find((r) => r.id === id)!;
+      expect(row.status).toBe("interrupted");
+      expect(row.detail).toMatch(/restarted/i);
+      expect(row.finished_at).toBeGreaterThan(0);
+    }
+    // The whole point: the schedule is free to fire again.
+    expect(activeRun(s.id)).toBeNull();
+    // An already-settled row is left exactly as it was.
+    expect(listRuns(s.id, 10).find((r) => r.id === finished.id)!.status).toBe("succeeded");
   });
 });

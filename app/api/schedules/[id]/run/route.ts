@@ -10,7 +10,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   if (!getSchedule(id)) return NextResponse.json({ error: "no such schedule" }, { status: 404 });
   const { runScheduleNow } = await import("@/lib/scheduler");
-  const run = await runScheduleNow(id);
-  if (!run) return NextResponse.json({ error: "a run is already starting for this schedule" }, { status: 409 });
-  return NextResponse.json(run, { status: 201 });
+  try {
+    const run = await runScheduleNow(id);
+    // null means the durable claim was lost — a real tick, or a second press,
+    // already owns this instant. Anything else now THROWS rather than reporting
+    // the same "already claimed" (see claimRun), so it lands below with the
+    // actual reason instead of a 409 that sends the user looking for a run that
+    // does not exist.
+    if (!run) return NextResponse.json({ error: "a run is already starting for this schedule" }, { status: 409 });
+    return NextResponse.json(run, { status: 201 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
 }

@@ -142,11 +142,33 @@ export function claimRun(scheduleId: string, scheduledFor: number, trigger: Sche
          VALUES (?, ?, ?, ?, 'claimed', ?, ?)`
       )
       .run(id, scheduleId, scheduledFor, now, trigger, dstAdjusted);
-  } catch {
-    return null; // UNIQUE violation: somebody else owns this slot
+  } catch (err) {
+    // ONLY the unique index means "somebody else owns this slot". A bare
+    // `catch { return null }` read every other failure — SQLITE_BUSY, a full
+    // disk, a foreign key pointing at a schedule that was just deleted — as a
+    // lost race too, and a lost race is silent by design: no row, no log, no
+    // trace. That is the one place in this feature where a skip leaves nothing
+    // behind at all, which is precisely what the whole design forbids. So
+    // narrow it, and let anything else out: every caller runs inside a guard
+    // that records and reports (the sweep's per-schedule catch, the route's
+    // 500) rather than swallowing.
+    if (!isUniqueViolation(err)) {
+      console.error(`[schedule] could not claim ${scheduleId} @ ${scheduledFor}:`, err);
+      throw err;
+    }
+    return null;
   }
   pruneRuns(scheduleId);
   return getRun(id);
+}
+
+/** The UNIQUE(schedule_id, scheduled_for) index rejecting a duplicate claim. */
+function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  if (typeof code === "string" && (code === "SQLITE_CONSTRAINT_UNIQUE" || code === "SQLITE_CONSTRAINT_PRIMARYKEY")) return true;
+  // better-sqlite3 always sets `code`, but the message check keeps an older
+  // build (or a driver swap) from turning a real duplicate into a thrown error.
+  return /UNIQUE constraint failed/i.test(err instanceof Error ? err.message : String(err));
 }
 
 export function getRun(id: string): ScheduleRun | null {
