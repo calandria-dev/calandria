@@ -351,6 +351,13 @@ export function createTask(input: {
   suggested?: boolean;
   agent?: string;
   send_context?: boolean;
+  /**
+   * The task's run permission, settable at creation so a task that will run
+   * UNATTENDED (auto-start, and later a schedule) can be pinned to a mode that
+   * won't stop to ask. null/undefined keeps the inherit-the-default behavior
+   * every other creation path relies on.
+   */
+  permission_mode?: string | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -367,10 +374,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0, agent, sendContext ? 1 : 0, position, now, now);
+    .run(
+      id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
+      agent, sendContext ? 1 : 0, input.permission_mode || null, position, now, now
+    );
   return getTask(id)!;
 }
 

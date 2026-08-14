@@ -5,7 +5,7 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, type BulkMoveResult, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -45,7 +45,7 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean }) => void; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null }) => void; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
@@ -54,6 +54,12 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
+  // null = the picker's "Default" head: inherit the app-level default, then the
+  // driver's. Set here (not just in the session rail) because the auto-start
+  // opt-in below decides this task will run with NOBODY WATCHING, and an
+  // unattended permission prompt declines itself — so the one dialog that
+  // schedules unattended work has to be able to say "don't stop to ask".
+  const [permission, setPermission] = useState<string | null>(null);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
@@ -68,7 +74,13 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
   const canStart = !blocked && agentReady;
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: autoStart && deps.length > 0 });
+  const willAutoStart = autoStart && deps.length > 0;
+  const permissionOpts = permissionOptions(selAgent?.capabilities);
+  // Auto-run is the only mode that never parks on a card. "Default" (null) can
+  // resolve to one that does, so it counts as unsafe-for-unattended too — we
+  // deliberately don't guess what it resolves to and claim it's fine.
+  const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, permission_mode: permission });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -100,7 +112,31 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
+      {permissionOpts.length > 1 && (
+        <div className="field">
+          <div className="lab">{Icon.lock()} Permission mode</div>
+          <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+            {permissionOpts.map((p) => (
+              <button key={p.label} className={permission === p.value ? "on" : ""} title={p.sub}
+                onClick={() => setPermission(p.value)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="hlp">
+            {permissionOpts.find((p) => p.value === permission)?.sub ?? "inherit the agent's default"}
+            {" — changeable later from the session rail."}
+          </div>
+        </div>
+      )}
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
+      {unattendedRisk && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This task auto-starts when its blockers clear, which may be while nobody is watching. Any mode but{" "}
+          <strong>Auto-run</strong> parks on a permission card, and an unanswered card declines itself and stops the
+          turn. Pick Auto-run if it needs to run all the way through unattended.
+        </div>
+      )}
     </Modal>
   );
 }

@@ -114,6 +114,30 @@ describe("resolving a task's permission mode", () => {
     expect(await modeOf(null, "plan")).toBe("plan");
   });
 
+  it("runs in the mode the task was CREATED with, without a follow-up edit", async () => {
+    // The New-task dialog sets this up front rather than PATCHing after, because
+    // "Start session immediately" launches the first turn — a mode applied
+    // afterwards would miss the very turn it was picked for. So createTask has
+    // to persist it, not just updateTask.
+    const project = createProject({ name: `CreateMode ${Math.random().toString(36).slice(2)}`, repo_path: "" });
+    const created = createTask({ project_id: project.id, title: "Unattended", description: "", permission_mode: "bypassPermissions" });
+    expect(created.permission_mode).toBe("bypassPermissions");
+
+    scriptSdk();
+    const { options } = await runTurn(getTask(created.id)!, project);
+    expect(options.permissionMode).toBe("bypassPermissions");
+  });
+
+  it("still defers to the default when created without a mode", async () => {
+    const project = createProject({ name: `NoMode ${Math.random().toString(36).slice(2)}`, repo_path: "" });
+    const created = createTask({ project_id: project.id, title: "Plain", description: "" });
+    expect(created.permission_mode).toBeNull();
+
+    scriptSdk();
+    const { options } = await runTurn(getTask(created.id)!, project);
+    expect(options.permissionMode).toBe("auto");
+  });
+
   it("lets the task's own choice beat the app default", async () => {
     const { project, task } = fixture({ permission_mode: "acceptEdits" });
     setSetting("default_permission_mode:claude", "plan");
