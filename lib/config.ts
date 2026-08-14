@@ -186,3 +186,29 @@ export const GIT_FETCH_COOLDOWN_MS = process.env.ORCH_GIT_FETCH_COOLDOWN_MS
  * any single-hostname deployment.
  */
 export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+
+/**
+ * How often the schedule ticker wakes to adjudicate due firings
+ * (lib/scheduler.ts). Firings are minute-granular, so this bounds how late one
+ * can be. Short enough to be punctual, long enough to be free.
+ */
+export const SCHEDULE_TICK_MS = ms(process.env.ORCH_SCHEDULE_TICK_MS, 30_000);
+
+/**
+ * How late a missed firing may still run. The machine sleeps, the container
+ * restarts, the app is down at 08:30 — on the next tick a firing this recent is
+ * run ONCE (marked `catch_up`), and anything older is recorded as `missed`
+ * rather than skipped silently. For a morning run, arriving at noon and finding
+ * it ran is useful; finding it start at 6pm is not. 0 disables catch-up
+ * entirely; a schedule can override this with its own catch_up_ms.
+ */
+export const SCHEDULE_CATCHUP_MS = ms(process.env.ORCH_SCHEDULE_CATCHUP_MS, 4 * 60 * 60 * 1000);
+
+/**
+ * Master switch for the schedule ticker. On by default. Set to off/0/false for
+ * an instance that must never start work on its own — a shared box, a debugging
+ * session, or a second container pointed at a copy of the database.
+ */
+export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
+  String(process.env.ORCH_SCHEDULER || "").toLowerCase(),
+);
