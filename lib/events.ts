@@ -23,10 +23,13 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // selection is one event, so eleven misfiled tasks cost every other tab one
 // re-sync instead of eleven, and there's one shape to handle either way.
 // task_edited is the wider cousin of task_updated: the row's user-visible
-// fields (title, description, priority) changed, not just the status/awaiting
-// pair the coarse wire payload carries. Listeners can't patch what isn't on the
-// wire, so it tells them to refetch the row — see the `update_task` agent tool
-// (lib/agentTools.ts updateOwnTask), the one writer that isn't the user.
+// fields (title, description, priority, dependency edges, …) changed, not just
+// the status/awaiting pair the coarse wire payload carries. Listeners can't
+// patch what isn't on the wire, so it tells them to refetch the row instead.
+// Both writers publish it — the user editing a task (PATCH /api/tasks/[id]) and
+// the `update_task` agent tool (lib/agentTools.ts updateOwnTask) — and it
+// SUPERSEDES task_updated when one write is both (a refetch settles the status
+// too, so the pair would be a duplicate).
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
