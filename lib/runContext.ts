@@ -18,10 +18,28 @@ export type RunOrigin = "user" | "dependency" | "schedule";
 
 export interface RunContext {
   origin: RunOrigin;
-  /** "deny" = settle any permission/ask request at once instead of parking. */
+  /**
+   * "deny" = settle any permission OR ask request at once instead of parking.
+   *
+   * Both halves are honored: lib/permissions.ts's waitForPermission() for the
+   * canUseTool gate, and the AskUserQuestion paths — the Claude driver's
+   * PreToolUse hook and the MCP bridge's ask_user (lib/agentTools.ts). An ask
+   * is the more dangerous of the two under a schedule, because it fires in
+   * EVERY permission mode (bypassPermissions short-circuits the gate but not
+   * the hook), and parking one holds the turn slot open indefinitely — which
+   * turns every future occurrence of that schedule into `skipped_overlap`.
+   */
   interactionPolicy: "interactive" | "deny";
   /** The schedule_runs row this turn belongs to, so the runner can settle it. */
   scheduleRunId?: string;
+  /**
+   * How many requests this turn auto-denied for want of a human. The permission
+   * gate reports its own through a `permission_decided` event, but the ask_user
+   * bridge has no event stream of its own, so it records here and the runner
+   * folds this in when it settles the run. A denied interaction means the turn
+   * stopped short of the job, and the run must not read as a success.
+   */
+  deniedInteractions?: number;
 }
 
 /** What a scheduled firing runs under. */
@@ -54,3 +72,29 @@ export const getRunContext = (taskId: string): RunContext | undefined => context
 /** True when this turn must never park on a human. */
 export const interactionDenied = (taskId: string): boolean =>
   contexts().get(taskId)?.interactionPolicy === "deny";
+
+/**
+ * Record that something was auto-denied because nobody is watching. A no-op for
+ * an ordinary turn (no context registered), so callers need no second check.
+ * The runner reads the count when it settles the schedule run.
+ */
+export function recordUnattendedDenial(taskId: string): void {
+  const ctx = contexts().get(taskId);
+  if (ctx) ctx.deniedInteractions = (ctx.deniedInteractions ?? 0) + 1;
+}
+
+/**
+ * What the model is told when its question can't be asked. Written FOR the
+ * model: it has to stop and summarize rather than guess an answer or retry the
+ * same question in a loop for the rest of the turn.
+ */
+export const UNATTENDED_ASK_DENIAL =
+  "This is a scheduled run: nobody is watching it, so the question cannot be answered and was " +
+  "declined automatically. Do not ask again. Continue with whatever you can do without an answer, " +
+  "using the most conservative reasonable assumption, and if that leaves the task blocked, stop and " +
+  "state exactly what you needed to know — the user will pick it up when they return.";
+
+/** The same fact, written for the human reading the transcript afterwards. */
+export const UNATTENDED_ASK_NOTE =
+  "Nobody is watching this scheduled run, so the question was declined automatically and the agent " +
+  "was told to carry on without an answer.";

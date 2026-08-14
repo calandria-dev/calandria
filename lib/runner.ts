@@ -23,6 +23,14 @@ import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContex
 import { settleRun } from "@/lib/schedule/store";
 import type { Task, Project, PermissionOutcome, ToolData, TurnUsage } from "@/lib/types";
 
+// What a scheduled run says for itself when it stopped because there was
+// nobody to approve something. Named, because the docs promise the user that a
+// non-Auto-run schedule "can stop early with the job half done" — this is that
+// sentence arriving on the run it happened to, instead of a green "ran".
+export const SCHEDULE_UNATTENDED_DETAIL =
+  "the agent needed approval and nobody was watching, so it was declined automatically — " +
+  "the run may have stopped with the job half done. Use Auto-run, or start this one by hand.";
+
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
  * must have already persisted the user message and set running=1. `syncNote`
@@ -509,7 +517,18 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // unanswerable item there every single morning, which is how a user learns
     // to ignore the pill. Success is quiet; a scheduled turn that FAILED still
     // raises its hand exactly like any other.
-    const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped;
+    // An interaction auto-denied by a path that doesn't emit a permission event
+    // — the Codex ask_user bridge (lib/agentTools.ts), which records it on the
+    // context instead. Folded in here, before anything below reads the flag, so
+    // "the turn was cut short because nobody was there" has exactly one meaning
+    // regardless of which agent hit it.
+    if (runContext?.deniedInteractions) unattendedDeny = true;
+    // Success is quiet — but only actual success. A turn whose tool calls (or
+    // questions) were auto-denied because nobody is watching did NOT do the job
+    // it was scheduled for; it stopped partway with the work half done. Reported
+    // as a quiet green "ran", that is precisely the silent skip this feature
+    // exists to make impossible, so it raises its hand like any other failure.
+    const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
     if (!generationAdvanced && !superseded) {
       updateTask(id, { running: 0, session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
     }
@@ -518,8 +537,16 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // knows the outcome: whether a session opened, whether it errored, whether
     // it was stopped. Polling task.running from outside cannot reconstruct it.
     if (runContext?.scheduleRunId) {
-      const status = stopped ? "stopped" : turnError ? "failed" : opened ? "succeeded" : "interrupted";
-      const detail = turnError && !stopped ? String(turnError).slice(0, 500) : !opened ? "the agent session never opened" : "";
+      const status = stopped
+        ? "stopped"
+        : turnError || unattendedDeny
+          ? "failed"
+          : opened ? "succeeded" : "interrupted";
+      const detail = turnError && !stopped
+        ? String(turnError).slice(0, 500)
+        : unattendedDeny && !stopped
+          ? SCHEDULE_UNATTENDED_DETAIL
+          : !opened ? "the agent session never opened" : "";
       try {
         settleRun(runContext.scheduleRunId, status, detail);
       } catch (err) {

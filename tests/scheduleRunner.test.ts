@@ -31,7 +31,7 @@ vi.mock("@/lib/analytics", () => ({
 import { createProject, createTask, getProject, getTask } from "@/lib/store";
 import { claimRun, createSchedule, getRun, startRun } from "@/lib/schedule/store";
 import { startTurn } from "@/lib/runner";
-import { SCHEDULED_RUN_CONTEXT, getRunContext } from "@/lib/runContext";
+import { SCHEDULED_RUN_CONTEXT, getRunContext, recordUnattendedDenial } from "@/lib/runContext";
 import { hasTurn } from "@/lib/abort";
 
 const settled = async () => {
@@ -80,6 +80,47 @@ describe("scheduled turns in the runner", () => {
     const run = getRun(runId)!;
     expect(run.status).toBe("failed");
     expect(run.detail).toContain("boom");
+    expect(getTask(taskId)!.awaiting_input).toBe(1);
+  });
+
+  it("settles a run whose tool calls were auto-denied as FAILED, not as a green 'ran'", async () => {
+    // The silent-success case, and the one this whole feature exists to make
+    // impossible. Under any mode but Auto-run a scheduled turn's permission
+    // prompts are declined automatically (nobody is there to answer), so the
+    // agent stops partway with the job half done — and the run recorded
+    // `succeeded`, because the status was computed from stopped/error/opened
+    // only. The runner already tracked this to park the pending queue; it just
+    // never told the schedule card.
+    events.push({
+      type: "permission",
+      request: { id: "perm:tu_1", tool: "Bash", title: "npm run deploy", detail: "npm run deploy", expiresAt: 0 },
+    });
+    events.push({
+      type: "permission_decided",
+      id: "perm:tu_1",
+      outcome: { decision: "deny", auto: true, reason: "unattended", note: "Nobody was watching." },
+    });
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+
+    const run = getRun(runId)!;
+    expect(run.status).toBe("failed");
+    expect(run.detail).toMatch(/needed approval and nobody was watching/i);
+    // And it raises its hand, like every other scheduled failure.
+    expect(getTask(taskId)!.awaiting_input).toBe(1);
+  });
+
+  it("a run denied through the ask_user bridge settles the same way", async () => {
+    // The Codex path has no permission event stream of its own — the bridge
+    // records the denial on the RunContext instead (lib/agentTools.ts). Both
+    // roads have to reach the same verdict, or "the turn stopped short because
+    // nobody was there" would mean different things per agent.
+    const ctx = scheduled();
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, ctx);
+    recordUnattendedDenial(taskId);
+    await settled();
+
+    expect(getRun(runId)!.status).toBe("failed");
     expect(getTask(taskId)!.awaiting_input).toBe(1);
   });
 
