@@ -4,6 +4,7 @@ import {
   localHttpRequestAllowed,
   localWebSocketRequestAllowed,
   safeRedirectPath,
+  sameOriginWebSocketRequestAllowed,
 } from "../lib/auth/local-origin.mjs";
 
 const emptyEnv = {};
@@ -101,6 +102,74 @@ describe("local origin boundary", () => {
     };
     expect(localHttpRequestAllowed(
       { host: "operator.example.com", origin: "https://operator.example.com", secFetchSite: "same-origin" },
+      env,
+    )).toBe(false);
+  });
+});
+
+/* The WebSocket boundary for Cloudflare Access mode, which is a DIFFERENT rule
+ * from the local one and gets its own tests because both halves of that
+ * difference were bugs at some point:
+ *
+ *  - too strict: reusing the local rule here meant the tunnel hostname was in
+ *    no allowlist, so the terminal was dead on every Access deployment that
+ *    left PUBLIC_BASE_URL empty — which the docs describe as the normal case.
+ *  - too loose: dropping the origin check entirely (the JWT "already proves
+ *    more") would open cross-site WebSocket hijacking, because the Access
+ *    cookie is SameSite=None and the edge will happily stamp a valid assertion
+ *    on a handshake a hostile page initiated.
+ */
+describe("authenticated (Access) mode WebSocket origin boundary", () => {
+  it("accepts the tunnel hostname with no PUBLIC_BASE_URL configured", () => {
+    // The regression: this is the documented default Access setup.
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: "https://orch.example.com" },
+      emptyEnv,
+    )).toBe(true);
+    // And the local rule, for contrast — it is why the terminal used to fail.
+    expect(localWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: "https://orch.example.com" },
+      emptyEnv,
+    )).toBe(false);
+  });
+
+  it("refuses a cross-site handshake even though the JWT would be valid", () => {
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: "https://evil.example" },
+      emptyEnv,
+    )).toBe(false);
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: null },
+      emptyEnv,
+    )).toBe(false);
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: "null" },
+      emptyEnv,
+    )).toBe(false);
+  });
+
+  it("distinguishes scheme and port, both of which are part of an origin", () => {
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com:8443", origin: "https://orch.example.com" },
+      emptyEnv,
+    )).toBe(false);
+    // Scheme is not carried by Host, so http:// vs https:// on the same
+    // host:port is same-origin as far as this check can tell; the tunnel
+    // terminates TLS anyway. Pinned so the asymmetry is deliberate.
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "orch.example.com", origin: "http://orch.example.com" },
+      emptyEnv,
+    )).toBe(true);
+  });
+
+  it("falls back to PUBLIC_BASE_URL when the proxy rewrites Host", () => {
+    const env = { PUBLIC_BASE_URL: "https://orch.example.com" };
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "internal-app:3000", origin: "https://orch.example.com" },
+      env,
+    )).toBe(true);
+    expect(sameOriginWebSocketRequestAllowed(
+      { host: "internal-app:3000", origin: "https://evil.example" },
       env,
     )).toBe(false);
   });

@@ -107,8 +107,9 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # the middleware copy compiled into .next). Import graphs:
 # lib/auth/origin.mjs -> lib/cf-access.mjs;
 # lib/service-router.mjs -> lib/service-host.mjs; lib/env-keys.mjs (also
-# imported by pty-server.js) stands alone. lib/auth/local-origin.mjs (imported
-# by server.js AND pty-server.js) arrives with the lib/auth copy below.
+# imported by pty-server.js) stands alone. lib/auth/{origin,local-origin}.mjs
+# are imported by server.js AND pty-server.js — the sidecar runs the same
+# mode-aware gate as the app — and arrive with the lib/auth copy below.
 # lib/resolveHostname.js is CommonJS and require()'d synchronously (the bind
 # address is needed before listen), but it is COPY'd for the same reason.
 COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/resolveHostname.js ./lib/
@@ -155,7 +156,15 @@ ENV ORCH_GIT_SHA=$GIT_SHA \
 # The idle endpoint doubles as the health probe (it exercises Next + SQLite).
 # It presents SERVICE_TOKEN — the one path middleware.ts exempts from the
 # Cloudflare Access check, since no Access JWT exists inside the container.
+#
+# The token is read from the environment OR from the file the entrypoint writes
+# when Access is on and the operator supplied none (see docker/entrypoint.sh —
+# keep the path in step with ORCH_SERVICE_TOKEN_FILE there). A healthcheck runs
+# as a fresh exec with the IMAGE's environment, not the entrypoint's, so the
+# file is the only way a generated token reaches it. Without this, Access mode
+# plus an unset SERVICE_TOKEN meant every probe 403'd and the container was
+# permanently unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/instance/idle',{headers:process.env.SERVICE_TOKEN?{'x-service-token':process.env.SERVICE_TOKEN}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+  CMD node -e "let t=(process.env.SERVICE_TOKEN||'').trim();if(!t){try{t=require('node:fs').readFileSync('/tmp/orch-service-token','utf8').trim()}catch{}}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/instance/idle',{headers:t?{'x-service-token':t}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/orch-entrypoint"]
