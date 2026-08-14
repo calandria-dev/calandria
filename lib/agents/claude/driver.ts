@@ -507,7 +507,7 @@ async function* runTurn(
         : opts.description?.trim() || opts.decisionReason?.trim() || undefined,
       diff: described.diff,
       scope,
-      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, task.id),
     };
     queue.push({ type: "permission", request });
     const settle = (outcome: PermissionOutcome) => queue.push({ type: "permission_decided", id, outcome });
