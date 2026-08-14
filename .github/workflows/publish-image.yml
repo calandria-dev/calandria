@@ -34,11 +34,14 @@
 # layers `attest` then signs. That is a real trust surface, and it is NOT pinned
 # here. Three reasons, in order of weight:
 #
-#   1. Nothing can bump it. Dependabot's docker ecosystem reads Dockerfiles,
-#      Compose files and k8s manifests — not `driver-opts` strings in a
-#      workflow (dependabot-core#5541, #5819, #6892 are the standing requests).
-#      A BuildKit digest here would be exactly the unbotted SHA pin the comment
-#      above calls strictly worse than a tag.
+#   1. No bot this repo runs can bump it. Dependabot's docker ecosystem reads
+#      Dockerfiles, Compose files and k8s manifests — not `driver-opts` strings
+#      in a workflow (dependabot-core#5541, #5819, #6892 are the standing
+#      requests). A BuildKit digest here would be exactly the unbotted SHA pin
+#      the comment above calls strictly worse than a tag. Renovate's regex
+#      customManagers CAN read this string; that was prototyped and declined on
+#      cost, not capability — read the RENOVATE block in
+#      .github/dependabot.yml before re-opening this.
 #   2. This pin rots dangerously, not gently. `cache-to: type=gha` speaks a
 #      GitHub-side API that has already been retired once: the v1 cache service
 #      was shut off 2025-04-15, and the v2 backend needs buildx >= v0.21.0 and
@@ -49,7 +52,10 @@
 #   3. `buildx-stable-1` is Docker's curated stable channel, not `latest` or
 #      `master`, and it is the same trust root as docker/build-push-action —
 #      which this job already runs. Pinning the engine while trusting the
-#      action that drives it buys less than it looks like it does.
+#      action that drives it buys less than it looks like it does. Less, not
+#      nothing: the image and the action are separate late-bound artifacts, so
+#      a registry-side tag retarget would move the engine without touching the
+#      pinned action SHA. That residual gain is weighed in dependabot.yml.
 #
 # What is done instead: the engine surface is REMOVED where it is free (the
 # merge job needs no BuildKit at all — see `driver: docker` there) and made
