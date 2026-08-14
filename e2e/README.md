@@ -17,6 +17,57 @@ npm run test:e2e:only   # skip the rebuild — ONLY safe if app code didn't chan
 npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboard)
 ```
 
+## Running the suites in a container
+
+The project rule is to run tests in a **separate docker container**, and this is
+the committed recipe for it — `docker/test/Dockerfile` plus
+`scripts/docker-test.sh`, wired to four npm scripts:
+
+```bash
+npm run test:docker        # vitest
+npm run typecheck:docker   # next typegen && tsc --noEmit
+npm run test:e2e:docker    # next build && playwright test
+npm run preflight:docker   # unit + e2e, the pre-push gate
+npm run test:docker -- tests/merge.test.ts   # args pass through
+```
+
+Nothing is baked into the image: the checkout is bind-mounted at `/work` and
+`node_modules` is a **named volume** (`orch-test-node-modules`), so the install
+is a one-time cost the next run — and every other worktree — inherits. The
+container's entrypoint reinstalls only when `package-lock.json` changes; wipe
+the volume (`docker volume rm orch-test-node-modules`) to force a clean tree.
+
+Three things this exists to stop you rediscovering:
+
+- **A worktree has no `node_modules`, and you cannot borrow the main
+  checkout's.** That tree was installed on macOS — it carries
+  `@rollup/rollup-darwin-arm64` and no Linux binary — so vitest will not start
+  against it from a Linux container. The volume is the fix.
+- **Don't build on `mcr.microsoft.com/playwright:v*-noble`.** It ships Node 24,
+  which has no `better-sqlite3` prebuild and no compiler, so `npm ci` dies on
+  `gyp ERR! not found: make`; hand it a toolchain and the app still fails to
+  boot with `ERR_DLOPEN_FAILED` / "Module did not self-register", which reads
+  like a product bug and reds every spec including 01-onboarding. The image
+  here puts the browsers on a **`node:22`** base instead, so both native
+  modules stay on their prebuilds.
+- **Pin the browsers to the installed Playwright.** `scripts/docker-test.sh`
+  reads the resolved `@playwright/test` version out of `package-lock.json` and
+  puts it in both the build arg and the image tag, so a version bump rebuilds
+  the image instead of silently re-downloading chromium on every run.
+
+Caveat, harmless but alarming: a task worktree's `.git` is a *file* pointing at
+`<parent repo>/.git/worktrees/<id>`, which is outside the mount, so any git
+command run at `/work` prints `fatal: not a git repository`. Neither suite cares
+— both build their own fixture repos under a temp root with a pinned gitconfig
+— but don't read it as a broken checkout. Run git on the host.
+
+Knobs (all optional): `ORCH_TEST_VOLUME` to use a different node_modules volume,
+`ORCH_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does *not* remap bind
+mounts (otherwise `.next/` and `test-results/` come back root-owned; OrbStack
+and Docker Desktop remap, so the default root user is fine there), and
+`ORCH_TEST_REBUILD=1` after editing anything under `docker/test/` — the wrapper
+skips the build when the tag already exists.
+
 ## How it stays hermetic and deterministic
 
 - **Fresh instance per run** — `e2e/env.ts` creates a temp root (DB, worktrees,
@@ -40,6 +91,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
   | `e2e:suggest=<title>` | create a suggested task + emit the event |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into ANOTHER project (id or name), through the real strict resolver — an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
+  | `e2e:blocked=<command>` | that Bash call refused by the CLI itself — an already-decided card with no buttons, nothing parked on the user |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs

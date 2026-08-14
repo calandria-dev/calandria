@@ -165,6 +165,34 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       if (!open || open.size === 0) {
         setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
       }
+    } else if (ev.type === "permission_denied") {
+      // The CLI refused the call itself — nothing was parked on the user, so
+      // awaiting_input and openAsks stay untouched. Mirrors lib/runner.ts: the
+      // already-settled card goes ONTO the tool message the call created,
+      // falling back to a card of its own when there is none (a subagent's
+      // tool_use blocks never reach this stream).
+      const outcome: PermissionOutcome = { decision: "deny", auto: true, reason: "blocked", blockedBy: ev.reasonType, note: ev.reason };
+      setMsgsByTask((prev) => {
+        const arr = prev[taskId] ?? [];
+        const target = arr.find((m) => m.role === "tool" && (m.id === ev.msgId || m.toolId === ev.id));
+        if (!target) {
+          const title = ev.agentId ? `${ev.tool} (in a subagent)` : ev.tool;
+          const data: ToolData = { title, permission: { request: { id: ev.id, tool: ev.tool, title, detail: "", expiresAt: 0 }, outcome } };
+          const m: Msg = { id: ev.msgId ?? `perm-${ev.id}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.id, ts: ev.ts };
+          return { ...prev, [taskId]: [...arr, m] };
+        }
+        return {
+          ...prev,
+          [taskId]: arr.map((m) => {
+            if (m !== target) return m;
+            try {
+              const d = JSON.parse(m.content) as ToolData;
+              d.permission = { request: { id: ev.id, tool: ev.tool, title: d.title, detail: d.detail ?? "", diff: d.diff, expiresAt: 0 }, outcome };
+              return { ...m, content: JSON.stringify(d) };
+            } catch { return m; }
+          }),
+        };
+      });
     } else if (ev.type === "usage") {
       // Live cumulative spend: add this turn's totals to the task's figure.
       // Context occupancy, by contrast, is the latest turn's INPUT-side

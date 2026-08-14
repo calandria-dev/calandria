@@ -227,6 +227,36 @@ export function denyMessage(title: string, reason: string): string {
   );
 }
 
+// ---------- refusals the CLI makes on its own ----------
+
+// A `system`/`permission_denied` message is the CLI saying it refused a call
+// before canUseTool was ever consulted. Nothing here decides anything — this is
+// only about which of the message's two text fields a HUMAN should be shown.
+//
+// The SDK documents `decision_reason` as "human-readable reason from the
+// deciding component" and `message` as "the rejection message returned to the
+// model". Live CLI 2.1.x leaves `decision_reason` unset on the denials we could
+// actually provoke and fills only `message` — which really is written for the
+// model: the `mode` denial is ~700 characters of "IMPORTANT: You *may* attempt
+// to accomplish this action using other tools…". Recorded verbatim in
+// tests/claudePermissionMode.test.ts.
+//
+// So: prefer decision_reason, else take `message` up to the model-directed
+// tail, and cap whatever survives. Pasting the raw `message` into the UI is
+// what this exists to prevent.
+const BLOCK_REASON_CAP = 400;
+
+export function blockedReason(decisionReason?: string, message?: string): string | undefined {
+  const stated = decisionReason?.trim();
+  if (stated) return capReason(stated);
+  // Everything from "IMPORTANT:" on is instruction aimed at the model.
+  const head = (message ?? "").split(/\bIMPORTANT:/)[0].trim();
+  return head ? capReason(head) : undefined;
+}
+
+const capReason = (text: string): string =>
+  text.length <= BLOCK_REASON_CAP ? text : `${text.slice(0, BLOCK_REASON_CAP).trimEnd()}…`;
+
 export const DENIED_BY_USER = "They declined it.";
 export const DENIED_UNATTENDED =
   "Nobody was watching this session to approve it, so it was declined automatically. " +

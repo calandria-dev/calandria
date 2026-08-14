@@ -41,6 +41,7 @@ import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDA
 import { waitForAnswer } from "../../asks";
 import {
   allowedByRules,
+  blockedReason,
   denyMessage,
   describePermission,
   isAlwaysAllowed,
@@ -98,6 +99,87 @@ import { claudeUsage } from "./usage";
 // like any other tool — auto-approved under bypassPermissions, screened by the
 // classifier under the "auto" default, and a permission card otherwise.
 const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
+
+// The one-shots below are a different animal, and they get a different policy.
+// A handoff note or a four-bullet recap is an internal transformation, not a
+// session the user is sitting in: it has no orchestrator bridge, no transcript,
+// no way to answer a prompt. Inheriting the full session config made every one
+// of them spawn the user's entire MCP fleet — measured on this machine: 10
+// servers, 146 MCP tools in context, ~8s of a ~5s job — purely to offer tools
+// the job can never use.
+//
+// So the one-shots isolate CAPABILITY and inherit CONFIG — the same split the
+// Codex driver's oneShot() already makes (read-only sandbox, no network, the
+// user's MCP servers unmounted, but ~/.codex/config.toml still read for auth
+// and model). Four levers do it, and NONE of them was set before:
+//
+//   tools           — the REAL restriction. `allowedTools` is NOT one: the SDK
+//                     defines it as "auto-allowed without prompting", and under
+//                     bypassPermissions everything is auto-allowed anyway. All
+//                     three helpers passed `allowedTools` and got the full
+//                     toolset regardless — verified against CLI 2.1.228, where
+//                     `allowedTools: []` happily ran Read and the "read-only"
+//                     draft agent below happily ran Write.
+//   strictMcpConfig — drops MCP from settings, .mcp.json and plugins. `tools`
+//                     alone doesn't: it governs built-ins only, so the fleet
+//                     survived it (146 tools left, 0 of them built-in).
+//   settings        — inline overrides, merged over whatever the sources below
+//                     loaded. `disableAllHooks` is the one that matters: the
+//                     user's hooks live in ~/.claude/settings.json and a
+//                     SessionStart hook injects context into a four-bullet
+//                     recap whether or not any tool exists to hook. Verified
+//                     both ways — with it the injection is gone, and the same
+//                     run still authenticates. (`managedSettings` does NOT work
+//                     here: the SDK filters that tier restrictive-only and the
+//                     key doesn't survive. Also don't reach for it — it
+//                     impersonates the IT policy tier and a real one displaces
+//                     it.) `autoMemoryEnabled: false` keeps the user's private
+//                     per-project memory out of an internal transformation.
+//   settingSources  — kept at ["user"], NOT []. This is where isolate-everything
+//                     advice goes wrong: ~/.claude/settings.json is also where a
+//                     user's `env` block, `apiKeyHelper` and model aliases live,
+//                     so it is load-bearing for AUTH and provider ROUTING, not
+//                     just for MCP and plugins. Measured on a Vertex-configured
+//                     machine with those vars absent from the server's own
+//                     environment (the normal case — the server is started from
+//                     a plain shell, not from inside a Claude session): `[]`
+//                     fails the run outright with "Not logged in", `["user"]`
+//                     succeeds with 0 tools and 0 MCP servers. Isolating here
+//                     would break recap and /clear for every Bedrock / Vertex /
+//                     proxy / apiKeyHelper user while their ordinary turns kept
+//                     working — the worst shape of bug we could ship.
+//
+// 'project' and 'local' are dropped from the text-only helpers: their only
+// remaining contribution is the repo's CLAUDE.md, which for a pure text
+// transformation is thousands of tokens that can only skew the output.
+// draftProjectContext keeps 'project' — see its own note.
+const ONE_SHOT_SETTING_SOURCES: SettingSource[] = ["user"];
+
+// What all three one-shots share, whatever tools they end up with.
+const ONE_SHOT_BASE = {
+  strictMcpConfig: true,
+  // The Skill tool isn't in any one-shot's `tools`, so this is belt-and-braces
+  // against the discovery pass rather than a second gate.
+  skills: [] as string[],
+  // These runs are unresumable by construction — nothing stores their session
+  // id. Persisting would only litter ~/.claude/projects with recap turns the
+  // user's own `claude --resume` list then has to show them.
+  persistSession: false,
+  settings: { disableAllHooks: true, autoMemoryEnabled: false },
+  // Belt-and-braces too: a one-shot has no UI to answer a permission card, so
+  // if a future edit adds a tool it must not start prompting into the void.
+  permissionMode: "bypassPermissions" as PermissionMode,
+  pathToClaudeCodeExecutable: CLAUDE_PATH,
+};
+
+// The two text-only one-shots (handoff note, recap): no tools at all, one turn,
+// and only the user's own settings, for auth.
+const TEXT_ONE_SHOT = {
+  ...ONE_SHOT_BASE,
+  settingSources: ONE_SHOT_SETTING_SOURCES,
+  tools: [] as string[],
+  maxTurns: 1,
+};
 
 function orchestratorServer(
   project: Project,
@@ -332,6 +414,10 @@ async function* runTurn(
   // Fallback-id uniquifier for permission prompts, for the same reason as
   // askSeq: the SDK normally supplies a toolUseID, but the registry keys on it.
   let permSeq = 0;
+  // Same again for a CLI-side refusal. tool_use_id is required by the SDK type,
+  // so this only fires if a build ever ships one without — and an undefined id
+  // would collapse every denial in the turn onto one transcript card.
+  let deniedSeq = 0;
   const queue = makeQueue<StreamEvent>();
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
@@ -571,17 +657,22 @@ async function* runTurn(
           // unsafe; it can also be a deny rule in the loaded settings. Reachable
           // in normal use now that "auto" is the default mode, and the only
           // other trace is an is_error tool_result the transcript renders as a
-          // plain tool failure — so say who denied it and why.
-          const why = message.decision_reason?.trim() || message.message?.trim();
+          // plain tool failure.
+          //
+          // Carries the tool_use id, which is the whole point: the runner
+          // settles this onto the transcript card the call ALREADY created, so
+          // it reads as "this call, refused, here's what it was" instead of a
+          // notice floating beside it — and three denials in a turn are three
+          // decided cards, not three identical loose lines.
           queue.push({
-            type: "notice",
-            content: clip(
-              `Claude Code blocked ${message.tool_name} without asking` +
-                `${message.decision_reason_type ? ` (${message.decision_reason_type})` : ""}` +
-                `${why ? `: ${why.replace(/\.?$/, ".")}` : "."} ` +
-                `You weren't given the choice — change this task's permission mode if it should have been allowed.`,
-              2_000
-            ),
+            type: "permission_denied",
+            id: message.tool_use_id || `denied-${sessionId ?? "x"}-${deniedSeq++}`,
+            tool: message.tool_name,
+            reasonType: message.decision_reason_type,
+            // NOT message.message verbatim — that field is written for the
+            // model, and the `mode` denial is ~700 chars of instruction.
+            reason: blockedReason(message.decision_reason, message.message),
+            ...(message.agent_id ? { agentId: message.agent_id } : {}),
           });
         } else if (message.type === "assistant") {
           for (const block of message.message.content) {
@@ -649,7 +740,7 @@ async function* runTurn(
 
 /**
  * Summarize a transcript into a concise handoff note for the /clear flow.
- * One-shot, no tools — just text in, summary out.
+ * One-shot, genuinely no tools — just text in, summary out (see TEXT_ONE_SHOT).
  */
 async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
   const response = query({
@@ -660,11 +751,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
       `=== TRANSCRIPT ===\n${transcript}`,
     options: {
       cwd: project.repo_path || process.cwd(),
-      allowedTools: [],
-      maxTurns: 1,
-      permissionMode: "bypassPermissions",
-      pathToClaudeCodeExecutable: CLAUDE_PATH,
-      settingSources: SETTING_SOURCES,
+      ...TEXT_ONE_SHOT,
     },
   });
 
@@ -686,10 +773,28 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
 const CTX_OPEN = "<<<CONTEXT>>>";
 const CTX_CLOSE = "<<<END_CONTEXT>>>";
 
+// The draft agent's tools. Unlike the two summarizers this one genuinely needs
+// to look at the repo — but only to LOOK. Bash is deliberately absent: under
+// bypassPermissions with no canUseTool it is unreviewed arbitrary execution in
+// the user's own checkout, for a job whose output is a paragraph of prose, and
+// the recent-activity half it used to be wanted for (git log) is handed in via
+// `digest` already. Read/Grep/Glob cover reading files, searching content and
+// walking the tree. Before this was a `tools` list it was an `allowedTools`
+// list, which restricts nothing — the "read-only" draft agent could Write, and
+// in a probe against CLI 2.1.228 it did.
+const DRAFT_TOOLS = ["Read", "Grep", "Glob"];
+
+// The one one-shot that keeps 'project': its whole job is to describe THIS
+// repo, and 'project' is what loads CLAUDE.md — the single most useful file it
+// can read. 'local' stays off, though: it adds only the gitignored
+// CLAUDE.local.md and .claude/settings.local.json, one developer's private
+// overrides leaking into a document written for everyone.
+const DRAFT_SETTING_SOURCES: SettingSource[] = ["user", "project"];
+
 /**
  * Draft a fresh "what we're building" project-context document by actually
  * reading the codebase. Unlike the one-shot summarizers above, this runs a
- * short read-only agent loop (Read/Grep/Glob/Bash) in the project's repo so
+ * short read-only agent loop (Read/Grep/Glob) in the project's repo so
  * Claude can explore the current state of the code and write context that
  * reflects what the project has become. `digest` seeds it with the existing
  * context and recent git activity. Returns markdown the user reviews before
@@ -722,11 +827,10 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
     options: {
       cwd: project.repo_path || process.cwd(),
-      allowedTools: ["Read", "Grep", "Glob", "Bash"],
+      ...ONE_SHOT_BASE,
+      settingSources: DRAFT_SETTING_SOURCES,
+      tools: DRAFT_TOOLS,
       maxTurns: 40,
-      permissionMode: "bypassPermissions",
-      pathToClaudeCodeExecutable: CLAUDE_PATH,
-      settingSources: SETTING_SOURCES,
     },
   });
 
@@ -751,9 +855,10 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
 
 /**
  * Generate a short "where you left off" recap for a project, shown when the
- * user returns after time away. One-shot, no tools. `digest` is the assembled
- * recent activity (task summaries, statuses, recent commits). Describes what
- * happened only — deliberately no next-step suggestions.
+ * user returns after time away. One-shot, genuinely no tools (see
+ * TEXT_ONE_SHOT). `digest` is the assembled recent activity (task summaries,
+ * statuses, recent commits). Describes what happened only — deliberately no
+ * next-step suggestions.
  */
 async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
   const response = query({
@@ -765,11 +870,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
       `=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
     options: {
       cwd: project.repo_path || process.cwd(),
-      allowedTools: [],
-      maxTurns: 1,
-      permissionMode: "bypassPermissions",
-      pathToClaudeCodeExecutable: CLAUDE_PATH,
-      settingSources: SETTING_SOURCES,
+      ...TEXT_ONE_SHOT,
     },
   });
 

@@ -42,6 +42,11 @@ of the following:
 Each exposed service can then be **private** (your session), **shared** (tokenized link), or
 **public**. The hostname is stable: `<project-slug>--<operator-host>`.
 
+One thing switches routing back off with all three in place: `ORCH_CONTROL_PLANE=1` vetoes it,
+because a box running as a fleet's control plane must not serve user services off its own
+hostname. It is unset on a normal instance — but if your services keep their
+`http://localhost:<port>` URLs and the three requirements above look right, check it.
+
 Operator provides a terminal and unattended coding agents. Put authentication in front of
 any internet-facing instance and read the [self-hosting security guidance](SELF_HOSTING.md).
 

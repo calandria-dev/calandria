@@ -935,7 +935,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .perm-sub{padding:4px 13px 0;font-size:11.5px;line-height:1.45;color:var(--ink-3);}
 .perm-note{padding:4px 13px 11px;font-size:11.5px;line-height:1.45;color:var(--ink-3);}
 .perm.settled .perm-what{padding-bottom:11px;}
-.perm.settled .perm-note + .perm-what,.perm.settled .perm-what:has(+ .perm-note){padding-bottom:0;}
+.perm.settled .perm-note + .perm-what,.perm.settled .perm-what:has(+ .perm-note),.perm.settled .perm-what:has(+ .perm-pre){padding-bottom:0;}
+/* A blocked card keeps its input + hint, so the note in between loses its tail. */
+.perm.settled .perm-note:has(+ .perm-hint){padding-bottom:0;}
+.perm.settled .perm-pre{margin-bottom:2px;}
 .perm-pre{margin:9px 13px 0;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel);font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;color:var(--ink-1);}
 .perm .ask-other{display:block;width:calc(100% - 26px);margin:9px 13px 0;}
 .perm-foot{display:flex;flex-wrap:wrap;gap:8px;padding:11px 13px 0;}
