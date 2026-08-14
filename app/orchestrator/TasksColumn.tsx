@@ -233,7 +233,12 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
       <div className="proj-banner">
         <div className="pb-row">
           {onBack && <button className="mobile-back" onClick={onBack} title="Back to projects" aria-label="Back to projects">{Icon.chevRight({ style: { transform: "rotate(180deg)" } })}</button>}
-          <button className="pb-home" onClick={onShowRecap} title="Project recap / overview">
+          {/* The project home: recap, schedules, project-level overview. An
+              explicit intent, not just "deselect the task" — the landing
+              decision in useRecaps.ts auto-picks a task whenever none is
+              selected, which used to bounce this click straight back and made
+              the button dead on any project that had a task. */}
+          <button className="pb-home" onClick={onShowRecap} aria-label="Project home" title="Project home — recap, schedules and overview">
             <span className="pb-pic" style={{ background: project.color }}>{project.name[0]}</span>
             <span className="pb-name">{project.name}</span>
           </button>
