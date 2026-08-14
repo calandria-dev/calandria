@@ -66,6 +66,18 @@ async function askDuringTurn(
       // exists once the hook has actually parked, so the retry IS the sync.
       if (answer) await vi.waitFor(() => expect(submitAnswer(task.id, "tu_ask", answer)).toBe(true));
       result = await pending;
+      // The CLI hands the hook's decision back as the tool's result, exactly as
+      // it does for an answered ask.
+      yield {
+        type: "user",
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu_ask",
+            content: result?.hookSpecificOutput?.permissionDecisionReason ?? "",
+          }],
+        },
+      };
     },
   }));
   for await (const ev of claudeDriver.runTurn(task, project, "go")) events.push(ev);
@@ -118,6 +130,10 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
       // queue and settles the schedule run as failed rather than green.
       expect(decided.outcome).toMatchObject({ decision: "deny", auto: true, reason: "unattended" });
       expect(decided.outcome.note).toMatch(/nobody is watching/i);
+      // The hook's refusal comes back as the tool's result, and it is text
+      // written for the model. The card is the user-facing record; the raw
+      // instruction must not be a second one beside it.
+      expect(events.some((e) => e.type === "tool_result")).toBe(false);
     } finally {
       clearRunContext(task.id);
     }
@@ -134,6 +150,7 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
     expect(events.some((e) => e.type === "permission")).toBe(false);
     const answered = events.find((e) => e.type === "ask_answered") as Extract<StreamEvent, { type: "ask_answered" }>;
     expect(answered.answers).toEqual([["Yes"]]);
+    expect(events.some((e) => e.type === "tool_result")).toBe(false);
     expect(result?.hookSpecificOutput?.permissionDecisionReason).toContain("Yes");
   });
 });

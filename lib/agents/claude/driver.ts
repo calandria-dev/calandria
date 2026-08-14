@@ -645,6 +645,11 @@ async function* runTurn(
                 // run settles `failed` with an actionable reason instead of a
                 // green "ran".
                 if (interactionDenied(task.id)) {
+                  // Registered exactly as an answered ask is, so the hook's own
+                  // deny text — written for the model, and long — is suppressed
+                  // when it comes back as a tool_result. The card below is the
+                  // user-facing record; the raw refusal is not a second one.
+                  askIds.add(id);
                   const asked = questions.map((q) => q.header?.trim() || q.question?.trim()).filter(Boolean).join(" · ");
                   queue.push({
                     type: "permission",
