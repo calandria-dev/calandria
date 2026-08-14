@@ -113,7 +113,8 @@ leave the task behind it blocked forever.
 ## Scheduled tasks
 
 A schedule is a saved prompt plus a recurring day/time, owned by the project it lives in —
-found on the project landing pane (select the project with no task open) under **Schedules**.
+found on the project landing pane, under **Schedules**. Click the project's name at the top
+of the task list to get there from anywhere.
 Unlike everything else in Operator, a schedule's firing needs no browser tab open: it's the
 app's only server-owned periodic work, driven by a ticker in the server process itself, not a
 timer in your browser.
@@ -144,16 +145,30 @@ than **Auto-run** still declines every prompt automatically rather than parking,
 the turn can stop early with the job half done. Auto-run is the only mode that runs a
 schedule all the way through unattended; pick it deliberately, not by default.
 
+When that happens the run is recorded as **failed**, not as a quiet green "ran", and says so:
+*the agent needed approval and nobody was watching*. A half-done job reported as a success is
+the exact failure this feature exists to prevent. The same applies to a question — if the
+agent asks one mid-run, it's declined immediately with the question preserved in the
+transcript, rather than parking the run forever waiting on an answer that isn't coming.
+
+The card also watches **the ticker itself**. If the scheduler isn't running, or its sweeps
+stop completing (a wedged check hangs every schedule on the instance at once), a banner says
+so instead of showing you a confident next-run time that will never arrive.
+
 **The slash-command gotcha**: a prompt like `/jira-tasks` is expanded by the CLI before the
 model ever sees it, which is what makes it suitable for unattended work — but an unrecognized
 command is not an error. The CLI answers "Unknown command: /x" as a *success*, with no tool
 calls, so a typo'd schedule would report green every morning having quietly done nothing. The
 editor checks the prompt against the project's real command registry before you save and
-shows the failure with one-click suggestions — but the check is a typo catcher, not an
-authority on what's valid, so it never blocks Save. (It also can't tell a genuine unknown
-command from a prompt that merely *starts* with something that looks like one, such as a
-file path — `/etc/passwd, tell me what's in it` reads as the command `etc`. Non-blocking is
-what keeps that case from refusing a perfectly good prompt.)
+shows the failure with one-click suggestions; the same check runs again when the schedule
+fires, where an unknown command records the run as **failed** and creates no task, because a
+plugin can be uninstalled or renamed between the two. A prompt that merely *starts* with a
+filesystem path is not a command at all — `/etc/passwd, tell me what's in it` is an ordinary
+prompt about a file, and a token followed by `/` is read as a path.
+
+Save is never blocked on the check, because the check is a typo catcher and not an authority:
+it reads one session's command list, so a conditionally-registered command can read as
+unknown. If it *is* right, the run fails loudly rather than reporting a success it didn't earn.
 
 ## Workspace tools
 

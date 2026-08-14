@@ -345,7 +345,20 @@ export interface ScheduleRow {
   active_run: ScheduleRunRow | null;
 }
 
+/** lib/scheduler.ts's schedulerHealth(), as served by the schedules endpoints. */
+export interface SchedulerHealth {
+  started: boolean;
+  /** When the ticker was started; the baseline before any sweep has finished. */
+  startedAt: number;
+  /** When the last sweep FINISHED. A stale value is the only symptom a wedged sweep has. */
+  lastTickAt: number;
+  /** The last per-schedule failure. Cleared by the next clean sweep. */
+  lastError: string;
+  /** The configured tick interval, so the client can age lastTickAt honestly. */
+  tickMs: number;
+}
+
 export interface SchedulesResponse {
   schedules: ScheduleRow[];
-  scheduler: { started: boolean; lastTickAt: number; lastError: string };
+  scheduler: SchedulerHealth;
 }

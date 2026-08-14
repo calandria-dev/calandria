@@ -5,6 +5,7 @@ import { nextFireAt } from "@/lib/schedule/time";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { agentLabel, capsFor, defaultAgentFor } from "./agents";
+import { schedulerAlert } from "./format";
 import { ErrNote } from "./shared";
 import type { AgentPickerOption, AgentsBundle, ProjectRow, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
 
@@ -115,12 +116,20 @@ function permissionConsequence(mode: string, modes: AgentPickerOption[], label: 
  * occurrences so a timezone or day-mask mistake is visible now, not next
  * Monday.
  *
- * Validation never blocks Save. `slashCommandOf` (lib/schedule/commands.ts)
- * over-matches a prompt that merely STARTS with a filesystem path (e.g.
- * "/etc/passwd, tell me what's in it" reads as the command "etc"), so a hard
- * block here would refuse a perfectly good prompt on a false positive. The
- * check is a typo catcher, not an authority — a failure is shown prominently,
- * with suggestions one click away, but Save always stays live.
+ * Validation never blocks Save — but the reason is narrower than it used to be.
+ * The old one was a false positive: `slashCommandOf` read a prompt that merely
+ * STARTS with a filesystem path ("/etc/passwd, tell me what's in it") as the
+ * command "etc". That is fixed at the root (a token followed by `/` is a path),
+ * because the same check runs again at FIRE time, where it settles the run
+ * `failed` and mints nothing — non-blocking here and hard-blocking there was
+ * two halves of one decision contradicting each other.
+ *
+ * What's left is a genuine limit of the probe rather than a bug in it: it reads
+ * one session's registry, so a command that a plugin registers conditionally,
+ * or one added between saving and firing, can read as unknown. The check is a
+ * typo catcher, not an authority — a failure is shown prominently, with
+ * suggestions one click away and a warning that a run WILL fail on it, but Save
+ * stays live.
  */
 function ScheduleForm({
   projectId, project, agents, initial, onCancel, onSaved,
@@ -242,7 +251,10 @@ function ScheduleForm({
                 ))}
               </div>
             )}
-            <div className="sched-note">This is a typo check, not a hard rule — Save still works.</div>
+            <div className="sched-note">
+              Save still works — the check reads one session&rsquo;s command list and can be wrong. If it
+              isn&rsquo;t, the run will fail rather than report success having done nothing.
+            </div>
           </div>
         )}
         {check?.ok && check.unchecked && (
@@ -344,6 +356,19 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
 
   useEffect(() => { void load(); }, [load]);
 
+  // Re-poll while the card is on screen. Two things here are TIME-dependent
+  // rather than action-dependent: a run that finishes after this card loaded,
+  // and — the reason this exists — the wedged-ticker warning, which is derived
+  // from how long ago the last sweep completed. Rendered once at mount, that
+  // warning could only ever appear if the user happened to reload the page,
+  // which is the one thing someone who thinks their schedules are fine will
+  // never do. Cheap: a couple of SQLite reads against a card that's only
+  // mounted on the project landing pane.
+  useEffect(() => {
+    const t = setInterval(() => { void load(); }, 30_000);
+    return () => clearInterval(t);
+  }, [load]);
+
   const act = async (id: string, fn: () => Promise<unknown>) => {
     setBusy(id);
     try {
@@ -355,6 +380,10 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
       setBusy("");
     }
   };
+
+  // Recomputed every render (and every 30s poll above), because "stuck" is a
+  // function of elapsed time, not of anything the server pushed.
+  const alert = data ? schedulerAlert(data.scheduler) : null;
 
   if (!data) return null;
 
@@ -370,15 +399,11 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
         )}
       </div>
       {/* A dead ticker is worse than no schedule, so say so rather than showing
-          a next-run time that will never arrive. A ticker that's alive but
-          whose last tick threw is the same lie in a different shape — a
-          confident "next run tomorrow 08:30" with nothing actually watching
-          for it — so it gets the same banner treatment. */}
-      {!data.scheduler.started ? (
-        <div className="sched-alert">{Icon.cloudOff()} The scheduler is not running on this instance — nothing will fire.</div>
-      ) : data.scheduler.lastError ? (
-        <div className="sched-alert">{Icon.cloudOff()} The last scheduler tick failed: {data.scheduler.lastError} — next-run times may be stale.</div>
-      ) : null}
+          a next-run time that will never arrive. schedulerAlert() ranks the
+          three ways that happens — never started, sweeps no longer completing,
+          one schedule throwing — because they need different actions and only
+          the middle one is invisible without it. */}
+      {alert ? <div className="sched-alert">{Icon.cloudOff()} {alert}</div> : null}
       {error ? <div className="sched-alert sched-alert-bad">{error}</div> : null}
       {creating && (
         <ScheduleForm
