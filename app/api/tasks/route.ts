@@ -27,6 +27,11 @@ export async function POST(req: Request) {
     // Whether sessions get the saved project context; falls back to the
     // project's send_context setting when omitted.
     send_context: typeof body.send_context === "boolean" ? body.send_context : undefined,
+    // Settable up front so a task created to run UNATTENDED can be pinned to a
+    // mode that won't stop to ask. Unvalidated like the PATCH route's copy: the
+    // driver resolves anything it doesn't recognize (permissionModeFor), so a
+    // stale or cross-agent value degrades to the default instead of 400ing.
+    permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
   });
   // `suggested` tasks are agent proposals in the tray; a real user-created task
   // is the funnel's "first task" step. Flag which so the funnel can filter.

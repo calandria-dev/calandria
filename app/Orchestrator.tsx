@@ -239,6 +239,7 @@ export default function Orchestrator() {
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
             onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
+            onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
             onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
             railW={layout.railW}
             onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}
@@ -325,6 +326,7 @@ export default function Orchestrator() {
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}
                 onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
+                onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
                 onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
                 railW={layout.railW}
                 onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}

@@ -911,6 +911,29 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ask-foot{display:flex;justify-content:flex-end;padding:11px 13px;border-top:1px solid var(--line-2);}
 .ask-picked{font-size:12.5px;color:var(--ink-2);font-weight:500;}
 
+/* ---------------- tool permission card (the canUseTool gate) ---------------- */
+.perm{border:1px solid var(--amber,var(--line-2));border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
+.perm-head{display:flex;align-items:center;gap:7px;padding:9px 13px;font-size:11px;font-weight:700;letter-spacing:.02em;color:var(--ink-1);background:var(--panel-2);border-bottom:1px solid var(--line-2);}
+.perm-head svg{width:14px;height:14px;}
+.perm.settled{opacity:.92;border-color:var(--line-2);}
+.perm.settled .perm-head{color:var(--ink-3);}
+.perm.settled.no .perm-head{color:var(--red);}
+.perm-what{padding:11px 13px 0;font-size:13px;font-weight:600;color:var(--ink-1);line-height:1.4;}
+.perm-sub{padding:4px 13px 0;font-size:11.5px;line-height:1.45;color:var(--ink-3);}
+.perm-note{padding:4px 13px 11px;font-size:11.5px;line-height:1.45;color:var(--ink-3);}
+.perm.settled .perm-what{padding-bottom:11px;}
+.perm.settled .perm-note + .perm-what,.perm.settled .perm-what:has(+ .perm-note){padding-bottom:0;}
+.perm-pre{margin:9px 13px 0;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel);font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;color:var(--ink-1);}
+.perm .ask-other{display:block;width:calc(100% - 26px);margin:9px 13px 0;}
+.perm-foot{display:flex;flex-wrap:wrap;gap:8px;padding:11px 13px 0;}
+.perm-hint{padding:8px 13px 11px;font-size:11px;color:var(--ink-4);}
+
+/* Settings → Run defaults: the remembered "always allow" list. */
+.perm-rules{display:flex;flex-direction:column;gap:6px;max-width:620px;}
+.perm-rule{display:flex;align-items:center;gap:10px;padding:7px 11px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel);}
+.perm-rule code{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--ink-1);word-break:break-all;}
+.perm-rule .opt{font-size:11px;color:var(--ink-4);white-space:nowrap;}
+
 /* ---------------- markdown (assistant / user message bodies) ---------------- */
 .md > :first-child{margin-top:0;}
 .md > :last-child{margin-bottom:0;}
