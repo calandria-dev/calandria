@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   allowedByRules,
   bashPrefixOf,
+  blockedReason,
   describePermission,
   isAlwaysAllowed,
   parseDecision,
@@ -276,5 +277,45 @@ describe("parking on a human", () => {
       // 0 attended cap = park indefinitely, reported as no deadline at all.
       expect(promptDeadline(0, 45_000)).toBe(0);
     });
+  });
+});
+
+// What a HUMAN is shown when Claude Code refuses a call on its own. The two
+// fields the SDK offers are not interchangeable: `message` is the rejection
+// text written for the MODEL, and on a real `mode` denial it is ~700 characters
+// of instruction about how to work around the refusal. Verbatim captures from
+// claude-cli 2.1.x live in tests/claudePermissionMode.test.ts.
+describe("the user-facing half of a CLI-side refusal", () => {
+  const MODE_MESSAGE =
+    "Permission to use Bash has been denied because Claude Code is running in don't ask mode. " +
+    "IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used " +
+    "to accomplish this goal, e.g. using head instead of cat.";
+
+  it("cuts the model-directed tail off the rejection message", () => {
+    expect(blockedReason(undefined, MODE_MESSAGE)).toBe(
+      "Permission to use Bash has been denied because Claude Code is running in don't ask mode."
+    );
+  });
+
+  it("prefers decision_reason, the field documented as human-readable", () => {
+    expect(blockedReason("Command could exfiltrate credentials", MODE_MESSAGE)).toBe(
+      "Command could exfiltrate credentials"
+    );
+  });
+
+  it("keeps a short message whole when there is no instruction tail", () => {
+    const m = "Permission to use Bash with command rm -f /tmp/x has been denied.";
+    expect(blockedReason(undefined, m)).toBe(m);
+  });
+
+  it("has nothing to say when the CLI supplied neither field", () => {
+    expect(blockedReason(undefined, undefined)).toBeUndefined();
+    expect(blockedReason("  ", "  ")).toBeUndefined();
+  });
+
+  it("caps a runaway reason rather than pasting a wall of text into the card", () => {
+    const reason = blockedReason("x".repeat(5_000), undefined)!;
+    expect(reason.length).toBeLessThanOrEqual(401);
+    expect(reason.endsWith("…")).toBe(true);
   });
 });

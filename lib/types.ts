@@ -223,7 +223,8 @@ export interface PermissionRequest {
 }
 
 // How a permission prompt settled. `auto` marks a decision nobody made — an
-// unattended or expired prompt that failed closed.
+// unattended or expired prompt that failed closed, or a call the CLI refused
+// on its own before a card ever existed ("blocked").
 export interface PermissionOutcome {
   decision: PermissionDecision;
   /** True for a decision nobody made — the gate failed closed on its own. */
@@ -232,8 +233,19 @@ export interface PermissionOutcome {
    * Why the gate decided without the user. "unattended" is the one the runner
    * acts on: it means nobody was there, so queued follow-ups are parked rather
    * than drained straight into the same wall (mirrors a dead-login turn).
+   * "blocked" is the odd one out — it isn't OUR gate deciding at all, it's the
+   * CLI refusing before canUseTool was consulted (see the permission_denied
+   * StreamEvent), so the card it settles was never answerable.
    */
-  reason?: "unattended" | "timeout" | "interrupted";
+  reason?: "unattended" | "timeout" | "interrupted" | "blocked";
+  /**
+   * On `reason: "blocked"` only: the SDK's `decision_reason_type` discriminator
+   * verbatim — 'classifier', 'mode', 'rule', 'subcommandResults', … Stored raw
+   * and phrased at render time on purpose: the CLI mints values the SDK's own
+   * docs don't list (`subcommandResults` is a real one), and a sentence baked
+   * into a persisted transcript can never be re-worded.
+   */
+  blockedBy?: string;
   /** The rule label recorded on "always allow". */
   remembered?: string;
   /** The user's typed reason, or why the gate decided on its own. */
@@ -282,6 +294,14 @@ export type StreamEvent =
   | { type: "ask_answered"; id: string; answers: AskAnswers }
   | { type: "permission"; request: PermissionRequest }
   | { type: "permission_decided"; id: string; outcome: PermissionOutcome }
+  // A tool call the CLI refused BY ITSELF, without ever consulting canUseTool —
+  // the "auto" classifier vetoing it, a deny rule in the loaded settings. There
+  // was no card, so there is nothing to answer and nothing parked on the user.
+  // `id` is the tool_use id, which is what lets the transcript settle this onto
+  // the call it killed instead of floating a loose notice beside it. (Verified
+  // against the live CLI: a denial from our OWN canUseTool does not also emit
+  // this, so the two paths can't double-render the same refusal.)
+  | { type: "permission_denied"; id: string; tool: string; reasonType?: string; reason?: string; agentId?: string }
   // A suggested task was filed. `projectId` is the project it landed IN, which
   // is not necessarily the one the turn is running in (suggest_task can target
   // any project) — the receiving tray is the one that has to refresh.
