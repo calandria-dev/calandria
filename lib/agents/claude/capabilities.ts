@@ -58,9 +58,24 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // a permission card. "Auto-run" is the one mode that never consults the gate.
   //
   // The SDK also defines "dontAsk" (deny anything not pre-approved, without
-  // prompting). It is deliberately NOT offered: it denies through the
-  // system/permission_denied path instead of the card, so a task would keep
-  // losing tool calls with no way for the user to approve any of them.
+  // prompting). It stays OFF — decided again, against the live CLI, once
+  // denials started rendering as real settled cards and the old objection
+  // ("it denies without raising a card") stopped applying.
+  //
+  // The reason it stays off is bigger than the rendering: **dontAsk never calls
+  // canUseTool at all.** Verified against claude-cli 2.1.x — under dontAsk,
+  // `echo hello` ran and `rm -f …` was refused with decision_reason_type
+  // "mode", and the callback was not invoked once either time. So the entire
+  // gate in lib/permissions.ts is inert: the read-only allowlist, the project's
+  // remembered `permission_rules`, the card. "Pre-approved" means the CLI's own
+  // allow rules in the user's ~/.claude settings, which the orchestrator does
+  // not write and should not start writing behind their back.
+  //
+  // Which leaves nothing for it to be. "Deny unless I have already allowed it"
+  // is already "Ask when needed" plus remembered rules — and that one can also
+  // ask, records what it grants where Settings can revoke it, and auto-denies
+  // when nobody is watching. dontAsk would offer strictly less control while
+  // reading like more, which is the worst thing a permission mode can do.
   permissionModes: [
     { value: "bypassPermissions", label: "Auto-run", sub: "never asks — bypasses every permission check" },
     { value: "auto", label: "Guarded auto", sub: "a model screens each call; risky ones ask you (default)" },

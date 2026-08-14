@@ -24,10 +24,15 @@ is the only static check there is. (`next typegen` writes the gitignored `next-e
 and `.next/types` that `tsconfig.json` includes, so a fresh clone checks the same files
 `next build` does.)
 
+Every one of those has a `:docker` twin (`npm run test:docker`, `typecheck:docker`,
+`test:e2e:docker`, `preflight:docker`) that runs it in a throwaway Linux container with
+its own `node_modules` volume and matching Playwright browsers — the way to get a green
+run out of a checkout whose dependencies were installed on another platform.
+
 The end-to-end suite builds the production app and drives onboarding, project/task
 creation, turns, diff, merge, and workspace views against a disposable instance. It uses
 the deterministic mock agent, so no agent CLI or login is required. See
-[`e2e/README.md`](e2e/README.md).
+[`e2e/README.md`](e2e/README.md) — which also documents the container harness.
 
 ## Continuous integration
 

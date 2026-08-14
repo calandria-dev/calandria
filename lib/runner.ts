@@ -19,7 +19,7 @@ import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
-import type { Task, Project, ToolData, TurnUsage } from "@/lib/types";
+import type { Task, Project, PermissionOutcome, ToolData, TurnUsage } from "@/lib/types";
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -331,6 +331,47 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
           if (ev.outcome.reason === "unattended") unattendedDeny = true;
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        }
+      } else if (ev.type === "permission_denied") {
+        // The CLI refused this call itself, before canUseTool was consulted.
+        // Nothing was ever parked on the user, so openAsks / awaiting_input are
+        // deliberately untouched — this is a card that arrives already settled.
+        //
+        // It settles onto the tool message the call already created, reusing
+        // what describeToolUse derived for it: the card's job is to show the
+        // input the user never got to judge, and it belongs WITH the call
+        // rather than beside it.
+        const outcome: PermissionOutcome = {
+          decision: "deny",
+          auto: true,
+          reason: "blocked",
+          blockedBy: ev.reasonType,
+          note: ev.reason,
+        };
+        const t = toolMsgs[ev.id];
+        if (t) {
+          t.data.permission = {
+            request: { id: ev.id, tool: ev.tool, title: t.data.title, detail: t.data.detail ?? "", diff: t.data.diff, expiresAt: 0 },
+            outcome,
+          };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        } else {
+          // No tool message to settle onto: the refused call happened inside a
+          // subagent (the SDK's agent_id), whose tool_use blocks never surface
+          // on this stream. Give it its own card so the refusal is still seen —
+          // without the input, which we genuinely don't have.
+          const request = {
+            id: ev.id,
+            tool: ev.tool,
+            title: ev.agentId ? `${ev.tool} (in a subagent)` : ev.tool,
+            detail: "",
+            expiresAt: 0,
+          };
+          const data: ToolData = { title: request.title, permission: { request, outcome } };
+          const m = addMessage(id, gen, "tool", JSON.stringify(data));
+          toolMsgs[ev.id] = { dbId: m.id, data };
+          publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
         }
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
