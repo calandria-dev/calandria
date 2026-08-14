@@ -173,21 +173,50 @@ A `setInterval` at 30s (fires are minute-granular, so worst-case lateness is
 `lib/events.ts`, `lib/abort.ts`, `lib/asks.ts` and `lib/services.ts` already
 use.
 
-**Started from the existing boot self-ping route**,
-`app/api/instance/services-restore/route.ts`, which `server.js` already
-loopback-POSTs with the service token right after listen; also started lazily
-from the schedules API so a dev boot that missed the ping still works.
+**Started from its own boot self-ping route**,
+`app/api/instance/scheduler/route.ts`, loopback-POSTed by `server.js` right
+after listen with the service token — the same shape as the existing services
+restore. Also started lazily from the schedules API so a dev boot that missed
+the ping still works.
 
-This placement is deliberate and worth not "fixing" later:
+`instrumentation.ts` would be the idiomatic Next home and is out for the reason
+the repo already documents on the services-restore route: Turbopack dev tries to
+bundle `better-sqlite3` into its edge variant and breaks the app.
 
-- It touches **neither `server.js` nor `middleware.ts`**. Both are fork-point
-  files that the private hosted overlay repo carries its own variants of, so
-  edits there cost a merge conflict in a repo this one can't see.
-- Reusing an already-whitelisted service-token path means no new entry in
-  `middleware.ts`'s allowlist.
-- `instrumentation.ts` would be the idiomatic Next home and is out for the
-  reason the repo already documents on that route: Turbopack dev tries to bundle
-  `better-sqlite3` into its edge variant and breaks the app.
+**Why a second route rather than reusing the existing boot ping.** The obvious
+move is to start the ticker from `app/api/instance/services-restore/route.ts`,
+which `server.js` already pings — no new route, no new allowlist entry, and no
+edits to `server.js` or `middleware.ts` (both fork-point files the private
+hosted overlay carries variants of). That is what this spec originally called
+for, and it does not work: `tests/importGraph.test.ts` PINS that route as
+SDK-free, and its walker follows **dynamic** `import()` transitively, not just
+static imports. The scheduler must reach `lib/runner.ts` to launch a turn, and
+the runner reaches both agent SDKs — so wiring it into that route trips a pin
+that exists because ESM-external async-compilation actually 500'd
+`/api/services/grant` and `/api/instance/services-restore` in production.
+
+The alternatives were considered and rejected:
+
+- Removing that route from `PINNED` — it guards a real, already-suffered prod
+  bug.
+- Making `lib/scheduler.ts` SDK-free by launching turns over an internal HTTP
+  POST to `/api/tasks/[id]/messages` instead of calling `startTurn` — it would
+  keep the graph clean, but a client-reachable route cannot be allowed to set
+  `interactionPolicy: "deny"`, so the RunContext could not be threaded.
+- A route-to-route loopback self-ping from services-restore, keeping `server.js`
+  untouched — works, but a boot signal that forwards itself by HTTP is
+  surprising, and `server.js` is the file whose documented job is pinging what
+  needs booting at boot.
+
+So this costs two additive edits to fork-point files: a `ping()` call in
+`server.js` and one path in `middleware.ts`'s `isServiceTokenPath`. The
+middleware entry matters only under Cloudflare Access mode — in default local
+mode a loopback self-ping is already allowed by Host — but this repo supports
+Access natively, so omitting it would ship a scheduler that silently never
+ticks for Access self-hosters.
+
+`lib/scheduler.ts` is therefore NOT added to the `PINNED` list; it reaches the
+runner deliberately, exactly as `lib/autoStart.ts` already does.
 
 The tick is **single-flight** (an in-flight guard, so a slow tick can't overlap
 itself) and fires due schedules **sequentially** — ten schedules at 08:30 must
