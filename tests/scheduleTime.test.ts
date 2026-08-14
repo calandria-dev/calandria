@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextFireAt } from "@/lib/schedule/time";
+import { formatWallClock, nextFireAt } from "@/lib/schedule/time";
 
 const LA = "America/Los_Angeles";
 const WEEKDAYS = 62; // Mon–Fri
@@ -76,5 +76,32 @@ describe("nextFireAt", () => {
     expect(() => nextFireAt({ daysMask: 62, timeOfDay: "8:30", timezone: LA }, Date.now())).toThrow(/time_of_day/);
     expect(() => nextFireAt({ daysMask: 62, timeOfDay: "24:00", timezone: LA }, Date.now())).toThrow(/time_of_day/);
     expect(() => nextFireAt({ daysMask: 62, timeOfDay: "08:30", timezone: "Mars/Olympus" }, Date.now())).toThrow(/timezone/);
+  });
+});
+
+describe("formatWallClock", () => {
+  it("renders an instant on the SCHEDULE's clock, not the server's", () => {
+    // The minted task's title. This is the case that was wrong: the run fired
+    // at 08:30 Pacific and the task was called "…— 2026-08-14 15:30", which is
+    // the one thing this whole feature is supposed to get right. Tests run on a
+    // UTC host (tests/setup.ts) precisely like the container does, so the bug
+    // reproduces here.
+    expect(formatWallClock(at("2026-08-14T15:30:00Z"), LA)).toBe("2026-08-14 08:30");
+    expect(formatWallClock(at("2026-08-14T15:30:00Z"), "UTC")).toBe("2026-08-14 15:30");
+    expect(formatWallClock(at("2026-08-14T15:30:00Z"), "Asia/Kathmandu")).toBe("2026-08-14 21:15");
+  });
+
+  it("keeps the wall time across a DST boundary, and pads midnight", () => {
+    // Same nominal 08:30 either side of the spring-forward, eight hours apart
+    // in UTC on one side and seven on the other — the title must read 08:30 in
+    // both, or it contradicts the schedule it came from.
+    expect(formatWallClock(at("2026-01-14T16:30:00Z"), LA)).toBe("2026-01-14 08:30");
+    expect(formatWallClock(at("2026-07-14T15:30:00Z"), LA)).toBe("2026-07-14 08:30");
+    expect(formatWallClock(at("2026-08-14T07:00:00Z"), LA)).toBe("2026-08-14 00:00");
+  });
+
+  it("falls back to UTC rather than throwing on a zone that no longer resolves", () => {
+    // A title is never worth losing the whole firing over.
+    expect(formatWallClock(at("2026-08-14T15:30:00Z"), "Mars/Olympus")).toBe("2026-08-14 15:30");
   });
 });

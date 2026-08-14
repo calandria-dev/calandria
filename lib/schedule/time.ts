@@ -134,6 +134,26 @@ export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; d
   throw new Error("no occurrence found within 400 days");
 }
 
+/**
+ * An instant as it reads on the schedule's own wall clock: "2026-08-14 08:30".
+ *
+ * Used for the minted task's title. `toISOString()` was wrong here in the one
+ * way this feature cannot afford: a job the user set for 08:30 Pacific produced
+ * a task titled "15:30", so the single most visible artifact of the whole
+ * feature contradicted the wall-clock promise everything else is built around.
+ * Falls back to UTC only if the stored zone has become unusable (a tzdata
+ * removal), because a title is never worth throwing over.
+ */
+export function formatWallClock(ms: number, timezone: string): string {
+  try {
+    const p = partsIn(ms, timezone);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
+  } catch {
+    return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  }
+}
+
 /** Human summary for the UI and run notes, e.g. "Mon–Fri at 08:30 (America/Los_Angeles)". */
 export function describeSpec(spec: ScheduleSpec): string {
   const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

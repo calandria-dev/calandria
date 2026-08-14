@@ -15,8 +15,9 @@ vi.mock("@/lib/schedule/commands", () => ({
 }));
 
 import { createProject, getTask, listTasks } from "@/lib/store";
-import { createSchedule, getSchedule, lastRun, listRuns } from "@/lib/schedule/store";
-import { runScheduleNow, tickSchedules } from "@/lib/scheduler";
+import { activeRun, claimRun, createSchedule, getSchedule, lastRun, listRuns } from "@/lib/schedule/store";
+import { fireSchedule, runScheduleNow, schedulerHealth, tickSchedules } from "@/lib/scheduler";
+import { reapInFlightScheduleRuns } from "@/lib/db";
 import { getDb } from "@/lib/db";
 import { setAgentConnection } from "@/lib/agents/connections";
 import { makeRepo } from "./helpers";
@@ -172,6 +173,79 @@ describe("scheduler", () => {
     // would otherwise pass this test unnoticed.
     expect(listTasks(p.id).filter((t) => t.schedule_id === s.id)).toHaveLength(0);
     expect(started).toHaveLength(0);
+  });
+
+  it("titles the minted task on the SCHEDULE's clock, not UTC", async () => {
+    // The single most visible artifact of the whole feature. toISOString() gave
+    // an 08:30 America/Los_Angeles job a task called "… — 2026-08-14 15:30",
+    // which is the feature contradicting, in its own output, the one thing it
+    // is fastidious about. Tests run on a UTC host, exactly like the container.
+    const p = await projectWithRepo();
+    const s = createSchedule({
+      project_id: p.id, name: "Morning triage", prompt: "go",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    // Claim the 08:30 Pacific slot explicitly so the title is deterministic.
+    const run = claimRun(s.id, at("2026-08-14T15:30:00Z"), "scheduled")!;
+    await fireSchedule(getSchedule(s.id)!, run);
+
+    const task = listTasks(p.id).find((t) => t.schedule_id === s.id)!;
+    expect(task.title).toBe("Morning triage — 2026-08-14 08:30");
+  });
+
+  it("clears lastError on a clean sweep instead of crying wolf forever", async () => {
+    // The banner said "the last scheduler tick failed" for the rest of the
+    // process's life after ONE transient failure, while every schedule kept
+    // firing correctly. An alarm that never goes off is one the user learns to
+    // scroll past — the same disease as a schedule that cries wolf every
+    // morning, which this feature explicitly refuses to have.
+    const p = await projectWithRepo();
+    const bad = createSchedule({
+      project_id: p.id, name: "Broken zone", prompt: "go",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    // A timezone that no longer resolves — adjudication throws on this row and
+    // the sweep must survive it, named.
+    getDb().prepare("UPDATE schedules SET timezone = 'Mars/Olympus', next_fire_at = ? WHERE id = ?")
+      .run(Date.now() - 1_000, bad.id);
+
+    await tickSchedules(Date.now());
+    expect(schedulerHealth().lastError).toContain("Broken zone"); // WHICH schedule, not "the tick"
+    expect(schedulerHealth().lastTickAt).toBeGreaterThan(0);
+
+    // Fix it; the very next clean sweep takes the banner down.
+    getDb().prepare("UPDATE schedules SET timezone = 'America/Los_Angeles' WHERE id = ?").run(bad.id);
+    await tickSchedules(Date.now());
+    expect(schedulerHealth().lastError).toBe("");
+  });
+
+  it("recovers a schedule wedged by a run row orphaned mid-launch", async () => {
+    // A crash between claimRun and startRun leaves a `claimed` row with no
+    // task_id, which isScheduleBusy() reads as "mid-launch" forever: every
+    // later occurrence is skipped_overlap, and the card's Stop button never
+    // renders because it is gated on blocking.task_id.
+    const p = await projectWithRepo();
+    const s = createSchedule({
+      project_id: p.id, name: "wedged", prompt: "go",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    claimRun(s.id, Date.now() - 86_400_000, "scheduled");
+    // Two DISTINCT due slots: both ticks below adjudicate the slot they find in
+    // next_fire_at, and the unique claim is (schedule, scheduled_for) — reusing
+    // one instant would make the second tick collide with the skip row the
+    // first one wrote, and pass this test for the wrong reason.
+    getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 120_000, s.id);
+
+    await tickSchedules(Date.now());
+    expect(lastRun(s.id)!.status).toBe("skipped_overlap");
+    expect(started).toHaveLength(0);
+
+    // The boot reaper (lib/db.ts init) is what breaks the deadlock.
+    reapInFlightScheduleRuns(getDb());
+    expect(activeRun(s.id)).toBeNull();
+    getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 1_000, s.id);
+    await tickSchedules(Date.now());
+    expect(started).toHaveLength(1);
   });
 
   it("does not fire a paused schedule", async () => {

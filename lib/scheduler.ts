@@ -17,7 +17,7 @@ import { adjudicate } from "@/lib/schedule/due";
 import {
   activeRun, getSchedule, listEnabledSchedules, refreshNextFire, claimRun, settleRun, startRun, specOf,
 } from "@/lib/schedule/store";
-import { describeSpec } from "@/lib/schedule/time";
+import { describeSpec, formatWallClock } from "@/lib/schedule/time";
 import { validatePrompt } from "@/lib/schedule/commands";
 import { startTurn } from "@/lib/runner";
 import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
@@ -29,16 +29,40 @@ import { SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import { workEnded, workStarted } from "@/lib/idle";
 import type { Schedule, ScheduleRun } from "@/lib/types";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __orchScheduler: { timer: NodeJS.Timeout | null; ticking: boolean; lastTickAt: number; lastError: string } | undefined;
+interface SchedulerState {
+  timer: NodeJS.Timeout | null;
+  ticking: boolean;
+  /** When the ticker was started, so "no tick has completed yet" can be aged. */
+  startedAt: number;
+  /** When the last sweep FINISHED. Stale = the sweep is wedged or dead. */
+  lastTickAt: number;
+  /** The last per-schedule failure, cleared by the next clean sweep. */
+  lastError: string;
 }
 
-const state = () => (global.__orchScheduler ??= { timer: null, ticking: false, lastTickAt: 0, lastError: "" });
+declare global {
+  // eslint-disable-next-line no-var
+  var __orchScheduler: SchedulerState | undefined;
+}
 
+const state = (): SchedulerState =>
+  (global.__orchScheduler ??= { timer: null, ticking: false, startedAt: 0, lastTickAt: 0, lastError: "" });
+
+/**
+ * What the card needs to tell the truth about the ticker. `tickMs` travels with
+ * it so the client can age `lastTickAt` against the real interval instead of
+ * guessing one, and `startedAt` covers the case `lastTickAt` cannot: a ticker
+ * that started and whose very FIRST sweep never came back.
+ */
 export const schedulerHealth = () => {
   const s = state();
-  return { started: !!s.timer, lastTickAt: s.lastTickAt, lastError: s.lastError };
+  return {
+    started: !!s.timer,
+    startedAt: s.startedAt,
+    lastTickAt: s.lastTickAt,
+    lastError: s.lastError,
+    tickMs: SCHEDULE_TICK_MS,
+  };
 };
 
 /**
@@ -58,6 +82,7 @@ export function startScheduler(): void {
       console.error(`[scheduler] schedule ${schedule.id} has an unusable spec:`, err);
     }
   }
+  s.startedAt = Date.now();
   s.timer = setInterval(() => { void tickSchedules(); }, SCHEDULE_TICK_MS);
   // Never hold the process open on the ticker alone.
   s.timer.unref?.();
@@ -80,6 +105,12 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
   if (s.ticking) return 0;
   s.ticking = true;
   let launched = 0;
+  // Rebuilt every sweep rather than accumulated: this is the state of the world
+  // NOW, so a clean sweep clears it. Left sticky (as it was), one transient
+  // failure showed the banner forever, while everything else fired correctly —
+  // an alarm that never goes off is one the user learns to scroll past, which
+  // is the same disease as a schedule that cries wolf every morning.
+  let failure = "";
   try {
     for (const schedule of listEnabledSchedules()) {
       try {
@@ -90,11 +121,14 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
         await fireSchedule(fresh, verdict.run);
         launched++;
       } catch (err) {
-        // One bad schedule must never abort the sweep.
-        s.lastError = err instanceof Error ? err.message : String(err);
+        // One bad schedule must never abort the sweep. Named, because "the tick
+        // failed" sent the user looking at the ticker when the fault was in one
+        // schedule they could go and fix.
+        failure = `"${schedule.name}": ${err instanceof Error ? err.message : String(err)}`;
         console.error(`[scheduler] schedule ${schedule.id} failed to fire:`, err);
       }
     }
+    s.lastError = failure;
     s.lastTickAt = Date.now();
   } finally {
     s.ticking = false;
@@ -165,7 +199,10 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
   workStarted();
   try {
     fs.mkdirSync(project.repo_path, { recursive: true });
-    const stamp = new Date(run.scheduled_for).toISOString().slice(0, 16).replace("T", " ");
+    // In the SCHEDULE's zone, not UTC: an 08:30 America/Los_Angeles job titled
+    // "15:30" is the feature contradicting, on its most visible artifact, the
+    // one thing it is fastidious about.
+    const stamp = formatWallClock(run.scheduled_for, schedule.timezone);
     const task = createTask({
       project_id: schedule.project_id,
       title: `${schedule.name} — ${stamp}`,
