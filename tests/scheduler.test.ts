@@ -95,6 +95,49 @@ describe("scheduler", () => {
     expect(started).toHaveLength(0);
   });
 
+  it("refuses to mint a doomed task when the schedule's own project no longer exists", async () => {
+    const p = await projectWithRepo();
+    const s = createSchedule({
+      project_id: p.id, name: "n", prompt: "go",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 1_000, s.id);
+    // Orphan the schedule: delete its project without cascading the delete onto
+    // the schedule row itself (schedules.project_id is ON DELETE CASCADE), so
+    // fireSchedule's own `!project` guard — not the FK — is what's under test.
+    getDb().pragma("foreign_keys = OFF");
+    getDb().prepare("DELETE FROM projects WHERE id = ?").run(p.id);
+    getDb().pragma("foreign_keys = ON");
+
+    await tickSchedules(Date.now());
+
+    const run = lastRun(s.id)!;
+    expect(run.status).toBe("failed");
+    expect(run.detail).toMatch(/no longer exists/i);
+    expect(listTasks(p.id)).toHaveLength(0);
+    expect(started).toHaveLength(0);
+  });
+
+  it("refuses to mint a doomed task when its agent is not connected, and never falls back", async () => {
+    const p = await projectWithRepo();
+    // "codex" is a real registered agent id, but only "claude" is connected in
+    // beforeEach — so this exercises isAgentConnected(schedule.agent) failing
+    // for THIS agent specifically, with nothing to silently fall back to.
+    const s = createSchedule({
+      project_id: p.id, name: "n", prompt: "go", agent: "codex",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 1_000, s.id);
+
+    await tickSchedules(Date.now());
+
+    const run = lastRun(s.id)!;
+    expect(run.status).toBe("failed");
+    expect(run.detail).toContain("codex");
+    expect(listTasks(p.id).filter((t) => t.schedule_id === s.id)).toHaveLength(0);
+    expect(started).toHaveLength(0);
+  });
+
   it("Run now fires immediately without moving the next scheduled occurrence", async () => {
     const p = await projectWithRepo();
     const s = createSchedule({
@@ -124,6 +167,10 @@ describe("scheduler", () => {
     const run = lastRun(s.id)!;
     expect(run.status).toBe("failed");
     expect(run.detail).toContain("/jira-tasks"); // the suggestion, so it's fixable
+    // Proves the check runs BEFORE minting, not just that startTurn was never
+    // called — a regression that moved this check to fire after createTask
+    // would otherwise pass this test unnoticed.
+    expect(listTasks(p.id).filter((t) => t.schedule_id === s.id)).toHaveLength(0);
     expect(started).toHaveLength(0);
   });
 

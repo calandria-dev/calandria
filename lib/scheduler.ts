@@ -174,8 +174,11 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
       agent: schedule.agent,
       send_context: schedule.send_context !== 0,
       permission_mode: schedule.permission_mode,
-      // Set at creation, not patched afterwards: updateTask writes an explicit
-      // column list, so a field it doesn't name is silently dropped.
+      // Set at creation rather than patched on afterwards — not because
+      // updateTask would drop it (it merges {...cur, ...patch}, so an omitted
+      // field is preserved from the current row), but because there's no
+      // reason to pay a create-then-update round trip for a value we already
+      // know at insert time.
       schedule_id: schedule.id,
     });
     startRun(run.id, task.id);
