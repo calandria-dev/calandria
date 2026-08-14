@@ -9,6 +9,17 @@ describe("slashCommandOf", () => {
     expect(slashCommandOf("/jira-tasks --since yesterday")).toBe("jira-tasks");
   });
 
+  it("over-matches a prompt that merely STARTS with a filesystem path — a known false positive", () => {
+    // Documented (not fixed) in app/orchestrator/Schedules.tsx and
+    // docs/FEATURES.md: a leading "/etc/..." reads as the command "etc", which
+    // would make validatePrompt() report it as unknown even though this is a
+    // perfectly ordinary prompt, not a slash command at all. The editor's fix
+    // is to never hard-block Save on a validation failure — this test just
+    // pins that the false positive is real, so that non-blocking behavior
+    // isn't protecting against a hypothetical.
+    expect(slashCommandOf("/etc/passwd, tell me what's in it")).toBe("etc");
+  });
+
   it("is null for an ordinary prompt", () => {
     expect(slashCommandOf("Triage my Jira tickets")).toBeNull();
     expect(slashCommandOf("look in ./src and /etc")).toBeNull();

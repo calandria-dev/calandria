@@ -4,9 +4,9 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { nextFireAt } from "@/lib/schedule/time";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { defaultAgentFor } from "./agents";
+import { agentLabel, capsFor, defaultAgentFor } from "./agents";
 import { ErrNote } from "./shared";
-import type { AgentsBundle, ProjectRow, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
+import type { AgentPickerOption, AgentsBundle, ProjectRow, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAYS = 62; // Mon–Fri: bits 1..5
@@ -75,6 +75,38 @@ function withCommand(prompt: string, command: string): string {
   return prompt.replace(/^(\s*)\/[A-Za-z0-9_:-]+/, `$1/${command}`);
 }
 
+// The permission modes a schedule can meaningfully pick for a given agent —
+// sourced from the driver's own capability descriptor (GET /api/agents), the
+// same one app/orchestrator/modals.tsx's NewTaskModal reads via
+// permissionOptions(), so the two pickers can't drift onto different claims
+// about what a mode does. Unlike that picker, "auto"/"default" (Claude's
+// inherit-a-default modes) are dropped: a schedule always runs unattended, so
+// "whatever the default happens to be" is exactly the ambiguity this field
+// exists to rule out — every remaining option must be a concrete, named
+// answer. Codex's descriptor has no "acceptEdits" at all (its driver treats
+// anything but "plan" as full workspace-write), so filtering from the REAL
+// per-agent list — rather than a fixed three-item list — is what stops a
+// Codex schedule from offering a mode that quietly behaves like Auto-run.
+function scheduleModesFor(agents: AgentsBundle, agent: string): AgentPickerOption[] {
+  return (capsFor(agents, agent)?.permissionModes ?? []).filter((p) => p.value !== "auto" && p.value !== "default");
+}
+
+// The plain-English consequence line. Driven by the SAME filtered list the
+// select renders, so it can only describe a mode that's actually on offer for
+// this agent — never an assumption ("declines automatically") that happens to
+// be true for Claude's acceptEdits but false for Codex's.
+function permissionConsequence(mode: string, modes: AgentPickerOption[], label: string): string {
+  if (modes.length === 0) {
+    return `${label} doesn't expose a configurable permission mode for a scheduled run — it runs using whatever this agent falls back to with nobody watching.`;
+  }
+  if (!modes.some((m) => m.value !== "bypassPermissions")) {
+    return `${label} offers no mode that declines instead of running — Auto-run is the only choice here, and it does whatever the prompt needs without asking.`;
+  }
+  return mode === "bypassPermissions"
+    ? "This run does whatever the prompt needs without asking. Nobody is around when it fires to approve anything."
+    : "Anything needing approval will be declined automatically, and the run may stop early.";
+}
+
 /**
  * Create/edit form for a schedule. Two behaviours are the point, not the
  * fields: validating a slash prompt against the project's real command
@@ -111,6 +143,16 @@ function ScheduleForm({
   const [permissionMode, setPermissionMode] = useState(initial?.permission_mode ?? "bypassPermissions");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // The modes actually on offer for the CURRENTLY selected agent. Recomputed
+  // whenever the agent changes, and the value is clamped to stay inside it —
+  // e.g. switching from Claude (which has acceptEdits) to Codex (which
+  // doesn't) must not leave `acceptEdits` selected-but-invalid, silently
+  // saving a value the target driver would treat as Auto-run.
+  const modeCaps = useMemo(() => scheduleModesFor(agents, agent), [agents, agent]);
+  useEffect(() => {
+    if (modeCaps.length && !modeCaps.some((m) => m.value === permissionMode)) setPermissionMode(modeCaps[0].value);
+  }, [modeCaps, permissionMode]);
 
   // Validate a slash prompt BEFORE saving. An unknown command does not fail at
   // run time — it returns "Unknown command: /x" as a SUCCESS — so catching it
@@ -250,27 +292,22 @@ function ScheduleForm({
       </div>
       {/* A scheduled run cannot answer a permission prompt: nobody is there, so
           the gate declines and the turn degrades. Saying so beside the picker
-          is the difference between a considered choice and a surprise.
-          Deliberately not driven by the selected agent's capability list (the
-          way NewTaskModal's picker is): these three values are what the
-          Claude driver understands, and scheduling's own showcase (a slash
-          skill like /jira-tasks) is Claude-only anyway. A Codex-run schedule
-          would still take "acceptEdits" without erroring — its driver treats
-          anything but "plan" as full auto-run — so that combination reads a
-          little optimistic there; flagged rather than special-cased per
-          agent, which would need its own pass. */}
+          is the difference between a considered choice and a surprise. The
+          options themselves come from the SELECTED agent's own capability
+          descriptor (scheduleModesFor, above) rather than a fixed list — a
+          Codex schedule never even sees "acceptEdits", because Codex's driver
+          has no such mode and would otherwise silently run it as full
+          auto-run despite the label promising otherwise. */}
       <div className="field">
         <label className="lab" htmlFor={`${uid}-perm`}>Permission mode</label>
-        <select id={`${uid}-perm`} value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)}>
-          <option value="bypassPermissions">Auto-run — no prompts, full tool access</option>
-          <option value="acceptEdits">Accept edits — prompts are declined automatically</option>
-          <option value="plan">Plan mode — prompts are declined automatically</option>
-        </select>
-        <p className="sched-note">
-          {permissionMode === "bypassPermissions"
-            ? "This run does whatever the prompt needs without asking. Nobody is around to approve anything when it fires."
-            : "Anything needing approval will be declined automatically, and the run may stop early."}
-        </p>
+        {modeCaps.length > 0 ? (
+          <select id={`${uid}-perm`} value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)}>
+            {modeCaps.map((m) => <option key={m.value} value={m.value} title={m.sub}>{m.label}</option>)}
+          </select>
+        ) : (
+          <div className="hlp">{agentLabel(agents, agent)} has no configurable permission mode.</div>
+        )}
+        <p className="sched-note">{permissionConsequence(permissionMode, modeCaps, agentLabel(agents, agent))}</p>
       </div>
       {err && <ErrNote>{err}</ErrNote>}
       <div className="sched-actions">
