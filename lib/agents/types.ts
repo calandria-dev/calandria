@@ -46,6 +46,19 @@ export interface AgentCapabilities {
   supportsAsks: boolean;
   /** Can mount the orchestrator's MCP tools (suggest_task / expose_service). */
   supportsMcpTools: boolean;
+  /**
+   * On top of the orchestrator's own tools, whether a task session also gets
+   * the MCP servers the user configured for this agent's CLI (~/.claude for
+   * Claude, ~/.codex/config.toml for Codex).
+   *
+   * This is a REAL functional difference between the agents, not a config
+   * detail, so it's modeled here rather than left implicit: a Claude task can
+   * call the user's own MCP tools and an otherwise-identical Codex task cannot.
+   * Codex is false because `codex exec` has no approver, so inherited tools are
+   * visible but every call is cancelled — the driver unmounts them instead of
+   * offering tools that can't work (lib/agents/codex/mcp.ts).
+   */
+  inheritsUserMcpServers: boolean;
   /** Usage events carry a real dollar cost (not just token counts). */
   reportsCostUsd: boolean;
   /**

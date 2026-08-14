@@ -70,6 +70,14 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   ],
   supportsAsks: true,
   supportsMcpTools: true,
+  // A task session loads the user's own ~/.claude configuration — settings, MCP
+  // servers, plugins, skills, CLAUDE.md — because the driver pins
+  // settingSources to all three sources (see SETTING_SOURCES in ./driver.ts).
+  // Their tools are then gated like any other: auto-approved under Auto-run,
+  // classifier-screened under the "auto" default, a permission card otherwise —
+  // reachable in every mode, which is what makes this differ from Codex, where
+  // an inherited tool call can never succeed. CLAUDE.md has the comparison.
+  inheritsUserMcpServers: true,
   reportsCostUsd: true,
   costIsEstimated: false,
   supportsResume: true,

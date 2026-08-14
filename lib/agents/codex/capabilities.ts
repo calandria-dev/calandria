@@ -79,6 +79,14 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // the portable stdio MCP bridge (scripts/orch-mcp.mjs), registered per turn
   // by the driver — the same tools the Claude driver mounts in-process.
   supportsMcpTools: true,
+  // …but ONLY those. Unlike a Claude task, a Codex task does not get the MCP
+  // servers from the user's own ~/.codex/config.toml: `codex exec` has no
+  // approver, so their tools are offered to the model and every call comes
+  // straight back as "user cancelled MCP tool call". The driver unmounts them
+  // rather than dangle tools that can't work (lib/agents/codex/mcp.ts, and
+  // CODEX_INHERIT_MCP in lib/config.ts to opt back in). This flag exists so the
+  // asymmetry is visible as data instead of buried in a driver.
+  inheritsUserMcpServers: false,
   // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
   // cost the driver emits is an estimate (tokens × published API prices for
   // the resolved model). The descriptor stays honest: reportsCostUsd=false,

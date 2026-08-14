@@ -8,7 +8,7 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { CanUseTool, PermissionMode, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, PermissionMode, PermissionResult, SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
   Project,
@@ -76,6 +76,26 @@ import {
   verifyTurn,
 } from "../../claude-auth";
 import { claudeUsage } from "./usage";
+
+// Which on-disk setting sources every Claude query loads. This is EXACTLY the
+// SDK's own default ("when omitted, all sources are loaded (matches CLI
+// defaults)") — pinned explicitly rather than inherited, because the default is
+// what makes a task session feel like the user's own `claude` terminal: their
+// ~/.claude settings, MCP servers, plugins and skills, plus every CLAUDE.md the
+// SDK discovers from `project`. That's a deliberate product decision, and an SDK
+// bump that changed the default would silently strip all of it with no symptom
+// beyond the agent quietly getting worse. Written out here so there is a line to
+// grep for, a test to fail (tests/claudeSettingSources.test.ts), and a comment
+// that says the inheritance is wanted.
+//
+// 'project' is load-bearing twice over: it's what loads CLAUDE.md, and a task
+// runs in its own worktree, so ".claude/" here means the checked-out repo's.
+//
+// This is settings inheritance only; it grants nothing. What an inherited MCP
+// server may actually DO is decided downstream by permissionMode + canUseTool
+// like any other tool — auto-approved under bypassPermissions, screened by the
+// classifier under the "auto" default, and a permission card otherwise.
+const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
 
 function orchestratorServer(
   project: Project,
@@ -447,6 +467,8 @@ async function* runTurn(
       // Omitted keys leave Claude Code's default thinking.
       ...reasoningOptions(reasoning),
       systemPrompt: { type: "preset", preset: "claude_code", append: buildProjectContext(project, task) },
+      // Inherit the user's own Claude Code configuration — see SETTING_SOURCES.
+      settingSources: SETTING_SOURCES,
       // Permission mode (default bypassPermissions; "plan" proposes without editing).
       permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
@@ -618,6 +640,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
       maxTurns: 1,
       permissionMode: "bypassPermissions",
       pathToClaudeCodeExecutable: CLAUDE_PATH,
+      settingSources: SETTING_SOURCES,
     },
   });
 
@@ -679,6 +702,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       maxTurns: 40,
       permissionMode: "bypassPermissions",
       pathToClaudeCodeExecutable: CLAUDE_PATH,
+      settingSources: SETTING_SOURCES,
     },
   });
 
@@ -721,6 +745,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
       maxTurns: 1,
       permissionMode: "bypassPermissions",
       pathToClaudeCodeExecutable: CLAUDE_PATH,
+      settingSources: SETTING_SOURCES,
     },
   });
 

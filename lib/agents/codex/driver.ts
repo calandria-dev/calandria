@@ -27,6 +27,7 @@ import { getSetting } from "../../store";
 import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
 import { buildProjectContext } from "../shared";
 import { mapThreadEvent, newState } from "./events";
+import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 
@@ -37,10 +38,21 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 // `command` is the absolute node binary (process.execPath) so the spawn doesn't
 // depend on PATH being present in the MCP subprocess env. The Codex SDK flattens
 // this `config` object into `--config mcp_servers.…` overrides (TOML) for the CLI.
+//
+// `inherited` is the set of the user's OWN configured servers, disabled so the
+// bridge is the only MCP server a Codex run mounts — the codex half of the
+// agent MCP-inheritance policy, explained in full in ./mcp.ts. It's a parameter
+// rather than an await in here so this stays a pure function the tests can read.
 // Exported for tests (tests/codexMcpBridge.test.ts).
-export function orchestratorMcpConfig(project: Project, task: Task): CodexOptions["config"] {
+export function orchestratorMcpConfig(
+  project: Project,
+  task: Task,
+  inherited: Record<string, { enabled: false }> = {}
+): CodexOptions["config"] {
   return {
     mcp_servers: {
+      // Spread FIRST so the bridge's own entry always wins a name collision.
+      ...inherited,
       orchestrator: {
         command: process.execPath,
         args: [ORCH_MCP_SCRIPT],
@@ -158,7 +170,7 @@ async function* runTurn(
 
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
-    config: orchestratorMcpConfig(project, task),
+    config: orchestratorMcpConfig(project, task, await inheritedServerOverrides()),
   });
   const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
 
@@ -207,7 +219,14 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // a failed helper turn never rejects into the recap/refresh jobs — mirrors the
 // Claude driver. Usage received before an error or max-items abort is retained.
 async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
-  const codex = new Codex({ codexPathOverride: CODEX_CLI_PATH || undefined });
+  // Same MCP policy as a turn, and it bites harder here: a one-shot mounts no
+  // orchestrator bridge at all, so every inherited server is a subprocess
+  // spawned purely to offer a recap or summary run tools it could never call.
+  const inherited = await inheritedServerOverrides();
+  const codex = new Codex({
+    codexPathOverride: CODEX_CLI_PATH || undefined,
+    ...(Object.keys(inherited).length ? { config: { mcp_servers: inherited } } : {}),
+  });
   const thread = codex.startThread({
     workingDirectory: project.repo_path || process.cwd(),
     skipGitRepoCheck: true,
