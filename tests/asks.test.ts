@@ -4,7 +4,7 @@
 // was a one-entry-per-task registry where the second ask silently orphaned the
 // first hook's promise, deadlocking the turn until the 24h hook timeout.
 import { describe, it, expect } from "vitest";
-import { waitForAnswer, submitAnswer } from "@/lib/asks";
+import { waitForAnswer, submitAnswer, cancelAsk } from "@/lib/asks";
 import type { AskQuestion } from "@/lib/types";
 
 const q = (text: string): AskQuestion[] => [
@@ -77,6 +77,17 @@ describe("asks registry", () => {
     const ac = new AbortController();
     ac.abort();
     await expect(waitForAnswer("t4", "a1", q("late?"), ac.signal)).rejects.toThrow("aborted");
+  });
+
+  it("cancelAsk settles the waiter and makes the id unanswerable", async () => {
+    // How a tool-permission prompt expires (lib/permissions.ts): a question has
+    // no deadline, but a prompt raised by an unattended turn must give up.
+    const p = waitForAnswer("t6", "a1", q("still there?"));
+    expect(cancelAsk("t6", "a1", "permission expired")).toBe(true);
+    await expect(p).rejects.toThrow("permission expired");
+    // Nothing left parked — a late answer falls through to the resume path.
+    expect(cancelAsk("t6", "a1", "again")).toBe(false);
+    expect(submitAnswer("t6", "a1", [["yes"]])).toBe(false);
   });
 
   it("settles (not orphans) a prior ask re-registered under the same id", async () => {

@@ -83,6 +83,15 @@ describe("agent tool defs reach both servers", () => {
     expect(TOOL_DEFS.UPDATE_TASK.statuses).not.toContain("cancelled");
   });
 
+  it("offers update_task's `task` target on both sides", () => {
+    // The param that lets an agent edit a row other than its own. Mounted on one
+    // side only, the cross-task policy is simply unreachable from the other
+    // agent — a capability gap no test of either side alone would notice.
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+      expect(read(rel), `update_task's \`task\` param is missing from ${rel}`).toContain("UPDATE_TASK.params.task");
+    }
+  });
+
   it("has an internal endpoint behind every path the bridge proxies to", () => {
     // A bridge tool whose endpoint doesn't exist fails at call time with a bare
     // 404 — invisible until an agent tries it in anger.

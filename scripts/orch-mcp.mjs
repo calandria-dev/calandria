@@ -167,16 +167,19 @@ server.registerTool(
   {
     description: UPDATE_TASK.description,
     inputSchema: {
+      task: z.string().optional().describe(UPDATE_TASK.params.task),
       title: z.string().optional().describe(UPDATE_TASK.params.title),
       description: z.string().optional().describe(UPDATE_TASK.params.description),
       priority: z.enum(UPDATE_TASK.priorities).optional().describe(UPDATE_TASK.params.priority),
       status: z.enum(UPDATE_TASK.statuses).optional().describe(UPDATE_TASK.params.status),
     },
   },
-  async ({ title, description, priority, status }) => {
-    // No task id crosses the wire: the endpoint writes ORCH_TASK_ID and nothing
-    // else, so this turn can only ever edit its own row.
-    const data = await callInternal("update-task", { title, description, priority, status });
+  async ({ task, title, description, priority, status }) => {
+    // `task` is the target the MODEL chose, and it is forwarded unvalidated —
+    // this bridge deliberately holds no policy. The endpoint decides what may
+    // be written, against ORCH_TASK_ID (sent by callInternal as the trusted
+    // caller identity, which nothing here can override).
+    const data = await callInternal("update-task", { task, title, description, priority, status });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

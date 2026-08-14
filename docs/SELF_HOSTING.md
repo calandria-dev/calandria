@@ -206,9 +206,19 @@ npm start
 
 ## Notes & caveats
 
-- **Permissions:** sessions run with `permissionMode: "bypassPermissions"`
-  (`lib/agents/claude/driver.ts`) so they don't block on prompts. Switch to
-  `"acceptEdits"` for a safety gate.
+- **Permissions:** tasks default to **Guarded auto** (`permissionMode: "auto"`), where a
+  model classifier approves the calls it judges safe and escalates the rest. Switch a
+  task — or the app default in Settings → Run defaults — to **Auto-run**
+  (`bypassPermissions`) for work that must never block on a prompt, or down to
+  **Accept edits**, **Ask when needed** or **Plan mode**. Anything the
+  agent isn't pre-approved for parks on a permission card in the transcript, with
+  Allow once / Always allow / Decline. Read-only tools pass silently; "Always
+  allow" remembers a command for that one project and is revocable in
+  Settings → Run defaults → Remembered approvals. A prompt nobody answers denies
+  itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
+  `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
+  wedge a turn overnight. Operator is a control layer, not a sandbox — the
+  isolated worktree is still the real boundary.
 - **Parallel quota:** every concurrent task spends your rate limit — N tasks ≈ N× the
   token rate against one subscription.
 - **Terminal:** the `node-pty` sidecar stays bound to `127.0.0.1` only — the browser

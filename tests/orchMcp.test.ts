@@ -109,18 +109,22 @@ describe("orch-mcp stdio bridge", () => {
     }
   });
 
-  it("offers no way to name the task update_task writes — the target is env-injected", async () => {
+  it("lets the model name update_task's target, but never offers it the caller's identity", async () => {
     const { client, close } = await connectBridge();
     try {
       const { tools } = await client.listTools();
-      // The blast-radius rule, visible in the wire contract: a turn can edit its
-      // own row and nothing else, so there is no task id to pass. (The endpoint
-      // enforces it too — it only ever writes ORCH_TASK_ID.)
+      // `task` is the target the model picks; it is optional, so omitting it
+      // still means "my own row". What is deliberately absent is `taskId` —
+      // the CALLER, which callInternal supplies from ORCH_TASK_ID. If the model
+      // could set that, naming any row would be enough to be treated as owning
+      // it. Whether the named target may actually be written is the server's
+      // call, proved end-to-end in tests/codexUpdateTaskPolicy.test.ts.
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
-      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["description", "priority", "status", "title"]);
-      // Cancelling is the user's call: it would abort the turn making the call.
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["description", "priority", "status", "task", "title"]);
+      // Cancelling is the user's call: on the caller's own row it would abort
+      // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
       expect(schema.properties!.status.enum).toContain("done");
     } finally {
@@ -184,6 +188,22 @@ describe("orch-mcp stdio bridge", () => {
       // "field present" as "write this", so a null would blank the column.
       expect(call.body.priority).toBeUndefined();
       expect(call.body.description).toBeUndefined();
+      // No `task` either, so the endpoint applies its own-row default.
+      expect(call.body.task).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it("forwards a model-named update_task target without letting it displace the caller", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      // The bridge holds no policy — it passes the id straight through. What it
+      // must NOT do is let that id become the caller: `taskId` stays ORCH_TASK_ID.
+      await client.callTool({ name: "update_task", arguments: { task: "task-someone-else", title: "Sharpened" } });
+      const call = calls.find((c) => c.path.endsWith("/update-task"))!;
+      expect(call.body).toMatchObject({ taskId: "task-xyz", task: "task-someone-else", title: "Sharpened" });
     } finally {
       await close();
     }

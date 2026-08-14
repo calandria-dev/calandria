@@ -20,9 +20,13 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
     case "user":
     case "session":
       return "turn_started";
+    // Both kinds of "your turn" park the task the same way: a question card
+    // and a tool-permission prompt each set awaiting_input and each clear it.
     case "ask":
+    case "permission":
       return "awaiting_input";
     case "ask_answered":
+    case "permission_decided":
       return "ask_answered";
     case "suggested":
       return "suggested";
@@ -30,8 +34,9 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
       return "turn_end";
     case "task_updated":
       return "task_updated";
-    // The `update_task` agent tool rewrote the row's title/description/priority
-    // too. The payload below can't carry those, so the client refetches on it.
+    // A write rewrote the row's title/description/priority/dependencies too —
+    // the user's edit dialog (PATCH /api/tasks/[id]) or the `update_task` agent
+    // tool. The payload below can't carry those, so the client refetches on it.
     case "task_edited":
       return "task_edited";
     default:

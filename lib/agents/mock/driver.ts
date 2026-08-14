@@ -17,6 +17,7 @@
 //                                   real suggest_task tool uses
 //   e2e:retitle=<title>             rename the RUNNING task through the same
 //                                   shared logic the real update_task tool calls
+//   e2e:permission=<command>        raise a Bash permission card and park on it
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
@@ -31,7 +32,18 @@ import type {
   AgentVerifyResult,
   StreamEvent,
 } from "../types";
-import { createSuggestedTask, resolveTargetProject, updateOwnTask } from "@/lib/agentTools";
+import { createSuggestedTask, resolveTargetProject, updateTaskForAgent } from "@/lib/agentTools";
+import { listPermissionRules, addPermissionRule } from "@/lib/store";
+import {
+  allowedByRules,
+  describePermission,
+  parseDecision,
+  promptDeadline,
+  scopeOfferFor,
+  waitForPermission,
+  DENIED_BY_USER,
+} from "@/lib/permissions";
+import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
@@ -89,6 +101,53 @@ export const mockDriver: AgentDriver = {
       return;
     }
 
+    // A tool-permission prompt. Deliberately runs the REAL gate helpers
+    // (lib/permissions.ts) rather than a hand-rolled stand-in, so the e2e suite
+    // covers the same rule lookup, card shape, parking, and rule storage the
+    // Claude driver's canUseTool goes through — everything except the SDK.
+    const gated = instructionText.match(/e2e:permission=([^\n]+)/)?.[1]?.trim();
+    if (gated) {
+      const input = { command: gated };
+      if (allowedByRules(listPermissionRules(project.id), "Bash", input)) {
+        yield { type: "notice", content: `Permission for \`${gated}\` was already remembered.` };
+      } else {
+        const described = describePermission("Bash", input);
+        const scope = scopeOfferFor("Bash", input) ?? undefined;
+        const id = `perm:mock-${task.id}-g${task.generation}`;
+        yield {
+          type: "permission",
+          request: {
+            id, tool: "Bash", title: described.title, detail: described.detail, scope,
+            expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+          },
+        };
+        const waited = await waitForPermission({
+          taskId: task.id, id, signal,
+          attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+          unattendedMs: PERMISSION_UNATTENDED_MS,
+        });
+        if ("answers" in waited) {
+          const { decision, note } = parseDecision(waited.answers);
+          let remembered: string | undefined;
+          if (decision === "allow_always" && scope?.scope === "project" && scope.match_kind) {
+            addPermissionRule({ project_id: project.id, tool: "Bash", match_kind: scope.match_kind, value: scope.value });
+            remembered = scope.label;
+          }
+          yield { type: "permission_decided", id, outcome: { decision, remembered, note: note || undefined } };
+          if (decision === "deny") {
+            yield { type: "assistant", content: `Skipped \`${gated}\` — ${note || DENIED_BY_USER}` };
+            yield { type: "done", sessionId };
+            return;
+          }
+        } else {
+          const reason = "expired" in waited ? waited.expired : "interrupted";
+          yield { type: "permission_decided", id, outcome: { decision: "deny", auto: true, reason } };
+          yield { type: "done", sessionId };
+          return;
+        }
+      }
+    }
+
     // File writes: every explicit e2e:write, else the default notes append.
     const writes: { rel: string; content: string }[] = [];
     for (const m of instructionText.matchAll(/e2e:write=([^\s:]+):([^\n]+)/g)) {
@@ -141,12 +200,12 @@ export const mockDriver: AgentDriver = {
       yield { type: "suggested", title, projectId: target.project.id };
     }
 
-    // A turn editing its OWN row — the update_task tool's one legal target.
-    // Nothing is yielded onto the task's stream: the write publishes
-    // "task_edited" globally from updateOwnTask, and that's precisely what the
-    // e2e asserts, so a stream event here would mask a broken global path.
+    // A turn editing its OWN row — update_task's default target. Nothing is
+    // yielded onto the task's stream: the write publishes "task_edited"
+    // globally from updateTaskForAgent, and that's precisely what the e2e
+    // asserts, so a stream event here would mask a broken global path.
     const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
-    if (retitle) updateOwnTask(task, { title: retitle.trim() });
+    if (retitle) updateTaskForAgent(task, undefined, { title: retitle.trim() });
 
     yield {
       type: "assistant",
