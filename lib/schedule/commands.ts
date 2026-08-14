@@ -16,12 +16,28 @@
 // and arrives BEFORE any model call (~1.5s), so we start a session, read the
 // list, and abandon it without spending a token.
 
+import { SCHEDULE_PROBE_MS } from "@/lib/config";
+import { SETTING_SOURCES } from "@/lib/agents/claude/driver";
 import type { Project } from "@/lib/types";
 
-/** The command a prompt invokes, or null when it isn't a slash prompt. */
+/**
+ * The command a prompt invokes, or null when it isn't a slash prompt.
+ *
+ * A token followed by `/` is a PATH, not a command: "/etc/passwd, tell me
+ * what's in it" is an ordinary prompt about a file, and reading it as the
+ * command "etc" is a false positive with teeth — the same validator runs again
+ * at fire time (lib/scheduler.ts), where an unknown command settles the run
+ * `failed` and mints nothing. So the prompt would save fine and then fail every
+ * morning. Slash commands never contain a path separator, so excluding the
+ * followed-by-`/` case costs nothing and closes the whole class.
+ *
+ * (Spelled as a trailing capture rather than a negative lookahead: `[A-Za-z0-9_:-]+(?!\/)`
+ * backtracks the token one character shorter and matches "et" instead of failing.)
+ */
 export function slashCommandOf(prompt: string): string | null {
-  const m = /^\s*\/([A-Za-z0-9_:-]+)/.exec(prompt);
-  return m ? m[1] : null;
+  const m = /^\s*\/([A-Za-z0-9_:-]+)(\/?)/.exec(prompt);
+  if (!m || m[2] === "/") return null;
+  return m[1];
 }
 
 /** Exact match only — a near miss is what this exists to catch. */
@@ -61,34 +77,69 @@ function editDistance(a: string, b: string): number {
  * read the init message and abandon the session before the model is called.
  * Best-effort — on any failure the caller degrades to "can't check" rather than
  * blocking the user.
+ *
+ * BOUNDED, and that is not a nicety. This runs inside fireSchedule(), which runs
+ * inside tickSchedules()'s single-flight sweep: an unbounded `for await` on a
+ * stalled CLI (a hung transport, a binary waiting on something that never
+ * arrives) leaves `ticking` true forever and every schedule on the instance
+ * silently stops firing — with no error, because nothing ever threw. So the
+ * probe carries both an AbortSignal (which the SDK honors, killing the child)
+ * and a hard race against the clock (which does not depend on the SDK honoring
+ * anything): whichever fires, the caller gets `null` — "couldn't check" — and
+ * the sweep moves on.
  */
-export async function listSlashCommands(project: Project, agent: string): Promise<string[] | null> {
+export async function listSlashCommands(
+  project: Project,
+  agent: string,
+  timeoutMs = SCHEDULE_PROBE_MS
+): Promise<string[] | null> {
   if (agent !== "claude") return null; // only the Claude CLI has this surface
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const giveUp = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(null);
+    }, Math.max(1, timeoutMs));
+    timer.unref?.();
+  });
   try {
-    const { query } = await import("@anthropic-ai/claude-agent-sdk");
-    const session = query({
-      prompt: "noop",
-      options: {
-        cwd: project.repo_path || process.cwd(),
-        // Must match the driver's SETTING_SOURCES, or we'd validate against a
-        // different set of commands than the scheduled turn actually gets.
-        settingSources: ["user", "project", "local"],
-        permissionMode: "bypassPermissions",
-      },
-    });
-    let commands: string[] | null = null;
-    for await (const message of session) {
-      if (message.type === "system" && message.subtype === "init") {
-        commands = (message as { slash_commands?: string[] }).slash_commands ?? [];
-        break;
-      }
-      if (message.type === "assistant") break; // shouldn't happen; don't spend a turn
-    }
-    await session.interrupt?.().catch(() => {});
-    return commands;
+    // Promise.race, not just the abort: if a future SDK/CLI ignores the signal,
+    // the dangling read is leaked (bounded, and the child is killed) rather than
+    // allowed to hold the whole sweep hostage.
+    return await Promise.race([readRegistry(project, controller), giveUp]);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function readRegistry(project: Project, abortController: AbortController): Promise<string[] | null> {
+  const { query } = await import("@anthropic-ai/claude-agent-sdk");
+  const session = query({
+    prompt: "noop",
+    options: {
+      cwd: project.repo_path || process.cwd(),
+      // The driver's own constant, imported rather than copied: validating
+      // against a different set of sources than the scheduled turn actually
+      // gets would settle a run `failed` and mint nothing on a command that
+      // really is registered. Pinned by tests/claudeSettingSources.test.ts.
+      settingSources: SETTING_SOURCES,
+      permissionMode: "bypassPermissions",
+      abortController,
+    },
+  });
+  let commands: string[] | null = null;
+  for await (const message of session) {
+    if (message.type === "system" && message.subtype === "init") {
+      commands = (message as { slash_commands?: string[] }).slash_commands ?? [];
+      break;
+    }
+    if (message.type === "assistant") break; // shouldn't happen; don't spend a turn
+  }
+  await session.interrupt?.().catch(() => {});
+  return commands;
 }
 
 export interface PromptValidation {
@@ -101,10 +152,15 @@ export interface PromptValidation {
 }
 
 /** Validate a schedule's prompt. Non-slash prompts are always fine. */
-export async function validatePrompt(prompt: string, project: Project, agent: string): Promise<PromptValidation> {
+export async function validatePrompt(
+  prompt: string,
+  project: Project,
+  agent: string,
+  timeoutMs = SCHEDULE_PROBE_MS
+): Promise<PromptValidation> {
   const command = slashCommandOf(prompt);
   if (!command) return { ok: true };
-  const registry = await listSlashCommands(project, agent);
+  const registry = await listSlashCommands(project, agent, timeoutMs);
   if (!registry) return { ok: true, unchecked: true };
   if (isRegistered(command, registry)) return { ok: true };
   return {

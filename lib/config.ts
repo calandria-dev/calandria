@@ -205,6 +205,16 @@ export const SCHEDULE_TICK_MS = ms(process.env.ORCH_SCHEDULE_TICK_MS, 30_000);
 export const SCHEDULE_CATCHUP_MS = ms(process.env.ORCH_SCHEDULE_CATCHUP_MS, 4 * 60 * 60 * 1000);
 
 /**
+ * How long the fire-time slash-command probe (lib/schedule/commands.ts) may
+ * take before the sweep gives up on it and treats the registry as unreachable.
+ * The probe spawns the agent CLI and reads its `init` message, which normally
+ * arrives in ~1.5s; the cap exists because that read happens INSIDE the ticker's
+ * single-flight sweep, so a stalled CLI would otherwise wedge every schedule on
+ * the instance with no error to show for it.
+ */
+export const SCHEDULE_PROBE_MS = ms(process.env.ORCH_SCHEDULE_PROBE_MS, 20_000);
+
+/**
  * Master switch for the schedule ticker. On by default. Set to off/0/false for
  * an instance that must never start work on its own — a shared box, a debugging
  * session, or a second container pointed at a copy of the database.
