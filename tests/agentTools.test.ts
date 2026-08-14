@@ -9,6 +9,7 @@ import {
   resolveTitleRefs,
   titleKey,
   updateTaskForAgent,
+  withdrawSuggestionForAgent,
 } from "@/lib/agentTools";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
@@ -16,6 +17,7 @@ import { POST as exposeService } from "@/app/api/internal/agent-tools/expose-ser
 import { POST as listTasksEp } from "@/app/api/internal/agent-tools/list-tasks/route";
 import { POST as getTaskEp } from "@/app/api/internal/agent-tools/get-task/route";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
+import { POST as withdrawEp } from "@/app/api/internal/agent-tools/withdraw-suggestion/route";
 import { instanceServiceTokenOk } from "@/lib/cf-access.mjs";
 
 function post(handler: (req: NextRequest) => Promise<Response>, url: string, body: unknown) {
@@ -295,6 +297,136 @@ describe("update_task (writes to another row, scoped to inert tray suggestions)"
     const { task: updated, autoStartDependents } = updateTaskForAgent(caller, inert.id, { status: "done" });
     expect(updated!.id).toBe(inert.id);
     expect(autoStartDependents).toBe(true);
+  });
+});
+
+describe("withdraw_suggestion (retracting a tray suggestion)", () => {
+  const board = (name: string) => {
+    const project = createProject({ name });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    // The caller is a live session — that's what makes its own row ineligible.
+    updateTask(caller.id, { started: 1, running: 1 });
+    const { task: inert } = createSuggestedTask(project, { title: "Proposed", description: "old brief", priority: "med" });
+    return { project, caller, inert: inert! };
+  };
+
+  it("cancels the suggestion but LEAVES it in the tray, with the reason on the row", () => {
+    const { caller, inert } = board("Wd-Ok");
+    const { task: updated, text } = withdrawSuggestionForAgent(caller, inert.id, "  already covered by the parser rewrite  ");
+    expect(updated!.id).toBe(inert.id);
+    const row = getTask(inert.id)!;
+    // Cancelled, but still `suggested` — that flag is what keeps the card in
+    // the tray for the user to revive or dismiss. Not a delete: the tray's own
+    // Dismiss button is the hard delete, and this app has no undo for that.
+    expect(row).toMatchObject({ status: "cancelled", suggested: 1, withdrawn_reason: "already covered by the parser rewrite" });
+    // The brief is untouched — a revived suggestion has to still say what it was for.
+    expect(row.description).toBe("old brief");
+    expect(text).toContain("Suggested tray");
+  });
+
+  it("requires a reason, and refuses a blank one without touching the row", () => {
+    const { caller, inert } = board("Wd-NoReason");
+    for (const reason of ["", "   "]) {
+      const { task: updated, text } = withdrawSuggestionForAgent(caller, inert.id, reason);
+      expect(updated).toBeNull();
+      expect(text).toContain("`reason` is required");
+      expect(getTask(inert.id)).toMatchObject({ status: "not_started", suggested: 1, withdrawn_reason: "" });
+    }
+  });
+
+  it("requires a target — there is no 'my own row' default", () => {
+    const { caller } = board("Wd-NoTarget");
+    const { task: updated, text } = withdrawSuggestionForAgent(caller, undefined, "redundant");
+    expect(updated).toBeNull();
+    expect(text).toContain("`task` is required");
+  });
+
+  it("refuses the caller's own row, which is never an inert suggestion anyway", () => {
+    const { caller } = board("Wd-Self");
+    const { task: updated, text } = withdrawSuggestionForAgent(caller, caller.id, "redundant");
+    expect(updated).toBeNull();
+    expect(text).toContain("this session is running in");
+    expect(getTask(caller.id)!.status).toBe("not_started");
+  });
+
+  // The eligibility screen is update_task's, shared (isInertSuggestion) so the
+  // two tools can never disagree about which rows an agent may write.
+  it.each([
+    ["a STARTED task", { suggested: 0, started: 1 } as const],
+    ["a RUNNING task", { running: 1 } as const],
+    ["an accepted (no longer suggested) task", { suggested: 0 } as const],
+  ])("refuses %s with the row unchanged", (_label, patch) => {
+    const { caller, inert } = board(`Wd-${_label.replace(/\W/g, "")}`);
+    updateTask(inert.id, patch);
+    const before = getTask(inert.id)!;
+    const { task: updated, text } = withdrawSuggestionForAgent(caller, inert.id, "redundant");
+    expect(updated).toBeNull();
+    expect(text).toContain("Nothing was changed");
+    expect(getTask(inert.id)).toMatchObject({ status: before.status, suggested: before.suggested, withdrawn_reason: "" });
+  });
+
+  it("refuses an unknown id and points at list_tasks", () => {
+    const { caller } = board("Wd-Ghost");
+    const { task: updated, text } = withdrawSuggestionForAgent(caller, "ghost", "redundant");
+    expect(updated).toBeNull();
+    expect(text).toContain("list_tasks");
+  });
+
+  it("is idempotent: withdrawing twice keeps the first reason", () => {
+    const { caller, inert } = board("Wd-Twice");
+    withdrawSuggestionForAgent(caller, inert.id, "first reason");
+    const { task: again, text } = withdrawSuggestionForAgent(caller, inert.id, "second reason");
+    expect(again!.withdrawn_reason).toBe("first reason");
+    expect(text).toContain("already withdrawn");
+  });
+
+  it("announces task_edited against the TARGET, so other tabs refetch the row", () => {
+    // task_edited, not task_updated: withdrawn_reason can't ride the coarse
+    // /api/events payload, so listeners have to refetch to draw the card at all.
+    const { caller, inert } = board("Wd-Bus");
+    const seen: { taskId: string; ev: BusEvent }[] = [];
+    const unsub = subscribeGlobal((taskId, ev) => seen.push({ taskId, ev }));
+    try {
+      withdrawSuggestionForAgent(caller, inert.id, "redundant");
+    } finally {
+      unsub();
+    }
+    expect(seen).toContainEqual({ taskId: inert.id, ev: { type: "task_edited" } });
+    expect(seen.some((s) => s.taskId === caller.id)).toBe(false);
+  });
+
+  it("signals auto-start: cancelling a blocker clears it, so dependents must not strand", () => {
+    // The whole hazard the tool has to avoid creating. blocks() treats cancelled
+    // as terminal, so the dependent IS unblocked — if no sweep fires it sits
+    // unblocked-but-never-launched forever.
+    const { caller, inert } = board("Wd-AutoStart");
+    const { task: updated, autoStartDependents } = withdrawSuggestionForAgent(caller, inert.id, "redundant");
+    expect(updated!.id).toBe(inert.id);
+    expect(autoStartDependents).toBe(true);
+  });
+
+  it("the endpoint runs the same policy, and refuses with 400 + the reason text", async () => {
+    const project = createProject({ name: "EP-Withdraw" });
+    const caller = createTask({ project_id: project.id, title: "Caller" });
+    const inert = createSuggestedTask(project, { title: "Proposed", description: "brief" }).task!;
+
+    const bad = await post(withdrawEp, "/api/internal/agent-tools/withdraw-suggestion", {
+      taskId: caller.id,
+      task: inert.id,
+    });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toContain("`reason` is required");
+    expect(getTask(inert.id)!.status).toBe("not_started");
+
+    const res = await post(withdrawEp, "/api/internal/agent-tools/withdraw-suggestion", {
+      taskId: caller.id,
+      task: inert.id,
+      reason: "superseded by the parser rewrite",
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; id: string; status: string };
+    expect(json).toMatchObject({ ok: true, id: inert.id, status: "cancelled" });
+    expect(getTask(inert.id)).toMatchObject({ suggested: 1, withdrawn_reason: "superseded by the parser rewrite" });
   });
 });
 

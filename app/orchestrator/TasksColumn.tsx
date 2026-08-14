@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { isAwaiting, relTime } from "./format";
+import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { SLABEL, AWAIT_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
@@ -199,7 +199,9 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
   const q = query.trim().toLowerCase();
   const match = (t: TaskRow) => !q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q);
   const shown = tasks.filter(match);
-  const shownSuggested = suggested.filter(match);
+  // Withdrawn suggestions sink to the bottom of the tray: they're retractions
+  // awaiting a decision, not proposals competing for attention.
+  const shownSuggested = suggested.filter(match).sort(withdrawnLast);
   const needsYou = shown.filter((t) => isAwaiting(t));
   const groups = {
     a: shown.filter((t) => t.status === "in_progress" && !isAwaiting(t)),
@@ -285,20 +287,34 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
         {shownSuggested.length > 0 && (
           <div className="suggest">
             <div className="suggest-h">{Icon.spark()} Suggested by agents<span className="sp">{shownSuggested.length}</span></div>
-            {shownSuggested.map((s) => (
-              <div key={s.id} className={`sug ${picked.has(s.id) ? "picked" : ""}`}>
+            {shownSuggested.map((s) => {
+              // Retracted by the agent that filed it. The row stays here on
+              // purpose — struck through, with the reason where the brief was —
+              // because the retraction is a recommendation, not a deletion:
+              // Add/Start revive it (clearing the cancel server-side), the ✕
+              // still dismisses it for good.
+              const gone = isWithdrawn(s);
+              return (
+              <div key={s.id} className={`sug ${picked.has(s.id) ? "picked" : ""} ${gone ? "withdrawn" : ""}`}>
                 <PickBox picked={picked.has(s.id)} pickable={canPick(s)} onPick={(range) => pick(s.id, range)} />
-                <StatusDot status="not_started" />
+                <StatusDot status={gone ? "cancelled" : "not_started"} />
                 <div className="sg-meta">
                   <div className="sg-name">{s.title}</div>
-                  {s.description && <div className="sg-why">{s.description}</div>}
+                  {gone ? (
+                    <div className="sg-why gone" title={s.withdrawn_reason || undefined}>
+                      Withdrawn{s.withdrawn_reason ? ` — ${s.withdrawn_reason}` : ""}
+                    </div>
+                  ) : (
+                    s.description && <div className="sg-why">{s.description}</div>
+                  )}
                 </div>
                 <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
-                <button className="sug-add" title="Add to task list to start later" onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} Add</button>
+                <button className="sug-add" title={gone ? "Disagree — restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
                 <button className="sug-btn" onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
                 <button className="sug-dismiss" title="Dismiss" onClick={() => onDismissSuggestion(s.id)}>{Icon.x()}</button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

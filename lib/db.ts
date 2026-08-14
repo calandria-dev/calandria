@@ -81,6 +81,12 @@ export function init(db: Database.Database) {
       -- Opt-in pipeline behavior: 1 = start this task's first turn automatically
       -- the moment its last unfinished blocker is marked done (lib/autoStart.ts).
       auto_start  INTEGER NOT NULL DEFAULT 0,
+      -- Why an agent retracted this suggestion (the withdraw_suggestion tool).
+      -- Non-empty only alongside status='cancelled' AND suggested=1: the row
+      -- stays in the tray, struck through, with this text as the explanation.
+      -- Cleared by whatever revives the row, so it can never outlive the state
+      -- it describes (PATCH /api/tasks/[id]).
+      withdrawn_reason TEXT NOT NULL DEFAULT '',
       position    INTEGER NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
@@ -408,6 +414,9 @@ export function migrate(db: Database.Database) {
   // Per-task auto-start opt-in: launch the first turn when the last blocker is
   // marked done (default off preserves the old never-auto-start behavior).
   if (!taskCols.includes("auto_start")) db.exec("ALTER TABLE tasks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0");
+  // Why an agent withdrew a tray suggestion (lib/agentTools withdrawSuggestionForAgent).
+  // Empty on every pre-existing row, which is correct: nothing was ever withdrawn before.
+  if (!taskCols.includes("withdrawn_reason")) db.exec("ALTER TABLE tasks ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''");
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

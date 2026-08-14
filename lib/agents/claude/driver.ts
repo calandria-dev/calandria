@@ -2,8 +2,9 @@
 // (lib/agents/types.ts). This is the moved lib/claude.ts: runTurn() drives one
 // user turn (resume or fresh session; project context appended to the Claude
 // Code system prompt), mounts the orchestrator MCP tools (suggest_task /
-// list_projects / list_tasks / get_task / update_task / expose_service), and
-// normalizes SDK messages into the StreamEvent contract. The one-shot helpers
+// list_projects / list_tasks / get_task / update_task / withdraw_suggestion /
+// expose_service), and normalizes SDK messages into the StreamEvent contract.
+// The one-shot helpers
 // (summarize / draft / recap) and the wizard's auth flow (delegating to
 // lib/claude-auth.ts) round out the interface.
 
@@ -34,8 +35,9 @@ import {
   resolveTargetProject,
   resolveTitleRefs,
   updateTaskForAgent,
+  withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
 import {
   allowedByRules,
@@ -217,6 +219,28 @@ function orchestratorServer(
             // Imported at CALL time, not module load: lib/autoStart reaches
             // lib/runner, which imports the driver registry, which imports this
             // file — a static import would close that cycle at init.
+            const { maybeAutoStartDependents } = await import("../../autoStart");
+            maybeAutoStartDependents(updated.id);
+          }
+          return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        WITHDRAW_SUGGESTION.name,
+        WITHDRAW_SUGGESTION.description,
+        {
+          task: z.string().describe(WITHDRAW_SUGGESTION.params.task),
+          reason: z.string().describe(WITHDRAW_SUGGESTION.params.reason),
+        },
+        async (args: { task: string; reason: string }) => {
+          // Same trust split as update_task: the closed-over `task` is the
+          // caller (the server's word), `args.task` the target (the model's).
+          // Eligibility is the shared isInertSuggestion, so a row this tool will
+          // withdraw is exactly a row update_task would edit.
+          const { task: updated, text, autoStartDependents } = withdrawSuggestionForAgent(task, args.task, args.reason);
+          if (autoStartDependents && updated) {
+            // Cancelling cleared a blocker. Imported at CALL time for the same
+            // cycle reason as update_task's copy above.
             const { maybeAutoStartDependents } = await import("../../autoStart");
             maybeAutoStartDependents(updated.id);
           }

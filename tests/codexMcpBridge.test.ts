@@ -141,6 +141,21 @@ describe("agent tool defs reach both servers", () => {
     }
   });
 
+  it("offers withdraw_suggestion's `task` + `reason` on both sides", () => {
+    // The retraction verb, and the explanation that makes it worth having.
+    // Mounted on one side only, an agent on the other has nothing but
+    // `status: "done"` for "this suggestion is redundant" — which claims work
+    // nobody started is finished AND fires the auto-start sweep.
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+      const src = read(rel);
+      expect(src, `withdraw_suggestion's \`task\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.task");
+      expect(src, `withdraw_suggestion's \`reason\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.reason");
+      // Neither is .optional() anywhere — a reason the model can omit is the
+      // one thing this tool must not allow.
+      expect(src).not.toMatch(/optional\(\)\.describe\(WITHDRAW_SUGGESTION\.params\./);
+    }
+  });
+
   it("has an internal endpoint behind every path the bridge proxies to", () => {
     // A bridge tool whose endpoint doesn't exist fails at call time with a bare
     // 404 — invisible until an agent tries it in anger.

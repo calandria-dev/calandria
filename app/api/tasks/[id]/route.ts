@@ -37,7 +37,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason"] as const;
+
+// Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
+// uses. A dependent waiting on a CANCELLED blocker would wait forever, so
+// cancelling clears the edge exactly as finishing does.
+const isTerminal = (s: string) => s === "done" || s === "cancelled";
 
 /** Same set of ids, order-insensitively — dependency edges have no order. */
 function sameIds(a: string[], b: string[]): boolean {
@@ -78,6 +83,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // (The worktree is kept — Cancelled ≠ Delete — so the diff stays reviewable
   // and the task can be revived by just sending another message.)
   if (allowed.status === "cancelled") abortTurn(id);
+  // Reviving a withdrawn suggestion, in one place. A withdrawn row is cancelled
+  // but still `suggested` (the withdraw_suggestion agent tool — it stays in the
+  // tray so the user can bring it back), and EVERY way back lands on this route:
+  // the tray's Start and Add both patch `suggested: 0` and nothing else, the
+  // board's drag sends a status alongside, the edit dialog re-statuses in place.
+  // Centralised here rather than left to each caller because the two halves have
+  // to move together — a reason left behind strikes through a card that's live
+  // again, and a status left at `cancelled` files the accepted task straight
+  // into the Cancelled column.
+  const withdrawn = current.status === "cancelled" && current.suggested === 1;
+  if (withdrawn && (("status" in allowed && allowed.status !== "cancelled") || ("suggested" in allowed && !allowed.suggested))) {
+    allowed.withdrawn_reason = "";
+    if (!("status" in allowed)) allowed.status = "not_started";
+  }
   // Dependency edges live in their own table — set them separately, with a cycle guard.
   let depsChanged = false;
   if (Array.isArray((body as { depends_on?: unknown }).depends_on)) {
@@ -116,10 +135,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const edited = depsChanged || EDIT_FIELDS.some((k) => k in allowed && allowed[k] !== current[k]);
   if (edited) publishGlobal(id, { type: "task_edited" });
   else if ("status" in allowed) publishGlobal(id, { type: "task_updated" });
-  // Flipping to done may be the last blocker some auto-start dependent was
-  // waiting on. Fire-and-forget: the launch runs detached (worktree creation
-  // can take seconds) and must never delay or fail this status change.
-  if (task.status === "done" && prevStatus !== "done") maybeAutoStartDependents(id);
+  // Reaching a TERMINAL status may have cleared the last blocker some auto-start
+  // dependent was waiting on. done and cancelled both count, because both are
+  // what lib/autoStart's blocks() calls cleared — firing only on done left a
+  // cancelled blocker's dependents unblocked but never launched, waiting on a
+  // sweep that would never come. Fire-and-forget: the launch runs detached
+  // (worktree creation can take seconds) and must never delay or fail this
+  // status change.
+  if (isTerminal(task.status) && !isTerminal(prevStatus)) maybeAutoStartDependents(id);
   return NextResponse.json({ ...task, depends_on: getTaskDeps(id) });
 }
 

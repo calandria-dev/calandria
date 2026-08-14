@@ -58,6 +58,8 @@ beforeAll(async () => {
         res.end(JSON.stringify({ ok: true, task: { id: body.task || body.taskId, title: "Mine", description: "my brief" } }));
       } else if (req.url?.endsWith("/update-task")) {
         res.end(JSON.stringify({ ok: true, id: body.taskId, title: body.title, text: `Updated "${body.title}".` }));
+      } else if (req.url?.endsWith("/withdraw-suggestion")) {
+        res.end(JSON.stringify({ ok: true, id: body.task, status: "cancelled", text: `Withdrew "${body.task}".` }));
       } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: "not found" }));
@@ -101,6 +103,7 @@ describe("orch-mcp stdio bridge", () => {
         "list_tasks",
         "suggest_task",
         "update_task",
+        "withdraw_suggestion",
       ]);
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
@@ -127,6 +130,50 @@ describe("orch-mcp stdio bridge", () => {
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
       expect(schema.properties!.status.enum).toContain("done");
+    } finally {
+      await close();
+    }
+  });
+
+  it("makes withdraw_suggestion's target and reason the model's to supply, and both mandatory", async () => {
+    const { client, close } = await connectBridge();
+    try {
+      const { tools } = await client.listTools();
+      const schema = tools.find((t) => t.name === "withdraw_suggestion")!.inputSchema as {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      };
+      // `taskId` is absent for the same reason it is on update_task: the CALLER
+      // comes from ORCH_TASK_ID via callInternal, and a model that could set it
+      // would own any row it could name.
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["reason", "task"]);
+      // Both required — a retraction with no target is meaningless and one with
+      // no explanation is worse than none. Whether the named target may actually
+      // be withdrawn is the server's call, proved in tests/agentTools.test.ts.
+      expect([...(schema.required ?? [])].sort()).toEqual(["reason", "task"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("forwards a model-named withdraw target without letting it displace the caller", async () => {
+    calls.length = 0;
+    const { client, close } = await connectBridge();
+    try {
+      // Same shape as the update_task case: the bridge holds no policy, it just
+      // must not let the model's `task` become the trusted `taskId`.
+      const res = (await client.callTool({
+        name: "withdraw_suggestion",
+        arguments: { task: "task-someone-else", reason: "already covered by the parser rewrite" },
+      })) as { content: { text: string }[] };
+      expect(res.content[0].text).toContain("Withdrew");
+      const call = calls.find((c) => c.path.endsWith("/withdraw-suggestion"))!;
+      expect(call.body).toMatchObject({
+        taskId: "task-xyz",
+        task: "task-someone-else",
+        reason: "already covered by the parser rewrite",
+      });
+      expect(call.token).toBe("smoke-token");
     } finally {
       await close();
     }

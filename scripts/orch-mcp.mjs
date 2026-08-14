@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
  * future one) the orchestrator's task tools (suggest_task / list_tasks /
- * get_task / update_task), list_projects, expose_service and ask_user.
+ * get_task / update_task / withdraw_suggestion), list_projects, expose_service
+ * and ask_user.
  *
  * The Claude driver mounts these as an in-process SDK MCP server, a construct
  * that only exists inside the Claude Agent SDK. This is the portable equivalent:
@@ -24,7 +25,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.ORCH_TASK_ID || "";
 const PROJECT_ID = process.env.ORCH_PROJECT_ID || "";
@@ -180,6 +181,24 @@ server.registerTool(
     // be written, against ORCH_TASK_ID (sent by callInternal as the trusted
     // caller identity, which nothing here can override).
     const data = await callInternal("update-task", { task, title, description, priority, status });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  WITHDRAW_SUGGESTION.name,
+  {
+    description: WITHDRAW_SUGGESTION.description,
+    inputSchema: {
+      task: z.string().describe(WITHDRAW_SUGGESTION.params.task),
+      reason: z.string().describe(WITHDRAW_SUGGESTION.params.reason),
+    },
+  },
+  async ({ task, reason }) => {
+    // Both values are the MODEL's, forwarded unvalidated — the bridge holds no
+    // policy here either. The endpoint decides whether that target is an inert
+    // tray suggestion, against ORCH_TASK_ID as the trusted caller identity.
+    const data = await callInternal("withdraw-suggestion", { task, reason });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

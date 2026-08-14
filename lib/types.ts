@@ -57,6 +57,7 @@ export interface Task {
   position: number; // manual order within the project (list groups + board columns, ascending)
   started: number; // 1 once the initial prompt has been sent
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done (lib/autoStart.ts)
+  withdrawn_reason: string; // why an agent retracted this suggestion ("" = not withdrawn); only meaningful with status "cancelled" + suggested 1
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   created_at: number;
