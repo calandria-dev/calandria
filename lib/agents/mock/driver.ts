@@ -32,7 +32,7 @@ import type {
   AgentVerifyResult,
   StreamEvent,
 } from "../types";
-import { createSuggestedTask, resolveTargetProject, updateOwnTask } from "@/lib/agentTools";
+import { createSuggestedTask, resolveTargetProject, updateTaskForAgent } from "@/lib/agentTools";
 import { listPermissionRules, addPermissionRule } from "@/lib/store";
 import {
   allowedByRules,
@@ -200,12 +200,12 @@ export const mockDriver: AgentDriver = {
       yield { type: "suggested", title, projectId: target.project.id };
     }
 
-    // A turn editing its OWN row — the update_task tool's one legal target.
-    // Nothing is yielded onto the task's stream: the write publishes
-    // "task_edited" globally from updateOwnTask, and that's precisely what the
-    // e2e asserts, so a stream event here would mask a broken global path.
+    // A turn editing its OWN row — update_task's default target. Nothing is
+    // yielded onto the task's stream: the write publishes "task_edited"
+    // globally from updateTaskForAgent, and that's precisely what the e2e
+    // asserts, so a stream event here would mask a broken global path.
     const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
-    if (retitle) updateOwnTask(task, { title: retitle.trim() });
+    if (retitle) updateTaskForAgent(task, undefined, { title: retitle.trim() });
 
     yield {
       type: "assistant",
