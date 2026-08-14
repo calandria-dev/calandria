@@ -67,7 +67,7 @@ describe("the shared needs-you predicate", () => {
 });
 
 describe("mutation routes publish lifecycle events", () => {
-  it("a manual status PATCH publishes task_updated (a plain field edit does not)", async () => {
+  it("a manual status PATCH publishes task_updated (a plain field edit publishes task_edited)", async () => {
     const project = createProject({ name: "PatchPub" });
     const t = createTask({ project_id: project.id, title: "T" });
     updateTask(t.id, { status: "in_progress", awaiting_input: 1 });
@@ -83,11 +83,14 @@ describe("mutation routes publish lifecycle events", () => {
     expect(seen).toContainEqual({ type: "task_updated" });
     expect(countAwaiting(project.id)).toBe(0);
 
-    // A non-status edit changes nothing awaiting-related — no event.
-    const quiet = await busEventsFor(t.id, async () => {
+    // A non-status edit changes nothing awaiting-related, but it does change
+    // what every other tab renders — and the coarse payload can't carry a
+    // title, so it goes out as the wider task_edited ("refetch the row").
+    // tests/taskEditEvents.ts covers which patches earn which event.
+    const renamed = await busEventsFor(t.id, async () => {
       await patchTask(new Request("http://test", { method: "PATCH", body: JSON.stringify({ title: "renamed" }) }), params(t.id));
     });
-    expect(quiet).toEqual([]);
+    expect(renamed).toEqual([{ type: "task_edited" }]);
   });
 
   it("/clear publishes task_updated after settling the row", async () => {
