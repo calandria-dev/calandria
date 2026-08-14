@@ -8,11 +8,22 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Project, Task, StreamEvent, AskQuestion, TurnUsage, Priority, Status as TaskStatus } from "../../types";
+import type {
+  Project,
+  Task,
+  StreamEvent,
+  AskQuestion,
+  TurnUsage,
+  Priority,
+  Status as TaskStatus,
+  PermissionOutcome,
+  PermissionRequest,
+} from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
-import { getSetting } from "../../store";
+import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import {
   createSuggestedTask,
   getTaskForAgent,
@@ -26,7 +37,24 @@ import {
 } from "../../agentTools";
 import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK } from "../../agentToolDefs.mjs";
 import { waitForAnswer } from "../../asks";
-import { CLAUDE_CLI_PATH as CLAUDE_PATH } from "../../config";
+import {
+  allowedByRules,
+  denyMessage,
+  describePermission,
+  isAlwaysAllowed,
+  parseDecision,
+  promptDeadline,
+  scopeOfferFor,
+  waitForPermission,
+  DENIED_BY_USER,
+  DENIED_TIMED_OUT,
+  DENIED_UNATTENDED,
+} from "../../permissions";
+import {
+  CLAUDE_CLI_PATH as CLAUDE_PATH,
+  PERMISSION_PROMPT_TIMEOUT_MS,
+  PERMISSION_UNATTENDED_MS,
+} from "../../config";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
 import {
@@ -201,6 +229,19 @@ function permissionModeFor(m: string | null): "bypassPermissions" | "acceptEdits
   return m === "acceptEdits" || m === "plan" ? m : "bypassPermissions";
 }
 
+// One AbortSignal that trips when ANY of its inputs does, plus the teardown to
+// stop listening. A parked permission prompt has two ways to die — the turn's
+// Stop button and the SDK's own per-request cancellation — and must answer to
+// both; leaking the listeners would pile up one per prompt on a long turn.
+function linkSignals(...signals: (AbortSignal | undefined)[]): { signal: AbortSignal; dispose: () => void } {
+  const live = signals.filter((s): s is AbortSignal => !!s);
+  const ac = new AbortController();
+  const trip = () => ac.abort();
+  if (live.some((s) => s.aborted)) trip();
+  else for (const s of live) s.addEventListener("abort", trip, { once: true });
+  return { signal: ac.signal, dispose: () => { for (const s of live) s.removeEventListener("abort", trip); } };
+}
+
 /**
  * Run one user turn against Claude Code and yield stream events.
  * Resumes the task's existing session when present; otherwise starts a fresh
@@ -221,6 +262,9 @@ async function* runTurn(
   let askSeq = 0;
   // tool_use id -> how to summarize its eventual result into a peek.
   const resultKinds = new Map<string, ResultKind>();
+  // Fallback-id uniquifier for permission prompts, for the same reason as
+  // askSeq: the SDK normally supplies a toolUseID, but the registry keys on it.
+  let permSeq = 0;
   const queue = makeQueue<StreamEvent>();
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
@@ -256,6 +300,112 @@ async function* runTurn(
     ? `${userText}\n\n(Read each attached image/file with the Read tool before responding.)`
     : userText;
 
+  const permissionMode = permissionModeFor(permission);
+
+  // The permission gate. It must be PROVIDED in every mode, because CLI ≥2.1
+  // only puts AskUserQuestion in the model's tool list when the host signals it
+  // can field interactive prompts by passing canUseTool — without it the tool
+  // simply doesn't exist and Claude can never ask (verified against 2.1.198).
+  //
+  // Under "Auto-run" (bypassPermissions) the SDK never consults it, so it stays
+  // a blanket allow. Under "Accept edits" / "Plan mode" every call the SDK
+  // doesn't auto-approve arrives here — and this is what makes those modes mean
+  // something rather than being Auto-run with a different label. Known-safe
+  // tools and calls already covered by a remembered project rule pass silently;
+  // anything else parks the turn on a card the user answers, through the very
+  // same registry + /answer route an AskUserQuestion uses (lib/permissions.ts).
+  const canUseTool: CanUseTool = async (toolName, input, opts) => {
+    const allow = (): PermissionResult => ({ behavior: "allow" as const, updatedInput: input });
+    if (permissionMode === "bypassPermissions") return allow();
+    // `blockedPath` is the CLI saying this call reaches somewhere it shouldn't
+    // (outside the worktree, typically) — the one case the read-only allowlist
+    // must NOT swallow, since it's the CLI's own warning.
+    if (isAlwaysAllowed(toolName, opts.blockedPath)) return allow();
+    // Re-read the rules per call, not per turn: an "always allow" answered
+    // earlier in THIS turn has to take effect immediately, and a rule the user
+    // revokes mid-turn has to stop applying just as fast.
+    if (!opts.blockedPath && allowedByRules(listPermissionRules(project.id), toolName, input)) return allow();
+
+    const described = describePermission(toolName, input);
+    // NAMESPACED, not the bare toolUseID: the runner keys its transcript rows
+    // by tool_use id, and the model's own tool_use block for this very call
+    // carries the same id — an un-prefixed key would let the two rows clobber
+    // each other and land the decision on the wrong card.
+    const id = `perm:${opts.toolUseID || `${sessionId ?? "x"}-${permSeq++}`}`;
+    // Durable rules are Bash-only (see lib/permissions.ts). For everything else
+    // the CLI's own `suggestions` payload is offered instead: it stops the
+    // re-asking for the rest of THIS session and is never persisted.
+    const scope = scopeOfferFor(toolName, input)
+      ?? (opts.suggestions?.length ? { scope: "session" as const, value: toolName, label: "Don't ask again this session" } : undefined);
+    const request: PermissionRequest = {
+      id,
+      tool: toolName,
+      // The CLI renders its own prompt sentence ("Claude wants to run …") and
+      // knows things we can't see from the input alone, so prefer it; fall back
+      // to the same title the transcript would give the tool call.
+      title: opts.title?.trim() || described.title,
+      detail: described.detail,
+      description: opts.blockedPath
+        ? `Reaches outside the task's working directory: ${opts.blockedPath}`
+        : opts.description?.trim() || opts.decisionReason?.trim() || undefined,
+      diff: described.diff,
+      scope,
+      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+    };
+    queue.push({ type: "permission", request });
+    const settle = (outcome: PermissionOutcome) => queue.push({ type: "permission_decided", id, outcome });
+
+    // Two signals matter: the turn's (Stop) and the SDK's per-request one — a
+    // cancelled control request must stop being answerable even if the turn
+    // itself lives on.
+    const linked = linkSignals(abortController?.signal, opts.signal);
+    let waited;
+    try {
+      waited = await waitForPermission({
+        taskId: task.id,
+        id,
+        signal: linked.signal,
+        attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+        unattendedMs: PERMISSION_UNATTENDED_MS,
+      });
+    } finally {
+      linked.dispose();
+    }
+
+    // Every non-answer path denies — the gate fails CLOSED, so a stopped,
+    // unwatched, or expired turn can never leak an unapproved tool call.
+    if ("aborted" in waited) {
+      const note = "The session was stopped before this was approved.";
+      settle({ decision: "deny", auto: true, reason: "interrupted", note });
+      return { behavior: "deny", message: note };
+    }
+    if ("expired" in waited) {
+      const note = waited.expired === "unattended" ? DENIED_UNATTENDED : DENIED_TIMED_OUT;
+      settle({ decision: "deny", auto: true, reason: waited.expired, note });
+      return { behavior: "deny", message: denyMessage(request.title, note) };
+    }
+
+    const { decision, note } = parseDecision(waited.answers);
+    if (decision === "deny") {
+      settle({ decision, note: note || undefined });
+      return { behavior: "deny", message: denyMessage(request.title, note || DENIED_BY_USER) };
+    }
+    let remembered: string | undefined;
+    if (decision === "allow_always" && scope?.scope === "project" && scope.match_kind) {
+      addPermissionRule({ project_id: project.id, tool: toolName, match_kind: scope.match_kind, value: scope.value });
+      remembered = scope.label;
+    } else if (decision === "allow_always" && scope?.scope === "session") {
+      remembered = scope.label;
+    }
+    settle({ decision, remembered });
+    // `suggestions` is the CLI's own "stop asking for this in this session"
+    // payload. Handing it back on an always-allow covers what our project rules
+    // deliberately can't: non-Bash tools, and path grants we don't model.
+    return decision === "allow_always" && opts.suggestions?.length
+      ? { behavior: "allow", updatedInput: input, updatedPermissions: opts.suggestions }
+      : allow();
+  };
+
   const response = query({
     prompt,
     options: {
@@ -271,7 +421,7 @@ async function* runTurn(
       ...reasoningOptions(reasoning),
       systemPrompt: { type: "preset", preset: "claude_code", append: buildProjectContext(project, task) },
       // Permission mode (default bypassPermissions; "plan" proposes without editing).
-      permissionMode: permissionModeFor(permission),
+      permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       mcpServers: {
         orchestrator: orchestratorServer(
@@ -287,14 +437,11 @@ async function* runTurn(
       },
       // Lets the Stop button interrupt the stream mid-turn (see lib/abort.ts).
       abortController,
-      // Newer CLIs (≥2.1.x) only put AskUserQuestion in the model's tool list
-      // when the SDK signals it can field interactive prompts by providing
-      // canUseTool — without it the tool simply doesn't exist and Claude can
-      // never ask (verified against CLI 2.1.198). Under bypassPermissions this
-      // callback is otherwise never consulted, and an answered/dismissed ask is
-      // resolved by the PreToolUse hook below before permissions are checked,
-      // so a blanket allow changes nothing else.
-      canUseTool: async (_name: string, input: Record<string, unknown>) => ({ behavior: "allow" as const, updatedInput: input }),
+      // The real permission gate (defined above); also what makes the CLI
+      // expose AskUserQuestion at all. An answered/dismissed ask is resolved by
+      // the PreToolUse hook below before permissions are ever checked, so the
+      // two interactive paths never collide.
+      canUseTool,
       // bypassPermissions auto-resolves AskUserQuestion with no UI, so the
       // questions never reach the user. This hook intercepts that one tool: it
       // surfaces the questions to the UI (an "ask" event), parks until the user

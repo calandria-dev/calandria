@@ -20,9 +20,13 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
     case "user":
     case "session":
       return "turn_started";
+    // Both kinds of "your turn" park the task the same way: a question card
+    // and a tool-permission prompt each set awaiting_input and each clear it.
     case "ask":
+    case "permission":
       return "awaiting_input";
     case "ask_answered":
+    case "permission_decided":
       return "ask_answered";
     case "suggested":
       return "suggested";

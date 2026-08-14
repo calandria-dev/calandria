@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import type { TaskStreamEvent, ToolData, AskAnswers } from "@/lib/types";
+import type { TaskStreamEvent, ToolData, AskAnswers, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
 import { contextPct } from "./format";
 import { capsFor } from "./agents";
@@ -21,9 +21,10 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
 }) {
   const [msgsByTask, setMsgsByTask] = useState<Record<string, Msg[]>>({});
 
-  // Asks still awaiting an answer, per task. One assistant message can park
-  // several AskUserQuestion cards at once, and the "Needs your input" flag must
-  // stay up until the last one is answered — mirrors openAsks in lib/runner.ts.
+  // Everything still parked on the user, per task — AskUserQuestion cards and
+  // tool-permission prompts alike. One assistant message can park several at
+  // once, and the "Needs your input" flag must stay up until the last one is
+  // settled — mirrors openAsks in lib/runner.ts.
   const openAsksRef = useRef<Record<string, Set<string>>>({});
 
   const appendMsg = (taskId: string, m: Msg) =>
@@ -43,6 +44,28 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             const d = JSON.parse(m.content) as ToolData;
             if (m.toolId !== askId && d.ask?.id !== askId) return m;
             d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], answers };
+            return { ...m, content: JSON.stringify(d) };
+          } catch {
+            return m;
+          }
+        }),
+      };
+    });
+
+  // Settle a permission card (matched by tool id, or the id embedded in the
+  // content for reloaded messages) — the same shape of update as an answered
+  // ask, one card at a time.
+  const setOutcomeOnMsg = (taskId: string, permId: string, outcome: PermissionOutcome) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      return {
+        ...prev,
+        [taskId]: arr.map((m) => {
+          if (m.role !== "tool") return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            if (!d.permission || (m.toolId !== permId && d.permission.request.id !== permId)) return m;
+            d.permission = { request: d.permission.request, outcome };
             return { ...m, content: JSON.stringify(d) };
           } catch {
             return m;
@@ -85,6 +108,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
         try {
           const d = JSON.parse(m.content) as ToolData;
           if (d.ask && !d.ask.answers) open.add(d.ask.id);
+          if (d.permission && !d.permission.outcome) open.add(d.permission.request.id);
         } catch {}
       }
       openAsksRef.current[taskId] = open;
@@ -124,6 +148,18 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     } else if (ev.type === "ask_answered") {
       setAnswerOnMsg(taskId, ev.id, ev.answers);
       // Only drop the flag once every parked ask on this task is answered.
+      const open = openAsksRef.current[taskId];
+      open?.delete(ev.id);
+      if (!open || open.size === 0) {
+        setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
+      }
+    } else if (ev.type === "permission") {
+      const data: ToolData = { title: "Permission needed", permission: { request: ev.request } };
+      upsertMsg(taskId, { id: ev.msgId ?? `perm-${ev.request.id}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.request.id });
+      (openAsksRef.current[taskId] ??= new Set()).add(ev.request.id);
+      setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 1 } : x)));
+    } else if (ev.type === "permission_decided") {
+      setOutcomeOnMsg(taskId, ev.id, ev.outcome);
       const open = openAsksRef.current[taskId];
       open?.delete(ev.id);
       if (!open || open.size === 0) {
@@ -178,5 +214,5 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     return () => es.close();
   }, [selTask]);
 
-  return { msgsByTask, appendMsg, setAnswerOnMsg };
+  return { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg };
 }

@@ -31,9 +31,16 @@ Claude Code is the reference driver and the first target for new agent-facing fe
 It supports parallel tasks, resume and `/clear` lineage, interactive questions, project
 context, diff workflows, and usage reporting.
 
-Task sessions run unattended inside their isolated worktrees. Operator is a control layer,
-not an additional security sandbox; review [the security model](../SECURITY.md) before
-exposing an instance.
+Task sessions run unattended inside their isolated worktrees by default (Auto-run).
+**Accept edits** and **Plan mode** are real gates: file edits auto-apply under Accept
+edits, and everything else — commands, network fetches, subagents, leaving plan mode —
+parks the turn on a permission card in the transcript. Read-only tools never prompt.
+"Always allow" remembers a command for that project only, and every remembered approval is
+listed and revocable in Settings → Run defaults. A prompt nobody answers declines itself,
+so an auto-started task can't sit wedged waiting for someone who isn't there.
+
+Operator is a control layer, not an additional security sandbox; review
+[the security model](../SECURITY.md) before exposing an instance.
 
 ## OpenAI Codex
 
@@ -47,7 +54,9 @@ Two upstream differences are visible:
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
-  mid-turn approval mode.
+  mid-turn approval mode. Claude's permission cards have no Codex equivalent yet: the
+  MCP bridge that carries `ask_user` could carry approvals the same way, but the CLI would
+  first have to route an approval request to a tool call instead of a terminal prompt.
 
 ## Adding another agent
 

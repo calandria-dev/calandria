@@ -65,7 +65,22 @@ the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `li
 `get_task` + `update_task` + `list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
-`lib/claude-auth.ts`. Sessions run `permissionMode: "bypassPermissions"`.
+`lib/claude-auth.ts`.
+
+Sessions default to `permissionMode: "bypassPermissions"`; the other two modes the UI
+offers are real gates. `canUseTool` (the SDK callback the CLI also needs present before it
+will expose `AskUserQuestion` at all) routes every call the SDK doesn't auto-approve
+through **`lib/permissions.ts`**: a read-only allowlist passes silently — unless the CLI
+flagged a `blockedPath`, which forces a prompt — then the project's remembered rules, then
+a human. A prompt reuses the ask machinery wholesale (`lib/asks.ts`, `POST /answer`,
+`tasks.awaiting_input`), yielding a `permission` StreamEvent the runner persists as an
+answerable transcript card and settling on a `permission_decided`. Remembered rules
+(`permission_rules`) are Bash-only and project-scoped — a command is the one input a user
+can read in full and generalize — while non-Bash tools get allow-once plus the CLI's own
+session-scoped suggestion. Every non-answer path denies: Stop, the SDK cancelling its own
+request, an expired prompt, an unparseable answer, and a turn that ends with a card still
+open (the runner settles it in its `finally`, and a restart settles any left in the DB).
+An unattended auto-deny also parks queued follow-ups, the same way a dead login does.
 
 ### The Codex driver (`lib/agents/codex/driver.ts`)
 
