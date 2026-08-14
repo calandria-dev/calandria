@@ -18,6 +18,8 @@
 //   e2e:retitle=<title>             rename the RUNNING task through the same
 //                                   shared logic the real update_task tool calls
 //   e2e:permission=<command>        raise a Bash permission card and park on it
+//   e2e:blocked=<command>           a Bash call the CLI refused on its own — an
+//                                   already-decided card, no buttons, nothing parked
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
@@ -41,6 +43,7 @@ import {
   promptDeadline,
   scopeOfferFor,
   waitForPermission,
+  blockedReason,
   DENIED_BY_USER,
 } from "@/lib/permissions";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
@@ -146,6 +149,28 @@ export const mockDriver: AgentDriver = {
           return;
         }
       }
+    }
+
+    // A call the CLI refused BY ITSELF, with no card — the "auto" classifier or
+    // a deny rule in the Claude driver, and nothing to answer here either. The
+    // sequence mirrors the real one exactly: the tool call, then the refusal
+    // against its tool_use id, then the is_error tool_result the CLI feeds the
+    // model. The reason text goes through the same blockedReason() the driver
+    // uses, boilerplate tail and all, so the e2e covers what the user actually
+    // reads rather than a cleaned-up version of it.
+    const blocked = instructionText.match(/e2e:blocked=([^\n]+)/)?.[1]?.trim();
+    if (blocked) {
+      const id = `mock-blocked-${task.id}-g${task.generation}`;
+      const described = describePermission("Bash", { command: blocked });
+      const message =
+        `Permission to use Bash with command ${blocked} has been denied. ` +
+        `IMPORTANT: You *may* attempt to accomplish this action using other tools.`;
+      yield { type: "tool", id, title: described.title, detail: described.detail };
+      yield { type: "permission_denied", id, tool: "Bash", reasonType: "classifier", reason: blockedReason(undefined, message) };
+      yield { type: "tool_result", id, content: message, isError: true };
+      yield { type: "assistant", content: `Skipped \`${blocked}\` — Claude Code refused it.` };
+      yield { type: "done", sessionId };
+      return;
     }
 
     // File writes: every explicit e2e:write, else the default notes append.
