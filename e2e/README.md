@@ -40,6 +40,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
   | `e2e:suggest=<title>` | create a suggested task + emit the event |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into ANOTHER project (id or name), through the real strict resolver — an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
+  | `e2e:blocked=<command>` | that Bash call refused by the CLI itself — an already-decided card with no buttons, nothing parked on the user |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs

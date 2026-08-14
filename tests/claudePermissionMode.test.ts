@@ -80,6 +80,10 @@ describe("which permission modes the driver offers", () => {
   });
 
   it("offers the five SDK modes worth surfacing, and not dontAsk", () => {
+    // dontAsk is off for a reason the list can't show: verified against
+    // claude-cli 2.1.x, it never invokes canUseTool, so the whole gate in
+    // lib/permissions.ts — read-only allowlist, the project's remembered rules,
+    // the card — is inert under it. See the note in capabilities.ts.
     expect(CLAUDE_CAPABILITIES.permissionModes.map((p) => p.value)).toEqual([
       "bypassPermissions",
       "auto",
@@ -235,32 +239,128 @@ describe("what each mode does to the gate", () => {
   });
 });
 
+// Two `system`/`permission_denied` messages CAPTURED VERBATIM from claude-cli
+// 2.1.x (via the Agent SDK against the real binary), not written from sdk.d.ts.
+// Both matter, and the type alone would have got both wrong:
+//
+//  - `decision_reason` — the field the SDK documents as "human-readable reason
+//    from the deciding component" — is ABSENT on both. Only `message` is set,
+//    and `message` is documented as (and reads as) the text handed to the
+//    MODEL: the `mode` one is ~700 characters of "IMPORTANT: You *may* attempt
+//    to accomplish this action using other tools…". Pasting it at the user is
+//    exactly what blockedReason() exists to stop.
+//  - `decision_reason_type` is open-ended. `subcommandResults` is a real value
+//    the CLI emits and the SDK's own doc comment doesn't list, which is why the
+//    discriminator is persisted raw and phrased at render time.
+const DENIED_BY_MODE = {
+  type: "system",
+  subtype: "permission_denied",
+  tool_name: "Bash",
+  tool_use_id: "toolu_vrtx_01UxKcWBfEyFD8aroDF1oJqs",
+  decision_reason_type: "mode",
+  message:
+    "Permission to use Bash has been denied because Claude Code is running in don't ask mode. " +
+    "IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used " +
+    "to accomplish this goal, e.g. using head instead of cat. But you *should not* attempt to work around " +
+    "this denial in malicious ways, e.g. do not use your ability to run tests to execute non-test actions. " +
+    "You should only try to work around this restriction in reasonable ways that do not attempt to bypass " +
+    "the intent behind this denial. If you believe this capability is essential to complete the user's " +
+    "request, STOP and explain to the user what you were trying to do and why you need this permission. " +
+    "Let the user decide how to proceed.",
+  uuid: "9037688e-d43c-4e33-a483-dbb6d95fe243",
+  session_id: "af043550-a616-4165-aecc-116cb332b2c3",
+};
+
+const DENIED_BY_SUBCOMMAND = {
+  type: "system",
+  subtype: "permission_denied",
+  tool_name: "Bash",
+  tool_use_id: "toolu_vrtx_01PpCVdJemHsETBimMJh2rfE",
+  decision_reason_type: "subcommandResults",
+  message: "Permission to use Bash with command rm -f /tmp/permprobe/scratch.txt has been denied.",
+  uuid: "586db46d-3e59-43d9-b892-baccc7330754",
+  session_id: "e6b5da72-2ff1-4f13-ac9f-b9274892e794",
+};
+
 describe("a call the CLI denies without asking", () => {
-  it("surfaces the classifier's veto as a notice instead of a bare tool failure", async () => {
+  const denialOf = (events: StreamEvent[]) =>
+    events.find((e) => e.type === "permission_denied") as Extract<StreamEvent, { type: "permission_denied" }> | undefined;
+
+  it("reports the refusal against the tool_use it killed, not as a loose notice", async () => {
     // Reachable in normal use now that "auto" is the default: the classifier can
     // deny without ever calling canUseTool, and the only other trace the user
     // gets is an is_error tool_result that reads like the command simply failed.
+    // Carrying the tool_use id is what lets the runner settle a decided
+    // permission card onto that very call (tests/permissionGate.test.ts).
+    const { project, task } = fixture({ permission_mode: "auto" });
+    scriptSdk([DENIED_BY_SUBCOMMAND]);
+
+    const { events } = await runTurn(task, project);
+    expect(denialOf(events)).toEqual({
+      type: "permission_denied",
+      id: "toolu_vrtx_01PpCVdJemHsETBimMJh2rfE",
+      tool: "Bash",
+      reasonType: "subcommandResults",
+      reason: "Permission to use Bash with command rm -f /tmp/permprobe/scratch.txt has been denied.",
+    });
+    // The notice this replaced floated beside the call and said the same thing twice.
+    expect(events.some((e) => e.type === "notice")).toBe(false);
+  });
+
+  it("keeps the instruction the CLI wrote for the MODEL out of the user's reason", async () => {
+    const { project, task } = fixture({ permission_mode: "auto" });
+    scriptSdk([DENIED_BY_MODE]);
+
+    const { events } = await runTurn(task, project);
+    const reason = denialOf(events)!.reason!;
+    expect(reason).toBe("Permission to use Bash has been denied because Claude Code is running in don't ask mode.");
+    expect(reason).not.toContain("IMPORTANT");
+    expect(reason).not.toContain("head instead of cat");
+  });
+
+  it("prefers decision_reason when the CLI does supply one", async () => {
+    // Not observed live on 2.1.x, but it's the field the SDK documents as the
+    // human-readable one — if a build starts filling it, it wins over `message`.
+    const { project, task } = fixture({ permission_mode: "auto" });
+    scriptSdk([{ ...DENIED_BY_MODE, decision_reason_type: "classifier", decision_reason: "Command could exfiltrate credentials" }]);
+
+    const { events } = await runTurn(task, project);
+    expect(denialOf(events)).toMatchObject({ reasonType: "classifier", reason: "Command could exfiltrate credentials" });
+  });
+
+  it("gives each denial in a turn its own id, so three refusals aren't one card", async () => {
     const { project, task } = fixture({ permission_mode: "auto" });
     scriptSdk([
-      {
-        type: "system",
-        subtype: "permission_denied",
-        tool_name: "Bash",
-        tool_use_id: "tu_9",
-        decision_reason_type: "classifier",
-        decision_reason: "Command could exfiltrate credentials",
-        message: "Permission to use Bash has been denied.",
-        uuid: "u1",
-        session_id: "s1",
-      },
+      { ...DENIED_BY_SUBCOMMAND, tool_use_id: "tu_a" },
+      { ...DENIED_BY_SUBCOMMAND, tool_use_id: "tu_b" },
+      { ...DENIED_BY_SUBCOMMAND, tool_use_id: "tu_c" },
     ]);
 
     const { events } = await runTurn(task, project);
-    const notice = events.find((e) => e.type === "notice");
-    expect(notice).toBeDefined();
-    const content = (notice as Extract<StreamEvent, { type: "notice" }>).content;
-    expect(content).toContain("Bash");
-    expect(content).toContain("classifier");
-    expect(content).toContain("Command could exfiltrate credentials");
+    const ids = events.filter((e) => e.type === "permission_denied").map((e) => (e as { id: string }).id);
+    expect(ids).toEqual(["tu_a", "tu_b", "tu_c"]);
+  });
+
+  it("still yields a distinct id when the CLI omits tool_use_id", async () => {
+    // Required by the SDK type, so this is a build-shipped-something-odd guard:
+    // a shared undefined id would collapse the whole turn onto one card.
+    const { project, task } = fixture({ permission_mode: "auto" });
+    const { tool_use_id: _drop, ...noId } = DENIED_BY_SUBCOMMAND;
+    scriptSdk([noId, noId]);
+
+    const { events } = await runTurn(task, project);
+    const ids = events.filter((e) => e.type === "permission_denied").map((e) => (e as { id: string }).id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((i) => i.startsWith("denied-"))).toBe(true);
+  });
+
+  it("marks a refusal that happened inside a subagent", async () => {
+    // A subagent's tool_use blocks never reach this stream, so there is no
+    // transcript card to settle onto — the runner needs to know why.
+    const { project, task } = fixture({ permission_mode: "auto" });
+    scriptSdk([{ ...DENIED_BY_SUBCOMMAND, agent_id: "agent_7" }]);
+
+    const { events } = await runTurn(task, project);
+    expect(denialOf(events)).toMatchObject({ agentId: "agent_7" });
   });
 });
