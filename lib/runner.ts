@@ -84,6 +84,29 @@ export function startTurn(
     } catch (settleErr) {
       console.error(`[runner] could not settle task ${task.id} after crash:`, settleErr);
     }
+    // A crash here means run()'s own finally never reached ITS settle block, so
+    // a scheduled run would otherwise leak two ways: the schedule_runs row stuck
+    // at claimed/running forever, and — worse — the stale RunContext entry left
+    // keyed on this task id, which a later ORDINARY turn on the same task would
+    // silently inherit via interactionDenied() (lib/runContext.ts) and have its
+    // own permission prompts auto-deny with no visible explanation. Settle both
+    // here, best-effort: this catch is the last line of defence for a detached
+    // promise, so nothing inside it may itself throw out.
+    if (runContext) {
+      try {
+        if (runContext.scheduleRunId) {
+          const detail = `runner crashed before settling: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500);
+          settleRun(runContext.scheduleRunId, "failed", detail);
+        }
+      } catch (scheduleErr) {
+        console.error(`[runner] could not settle schedule run ${runContext.scheduleRunId} after crash:`, scheduleErr);
+      }
+      try {
+        clearRunContext(task.id, runContext);
+      } catch (contextErr) {
+        console.error(`[runner] could not clear run context for task ${task.id} after crash:`, contextErr);
+      }
+    }
   });
 }
 
@@ -496,7 +519,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // it was stopped. Polling task.running from outside cannot reconstruct it.
     if (runContext?.scheduleRunId) {
       const status = stopped ? "stopped" : turnError ? "failed" : opened ? "succeeded" : "interrupted";
-      const detail = turnError ? String(turnError).slice(0, 500) : !opened ? "the agent session never opened" : "";
+      const detail = turnError && !stopped ? String(turnError).slice(0, 500) : !opened ? "the agent session never opened" : "";
       try {
         settleRun(runContext.scheduleRunId, status, detail);
       } catch (err) {

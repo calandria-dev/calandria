@@ -15,6 +15,19 @@ vi.mock("@/lib/agents/registry", () => ({
   }),
 }));
 
+// Mirror tests/runnerEarlyThrow.test.ts: track() calls inside run()'s own
+// finally (turn_completed / turn_failed) are unguarded, so making one throw
+// forces a crash that escapes run() entirely — before its OWN settle-the-
+// schedule-run block ever runs. That is the only way to reach the
+// last-resort `.catch` on the detached run() promise in startTurn(), which is
+// what this file's "crash" test is really exercising.
+const analyticsState = vi.hoisted(() => ({ failEvents: [] as string[] }));
+vi.mock("@/lib/analytics", () => ({
+  track: (event: string) => {
+    if (analyticsState.failEvents.includes(event)) throw new Error(`simulated finally failure (${event})`);
+  },
+}));
+
 import { createProject, createTask, getProject, getTask } from "@/lib/store";
 import { claimRun, createSchedule, getRun, startRun } from "@/lib/schedule/store";
 import { startTurn } from "@/lib/runner";
@@ -37,6 +50,7 @@ describe("scheduled turns in the runner", () => {
 
   beforeEach(() => {
     events.length = 0;
+    analyticsState.failEvents = [];
     const p = createProject({ name: `runner-${Math.random().toString(36).slice(2)}` });
     projectId = p.id;
     const s = createSchedule({
@@ -79,5 +93,28 @@ describe("scheduled turns in the runner", () => {
     startTurn(getTask(taskId)!, getProject(projectId)!, "hello", "");
     await settled();
     expect(getTask(taskId)!.awaiting_input).toBe(1);
+  });
+
+  it("still settles the schedule run and clears the run context when run()'s own finally crashes", async () => {
+    // turn_completed fires inside run()'s finally, unguarded, BEFORE the
+    // schedule-run settle block below it — so throwing there simulates a
+    // crash that escapes run() with its own settle block never reached
+    // (the FOREIGN-KEY-on-a-deleted-row hazard tests/runnerEarlyThrow.test.ts
+    // documents is one real-world way this happens; this is the same shape of
+    // failure, provoked directly at the point that matters for this test).
+    // The ONLY thing left that can settle the run and clear the context is
+    // the last-resort `.catch` on startTurn's detached run() promise.
+    analyticsState.failEvents = ["turn_completed", "turn_failed"];
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+    const run = getRun(runId)!;
+    // Terminal, not stuck at "claimed"/"running" forever.
+    expect(run.status).not.toBe("claimed");
+    expect(run.status).not.toBe("running");
+    expect(run.finished_at).toBeGreaterThan(0);
+    // The stale RunContext must not survive — otherwise a later, ORDINARY
+    // turn on this same task would silently inherit interactionPolicy: "deny"
+    // and have its own permission prompts auto-deny with no explanation.
+    expect(getRunContext(taskId)).toBeUndefined();
   });
 });
