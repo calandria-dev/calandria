@@ -39,6 +39,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
   | `e2e:fail=<message>` | end the turn with an error event |
   | `e2e:suggest=<title>` | create a suggested task + emit the event |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into ANOTHER project (id or name), through the real strict resolver — an unknown ref yields an error event |
+  | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs
@@ -53,6 +54,7 @@ npx playwright test e2e/03-views.spec.ts   # one spec (post-01 specs self-onboar
 | `06-move-task.spec.ts` | re-filing an unstarted task to another project from the Edit modal |
 | `07-move-tasks-bulk.spec.ts` | multi-select + Move to project… : one request for a whole selection, refusals reported |
 | `08-move-started-task.spec.ts` | re-filing a task that has RUN: the worktree it must discard is named, confirmed twice, reclaimed — and its next turn lands in the destination repo |
+| `09-permissions.spec.ts` | the tool-permission gate: a turn parks on a card, Allow once resumes it, Decline feeds the reason back, "Always allow" stores a project rule that skips the next prompt and is revocable in Settings |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named

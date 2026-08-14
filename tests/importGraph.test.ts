@@ -31,6 +31,8 @@ const PINNED = [
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
+  "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
+  "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
 ];

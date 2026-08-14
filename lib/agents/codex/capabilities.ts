@@ -58,6 +58,16 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // sandbox. acceptEdits has no distinct codex analog (writes already auto-apply)
   // and on-request approvals can't be answered non-interactively, so neither is
   // offered — both fall back to bypassPermissions.
+  //
+  // Claude's prompted modes now park on a real permission card (lib/permissions.ts,
+  // reached through canUseTool). Codex has no equivalent hook: `codex exec` decides
+  // approvals inside the CLI process and the SDK gives the host no callback to
+  // intercept them with, so raising CODEX_APPROVAL_POLICY above "never" would
+  // stall turns invisibly. The ask_user MCP bridge is the plausible route if that
+  // changes — it already carries an interactive question out to the same card UI
+  // and /answer route, and a permission prompt is the same park-and-resume shape.
+  // What's missing is the CLI side: something that routes an approval request to
+  // an MCP tool call instead of a terminal prompt. Until then, leave this alone.
   permissionModes: [
     { value: "bypassPermissions", label: "Auto-run", sub: "workspace write, no approvals (default)" },
     { value: "plan", label: "Plan mode", sub: "read-only, propose without editing" },

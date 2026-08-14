@@ -18,6 +18,7 @@ import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
+import { DENIED_INTERRUPTED } from "@/lib/permissions";
 import type { Task, Project, ToolData, TurnUsage } from "@/lib/types";
 
 /**
@@ -188,8 +189,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   let opened = false;
   // tool_use_id -> { dbId, data } so a later tool_result can be merged in.
   const toolMsgs: Record<string, { dbId: string; data: ToolData }> = {};
-  // Asks still awaiting an answer — one assistant message can park several at
-  // once, and awaiting_input must stay up until the last one is answered.
+  // Everything currently parked on the user — AskUserQuestion cards and
+  // permission prompts alike. One assistant message can park several at once,
+  // and awaiting_input must stay up until the last one is settled.
   const openAsks = new Set<string>();
   // Analytics: this turn's spend (from the usage event) + failure state, both
   // attached to the terminal turn_completed / turn_failed event below.
@@ -205,6 +207,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // straight into the same limit. Classified after authFailure (a dead login
   // never doubles as a spent quota).
   let usageLimitFailure: string | null = null;
+  // Set when a tool-permission prompt auto-denied because NOBODY was watching
+  // (lib/permissions.ts). Like a dead login, the problem isn't the work — it's
+  // that there was no one to approve it, and draining the queue now would run
+  // every follow-up into the same wall.
+  let unattendedDeny = false;
   const startedAt = Date.now();
 
   // Persist + publish a failed turn's transcript line (with a recovery hint when
@@ -302,6 +309,29 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
         }
+      } else if (ev.type === "permission") {
+        // A tool call parked on the user's approval (the canUseTool gate under
+        // "Accept edits" / "Plan mode"). Same deal as an ask: persist the
+        // request with its id so a reload re-renders an answerable card, and
+        // flag the task now — the turn is live but blocked on a human.
+        const data: ToolData = { title: "Permission needed", permission: { request: ev.request } };
+        const m = addMessage(id, gen, "tool", JSON.stringify(data));
+        toolMsgs[ev.request.id] = { dbId: m.id, data };
+        openAsks.add(ev.request.id);
+        updateTask(id, { awaiting_input: 1 });
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+      } else if (ev.type === "permission_decided") {
+        const t = toolMsgs[ev.id];
+        if (t && t.data.permission) {
+          t.data.permission = { request: t.data.permission.request, outcome: ev.outcome };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          // Shares openAsks with the question cards on purpose: the flag drops
+          // only once NOTHING is waiting on the user, whichever kind it was.
+          openAsks.delete(ev.id);
+          if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
+          if (ev.outcome.reason === "unattended") unattendedDeny = true;
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        }
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
         turnUsage = ev.usage;
@@ -343,6 +373,22 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // the pending queue, and turn_end — settling any of them here would clobber
     // a live turn's state (running flipped off, its queued follow-ups eaten).
     const superseded = hasTurn(id) && !ownsTurn(id, abortController);
+    // Any permission card still open never got a decision — the turn died
+    // (Stop, a crash, a driver error) with the gate parked. Settle it here or
+    // it renders as answerable forever, and answering it would resolve nothing.
+    // Best-effort: this is the finally, and the task row may already be gone.
+    for (const openId of openAsks) {
+      const t = toolMsgs[openId];
+      if (!t?.data.permission || t.data.permission.outcome) continue;
+      const outcome = { decision: "deny" as const, auto: true, reason: "interrupted" as const, note: DENIED_INTERRUPTED };
+      t.data.permission = { request: t.data.permission.request, outcome };
+      try {
+        updateMessage(t.dbId, JSON.stringify(t.data));
+        publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
+      } catch (err) {
+        console.error(`[runner] could not settle open permission card for task ${id}:`, err);
+      }
+    }
     // Terminal analytics for the funnel + per-task cost. A Stop isn't a failure
     // (Claude swallows the abort), so it reports as a completed-but-stopped turn.
     const stopped = abortController.signal.aborted;
@@ -409,17 +455,18 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
-    } else if (authFailure || usageLimitFailure) {
-      // The login (or the quota) is dead, not the work: draining now would run
-      // each follow-up straight into the same authentication error / spent
-      // limit, emptying the queue and stacking identical walls of red for
-      // messages that never actually ran. Leave them parked (they're rows in
+    } else if (authFailure || usageLimitFailure || unattendedDeny) {
+      // The login (or the quota, or the absent human) is what failed — not the
+      // work: draining now would run each follow-up straight into the same
+      // authentication error / spent limit / unanswerable permission prompt,
+      // emptying the queue and stacking identical walls of red for messages
+      // that never actually ran. Leave them parked (they're rows in
       // pending_messages, so they survive a reload and still render as queued
       // bubbles) and say so once. They drain normally at the end of the next
-      // turn, after a reconnect / once the limit resets.
+      // turn, after a reconnect / once the limit resets / once you're back.
       const parked = listPendingMessages(id).length;
       if (parked) {
-        const when = authFailure ? "once you reconnect" : "once the limit resets";
+        const when = authFailure ? "once you reconnect" : usageLimitFailure ? "once the limit resets" : "when you send the next message";
         const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue — ${parked === 1 ? "it runs" : "they run"} ${when}.`;
         // Best-effort: the task row can be gone by now (deleted mid-turn), and a
         // FOREIGN KEY throw here would escape the detached run()'s finally.
