@@ -13,6 +13,11 @@ Things we DO consider vulnerabilities:
 - Cross-origin attacks against a default local instance (e.g. a malicious
   website driving `http://localhost:3000` from the browser — CSRF/DNS
   rebinding).
+- Cross-origin attacks against an **authenticated** instance. Passing Cloudflare
+  Access is not consent: the `CF_Authorization` cookie is `SameSite=None`, so a
+  hostile page that can make a logged-in user's browser open `/pty` gets a valid
+  assertion for free. Anything that drives a signed-in instance from another
+  origin counts, `/pty` most of all.
 - One project's task escaping its git worktree isolation in a way the UI does
   not surface.
 - Secrets (tokens, API keys) leaking into transcripts, logs, or diffs beyond
