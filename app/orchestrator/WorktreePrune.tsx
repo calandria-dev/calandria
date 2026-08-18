@@ -13,10 +13,13 @@ interface Candidate {
   projectName: string;
   branch: string;
   mergedAt: number;
+  cleanupAt: number;
+  status: string;
   sizeBytes: number;
   running: boolean;
-  unsafe: boolean; // has post-merge work (dirty or ahead) — removing it would lose work
+  unsafe: boolean; // dirty or ahead — removing it would lose work
   unsafeReason: string | null;
+  canDiscard: boolean; // Done tasks may be explicitly destroyed even when unsafe
 }
 interface PruneList {
   candidates: Candidate[];
@@ -24,23 +27,23 @@ interface PruneList {
 }
 interface PruneResult {
   pruned: string[];
+  discarded: string[];
   skipped: { taskId: string; reason: string }[];
   reclaimedBytes: number;
 }
 
 const DAY = 86_400_000;
-const mergedDaysAgo = (mergedAt: number) => Math.floor((Date.now() - mergedAt) / DAY);
-const mergedLabel = (mergedAt: number) => {
-  const d = mergedDaysAgo(mergedAt);
-  if (d <= 0) return "merged today";
-  return `merged ${d} day${d === 1 ? "" : "s"} ago`;
+const daysAgo = (at: number) => Math.floor((Date.now() - at) / DAY);
+const cleanupLabel = (c: Candidate) => {
+  const d = daysAgo(c.cleanupAt);
+  const action = c.mergedAt ? "merged" : "done";
+  if (d <= 0) return `${action} today`;
+  return `${action} ${d} day${d === 1 ? "" : "s"} ago`;
 };
 
-// The "Prune merged worktrees" cleanup. Worktrees are only ever removed on task
-// or project delete, so merged-and-forgotten ones pile up under the worktrees
-// dir. This lists those candidates with the disk each would reclaim, and prunes
-// the selected ones — keeping their branches by default (the branch is the diff
-// base for reopening the task; only an explicit opt-in deletes it).
+// Settings cleanup for merged worktrees and worktrees belonging to Done tasks.
+// Safe cleanup retains branches by default. Unmerged work in a Done task can be
+// explicitly discarded, which permanently deletes its edits and task branch.
 export function WorktreePrune() {
   const [list, setList] = useState<PruneList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,13 +68,14 @@ export function WorktreePrune() {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Candidates old enough to show, given the "merged more than N days ago" filter.
+  // Candidates old enough to show, based on merge time or the time marked Done.
   const shown = useMemo(
-    () => (list?.candidates ?? []).filter((c) => mergedDaysAgo(c.mergedAt) >= minDays),
+    () => (list?.candidates ?? []).filter((c) => daysAgo(c.cleanupAt) >= minDays),
     [list, minDays]
   );
-  const selectable = useMemo(() => shown.filter((c) => !c.running && !c.unsafe), [shown]);
+  const selectable = useMemo(() => shown.filter((c) => !c.running && (!c.unsafe || c.canDiscard)), [shown]);
   const selectedList = useMemo(() => shown.filter((c) => selected.has(c.taskId)), [shown, selected]);
+  const destructiveList = useMemo(() => selectedList.filter((c) => c.unsafe), [selectedList]);
   const selectedBytes = selectedList.reduce((s, c) => s + c.sizeBytes, 0);
   const allSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.taskId));
 
@@ -98,6 +102,7 @@ export function WorktreePrune() {
       const res = await jsend<PruneResult>("/api/maintenance/worktrees", "POST", {
         taskIds: selectedList.map((c) => c.taskId),
         deleteBranch,
+        discardChanges: destructiveList.length > 0,
       });
       setResult(res);
       setSelected(new Set());
@@ -115,19 +120,19 @@ export function WorktreePrune() {
   return (
     <>
       <div className="field">
-        <div className="lab">{Icon.archive()} Prune merged worktrees</div>
+        <div className="lab">{Icon.archive()} Reclaim task worktrees</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 12 }}>
-          Every task runs in its own git worktree. Once a task&apos;s branch is fully merged the worktree is just disk —
-          removing it reclaims that space and <strong>keeps the branch</strong> by default, so you can still reopen the
-          task later (its worktree is recreated on demand). Tasks with work done <em>after</em> the merge (uncommitted
-          edits or un-merged commits) are flagged and skipped — that work would be lost.
+          Every task runs in its own git worktree. Remove worktrees for merged or Done tasks to reclaim their disk.
+          Safe cleanup <strong>keeps the branch</strong> by default, so reopening recreates the worktree with its commits.
+          A Done task with unmerged work can also be discarded, but its edits and branch are permanently deleted.
         </div>
 
         {error && <ErrNote style={{ marginBottom: 10 }} onRetry={refresh}>{error}</ErrNote>}
         {result && (
           <div className="hlp" style={{ marginBottom: 10 }}>
-            {Icon.check()} Pruned {result.pruned.length} worktree{result.pruned.length === 1 ? "" : "s"}, reclaimed{" "}
+            {Icon.check()} Removed {result.pruned.length} worktree{result.pruned.length === 1 ? "" : "s"}, reclaimed{" "}
             <strong>{fmtBytes(result.reclaimedBytes)}</strong>
+            {result.discarded.length > 0 && ` · permanently discarded work from ${result.discarded.length}`}
             {result.skipped.length > 0 && ` · skipped ${result.skipped.length} (${result.skipped.map((s) => s.reason).join(", ")})`}
           </div>
         )}
@@ -135,12 +140,12 @@ export function WorktreePrune() {
         {list == null && !error ? (
           <LoadNote style={{ padding: 0 }}>Scanning worktrees…</LoadNote>
         ) : list == null ? null : list.candidates.length === 0 ? (
-          <div className="hlp" style={{ marginTop: 0 }}>No merged worktrees to prune — nothing to reclaim. 🎉</div>
+          <div className="hlp" style={{ marginTop: 0 }}>No merged or Done task worktrees to remove — nothing to reclaim. 🎉</div>
         ) : (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
               <label className="hlp" style={{ margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                Merged more than
+                Finished more than
                 <input
                   type="number" min={0} value={minDays}
                   onChange={(e) => setMinDays(Math.max(0, Math.round(Number(e.target.value) || 0)))}
@@ -167,19 +172,24 @@ export function WorktreePrune() {
                     type="checkbox"
                     checked={selected.has(c.taskId)}
                     onChange={() => toggle(c.taskId)}
-                    disabled={c.running || c.unsafe}
+                    disabled={c.running || (c.unsafe && !c.canDiscard)}
                   />
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     <span style={{ opacity: 0.6 }}>{c.projectName} · </span>
                     {c.title || "(untitled)"}
                     {c.running && <span className="hlp" style={{ margin: 0, marginLeft: 8 }}>· running, skipped</span>}
-                    {!c.running && c.unsafe && (
+                    {!c.running && c.unsafe && c.canDiscard && (
                       <span className="hlp" style={{ margin: 0, marginLeft: 8, color: "var(--red)" }}>
-                        · has unmerged work{c.unsafeReason ? ` (${c.unsafeReason})` : ""} — will be lost, skipped
+                        · discard permanently{c.unsafeReason ? ` (${c.unsafeReason})` : ""}
+                      </span>
+                    )}
+                    {!c.running && c.unsafe && !c.canDiscard && (
+                      <span className="hlp" style={{ margin: 0, marginLeft: 8, color: "var(--red)" }}>
+                        · has active unmerged work — mark Done before discarding
                       </span>
                     )}
                   </span>
-                  <span className="hlp" style={{ margin: 0, whiteSpace: "nowrap" }}>{mergedLabel(c.mergedAt)}</span>
+                  <span className="hlp" style={{ margin: 0, whiteSpace: "nowrap" }}>{cleanupLabel(c)}</span>
                   <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", width: 72, textAlign: "right" }}>
                     {fmtBytes(c.sizeBytes)}
                   </span>
@@ -187,11 +197,19 @@ export function WorktreePrune() {
               ))}
             </div>
 
+            {destructiveList.length > 0 && (
+              <div className="err-note" style={{ marginTop: 12 }}>
+                <strong>Permanent discard:</strong> {destructiveList.length} selected Done task{destructiveList.length === 1 ? " has" : "s have"} unmerged work.
+                {" "}Removing {destructiveList.length === 1 ? "it" : "them"} deletes uncommitted edits and the task {destructiveList.length === 1 ? "branch" : "branches"}. This cannot be undone.
+              </div>
+            )}
+
             <label className="hlp" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12 }}>
               <input type="checkbox" checked={deleteBranch} onChange={(e) => { setDeleteBranch(e.target.checked); setConfirming(false); }} style={{ marginTop: 2 }} />
               <span>
                 <strong>Also delete the branch</strong> (off by default). Frees a little more, but you lose the ability to
                 view that task&apos;s diff against its original base. Reopening still works — it starts a fresh worktree.
+                {destructiveList.length > 0 && " Branches containing unmerged work are always deleted when permanently discarded."}
               </span>
             </label>
 
@@ -203,10 +221,12 @@ export function WorktreePrune() {
               >
                 {Icon.archive()}{" "}
                 {busy
-                  ? "Pruning…"
+                  ? "Removing…"
                   : confirming
-                    ? `Confirm — prune ${selectedList.length} & reclaim ${fmtBytes(selectedBytes)}${deleteBranch ? " + delete branches" : ""}`
-                    : `Prune ${selectedList.length} selected · ${fmtBytes(selectedBytes)}`}
+                    ? destructiveList.length > 0
+                      ? `Confirm — remove ${selectedList.length}, permanently discard ${destructiveList.length} · reclaim ${fmtBytes(selectedBytes)}`
+                      : `Confirm — remove ${selectedList.length} & reclaim ${fmtBytes(selectedBytes)}${deleteBranch ? " + delete branches" : ""}`
+                    : `Remove ${selectedList.length} selected · ${fmtBytes(selectedBytes)}`}
               </button>
               {confirming && !busy && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>Cancel</button>
@@ -222,7 +242,7 @@ export function WorktreePrune() {
         <div className="lab">{Icon.clock()} Auto-prune</div>
         <label className="hlp" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 0, opacity: 0.6 }}>
           <input type="checkbox" disabled />
-          Automatically prune worktrees merged more than 30 days ago <span className="opt">— coming soon</span>
+          Automatically remove worktrees merged more than 30 days ago <span className="opt">— coming soon</span>
         </label>
       </div>
     </>

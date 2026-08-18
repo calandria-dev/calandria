@@ -20,11 +20,11 @@
 
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
-import type { Project, Task, StreamEvent } from "../../types";
-import type { AgentDriver } from "../types";
+import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
+import type { AgentDriver, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
+import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
 import { buildProjectContext } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { resolveCodexModel } from "./pricing";
@@ -92,16 +92,25 @@ function reasoningEffort(level: string | null): { modelReasoningEffort?: ModelRe
   return e ? { modelReasoningEffort: e } : {};
 }
 
-type RunControls = { sandboxMode: SandboxMode; approvalPolicy: ApprovalMode; networkAccessEnabled: boolean };
+type RunControls = { sandboxMode: SandboxMode; networkAccessEnabled: boolean };
 
-// The task's run permission → codex sandbox + approval policy. Default (null /
-// unknown / "bypassPermissions") is the auto-run analog of Claude's
-// bypassPermissions: write within the workspace, run commands and reach the
-// network without approvals — safe because tasks run in isolated worktrees /
-// a hardened container. "plan" runs read-only so codex proposes without editing.
+// The task's run permission → codex sandbox. Default (null / unknown /
+// "bypassPermissions") is the auto-run analog of Claude's bypassPermissions:
+// write within the workspace, run commands and reach the network without
+// approvals — safe because tasks run in isolated worktrees / a hardened
+// container. "plan" runs read-only so codex proposes without editing.
 function runControls(mode: string | null): RunControls {
-  if (mode === "plan") return { sandboxMode: "read-only", approvalPolicy: "never", networkAccessEnabled: false };
-  return { sandboxMode: "workspace-write", approvalPolicy: "never", networkAccessEnabled: true };
+  if (mode === "plan") return { sandboxMode: "read-only", networkAccessEnabled: false };
+  return { sandboxMode: "workspace-write", networkAccessEnabled: true };
+}
+
+// The approval-policy override sent to the CLI, or nothing when the instance
+// opts to inherit ~/.codex/config.toml — enterprise-managed requirements can
+// disallow "never", and omitting the flag lets the managed config decide.
+// See CODEX_APPROVAL_POLICY in lib/config.ts.
+function approvalOverride(): { approvalPolicy?: ApprovalMode } {
+  if (CODEX_APPROVAL_POLICY === "inherit") return {};
+  return { approvalPolicy: CODEX_APPROVAL_POLICY as ApprovalMode };
 }
 
 /**
@@ -144,7 +153,7 @@ async function* runTurn(
     // be — skip the check so codex never hard-errors on a missing repo.
     skipGitRepoCheck: true,
     sandboxMode: controls.sandboxMode,
-    approvalPolicy: controls.approvalPolicy,
+    ...approvalOverride(),
     networkAccessEnabled: controls.networkAccessEnabled,
     ...(task.model ? { model: task.model } : {}),
     ...reasoningEffort(reasoning),
@@ -209,24 +218,29 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // run is cut off (returning whatever the agent had said by then). Any failure
 // degrades to empty text (callers add their own "(no … produced)" fallback) so
 // a failed helper turn never rejects into the recap/refresh jobs — mirrors the
-// Claude driver, whose collectors always return a string.
-async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<string> {
+// Claude driver. Usage received before an error or max-items abort is retained.
+async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
   const codex = new Codex({ codexPathOverride: CODEX_CLI_PATH || undefined });
   const thread = codex.startThread({
     workingDirectory: project.repo_path || process.cwd(),
     skipGitRepoCheck: true,
     sandboxMode: mode,
-    approvalPolicy: "never",
+    ...approvalOverride(),
     networkAccessEnabled: false,
   });
   const abort = new AbortController();
   let items = 0;
   // The last agent_message wins — the same semantics as the SDK's finalResponse.
   let finalResponse = "";
+  let usage: TurnUsage | undefined;
+  const state = newState(resolveCodexModel(null));
   try {
     const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
     for await (const ev of events) {
-      if (ev.type === "turn.failed" || ev.type === "error") return "";
+      for (const mapped of mapThreadEvent(ev, state)) {
+        if (mapped.type === "usage") usage = mapped.usage;
+      }
+      if (ev.type === "turn.failed" || ev.type === "error") return { text: "", usage };
       if (ev.type === "item.started" && ++items > maxItems) {
         abort.abort(); // kills the codex process; keep what we have
         break;
@@ -236,27 +250,27 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   } catch {
     // Aborting above surfaces as a throw from the stream — that's the guard
     // firing, not a failure. A throw without our abort is a real error: degrade.
-    if (!abort.signal.aborted) return "";
+    if (!abort.signal.aborted) return { text: "", usage };
   }
-  return finalResponse.trim();
+  return { text: finalResponse.trim(), usage };
 }
 
-async function summarizeTranscript(transcript: string, project: Project): Promise<string> {
-  const out = await oneShot(
+async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `Summarize the following Codex session into a concise handoff note for a fresh session continuing the ` +
       `same task. Cover: what was done, the current state of the code, decisions made, and what remains. Be ` +
       `specific about files and follow-ups. Output only the note.\n\n=== TRANSCRIPT ===\n${transcript}`,
     ONESHOT_MAX_ITEMS_TEXT
   );
-  return out || "(no summary produced)";
+  return { text: result.text || "(no summary produced)", usage: result.usage };
 }
 
 const CTX_OPEN = "<<<CONTEXT>>>";
 const CTX_CLOSE = "<<<END_CONTEXT>>>";
 
-async function draftProjectContext(project: Project, digest: string): Promise<string> {
-  const out = await oneShot(
+async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `You are refreshing the saved "project context" for the project "${project.name}". This context is prepended ` +
       `to every new session in this project, so it must get a fresh session up to speed fast and accurately reflect ` +
@@ -273,15 +287,15 @@ async function draftProjectContext(project: Project, digest: string): Promise<st
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
     ONESHOT_MAX_ITEMS_EXPLORE
   );
-  const open = out.indexOf(CTX_OPEN);
-  const close = out.lastIndexOf(CTX_CLOSE);
-  let doc = open !== -1 && close > open ? out.slice(open + CTX_OPEN.length, close) : out;
+  const open = result.text.indexOf(CTX_OPEN);
+  const close = result.text.lastIndexOf(CTX_CLOSE);
+  let doc = open !== -1 && close > open ? result.text.slice(open + CTX_OPEN.length, close) : result.text;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return doc || "(no context produced)";
+  return { text: doc || "(no context produced)", usage: result.usage };
 }
 
-async function summarizeProjectRecap(project: Project, digest: string): Promise<string> {
-  const out = await oneShot(
+async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+  const result = await oneShot(
     project,
     `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns after ` +
       `time away. Output ONLY 2–4 terse markdown bullet points ("- " each), one line each, ideally under ~12 words. ` +
@@ -289,7 +303,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
     ONESHOT_MAX_ITEMS_TEXT
   );
-  return out || "(no recap produced)";
+  return { text: result.text || "(no recap produced)", usage: result.usage };
 }
 
 export const codexDriver: AgentDriver = {

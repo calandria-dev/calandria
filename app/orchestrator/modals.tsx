@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration } from "./format";
-import { SLABEL, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle } from "./types";
+import { relTime, duration, fmtJobCost } from "./format";
+import { SLABEL, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -45,12 +45,13 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[]; auto_start: boolean }) => void; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean }) => void; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
   const [agent, setAgent] = useState(() => defaultAgentFor(agents, project.default_agent));
   const [startNow, setStartNow] = useState(false);
+  const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -67,9 +68,9 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
   const canStart = !blocked && agentReady;
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, depends_on: deps, auto_start: autoStart && deps.length > 0 });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: autoStart && deps.length > 0 });
   return (
-    <Modal title="New task" sub={`${project.name} · title + description become ${agentLabel(agents, agent)}'s first prompt`} onClose={onClose}
+    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
           title={blocked ? "Can't start now — this task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
@@ -86,8 +87,13 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
       </div>
       <div className="field">
         <div className="lab">Description <span className="opt">— what to do</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
-        <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
+        <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
+        {sendContext && <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
+          title="Uncheck to start this task's sessions without the saved project context. Task details and orchestrator tools are always included.">
+          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+          Send saved project context to the agent
+        </label>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       <div className="field">
@@ -114,7 +120,7 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
   const save = () => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0 });
   return (
-    <Modal title="Edit task" sub="title + description become the agent's first prompt" onClose={onClose}
+    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
       footer={<>
         {confirmDel ? (
           <button className="btn-danger on" onClick={() => onDelete(task.id)} title="Permanently remove this task, its session and worktree">{Icon.x()} Delete task permanently</button>
@@ -152,11 +158,12 @@ export function EditTaskModal({ task, tasks, agents, onClose, onSave, onDelete, 
 
 // Mirror of the server's RefreshState (lib/contextRefresh.ts) — the detached
 // "Refresh with AI" job state the modal polls.
-type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number };
+type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number; estimate?: InternalUsageEstimate | null };
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
+  const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [repo, setRepo] = useState(project.repo_path);
   const [branch, setBranch] = useState(project.branch);
   const [devCmd, setDevCmd] = useState(project.dev_command);
@@ -172,6 +179,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
   const [prevContext, setPrevContext] = useState<string | null>(null);
+  const [refreshEstimate, setRefreshEstimate] = useState<InternalUsageEstimate | null>(null);
   // Edit vs. rendered-markdown preview of the context. Refreshing forces edit
   // (the textarea shows the disabled/loading state).
   const [preview, setPreview] = useState(false);
@@ -192,6 +200,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // Fold a polled job state into the UI. Idempotent: applies a finished draft at
   // most once, then acks it so it doesn't resurface on the next modal open.
   const handleState = useCallback((s: RefreshState) => {
+    setRefreshEstimate(s.estimate ?? null);
     if (s.status === "running") { setRefreshing(true); return; }
     if (s.started_at && appliedRef.current !== s.started_at) {
       if (s.status === "done" && s.draft) {
@@ -256,7 +265,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, repo_path: repo, branch, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -285,6 +294,11 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
               disabled={refreshing || !repo}
               title={repo ? "Let an agent read the repo and draft fresh context. Review and edit before saving." : "Set a working directory first"}
             >{Icon.spark()} {refreshing ? "Reading the repo…" : "Refresh with AI"}</button>
+            {refreshEstimate && !refreshing && (
+              <span className="job-cost-hint">
+                {refreshEstimate.source === "project_latest" ? "Last run used" : "Typical run uses"} {fmtJobCost(refreshEstimate)}
+              </span>
+            )}
           </div>
         </div>
         {showPreview ? (
@@ -305,6 +319,13 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           <div className="hlp">Drafted from the repo. Review and edit it, then Save — or Undo to revert.</div>
         ) : (
           <div className="hlp">Be specific about stack, conventions, and constraints. Every task in this project inherits it.</div>
+        )}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+          Include this context in new agent sessions
+        </label>
+        {!sendContext && (
+          <div className="hlp">New tasks will start without the saved context (task details and orchestrator tools are still included). Each task can override this when it starts.</div>
         )}
       </div>
       <div style={{ display: "flex", gap: 14 }}>
@@ -448,8 +469,8 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
   const [repo, setRepo] = useState("");
   const colors = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"];
   const [color, setColor] = useState(colors[0]);
-  // Where the code comes from: a fresh/local folder (the greenfield path) or a
-  // clone of one of the user's GitHub repos (the onboarding path).
+  // Where the code comes from: a local folder — existing repo or greenfield —
+  // or a clone of one of the user's GitHub repos (the onboarding path).
   const [mode, setMode] = useState<"fresh" | "clone">("fresh");
   const [cloneSpec, setCloneSpec] = useState(""); // owner/repo or pasted URL
   const [cloning, setCloning] = useState(false);
@@ -505,13 +526,13 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
       <div className="field">
         <div className="lab">{Icon.folder()} Code</div>
         <div className="seg">
-          <button className={mode === "fresh" ? "on" : ""} onClick={() => setMode("fresh")}>Start fresh</button>
+          <button className={mode === "fresh" ? "on" : ""} onClick={() => setMode("fresh")}>Local folder</button>
           <button className={mode === "clone" ? "on" : ""} onClick={() => setMode("clone")}>{Icon.github()} Clone from GitHub</button>
         </div>
       </div>
       {mode === "fresh" ? (
         <div className="field">
-          <div className="lab">Working dir <span className="opt">— optional, can add later</span></div>
+          <div className="lab">Working dir <span className="opt">— pick an existing repo or folder, or leave blank to start fresh and add one later</span></div>
           <div style={{ display: "flex", gap: 8 }}>
             <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={repo} placeholder="/Users/you/code/project" onChange={(e) => setRepo(e.target.value)} />
             <BrowseDirButton initial={repo} onPick={setRepo} />

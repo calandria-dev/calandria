@@ -2,7 +2,7 @@
   "name": "agent-orchestrator",
   "version": "0.1.0",
   "engines": {
-    "node": ">=18.18"
+    "node": ">=20.9"
   },
   "private": true,
   "scripts": {
@@ -27,8 +27,8 @@
     "better-sqlite3": "^11.10.0",
     "highlight.js": "^11.11.1",
     "jose": "^6.2.3",
-    "nanoid": "^5.1.11",
-    "next": "15.5.18",
+    "nanoid": "^5.1.16",
+    "next": "15.5.22",
     "node-pty": "^1.1.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -48,5 +48,9 @@
     "concurrently": "^9.2.1",
     "typescript": "5.8.2",
     "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.3"
   }
 }

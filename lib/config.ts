@@ -4,7 +4,7 @@ import os from "node:os";
 /**
  * Per-instance configuration, driven entirely by environment variables so an
  * instance can be relocated (fresh container, different user, different ports)
- * with zero code edits. Every value has a documented default — see README
+ * with zero code edits. Every value has a documented default — see docs/SELF_HOSTING.md
  * "Configuration" and .env.example.
  *
  * Server-side only. The two plain-Node entrypoints (server.js, pty-server.js)
@@ -37,6 +37,22 @@ export const CLAUDE_CLI_PATH =
  * binary when PATH is trimmed or a different install should be used.
  */
 export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
+
+/**
+ * The `approval_policy` the Codex driver passes to the CLI for turns and
+ * one-shot helpers. Default "never" is the auto-run analog of Claude's
+ * bypassPermissions — turns run unattended in isolated worktrees, with nobody
+ * in the loop to answer approval prompts. Enterprise-managed Codex deployments
+ * can disallow "never" (the CLI then warns and falls back per its requirements);
+ * set this to an allowed value — "untrusted" (codex's UnlessTrusted),
+ * "on-request", "on-failure" — or to "inherit" to omit the override entirely so
+ * ~/.codex/config.toml and the enterprise requirements decide. Unknown values
+ * fall back to "never".
+ */
+export const CODEX_APPROVAL_POLICY = (() => {
+  const v = String(process.env.CODEX_APPROVAL_POLICY || "never").toLowerCase();
+  return ["never", "on-request", "on-failure", "untrusted", "inherit"].includes(v) ? v : "never";
+})();
 
 /**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, listMessages, addMessage, addSummary, clearPendingMessages } from "@/lib/store";
+import { getTask, getProject, updateTask, listMessages, addMessage, addSummary, clearPendingMessages, getTaskContext } from "@/lib/store";
+import { getClearEstimate } from "@/lib/internalUsage";
 import { summarizeTranscript } from "@/lib/agents/oneshots";
 import { hasTurn, abortTurn } from "@/lib/abort";
 import { publish, publishGlobal } from "@/lib/events";
@@ -7,6 +8,13 @@ import { buildClippedTranscript } from "@/lib/transcript";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const task = getTask(id);
+  if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+  return NextResponse.json({ estimate: getClearEstimate(getTaskContext(id).context_tokens, task.agent) });
+}
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -46,12 +54,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
   }
 
+  // The summarize above can take minutes — re-read before writing. The task may
+  // have been deleted while we waited (addSummary would then throw FOREIGN KEY
+  // and 500), or another tab's /clear may have already advanced the generation
+  // (bumping again here would skip a generation and double-record the boundary).
+  const cur = getTask(id);
+  if (!cur) return NextResponse.json({ error: "task was deleted while summarizing" }, { status: 404 });
+  if (cur.generation !== gen) return NextResponse.json({ task: cur, summary, generation: cur.generation });
+
   addSummary(id, gen, summary);
   // Record the boundary + summary in the message log for continuity in the UI.
   addMessage(id, gen, "session_break", summary);
 
   // Fresh generation: new context window, session reset. started=0 so the next
-  // send re-issues title+description, and buildProjectContext now includes the summary.
+  // send opens with the generic start prompt; buildProjectContext supplies the
+  // task metadata and now includes the summary.
   const next = updateTask(id, {
     generation: gen + 1,
     session_id: null,

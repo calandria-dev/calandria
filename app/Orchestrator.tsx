@@ -108,6 +108,15 @@ export default function Orchestrator() {
   // ⌘K / Ctrl-K command palette. Same flag as the top-bar omni button, so
   // re-enabling the feature turns on both the visual affordance and the shortcut.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [clearRequest, setClearRequest] = useState<string | null>(null);
+  useEffect(() => setClearRequest(null), [selTask]);
+  const requestClear = (taskId: string) => setClearRequest(taskId);
+  const confirmClear = () => {
+    if (!clearRequest) return;
+    const taskId = clearRequest;
+    setClearRequest(null);
+    void o.clearSession(taskId);
+  };
   const omniEnabled = features.omniSearch && !isMobile;
   useEffect(() => {
     if (!omniEnabled) return;
@@ -215,10 +224,10 @@ export default function Orchestrator() {
             onSend={(text) => o.runTurn(task.id, text, false)}
             onStart={() => o.runTurn(task.id, "", true)}
             onStop={() => o.stopTurn(task.id)}
-            onClear={() => o.clearSession(task.id)} onEdit={() => o.setEditId(task.id)}
+            onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
             onReconnect={() => openSettings("agents")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission}
+            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
             onResolveWithAI={o.resolveConflictsWithAI}
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
@@ -261,6 +270,8 @@ export default function Orchestrator() {
         <TerminalDrawer
           key={project.id}
           cwd={project.repo_path}
+          taskDir={task?.worktree_path || undefined}
+          taskTitle={task?.title}
           port={project.port}
           visible={o.termOpen}
           height={o.termHeight}
@@ -301,10 +312,10 @@ export default function Orchestrator() {
                 onSend={(text) => o.runTurn(task.id, text, false)}
                 onStart={() => o.runTurn(task.id, "", true)}
                 onStop={() => o.stopTurn(task.id)}
-                onClear={() => o.clearSession(task.id)} onEdit={() => o.setEditId(task.id)}
+                onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
                 onReconnect={() => openSettings("agents")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission}
+                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
                 onResolveWithAI={o.resolveConflictsWithAI}
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}
@@ -336,6 +347,8 @@ export default function Orchestrator() {
         <TerminalDrawer
           key={project.id}
           cwd={project.repo_path}
+          taskDir={task?.worktree_path || undefined}
+          taskTitle={task?.title}
           port={project.port}
           visible={o.termOpen}
           height={o.termHeight}
@@ -347,7 +360,7 @@ export default function Orchestrator() {
   );
 
   const insightsColumn = (
-    <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} />
+    <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} onOpenSettings={openSettings} />
   );
 
   const settingsColumn = (
@@ -436,7 +449,7 @@ export default function Orchestrator() {
             <button
               className={`tb-btn${o.termOpen ? " on" : ""}`}
               disabled={!project}
-              title={project ? "Toggle terminal (runs in the project's working dir)" : "Select a project first"}
+              title={project ? "Toggle terminal (project working dir — switch it to the selected task's worktree from the drawer)" : "Select a project first"}
               onClick={() => { if (!project) return; o.setTermMounted(true); o.setTermOpen((t) => !t); }}
             >
               {Icon.terminal()} Terminal
@@ -571,7 +584,7 @@ export default function Orchestrator() {
             { id: "open-appearance", label: "Open Appearance", keywords: "appearance density theme dark light mode", icon: Icon.sliders(), run: () => o.setAppearanceOpen(true) },
             project && features.services && { id: "toggle-services", label: "Toggle Services", hint: o.servicesOpen ? "hide" : "show", keywords: "dev server setup test drawer", icon: Icon.sliders(), run: () => { o.setServicesMounted(true); o.setServicesOpen((s) => !s); } },
             project && { id: "toggle-terminal", label: "Toggle Terminal", hint: o.termOpen ? "hide" : "show", keywords: "shell console pty", icon: Icon.terminal(), run: () => { o.setTermMounted(true); o.setTermOpen((t) => !t); } },
-            task && task.started === 1 && !o.running.has(task.id) && { id: "clear-session", label: "/clear current session", hint: task.title, keywords: "new session restart fresh context compact", icon: Icon.clear(), run: () => { void o.clearSession(task.id); } },
+            task && task.started === 1 && !o.running.has(task.id) && { id: "clear-session", label: "/clear current session", hint: task.title, keywords: "new session restart fresh context compact", icon: Icon.clear(), run: () => requestClear(task.id) },
           ] as (PaletteCommand | false | null)[]).filter((c): c is PaletteCommand => !!c)}
           onPickProject={o.selectProject}
           onPickTask={o.goToTask}

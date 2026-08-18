@@ -1,0 +1,21 @@
+title: "[Show and tell] "
+body:
+  - type: textarea
+    id: project
+    attributes:
+      label: What did you build with Operator?
+      description: Tell the community what you shipped or what workflow you developed.
+    validations:
+      required: true
+  - type: textarea
+    id: operator
+    attributes:
+      label: How did Operator help?
+      description: Share the agents, task structure, or features that were most useful.
+    validations:
+      required: true
+  - type: textarea
+    id: lessons
+    attributes:
+      label: What did you learn?
+      description: Add tips, screenshots, or links others can learn from. Do not include private code or credentials.

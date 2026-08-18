@@ -44,6 +44,15 @@ export function OnboardingWizard({
   useEffect(() => { load(); }, [load]);
 
   const connected = (bundle?.agents ?? []).filter((a) => a.connected);
+
+  // While nothing is connected yet, keep re-checking: a login can settle
+  // server-side after a missed onConnected (e.g. the connect card was remounted
+  // mid-login), and without this the Continue button stays locked until a reload.
+  useEffect(() => {
+    if (step !== "connect" || connected.length > 0) return;
+    const t = setInterval(load, 3_000);
+    return () => clearInterval(t);
+  }, [step, connected.length, load]);
   const verifyAgent =
     (justConnected && connected.find((a) => a.id === justConnected)) || connected[0] || null;
 
@@ -139,6 +148,9 @@ function ConnectStep({
         sub="Operator runs coding agents as you. Sign in with the account you already have — connect one now, add others any time from Settings."
       />
       <div className="wiz-body">
+        <div className="hlp" style={{ margin: "0 0 18px", maxWidth: 620 }}>
+          Operator uses the connected agent for small utility jobs, including automatic project recaps and session summaries you request. Control these any time in Settings → Background jobs.
+        </div>
         {!bundle && <div className="wiz-verify"><span className="wiz-spin" /> <span>Loading agents…</span></div>}
         {agents.length > 1 && (
           <div className="seg" style={{ maxWidth: 460, marginBottom: 20 }}>

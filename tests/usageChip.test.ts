@@ -5,7 +5,7 @@
 // re-sent every turn at ~10% of the input rate, not work), and a dollar figure
 // is only presented as money when the agent is signed in with an API key.
 import { describe, it, expect } from "vitest";
-import { usageSplit, costDisplay, usageTooltip } from "@/app/orchestrator/format";
+import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/orchestrator/format";
 import type { AgentInfo, TaskRow } from "@/app/orchestrator/types";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
 import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
@@ -42,6 +42,13 @@ describe("usageSplit", () => {
     const skewed = { total_tokens: 100, cache_read_tokens: 200, cache_creation_tokens: 50 } as TaskRow;
     expect(usageSplit(skewed).inOut).toBe(0);
     expect(usageSplit(skewed).fresh).toBe(0);
+  });
+});
+
+describe("fmtJobCost", () => {
+  it("keeps the point-of-action estimate compact", () => {
+    expect(fmtJobCost({ tokens: 38_000, cost_usd: 0.11, source: "project_latest" }))
+      .toBe("~38k tokens (~$0.11)");
   });
 });
 

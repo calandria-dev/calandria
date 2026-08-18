@@ -34,5 +34,6 @@ export async function POST(req: NextRequest) {
     priority: body.priority,
     blocked_by: Array.isArray(body.blocked_by) ? body.blocked_by : undefined,
   });
+  if (!task) return NextResponse.json({ error: text }, { status: 404 });
   return NextResponse.json({ ok: true, id: task.id, title: task.title, text });
 }

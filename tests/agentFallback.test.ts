@@ -174,7 +174,7 @@ describe("suggested tasks are born on a connected agent", () => {
     expect(project.default_agent).toBe("claude");
     connect("codex"); // claude never connected
     const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
-    expect(getTask(task.id)?.agent).toBe("codex");
+    expect(getTask(task!.id)?.agent).toBe("codex");
   });
 
   it("keeps the project default when it IS connected", () => {
@@ -183,14 +183,14 @@ describe("suggested tasks are born on a connected agent", () => {
     connect("claude");
     connect("codex");
     const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
-    expect(getTask(task.id)?.agent).toBe("claude");
+    expect(getTask(task!.id)?.agent).toBe("claude");
   });
 
   it("falls back to the project default when nothing is connected", () => {
     setSetting("default_agent", "claude");
     const project = createProject({ name: "SuggestNone" });
     const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
-    expect(getTask(task.id)?.agent).toBe("claude");
+    expect(getTask(task!.id)?.agent).toBe("claude");
   });
 });
 

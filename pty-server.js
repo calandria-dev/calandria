@@ -13,7 +13,7 @@ const os = require("node:os");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
 
-// Per-instance overrides (see README "Configuration"). The sidecar stays bound
+// Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). The sidecar stays bound
 // to loopback by default — the browser never talks to it directly; server.js
 // proxies /pty upgrades to it on the same machine.
 const PORT = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;
@@ -24,7 +24,32 @@ const server = http.createServer((_req, res) => {
   res.end("orchestrator pty-server");
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  verifyClient: (info, callback) => {
+    import("./lib/auth/local-origin.mjs")
+      .then((localOrigin) => {
+        // Peer address first: it is the one thing in this handshake the caller
+        // cannot forge. server.js proxies from this same machine, so a
+        // non-loopback peer found PTY_PORT directly.
+        const peer = info.req.socket?.remoteAddress;
+        if (!localOrigin.isLoopbackPeer(peer)) {
+          console.warn(`[pty-server] rejected connection from ${peer} (not loopback)`);
+          return callback(false, 401, "Unauthorized");
+        }
+        const allowed = localOrigin.localWebSocketRequestAllowed({
+          host: info.req.headers.host,
+          origin: info.origin,
+        });
+        if (!allowed) console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"}`);
+        callback(allowed);
+      })
+      .catch((err) => {
+        console.error("[pty-server] Failed to load local-origin.mjs", err);
+        callback(false);
+      });
+  },
+});
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost");

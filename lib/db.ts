@@ -40,6 +40,9 @@ export function init(db: Database.Database) {
       port          INTEGER NOT NULL DEFAULT 0,
       -- Which agent driver new tasks in this project run under (lib/agents/).
       default_agent TEXT NOT NULL DEFAULT 'claude',
+      -- 1 = include the saved project context in new agent sessions; the default
+      -- each new task's own send_context is seeded from.
+      send_context INTEGER NOT NULL DEFAULT 1,
       position    INTEGER NOT NULL DEFAULT 0,
       deprecated  INTEGER NOT NULL DEFAULT 0,
       -- 1 for the built-in "Welcome" tutorial project so it's excluded from the
@@ -58,6 +61,9 @@ export function init(db: Database.Database) {
       suggested   INTEGER NOT NULL DEFAULT 0,
       -- The agent driver this task's sessions run under (lib/agents/registry.ts).
       agent       TEXT NOT NULL DEFAULT 'claude',
+      -- 1 = prepend the saved project context to this task's sessions (seeded
+      -- from the project's send_context at creation; adjustable at task start).
+      send_context INTEGER NOT NULL DEFAULT 1,
       model       TEXT,
       resolved_model TEXT,
       reasoning   TEXT,
@@ -140,6 +146,27 @@ export function init(db: Database.Database) {
       created_at            INTEGER NOT NULL
     );
 
+    -- Agent work performed outside a task chat: summaries, recaps, context
+    -- drafts, and connection verification. Deliberately has no foreign keys so
+    -- deleting a project/task does not erase historical overhead spend.
+    CREATE TABLE IF NOT EXISTS internal_usage (
+      id                    TEXT PRIMARY KEY,
+      job                   TEXT NOT NULL,
+      agent                 TEXT NOT NULL,
+      requested_agent       TEXT NOT NULL,
+      fallback              INTEGER NOT NULL DEFAULT 0,
+      project_id            TEXT,
+      task_id               TEXT,
+      ok                    INTEGER NOT NULL DEFAULT 1,
+      ms                    INTEGER NOT NULL DEFAULT 0,
+      cost_usd              REAL NOT NULL DEFAULT 0,
+      input_tokens          INTEGER NOT NULL DEFAULT 0,
+      output_tokens         INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at            INTEGER NOT NULL
+    );
+
     -- One row per successful merge that actually landed commits (re-merges of an
     -- already-merged branch don't record). additions/deletions are the line
     -- stats of what that merge introduced on the base branch — captured at merge
@@ -213,6 +240,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
     CREATE INDEX IF NOT EXISTS idx_task_usage_task ON task_usage(task_id);
     CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
+    CREATE INDEX IF NOT EXISTS idx_internal_usage_created ON internal_usage(created_at);
     CREATE INDEX IF NOT EXISTS idx_task_merges_project ON task_merges(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_merges_task ON task_merges(task_id);
   `);
@@ -293,6 +321,9 @@ export function migrate(db: Database.Database) {
   // Agent-driver seam (lib/agents/): which driver new tasks default to. Every
   // pre-seam project ran Claude, so the column default backfills correctly.
   add("default_agent", "TEXT NOT NULL DEFAULT 'claude'");
+  // Whether new sessions get the saved project context. Default 1 preserves the
+  // always-included behavior for existing projects.
+  add("send_context", "INTEGER NOT NULL DEFAULT 1");
   // Manual sidebar ordering. Backfill in creation order so existing projects
   // keep the order they had when this column was the implicit sort.
   if (!cols.includes("position")) {
@@ -337,6 +368,9 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
   // GitHub PR opened from this task's branch via "Create PR" ("" = none yet).
   if (!taskCols.includes("pr_url")) db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''");
+  // Per-task "send saved project context" flag (default 1 = the old always-on
+  // behavior; seeded from the project's send_context for tasks created later).
+  if (!taskCols.includes("send_context")) db.exec("ALTER TABLE tasks ADD COLUMN send_context INTEGER NOT NULL DEFAULT 1");
   // Per-task auto-start opt-in: launch the first turn when the last blocker is
   // marked done (default off preserves the old never-auto-start behavior).
   if (!taskCols.includes("auto_start")) db.exec("ALTER TABLE tasks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0");
@@ -467,8 +501,8 @@ function seedIfEmpty(db: Database.Database) {
 
   // The hands-on task: it drives the full loop in one turn — a question, a
   // one-file edit, a diff to review, a one-click merge. Its title + description
-  // become the first prompt (see app/api/tasks/[id]/messages), so the steps are
-  // written as instructions to Claude.
+  // become the injected task context, so the steps are written as instructions
+  // to the agent.
   seedTask("Try me: add a tagline", TUTORIAL_TASK_DESC, "hi", 0);
   // A pre-loaded "suggested" task so the tray isn't empty — this is exactly what
   // a Claude session drops there when it proposes follow-up work.

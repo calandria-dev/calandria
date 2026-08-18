@@ -46,6 +46,7 @@ export function useOrchestrator() {
   // Server-backed app defaults (e.g. default reasoning / permission mode a task
   // inherits). Stored in orchestrator.db, not localStorage, so runTurn can read them.
   const [appDefaults, setAppDefaults] = useState<Record<string, string>>({});
+  const [appDefaultsReady, setAppDefaultsReady] = useState(false);
   // Agent capability descriptors (GET /api/agents): the model/reasoning/permission
   // pickers, per-task agent badges, cost/ask gates, and the new-task agent picker
   // all read from this — no hardcoded per-agent lists in the client.
@@ -167,11 +168,21 @@ export function useOrchestrator() {
     usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask });
 
   // ---------- project recaps + landing decision ----------
-  const { recaps, fetchRecap } = useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef });
+  const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
+    ? appDefaults.recap_mode
+    : "automatic";
+  const { recaps, fetchRecap } = useRecaps({
+    selProj, selTask, tasks, setSelTask, selProjRef,
+    settingsReady: appDefaultsReady,
+    backgroundJobs: appDefaults.background_jobs !== "off",
+    recapMode,
+  });
 
   // Load server-backed app defaults (reasoning / permission mode) once.
   useEffect(() => {
-    jget<Record<string, string>>("/api/settings").then(setAppDefaults).catch(() => {});
+    jget<Record<string, string>>("/api/settings")
+      .then(setAppDefaults)
+      .finally(() => setAppDefaultsReady(true));
   }, []);
 
   // Onboarding: a fresh instance opens the wizard automatically; an already
@@ -415,7 +426,7 @@ export function useOrchestrator() {
     } finally {
       setTaskRunning(taskId, false);
     }
-    // spin up the fresh window (re-prime with title + description + carried summary)
+    // Spin up the fresh window; its injected context carries task metadata + summary.
     runTurn(taskId, "", true);
   }, [tasks, running, runTurn, appendMsg]);
 
@@ -455,10 +466,17 @@ export function useOrchestrator() {
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { permission_mode: p });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
+  // The task-start "Send saved project context" checkbox (TaskHero) persists
+  // immediately so the flag is already on the row when the first turn launches.
+  const setSendContext = async (v: boolean) => {
+    if (!task) return;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { send_context: v ? 1 : 0 });
+    setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
+  };
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; depends_on: string[]; auto_start: boolean }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean }) => {
     if (!project) return;
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent });
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -529,7 +547,7 @@ export function useOrchestrator() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
@@ -579,7 +597,11 @@ export function useOrchestrator() {
   // (agent-scoped and legacy) plus the reset of client-only settings.
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
-    for (const key of Object.keys(appDefaults)) if (key.startsWith("default_") || key === "utility_agent") void setAppDefault(key, null);
+    for (const key of Object.keys(appDefaults)) {
+      if (key.startsWith("default_") || key === "utility_agent" || key === "background_jobs" || key === "recap_mode") {
+        void setAppDefault(key, null);
+      }
+    }
   };
 
   // Set a project's default agent for new tasks (persisted; existing tasks keep
@@ -606,7 +628,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, fetchRecap, runTurn, answerQuestion, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
-    setReasoning, setPermission, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

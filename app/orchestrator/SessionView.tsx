@@ -4,11 +4,11 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { fmtTokens, fmtCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, RAIL_W,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate,
 } from "./types";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
@@ -16,6 +16,7 @@ import { MessageView, SessionBreak } from "./Transcript";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
 import { ColResize, ColRail } from "./Layout";
+import { jget } from "./api";
 
 // Non-blocking banner shown when a reopened task's worktree is behind its base
 // branch. Computed (read-only) on open; the actual git op fires only when the user
@@ -77,9 +78,10 @@ function SyncBanner({ taskId, running, onResolveWithAI, onSwitchToChat }: {
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; running: boolean; blockedBy?: string[] }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, blockedBy }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; running: boolean; blockedBy?: string[] }) {
   const carried = task.generation > 1;
   const blocked = !!blockedBy?.length && !task.started;
+  const sendContext = task.send_context !== 0;
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
     <div className="hero">
@@ -90,10 +92,15 @@ function TaskHero({ task, project, onStart, onEdit, running, blockedBy }: { task
       <div className="h-prompt">
         <div className="hp-h">Initial prompt the agent will receive</div>
         <div className="hp-b">
-          <span className="ctx-pre">↳ {project.name} project context{carried ? " + previous session summary" : ""} (auto-prepended)</span>
+          <span className="ctx-pre">↳ {sendContext ? `${project.name} project context` : "task details only"}{carried ? " + previous session summary" : ""} (auto-prepended)</span>
           <strong>{task.title}.</strong> {task.description}
         </div>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: running ? "not-allowed" : "pointer" }}
+        title="Uncheck to start without the saved project context. Task details and orchestrator tools are always included.">
+        <input type="checkbox" checked={sendContext} disabled={running} onChange={(e) => onSetSendContext(e.target.checked)} />
+        Send saved project context to the agent
+      </label>
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
           {Icon.bolt()} Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change this.
@@ -125,13 +132,15 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onResolveWithAI, onMerged, onPrCreated, onAnswer, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
+  clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
+  onSetSendContext: (v: boolean) => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -147,6 +156,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const [modelOpen, setModelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<"chat" | "changes">("chat");
+  const [clearEstimate, setClearEstimate] = useState<InternalUsageEstimate | null>(null);
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
@@ -154,6 +164,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  useEffect(() => {
+    if (!clearConfirming) { setClearEstimate(null); return; }
+    let alive = true;
+    jget<{ estimate: InternalUsageEstimate | null }>(`/api/tasks/${task.id}/clear`)
+      .then((r) => { if (alive) setClearEstimate(r.estimate); })
+      .catch(() => { if (alive) setClearEstimate(null); });
+    return () => { alive = false; };
+  }, [clearConfirming, task.id]);
   // Run-control pickers + feature gates come from this task's agent capabilities,
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
@@ -419,8 +437,18 @@ export function SessionView({ project, task, agents, messages, running, blockedB
           <SyncBanner taskId={task.id} running={running} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} />
         )}
 
+        {clearConfirming && (
+          <div className="clear-confirm">
+            <span>Save a summary and start a fresh context?</span>
+            {clearEstimate && <span className="job-cost-hint">Estimated to use {fmtJobCost(clearEstimate)}</span>}
+            <span className="spacer" />
+            <button className="btn btn-ghost btn-sm" onClick={onCancelClear}>Cancel</button>
+            <button className="btn btn-accent btn-sm" onClick={onConfirmClear}>{Icon.clear()} Confirm /clear</button>
+          </div>
+        )}
+
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} running={running} blockedBy={blockedBy} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} running={running} blockedBy={blockedBy} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),

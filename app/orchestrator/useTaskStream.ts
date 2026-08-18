@@ -74,8 +74,8 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       // Authoritative catch-up: the full persisted transcript, then any parked
       // follow-ups as "queued" bubbles (so a reload mid-run re-renders them),
       // plus whether a turn is live right now (true after a reload mid-turn).
-      const committed: Msg[] = ev.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, generation: m.generation }));
-      const queued: Msg[] = ev.pending.map((p) => ({ id: p.id, role: "queued" as const, content: p.content, generation: p.generation }));
+      const committed: Msg[] = ev.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, generation: m.generation, ts: m.created_at }));
+      const queued: Msg[] = ev.pending.map((p) => ({ id: p.id, role: "queued" as const, content: p.content, generation: p.generation, ts: p.created_at }));
       setMsgsByTask((prev) => ({ ...prev, [taskId]: [...committed, ...queued] }));
       // Rebuild the open-ask set from the persisted transcript so a reload
       // mid-turn (with asks still parked) counts them correctly.
@@ -92,11 +92,11 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       return;
     }
     const gen = ("generation" in ev ? ev.generation : undefined) ?? 1;
-    if (ev.type === "user") upsertMsg(taskId, { id: ev.msgId, role: "user", content: ev.content, generation: gen });
-    else if (ev.type === "queued") upsertMsg(taskId, { id: ev.msgId, role: "queued", content: ev.content, generation: gen });
+    if (ev.type === "user") upsertMsg(taskId, { id: ev.msgId, role: "user", content: ev.content, generation: gen, ts: ev.ts });
+    else if (ev.type === "queued") upsertMsg(taskId, { id: ev.msgId, role: "queued", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "dequeued") removeMsg(taskId, ev.msgId);
     else if (ev.type === "model") setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, resolved_model: ev.model } : x)));
-    else if (ev.type === "assistant") upsertMsg(taskId, { id: ev.msgId ?? `a-${Date.now()}-${Math.random()}`, role: "assistant", content: ev.content, generation: gen });
+    else if (ev.type === "assistant") upsertMsg(taskId, { id: ev.msgId ?? `a-${Date.now()}-${Math.random()}`, role: "assistant", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "tool") {
       const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff };
       upsertMsg(taskId, { id: ev.msgId ?? `t-${Date.now()}-${Math.random()}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.id });

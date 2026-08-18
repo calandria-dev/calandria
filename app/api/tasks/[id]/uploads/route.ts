@@ -32,7 +32,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch {
     return NextResponse.json({ error: "expected multipart form data" }, { status: 400 });
   }
-  // Duck-typed rather than `instanceof File` — Node 18 has no global File.
+  // Duck-typed rather than `instanceof File`: a FormData entry is either a
+  // string or a file-like, and narrowing on the string is enough. (Written when
+  // Node 18 had no global File; kept because it needs no global either way.)
   if (!entry || typeof entry === "string") return NextResponse.json({ error: "missing file" }, { status: 400 });
   const file = entry;
   // file.type may carry a charset (e.g. "text/plain;charset=utf-8"); match on

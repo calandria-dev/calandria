@@ -26,7 +26,8 @@ import type {
 // the user installed, which may be older or newer than the SDK types.
 type TurnCompletedUsage = Partial<Usage>;
 import { clip, summarizeResult, resultText } from "../shared";
-import { DEFAULT_CODEX_MODEL, estimateCostUsd } from "./pricing";
+import { DEFAULT_CODEX_MODEL } from "./pricing";
+import { codexUsage } from "./usage";
 
 // Codex's raw cumulative token counters for a thread, exactly as `turn.completed`
 // reports them. Persisted per thread (sessions.usage_cum) so the NEXT turn can
@@ -93,15 +94,19 @@ export function mapThreadEvent(ev: ThreadEvent, state: CodexMapState): StreamEve
       const turn = monotonic(cur, state.cum) ? diffCum(cur, state.cum) : cur;
       state.cum = cur;
       state.cumDirty = true;
-      const usage = {
-        cost_usd: 0,
-        input_tokens: Math.max(0, turn.input - turn.cachedInput - turn.cacheWrite),
-        output_tokens: turn.output + turn.reasoning,
-        cache_read_tokens: turn.cachedInput,
-        cache_creation_tokens: turn.cacheWrite,
-      };
-      usage.cost_usd = estimateCostUsd(state.model, usage);
-      return [{ type: "usage", usage }];
+      return [{
+        type: "usage",
+        usage: codexUsage(
+          {
+            input_tokens: turn.input,
+            cached_input_tokens: turn.cachedInput,
+            cache_write_input_tokens: turn.cacheWrite,
+            output_tokens: turn.output,
+            reasoning_output_tokens: turn.reasoning,
+          },
+          state.model
+        ),
+      }];
     }
     case "turn.failed":
       // A model/turn failure (distinct from a Stop, which kills the process and

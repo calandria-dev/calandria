@@ -7,6 +7,7 @@ import { getDb } from "./db";
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
 import type { Project, Task, Message, PendingMessage, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals } from "./types";
+export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
 
@@ -179,9 +180,9 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?,
-        dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, deprecated = ? WHERE id = ?`
+        dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
     )
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.deprecated ? 1 : 0, id);
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
   return getProject(id);
 }
 
@@ -340,22 +341,27 @@ export function createTask(input: {
   priority?: Priority;
   suggested?: boolean;
   agent?: string;
+  send_context?: boolean;
 }): Task {
   const now = Date.now();
   const id = nanoid();
+  const project = getProject(input.project_id);
   // Which agent driver the task runs under: explicit choice, else the owning
   // project's default (see lib/agents/registry.ts for resolution).
-  const agent = input.agent || getProject(input.project_id)?.default_agent || "claude";
+  const agent = input.agent || project?.default_agent || "claude";
+  // Whether sessions get the saved project context: explicit choice, else the
+  // project's send_context setting (missing project ⇒ 1, the historic behavior).
+  const sendContext = input.send_context ?? (project ? project.send_context !== 0 : true);
   // New tasks land at the end of the project's manual order.
   const position = (
     getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(input.project_id) as { n: number }
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0, agent, position, now, now);
+    .run(id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0, agent, sendContext ? 1 : 0, position, now, now);
   return getTask(id)!;
 }
 
@@ -377,10 +383,10 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const n = { ...cur, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
-      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
+      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
         session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, running=?, awaiting_input=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.running, n.awaiting_input, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.running, n.awaiting_input, n.updated_at, id);
   return getTask(id);
 }
 
@@ -392,11 +398,13 @@ export function setTaskStatus(id: string, status: Status) {
   return updateTask(id, { status });
 }
 
-// Merged tasks that still hold an on-record worktree — the candidates for the
-// "prune merged worktrees" cleanup. Joined with the owning project so the API
-// can resolve each worktree's repo (for git ops) and label it for the user.
+// Merged tasks and completed tasks that still hold an on-record worktree — the
+// candidates for Settings → Storage cleanup. A completed task is included even
+// when its work was never merged, because the user may explicitly discard it.
+// Joined with the owning project so the API can resolve each worktree's repo
+// (for git ops) and label it for the user.
 // Whether the directory actually exists on disk is checked by the caller.
-export interface PrunableWorktree {
+export interface ReclaimableWorktree {
   id: string;
   title: string;
   project_id: string;
@@ -406,17 +414,19 @@ export interface PrunableWorktree {
   worktree_path: string;
   work_branch: string;
   merged_at: number;
+  status: Status;
+  updated_at: number;
 }
-export function listPrunableWorktrees(): PrunableWorktree[] {
+export function listReclaimableWorktrees(): ReclaimableWorktree[] {
   return getDb()
     .prepare(
       `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path, p.branch AS base_branch,
-              t.worktree_path, t.work_branch, t.merged_at
+              t.worktree_path, t.work_branch, t.merged_at, t.status, t.updated_at
          FROM tasks t JOIN projects p ON p.id = t.project_id
-        WHERE t.merged_at > 0 AND t.worktree_path != ''
-        ORDER BY t.merged_at ASC`
+        WHERE t.worktree_path != '' AND (t.merged_at > 0 OR t.status = 'done')
+        ORDER BY CASE WHEN t.merged_at > 0 THEN t.merged_at ELSE t.updated_at END ASC`
     )
-    .all() as PrunableWorktree[];
+    .all() as ReclaimableWorktree[];
 }
 
 // ---------- settings (app-level key/value, readable server-side) ----------
@@ -739,6 +749,9 @@ export function getProjectUsage(projectId: string): UsageTotals {
 // ---------- instance-wide rollup (for the control-plane fleet view) ----------
 
 export interface InstanceUsage extends UsageTotals {
+  internal_cost_usd: number;
+  internal_tokens: number;
+  internal_jobs: number;
   projects: number;
   tasks: number; // real tasks (suggested excluded), like listProjects' task_count
   running_tasks: number;
@@ -782,10 +795,20 @@ export function getInstanceUsage(): InstanceUsage {
     awaiting_tasks: number;
     last_activity: number;
   };
+  const internal = db
+    .prepare(
+      `SELECT
+         COALESCE(SUM(cost_usd), 0) AS internal_cost_usd,
+         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) AS internal_tokens,
+         COUNT(*) AS internal_jobs
+       FROM internal_usage`
+    )
+    .get() as Pick<InstanceUsage, "internal_cost_usd" | "internal_tokens" | "internal_jobs">;
   return {
     ...usage,
     total_tokens:
       usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_creation_tokens,
+    ...internal,
     ...counts,
   };
 }
@@ -794,7 +817,7 @@ export function getInstanceUsage(): InstanceUsage {
 
 /**
  * Everything the Insights dashboard charts, as per-day facts grouped by
- * (day, project, agent) — the client slices/filters/aggregates locally so
+ * (day, project, agent), with Operator jobs additionally grouped by job — the client slices/filters/aggregates locally so
  * switching range/project/agent filters never refetches. Days are local-time
  * `YYYY-MM-DD` strings (this is a single-user, local-first surface; the server's
  * clock IS the user's clock). One fetch covers the widest range plus the same
@@ -804,6 +827,8 @@ export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   /** Per-day token/cost usage. */
   usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** Operator's own one-shot work, kept separate from task usage. */
+  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
   shipped: { d: string; p: string; a: string; n: number }[];
   /** Lines landed on the base branch that day (from task_merges). */
@@ -826,6 +851,15 @@ export function getInsightsData(sinceMs: number): InsightsData {
        FROM task_usage WHERE created_at >= ? GROUP BY d, p, a`
     )
     .all(sinceMs) as InsightsData["usage"];
+  const internal = db
+    .prepare(
+      `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
+              COALESCE(project_id, '') AS p, agent AS a, job, COUNT(*) AS n,
+              SUM(cost_usd) AS cost, SUM(input_tokens) AS inp, SUM(output_tokens) AS out,
+              SUM(cache_read_tokens) AS cr, SUM(cache_creation_tokens) AS cw
+       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job`
+    )
+    .all(sinceMs) as InsightsData["internal"];
   const shipped = db
     .prepare(
       `SELECT date(merged_at/1000, 'unixepoch', 'localtime') AS d, project_id AS p, agent AS a, COUNT(*) AS n
@@ -845,7 +879,7 @@ export function getInsightsData(sinceMs: number): InsightsData {
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  return { projects, usage, shipped, merges, models };
+  return { projects, usage, internal, shipped, merges, models };
 }
 
 // ---------- recaps ----------

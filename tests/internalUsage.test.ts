@@ -1,0 +1,147 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const oneShot = vi.hoisted(() => vi.fn());
+
+vi.mock("../lib/agents/claude/driver", () => ({
+  claudeDriver: {
+    id: "claude",
+    label: "Claude Code",
+    draftProjectContext: oneShot,
+  },
+}));
+
+import { getDb } from "../lib/db";
+import { addUsage, createProject, createTask, getInstanceUsage, setSetting } from "../lib/store";
+import { setAgentConnection } from "../lib/agents/connections";
+import { draftProjectContext } from "../lib/agents/oneshots";
+import {
+  addInternalUsage,
+  getClearEstimate,
+  getContextDraftEstimate,
+  internalUsageLast30Days,
+} from "../lib/internalUsage";
+
+const USAGE = {
+  cost_usd: 0.25,
+  input_tokens: 10,
+  output_tokens: 20,
+  cache_read_tokens: 30,
+  cache_creation_tokens: 40,
+};
+
+describe("internal agent usage", () => {
+  beforeEach(() => {
+    getDb().prepare("DELETE FROM internal_usage").run();
+    getDb().prepare("DELETE FROM task_usage").run();
+    setSetting("utility_agent", "codex");
+    setSetting("default_agent", "claude");
+    setSetting("agent_conn_codex", null);
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    oneShot.mockReset();
+  });
+
+  it("records usage with the actual agent and fallback", async () => {
+    oneShot.mockResolvedValue({ text: "draft", usage: USAGE });
+    const project = createProject({ name: "Metered" });
+
+    await expect(draftProjectContext(project, "digest")).resolves.toBe("draft");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({
+      job: "draftProjectContext",
+      agent: "claude",
+      requested_agent: "codex",
+      fallback: 1,
+      project_id: project.id,
+      task_id: null,
+      ok: 1,
+      ...USAGE,
+    });
+  });
+
+  it("records zero counters when a driver omits usage", async () => {
+    oneShot.mockResolvedValue({ text: "draft" });
+    const project = createProject({ name: "Unmetered" });
+    await draftProjectContext(project, "digest");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({
+      ok: 1,
+      cost_usd: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+    });
+  });
+
+  it("records failed internal jobs", async () => {
+    oneShot.mockRejectedValue(new Error("boom"));
+    const project = createProject({ name: "Failed" });
+    await expect(draftProjectContext(project, "digest")).rejects.toThrow("boom");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({
+      job: "draftProjectContext",
+      agent: "claude",
+      requested_agent: "codex",
+      fallback: 1,
+      ok: 0,
+    });
+  });
+
+  it("keeps task and internal totals separate in instance usage", () => {
+    const project = createProject({ name: "Totals" });
+    const task = createTask({ project_id: project.id, title: "Task", description: "" });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: USAGE });
+    getDb().prepare(
+      `INSERT INTO internal_usage
+       (id, job, agent, requested_agent, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at)
+       VALUES ('internal-test', 'verify', 'claude', 'claude', 1.5, 1, 2, 3, 4, ?)`
+    ).run(Date.now());
+
+    expect(getInstanceUsage()).toMatchObject({
+      cost_usd: 0.25,
+      total_tokens: 100,
+      turns: 1,
+      internal_cost_usd: 1.5,
+      internal_tokens: 10,
+      internal_jobs: 1,
+    });
+  });
+
+  it("groups the settings readout by job and excludes usage older than 30 days", () => {
+    const insert = getDb().prepare(
+      `INSERT INTO internal_usage (id, job, agent, requested_agent, cost_usd, created_at)
+       VALUES (?, ?, 'claude', 'claude', ?, ?)`
+    );
+    insert.run("recent-recap", "summarizeProjectRecap", 0.19, Date.now());
+    insert.run("recent-recap-2", "summarizeProjectRecap", 0.01, Date.now());
+    insert.run("old-recap", "summarizeProjectRecap", 99, Date.now() - 31 * 24 * 60 * 60 * 1000);
+
+    expect(internalUsageLast30Days()).toContainEqual({
+      job: "summarizeProjectRecap",
+      runs: 2,
+      cost_usd: 0.2,
+    });
+  });
+
+  it("uses a project's latest context draft, then the instance median", () => {
+    const project = createProject({ name: "Estimated" });
+    addInternalUsage({ job: "draftProjectContext", agent: "claude", requested_agent: "claude", project_id: project.id, usage: { ...USAGE, cost_usd: 0.11, input_tokens: 30_000, output_tokens: 8_000, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    expect(getContextDraftEstimate(project.id)).toMatchObject({ tokens: 38_000, cost_usd: 0.11, source: "project_latest" });
+
+    const other = createProject({ name: "Fallback" });
+    addInternalUsage({ job: "draftProjectContext", agent: "claude", requested_agent: "claude", usage: { ...USAGE, cost_usd: 0.21, input_tokens: 58_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    expect(getContextDraftEstimate(other.id)).toMatchObject({ tokens: 48_000, cost_usd: 0.16, source: "instance_median" });
+  });
+
+  it("scales /clear history to the current transcript and prefers the task agent", () => {
+    addInternalUsage({ job: "summarizeTranscript", agent: "claude", requested_agent: "claude", usage: { ...USAGE, cost_usd: 0.12, input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+    addInternalUsage({ job: "summarizeTranscript", agent: "codex", requested_agent: "codex", usage: { ...USAGE, cost_usd: 9, input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 } });
+
+    expect(getClearEstimate(200, "claude")).toMatchObject({ tokens: 240, cost_usd: 0.24, source: "scaled_history" });
+  });
+
+  it("does not manufacture estimates without metered history", () => {
+    expect(getContextDraftEstimate("missing")).toBeNull();
+    expect(getClearEstimate(20_000, "claude")).toBeNull();
+  });
+});

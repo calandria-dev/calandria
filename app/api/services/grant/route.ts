@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getGateSecret, publicServiceHost } from "@/lib/services";
 import { mintGateToken } from "@/lib/service-host.mjs";
+import { safeRedirectPath } from "@/lib/auth/local-origin.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function GET(req: Request) {
   const token = mintGateToken(getGateSecret(), row.slug, HOP_TTL_MS);
   const base = new URL(process.env.PUBLIC_BASE_URL!);
   const portSuffix = base.port ? `:${base.port}` : "";
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const safeNext = safeRedirectPath(next);
   const target = `${base.protocol}//${host}${portSuffix}/__orch/auth?t=${encodeURIComponent(token)}&next=${encodeURIComponent(safeNext)}`;
   return NextResponse.redirect(target, 302);
 }

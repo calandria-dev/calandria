@@ -1,6 +1,8 @@
 // Client-side shapes + UI constants shared across the orchestrator modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import type { Priority, Status } from "@/lib/types";
+import type { InternalUsageEstimate } from "@/lib/internalUsage";
+export type { InternalUsageEstimate };
 
 // ---------- client shapes ----------
 export interface ProjectRow {
@@ -16,6 +18,7 @@ export interface ProjectRow {
   setup_command: string;
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
+  send_context: number; // 1 = new tasks default to sending the saved project context to the agent
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -33,11 +36,13 @@ export interface TaskRow {
   status: Status;
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
+  send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
   session_id: string | null;
+  worktree_path: string; // isolated git worktree this task runs in ("" = not created yet — appears on the first turn)
   pr_url: string; // GitHub PR opened from this task's branch ("" = none yet)
   generation: number;
   started: number;
@@ -88,6 +93,7 @@ export interface Msg {
   content: string;
   generation: number;
   toolId?: string; // tool_use id, for merging the tool_result that arrives later
+  ts?: number; // created_at of the persisted row (ms epoch); absent on synthetic ids
 }
 export interface ProjectSession {
   id: string;

@@ -1,6 +1,7 @@
 // Pure formatting + derivation helpers shared across the orchestrator modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
+import type { InternalUsageEstimate } from "./types";
 
 // Compact token count: 1234 → "1.2k", 1_200_000 → "1.2M".
 export function fmtTokens(n: number): string {
@@ -21,6 +22,11 @@ export function fmtCost(n: number): string {
   if (n <= 0) return "$0.00";
   if (n < 0.01) return "<$0.01";
   return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+}
+
+export function fmtJobCost(e: InternalUsageEstimate): string {
+  const cost = e.cost_usd <= 0 ? "$0.00" : e.cost_usd < 0.01 ? "<$0.01" : `$${e.cost_usd.toFixed(2)}`;
+  return `~${fmtTokens(e.tokens)} tokens (~${cost})`;
 }
 
 // ---------- the usage chip (tokens + cost, honestly) ----------
@@ -160,6 +166,16 @@ export function formatAnswersText(questions: AskQuestion[], answers: AskAnswers)
     return `- ${q.header || q.question}: ${picked.length ? picked.join(", ") : "(no selection)"}`;
   });
   return `Answering your question${questions.length > 1 ? "s" : ""}:\n${lines.join("\n")}`;
+}
+// Absolute wall-clock stamp for a transcript message ("3:42 PM", locale-aware).
+// Messages from an earlier day prefix the date, so a task resumed days later
+// still reads right. Absolute on purpose: MessageView is memoized, so a
+// relative "2m ago" would freeze at whatever it said when the row rendered.
+export function clockTime(ts: number): string {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
 export function relTime(ts: number): string {
   const d = Date.now() - ts;
