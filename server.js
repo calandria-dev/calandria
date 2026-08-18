@@ -60,7 +60,7 @@ const serviceRouterImport = import("./lib/service-router.mjs");
 // init; ORCH_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
 const envKeysImport = import("./lib/env-keys.mjs");
 
-// Per-instance overrides (see README "Configuration"). PTY_HOST/PTY_PORT must
+// Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). PTY_HOST/PTY_PORT must
 // match what pty-server.js binds — the sidecar is loopback-only by default and
 // is reached exclusively through this proxy.
 const dev = process.env.NODE_ENV !== "production";

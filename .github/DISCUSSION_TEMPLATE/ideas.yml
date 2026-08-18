@@ -1,0 +1,52 @@
+title: "[Idea] "
+labels:
+  - idea
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the problem and desired outcome. Solutions are easier to evaluate when the underlying workflow is clear.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you encountering?
+      description: Tell us where your current Operator workflow breaks down or becomes costly.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What outcome do you want?
+      description: Describe what success looks like without assuming a particular implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How do you handle this today?
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does this affect you?
+      options:
+        - Every day
+        - A few times a week
+        - A few times a month
+        - Occasionally
+    validations:
+      required: true
+  - type: checkboxes
+    id: participation
+    attributes:
+      label: How would you like to help?
+      options:
+        - label: I can test an early version.
+        - label: I may be able to contribute an implementation.
+        - label: I can provide more examples or workflow details.
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Add mockups, examples, or related discussions. Do not include private code or credentials.

@@ -4,7 +4,7 @@ import os from "node:os";
 /**
  * Per-instance configuration, driven entirely by environment variables so an
  * instance can be relocated (fresh container, different user, different ports)
- * with zero code edits. Every value has a documented default — see README
+ * with zero code edits. Every value has a documented default — see docs/SELF_HOSTING.md
  * "Configuration" and .env.example.
  *
  * Server-side only. The two plain-Node entrypoints (server.js, pty-server.js)

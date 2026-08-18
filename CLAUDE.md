@@ -73,4 +73,5 @@ This is the **open-source repo** — the whole local app lives here and all core
 
 ## More detail
 
-`README.md` (features, configuration, self-hosting, architecture map) · `.env.example` (every env var, documented).
+`README.md` (concise product overview and quick start) · `docs/` (features, agents,
+services, self-hosting, and architecture) · `.env.example` (every env var, documented).
