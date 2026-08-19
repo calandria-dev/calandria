@@ -532,11 +532,23 @@ export interface TaskMoveBatch {
  * cuts a fresh worktree from the destination — see the `clearCheckout` statement
  * below for exactly what that covers and why.
  *
+ * It's a SET of ids rather than a flag on the batch, because a checkout is
+ * thrown away one at a time: each is a separate irreversible answer the user
+ * gave about that task's worktree, and the two things the option does — waive
+ * the started-task refusal, and clear the columns — must apply to exactly the
+ * tasks that were answered for. As one flag over the batch, an unanswered
+ * started task would move with its columns cleared and its worktree left
+ * orphaned in the repo it came from, with nothing pointing at it.
+ *
  * Liveness is NOT checked here: a turn can be in flight with the row still
  * reading running=0 (POST /messages claims the abort slot before it locks), so
  * the caller screens for that under the task locks — see lib/taskMove.ts.
  */
-export function moveTasks(ids: string[], projectId: string, opts: { resetCheckout?: boolean } = {}): TaskMoveBatch {
+export function moveTasks(
+  ids: string[],
+  projectId: string,
+  opts: { resetCheckout?: ReadonlySet<string> } = {}
+): TaskMoveBatch {
   const db = getDb();
   const dest = getProject(projectId);
   if (!dest) throw new Error("project not found");
@@ -551,7 +563,7 @@ export function moveTasks(ids: string[], projectId: string, opts: { resetCheckou
     if (!task) skipped.push({ id, reason: "task not found" });
     else if (task.project_id === projectId) unchanged.push(id);
     else {
-      const blocked = moveTaskBlockedReason(task, opts);
+      const blocked = moveTaskBlockedReason(task, { resetCheckout: opts.resetCheckout?.has(id) });
       if (blocked) skipped.push({ id, reason: blocked });
       else movers.push({ ...task, picked });
     }
@@ -637,7 +649,7 @@ export function moveTasks(ids: string[], projectId: string, opts: { resetCheckou
     );
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
-      if (opts.resetCheckout) clearCheckout.run(r.id);
+      if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
       for (const stmt of repoint) stmt.run(projectId, r.id);
     }
     // A blocker-less task can never auto-start (lib/autoStart.ts selects through

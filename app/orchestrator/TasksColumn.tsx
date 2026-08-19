@@ -21,7 +21,7 @@ import { BaseBranchBanner } from "./BaseBranchBanner";
 function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: boolean; onPick: (range: boolean) => void }) {
   return (
     <label className="pickbox" onClick={(e) => e.stopPropagation()}
-      title={pickable ? "Select — shift-click to extend the range" : "Started tasks can't be re-filed: the worktree belongs to this project's repo"}>
+      title={pickable ? "Select — shift-click to extend the range" : "A task mid-turn can't be re-filed — nothing may move a worktree an agent is writing into"}>
       <input type="checkbox" checked={picked} disabled={!pickable} onChange={() => {}}
         onClick={(e) => { e.stopPropagation(); onPick(e.shiftKey); }} />
     </label>
@@ -76,7 +76,12 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
 // The server decides for real (it also refuses one whose turn is merely in
 // flight, and reports that as a skip) — this only keeps the obvious cases from
 // being selectable at all.
-const canPick = (t: TaskRow) => t.started === 0 && t.running === 0;
+//
+// A STARTED task IS pickable: it moves by discarding the worktree it cut from
+// this project's repo, and the move modal asks for that per row, with what that
+// particular checkout holds beside the box. Only a live turn is unpickable —
+// no answer moves a task an agent is writing into.
+const canPick = (t: TaskRow) => t.running === 0;
 
 function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, accent, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; accent?: boolean; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
@@ -113,8 +118,8 @@ function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSele
  * would act on rows that are no longer on screen — worse, the board doesn't
  * render the action bar, so a selection carried into it would be invisible.
  * Pruned against `order` on every render for the same reason — a picked task
- * that got moved, deleted, started, or filtered out by the search box must leave
- * the selection with it.
+ * that got moved, deleted, filtered out by the search box, or launched into a
+ * turn under the selection must leave it.
  */
 function usePicked(scope: string, order: string[]) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -215,11 +220,12 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
 
   // The rows a shift-click range runs over: every group in render order, then
   // the Suggested tray. Collapsed groups are excluded — a range must not sweep
-  // up tasks the user can't see — and so are started ones, which can't be
+  // up tasks the user can't see — and so are the ones mid-turn, which can't be
   // re-filed at all, so a range spanning one skips it rather than selecting
-  // something the server will only refuse. Suggested rows are ordinary unstarted
-  // task rows server-side, so a range crossing into the tray is a real
-  // selection, not a category error.
+  // something the server will only refuse. Started rows are swept up like any
+  // other; what their move costs is asked for one row at a time in the modal.
+  // Suggested rows are ordinary unstarted task rows server-side, so a range
+  // crossing into the tray is a real selection, not a category error.
   const order = [
     ...needsYou, ...groups.a, ...groups.h, ...groups.r,
     ...(doneCollapsed && !q ? [] : groups.g),

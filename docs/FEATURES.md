@@ -87,9 +87,12 @@ A whole batch can go at once: tick the checkboxes in the task list (shift-click 
 the Suggested tray included) and use **Move to project…** in the selection bar. They move
 under one transaction, and a blocked-by link whose *both* ends are in the selection survives
 the trip — select a whole dependency chain and it arrives intact. Anything that can't move
-is named in a report rather than quietly left behind. Bulk moves never discard worktrees:
-each one is its own irreversible answer, so started tasks are reported and re-filed one at a
-time from **Edit task**.
+is named in a report rather than quietly left behind. Started tasks can come along, but one
+answer at a time: each row that holds a worktree gets its own checkbox, off until you tick
+it, with what that particular checkout holds beside it — clean and merged, or the uncommitted
+edits and unmerged commits it would destroy, in red. Ticking none is a plain move. Three
+worktrees holding unsaved work in a selection of eleven don't refuse the other eight; the
+three are reported and stay where they are, checkouts untouched.
 
 Agents can also suggest follow-up tasks while they work — into their own project, or into
 any other one. When you spot work in a session that belongs to a different repo, the agent
