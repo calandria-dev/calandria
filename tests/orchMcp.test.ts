@@ -125,7 +125,7 @@ describe("orch-mcp stdio bridge", () => {
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
-      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["description", "priority", "status", "task", "title"]);
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["blocked_by", "description", "priority", "status", "task", "title"]);
       // Cancelling is the user's call: on the caller's own row it would abort
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
@@ -251,6 +251,33 @@ describe("orch-mcp stdio bridge", () => {
       await client.callTool({ name: "update_task", arguments: { task: "task-someone-else", title: "Sharpened" } });
       const call = calls.find((c) => c.path.endsWith("/update-task"))!;
       expect(call.body).toMatchObject({ taskId: "task-xyz", task: "task-someone-else", title: "Sharpened" });
+    } finally {
+      await close();
+    }
+  });
+
+  it("forwards update_task's blocked_by verbatim — ids only, no title lookup", async () => {
+    calls.length = 0;
+    nextId = 0;
+    const { client, close } = await connectBridge();
+    try {
+      // File a task so its title IS in the bridge's per-turn map…
+      await client.callTool({ name: "suggest_task", arguments: { title: "First", description: "" } });
+      // …then wire dependencies the way the two-phase recipe does: with the id.
+      await client.callTool({ name: "update_task", arguments: { task: "id-1", blocked_by: ["id-0"] } });
+      expect(calls.find((c) => c.path.endsWith("/update-task"))!.body).toMatchObject({
+        taskId: "task-xyz",
+        task: "id-1",
+        blocked_by: ["id-0"],
+      });
+
+      // A TITLE is not resolved here, unlike suggest_task's version of the
+      // param: the map dies with this process, so the same string would work
+      // this turn and be refused the next. It travels as typed and the endpoint
+      // refuses the call, which is a message the model can act on.
+      calls.length = 0;
+      await client.callTool({ name: "update_task", arguments: { task: "id-1", blocked_by: ["First"] } });
+      expect(calls.find((c) => c.path.endsWith("/update-task"))!.body.blocked_by).toEqual(["First"]);
     } finally {
       await close();
     }

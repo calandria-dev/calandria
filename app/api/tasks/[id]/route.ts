@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, countAwaiting } from "@/lib/store";
+import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting } from "@/lib/store";
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
@@ -43,11 +43,6 @@ const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
 // cancelling clears the edge exactly as finishing does.
 const isTerminal = (s: string) => s === "done" || s === "cancelled";
-
-/** Same set of ids, order-insensitively — dependency edges have no order. */
-function sameIds(a: string[], b: string[]): boolean {
-  return a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
-}
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -110,7 +105,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // self, duplicates), so a submitted list is often identical to the stored
     // one — and every edit dialog save submits `depends_on` whether or not the
     // user touched it.
-    depsChanged = !sameIds(before, getTaskDeps(id));
+    depsChanged = !sameDepSet(before, getTaskDeps(id));
   }
   const task = updateTask(id, allowed);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });

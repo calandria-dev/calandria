@@ -173,14 +173,19 @@ server.registerTool(
       description: z.string().optional().describe(UPDATE_TASK.params.description),
       priority: z.enum(UPDATE_TASK.priorities).optional().describe(UPDATE_TASK.params.priority),
       status: z.enum(UPDATE_TASK.statuses).optional().describe(UPDATE_TASK.params.status),
+      // Ids only — no title lookup against `createdByTitle` the way suggest_task
+      // does. That map dies with this process (one turn), so the same string
+      // would resolve in one turn and be refused in the next; the two-phase
+      // recipe hands the model real ids anyway.
+      blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
     },
   },
-  async ({ task, title, description, priority, status }) => {
+  async ({ task, title, description, priority, status, blocked_by }) => {
     // `task` is the target the MODEL chose, and it is forwarded unvalidated —
     // this bridge deliberately holds no policy. The endpoint decides what may
     // be written, against ORCH_TASK_ID (sent by callInternal as the trusted
     // caller identity, which nothing here can override).
-    const data = await callInternal("update-task", { task, title, description, priority, status });
+    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
