@@ -6,7 +6,7 @@ import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { loadPersist, readUrlSel } from "./persist";
-import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type TaskRow } from "./types";
+import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type SaveAction, type TaskRow } from "./types";
 import { agentLabel } from "./agents";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
@@ -589,10 +589,27 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
-  const saveTask = async (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => {
-    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { ...patch, auto_start: patch.auto_start ? 1 : 0 });
+  // `action` is the edit dialog's Add / Start: the same write, plus accepting
+  // the task out of the suggestions tray (`suggested: 0`) and — for "start" —
+  // launching its first turn. One PATCH carries both, so a sharpened brief and
+  // the decision it led to can't half-apply, and the route's revive branch
+  // clears a withdrawal (reason + cancelled status) for free.
+  const saveTask = async (
+    id: string,
+    patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean },
+    action?: SaveAction,
+  ) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {
+      ...patch,
+      auto_start: patch.auto_start ? 1 : 0,
+      ...(action ? { suggested: 0 } : {}),
+    });
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
     setEditId(null);
+    if (action === "start") {
+      setSelTask(id);
+      runTurn(id, "", true);
+    }
   };
 
   // Re-parent a misfiled task. Every dependency edge touching it is dropped,
