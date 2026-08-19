@@ -45,7 +45,12 @@ here from most autonomous to least:
 Every mode except Auto-run is a real gate: whatever it doesn't auto-approve parks the turn
 on a permission card in the transcript. Read-only tools never prompt. "Always allow"
 remembers a command for that project only, and every remembered approval is listed and
-revocable in Settings → Run defaults. A prompt nobody answers declines itself, so an
+revocable in Settings → Run defaults — where you can also add one up front, without
+waiting for a prompt to happen. A typed-in rule goes through the same policy as the card:
+Bash commands only, and "and its arguments" stores just the command and its subcommand
+(`git push origin main` → `git push …`), refusing outright when the line is one no honest
+prefix describes — a wrapper like `sudo`, an env assignment, or anything the shell could
+reinterpret. A prompt nobody answers declines itself, so an
 auto-started task can't sit wedged waiting for someone who isn't there — which is the
 trade-off of the default: unattended work that trips the classifier stops and says so
 rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
@@ -102,7 +107,9 @@ Three upstream differences are visible:
   the point above: an inherited server's tools are offered to the model and every call
   returns `user cancelled MCP tool call`. Operator unmounts them rather than dangle tools
   that cannot work. Set `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you
-  have set `default_tools_approval_mode = "approve"` on your own servers.
+  have set `default_tools_approval_mode = "approve"` on your own servers. Each agent's
+  card in **Settings → Agents** says which side of this it is on, so you can see it
+  before picking an agent for a task.
 
 ## Adding another agent
 

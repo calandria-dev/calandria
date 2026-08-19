@@ -128,6 +128,47 @@ test("'Always allow' remembers the command, skips the next prompt, and is revoca
   expect(after.rules.some((r: { id: string }) => r.id === rule.id)).toBe(false);
 });
 
+test("a rule added in Settings pre-approves a command no prompt was ever raised for", async ({ page, request }) => {
+  // The gap the add row closes: without it, pre-approving costs one prompt in
+  // one task first — and an auto-started unattended turn declines that prompt
+  // before anyone sees it.
+  await gotoApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Run defaults" }).click();
+
+  const add = page.locator(".perm-add");
+  await expect(add).toBeVisible();
+  await add.getByTitle("Which project this applies to").selectOption({ label: PROJECT });
+
+  // A prefix the policy refuses is an error, not a narrower rule nobody asked
+  // for — the whole reason the form routes through bashPrefixOf().
+  await add.locator("input").fill("sudo yarn lint");
+  await add.getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator(".err-note")).toContainText("runs whatever its arguments say");
+  expect((await (await request.get("/api/settings/permissions")).json())
+    .rules.some((r: { value: string }) => r.value.startsWith("sudo"))).toBe(false);
+
+  // And an acceptable one stores the GENERALIZED prefix, said out loud.
+  await add.locator("input").fill("yarn lint --fix src");
+  await add.getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator(".perm-rules")).toContainText("yarn lint …");
+  await expect(page.locator(".err-note")).toHaveCount(0);
+
+  const listed = await (await request.get("/api/settings/permissions")).json();
+  const rule = listed.rules.find((r: { value: string; project_name: string }) => r.value === "yarn lint" && r.project_name === PROJECT);
+  expect(rule).toMatchObject({ tool: "Bash", match_kind: "bash_prefix" });
+
+  // The gate honors it on a turn that never asked anybody anything.
+  const task = await createTask(request, {
+    projectId,
+    title: "Covered before it ran",
+    description: "e2e:permission=yarn lint --fix",
+  });
+  await sendMessage(request, task.id);
+  const done = await waitForIdle(request, task.id);
+  expect(done.messages.some((m: { content: string }) => m.content.includes('"permission"'))).toBe(false);
+});
+
 test("a call Claude Code refuses on its own lands as a decided card on that call", async ({ page, request }) => {
   // No canUseTool, no buttons, nothing parked on the user — but the model just
   // lost a tool call, and the only other trace is an is_error tool_result that

@@ -7,10 +7,10 @@ import { capsFor, agentLabel } from "./agents";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
-import { LoadNote } from "./shared";
+import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
 import type { AgentInfoT, AgentsResponseT } from "./types";
-import type { PermissionRule } from "@/lib/types";
+import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 // Account / session panel. Shows who's signed in to this instance and a Logout
 // control — but only when an origin provider is actually gating the box (first-
@@ -116,9 +116,30 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
               ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Sign-in stopped working">{Icon.bolt()}</span>
               : <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>)}
           </div>
+          <McpInheritance agent={a} />
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// Whether a task on this agent can use the MCP servers the user configured for
+// its own CLI — the one capability difference between the agents that changes
+// what a task can DO, rather than how its controls look. A Claude task reaches
+// the tools in ~/.claude; an otherwise-identical Codex task reaches only
+// Operator's, so it's worth knowing before choosing an agent for a task. Both
+// the verdict and the explanation come from the driver's descriptor
+// (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
+// agent states its own position here with no edit to this file.
+function McpInheritance({ agent }: { agent: AgentInfoT }) {
+  const { inheritsUserMcpServers: inherits, userMcpServersNote: note } = agent.capabilities;
+  return (
+    <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
+      <strong style={{ color: "var(--ink-2)" }}>
+        {inherits ? "Uses your own MCP servers." : "Operator's tools only."}
+      </strong>
+      {note ? ` ${note}` : ""}
     </div>
   );
 }
@@ -148,13 +169,34 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
 }
 
 // The "always allow" answers given to tool-permission prompts (lib/permissions.ts),
-// with a revoke on each. A grant nobody can find is a grant nobody can take
-// back, so this list is the other half of the "Always allow" button — without
-// it, one click in a transcript is permanent and invisible.
+// with a revoke on each, plus a row to add one WITHOUT waiting for a prompt.
+// A grant nobody can find is a grant nobody can take back, so this list is the
+// other half of the "Always allow" button — without it, one click in a
+// transcript is permanent and invisible. The add row is the other direction:
+// "always allow" was the only way to mint a rule, so pre-approving `npm test`
+// for a project cost you one prompt in one task first — and an auto-started
+// unattended turn declines that prompt before anyone can answer it.
+//
+// The form can't grant more than the card can. It sends the command the user
+// typed; the server runs it through the same prefix policy and answers with the
+// rule it actually stored (`git push origin main` asked for by prefix comes
+// back as `git push`), or with an error when no honest prefix exists.
 function PermissionRules() {
   const [rules, setRules] = useState<(PermissionRule & { project_name: string })[] | null>(null);
-  const load = () => jget<{ rules: (PermissionRule & { project_name: string })[] }>("/api/settings/permissions")
-    .then((d) => setRules(d.rules))
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [command, setCommand] = useState("");
+  const [kind, setKind] = useState<PermissionMatchKind>("bash_prefix");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
+
+  const load = () => jget<{ rules: (PermissionRule & { project_name: string })[]; projects: { id: string; name: string }[] }>("/api/settings/permissions")
+    .then((d) => {
+      setRules(d.rules);
+      setProjects(d.projects);
+      setProjectId((cur) => (d.projects.some((p) => p.id === cur) ? cur : d.projects[0]?.id ?? ""));
+    })
     .catch(() => setRules([]));
   useEffect(() => { void load(); }, []);
 
@@ -163,14 +205,69 @@ function PermissionRules() {
     try { await jsend("/api/settings/permissions", "DELETE", { id }); } catch { void load(); }
   };
 
+  const add = async () => {
+    if (busy || !projectId || !command.trim()) return;
+    setBusy(true);
+    setError(null);
+    setAdded(null);
+    try {
+      const { rule } = await jsend<{ rule: PermissionRule & { project_name: string } }>(
+        "/api/settings/permissions", "POST", { project_id: projectId, command, match_kind: kind }
+      );
+      // The stored rule, not the typed line — say so whenever they differ, so a
+      // narrowed prefix isn't a silent surprise the next time it doesn't match.
+      setAdded(rule.match_kind === "bash_prefix" ? `${rule.value} …` : rule.value);
+      setCommand("");
+      setRules((prev) => [rule, ...(prev ?? []).filter((r) => r.id !== rule.id)]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="field">
       <div className="lab">{Icon.check()} Remembered approvals</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-        Commands you chose <strong>Always allow</strong> for on a permission prompt. They apply to one project
-        and skip the prompt entirely, so revoke anything you no longer want run unattended. A remembered command
-        names a script, not a behaviour — <code>npm test</code> is whatever the project says it is today.
+        Commands allowed without a prompt — the ones you chose <strong>Always allow</strong> for on a permission
+        card, plus any you add here. They apply to one project and skip the prompt entirely, so revoke anything you
+        no longer want run unattended. A remembered command names a script, not a behaviour — <code>npm test</code>
+        {" "}is whatever the project says it is today.
       </div>
+      {projects.length > 0 && (
+        <>
+          <div className="perm-add">
+            <select value={projectId} onChange={(e) => setProjectId(e.target.value)} title="Which project this applies to">
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <input
+              type="text" className="ctx-mono" placeholder="npm test" spellCheck={false} value={command}
+              onChange={(e) => { setCommand(e.target.value); setError(null); setAdded(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void add(); } }}
+            />
+            <select
+              value={kind} title="How much of the command line the rule covers"
+              onChange={(e) => { setKind(e.target.value as PermissionMatchKind); setError(null); setAdded(null); }}
+            >
+              <option value="bash_prefix">and its arguments</option>
+              <option value="bash_exact">exactly, nothing else</option>
+            </select>
+            <button className="btn btn-line btn-sm" onClick={() => void add()} disabled={busy || !command.trim()}>
+              {Icon.check()} {busy ? "Adding…" : "Allow"}
+            </button>
+          </div>
+          <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+            <strong>And its arguments</strong> remembers only the leading command and subcommand, exactly as the
+            permission card would — <code>git push origin main</code> is stored as <code>git push …</code>, and a line
+            the shell could reinterpret (pipes, <code>$(…)</code>, <code>&amp;&amp;</code>) or one led by a wrapper
+            like <code>sudo</code> can&apos;t be generalized at all. <strong>Exactly</strong> matches that one literal
+            line and nothing else.
+          </div>
+          {error && <ErrNote style={{ marginBottom: 10 }}>{error}</ErrNote>}
+          {added && !error && <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>Remembered as <code>{added}</code>.</div>}
+        </>
+      )}
       {rules === null ? (
         <div className="hlp">Loading…</div>
       ) : rules.length === 0 ? (

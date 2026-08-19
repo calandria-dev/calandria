@@ -7,12 +7,13 @@
 // /messages streams (including zero) can watch; disconnects never touch the
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
+import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
-import { worktreeSyncStatus, fastForwardWorktree } from "@/lib/git";
+import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { track } from "@/lib/analytics";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
@@ -119,13 +120,13 @@ export function startTurn(
 }
 
 /**
- * Begin a *resume* (non-initial) turn for a task: silently catch a
- * fast-forward-able worktree up to the base branch, persist + echo the user
- * message, flip running on, and hand off to the detached runner. Shared by the
- * POST /messages resume path and the queue drainer (a dequeued follow-up is
- * always a resume turn). Mirrors the prep the POST route does inline for the
- * very first turn; the initial turn stays in the route since it also creates
- * the worktree and persists the generic opening prompt.
+ * Begin a *resume* (non-initial) turn for a task: make sure the task has a
+ * worktree, silently catch a fast-forward-able one up to the base branch,
+ * persist + echo the user message, flip running on, and hand off to the
+ * detached runner. Shared by the POST /messages resume path and the queue
+ * drainer (a dequeued follow-up is always a resume turn). Mirrors the prep the
+ * POST route does inline for the very first turn; the initial turn stays in the
+ * route since it also persists the generic opening prompt.
  */
 export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController): Promise<void> {
   const id = task.id;
@@ -143,6 +144,36 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     return;
   }
   try {
+    // Isolation is this function's job, not its callers'. Both launch paths that
+    // create a worktree (POST /messages, lib/autoStart.ts) run the same self-heal
+    // before their FIRST turn, but a turn can also reach the runner through the
+    // queue drainer in run()'s finally — which only pops a message and calls
+    // here. If task.worktree_path were empty by then, the driver would fall back
+    // to project.repo_path and the agent would edit the user's actual checkout
+    // instead of an isolated worktree. Today the callers happen to make that
+    // unreachable (every drain follows a turn one of them launched); this makes
+    // it an invariant of the code rather than of three call sites agreeing.
+    // Same contract as those paths: ensureWorktree reattaches to a surviving
+    // branch so pruned work comes back, non-git/empty repos legitimately yield
+    // null and fall back to repo_path, and a git hiccup must never block the
+    // turn. Mutating `task` so the sync check below and the runner see the new
+    // cwd. Runs before the catch-up on purpose — that reads worktree_path.
+    // A project with no working directory set is skipped rather than isolated:
+    // both launch paths refuse that project outright, and ensureWorktree("")
+    // would be asking git to init a repo in an unknown place.
+    if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
+      try {
+        const wt = await ensureWorktree(project.repo_path, id, project.branch);
+        if (wt) {
+          task.worktree_path = wt.path;
+          task.work_branch = wt.branch;
+          task.base_sha = wt.baseSha;
+          updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+        }
+      } catch {
+        // fall back to repo_path
+      }
+    }
     // Catch the worktree up to base when it's a clean, zero-conflict fast-forward
     // (no divergent commits, clean tree) so follow-up work isn't built on stale
     // code. Anything riskier is left to the user-driven Sync/Fix banner. A git
