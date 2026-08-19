@@ -179,6 +179,41 @@ test("a second turn resumes the same session", async ({ request }) => {
   expect(afterSecond.session_id).toBe(afterFirst.session_id);
 });
 
+// Auto-start has to be exercised against the BUILT server, which is the whole
+// reason this lives here and not in tests/autoStart.ts: that suite mocks
+// lib/runner, so it pins WHEN a launch happens but can never see the launch
+// itself fail. In production it always did — lib/autoStart.ts reaches
+// lib/runner.ts, which Turbopack compiles as an async module (the agent SDKs
+// are async ESM externals), and a static import of one reads every export off
+// a pending Promise, so every single auto-start died on `startTurn` not being
+// a function. Dev and vitest were both green throughout.
+test("a blocker marked done auto-starts its dependent's first turn", async ({ request }) => {
+  const blocker = await createTask(request, { projectId, title: `Blocker ${uid()}` });
+  const dependent = await createTask(request, { projectId, title: "Waits for the blocker" });
+
+  const wired = await request.patch(`/api/tasks/${dependent.id}`, {
+    data: { depends_on: [blocker.id], auto_start: 1 },
+  });
+  expect(wired.ok()).toBeTruthy();
+  expect((await wired.json()).depends_on).toEqual([blocker.id]);
+
+  // The only trigger: no message is ever POSTed to the dependent.
+  const done = await request.patch(`/api/tasks/${blocker.id}`, { data: { status: "done" } });
+  expect(done.ok()).toBeTruthy();
+
+  const settled = await waitForIdle(request, dependent.id);
+  expect(settled.started).toBe(1);
+  // The turn really ran (a claimed-but-crashed launch also leaves a user
+  // message behind), and the transcript says why it began.
+  const roles = settled.messages.map((m: { role: string }) => m.role);
+  expect(roles).toContain("assistant");
+  const note = settled.messages.find(
+    (m: { role: string; content: string }) => m.role === "system" && m.content.includes("Auto-started")
+  );
+  expect(note?.content).toContain(blocker.title);
+  expect(note?.content).toContain("is done");
+});
+
 test("a task an agent renames updates the list live, with no reload", async ({ page, request }) => {
   // The update_task path. Unlike a status change, a retitle carries no field the
   // coarse /api/events payload knows about, so this only works if the write

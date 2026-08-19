@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Pin the launch at the runner boundary: auto-start's job is deciding WHEN to
 // start a task and handing the runner a correctly prepared launch; the turn
 // itself is the driver-contract test's problem (tests/agentDriver.test.ts).
-vi.mock("@/lib/runner", () => ({ startTurn: vi.fn() }));
+vi.mock("@/lib/runner", () => ({ startTurn: vi.fn(), publishTurnError: vi.fn() }));
 
-import { startTurn } from "@/lib/runner";
+import { startTurn, publishTurnError } from "@/lib/runner";
 import {
   createProject,
   createTask,
@@ -21,6 +21,7 @@ import { tmpDir } from "./helpers";
 import type { Task } from "../lib/types";
 
 const startTurnMock = vi.mocked(startTurn);
+const publishTurnErrorMock = vi.mocked(publishTurnError);
 
 function makeProject() {
   // A plain (non-git) working dir: ensureWorktree falls back to repo_path,
@@ -41,7 +42,10 @@ function makeChain(autoStart = true) {
 // Launching hands the claimed turn slot to the (mocked) runner, which never
 // releases it — free it so later tests can claim the same task id again... and
 // because each test uses fresh task ids, just clearing the mock is enough.
-beforeEach(() => startTurnMock.mockClear());
+beforeEach(() => {
+  startTurnMock.mockReset();
+  publishTurnErrorMock.mockReset();
+});
 
 describe("readyAutoStartDependents (selection rules)", () => {
   it("a dependent with the toggle on is ready once its only blocker is done", () => {
@@ -156,6 +160,37 @@ describe("maybeAutoStartDependents (the launch)", () => {
     // "is done": an agent about to build on a CANCELLED blocker should know.
     expect(note).toContain('"A" was cancelled');
     expect(note).not.toContain("is done");
+  });
+
+  // Nobody is watching an auto-start — it runs fire-and-forget behind someone
+  // else's status change — so a launch that throws after the row was marked
+  // running used to leave the task spinning forever on a turn that never
+  // started, recoverable only by restarting the server. That is exactly what
+  // the production Turbopack bug did on EVERY auto-start: lib/runner.ts is an
+  // async module and a static import read `startTurn` off a pending Promise,
+  // so the handoff threw a TypeError with the row already flagged.
+  it("a launch that throws unwinds the row instead of leaving it spinning", async () => {
+    const { a, b } = makeChain();
+    startTurnMock.mockImplementation(() => {
+      throw new TypeError("(0 , n.startTurn) is not a function");
+    });
+    updateTask(a.id, { status: "done" });
+    maybeAutoStartDependents(a.id);
+    await vi.waitFor(() => expect(startTurnMock).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+
+    await vi.waitFor(() => expect(getTask(b.id)!.running).toBe(0), { timeout: 10_000 });
+    const fresh = getTask(b.id)!;
+    // Cleanly retryable: not started, not running, turn slot released, so the
+    // user's Start button (and a later sweep) both still work.
+    expect(fresh.started).toBe(0);
+    expect(fresh.status).toBe("not_started");
+    expect(hasTurn(b.id)).toBe(false);
+    // …and the failure is where the user will see it, not only in the log.
+    expect(publishTurnErrorMock).toHaveBeenCalledTimes(1);
+    const [id, gen, text] = publishTurnErrorMock.mock.calls[0];
+    expect(id).toBe(b.id);
+    expect(gen).toBe(fresh.generation);
+    expect(text).toContain("(0 , n.startTurn) is not a function");
   });
 
   it("a task started in the race window isn't double-launched", () => {
