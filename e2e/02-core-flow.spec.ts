@@ -71,6 +71,22 @@ test("the transcript survives a reload (persisted, not stream-bound)", async ({ 
   await expect(page.getByText("Mock turn complete").first()).toBeVisible();
 });
 
+test("the task description stays viewable after the session starts", async ({ page }) => {
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText(TASK_TITLE).first().click();
+  // TaskHero — the only surface showing the description — is gone once the
+  // session starts, so the session header's Edit button is the only way left
+  // to read or copy the original brief.
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByText("Edit task").first()).toBeVisible();
+  await expect(page.getByPlaceholder("e.g. Add rate-limiting to auth endpoints")).toHaveValue(TASK_TITLE);
+  await expect(page.getByPlaceholder(/Describe the feature or task/)).toHaveValue(/e2e:write=greeting\.txt/);
+  // Started task → the helper explains edits land on future sessions, not the
+  // one whose transcript is on screen.
+  await expect(page.getByText(/Already sent to the agent/)).toBeVisible();
+});
+
 async function taskIdByTitle(request: import("@playwright/test").APIRequestContext, title: string): Promise<string> {
   const projects = await (await request.get("/api/projects")).json();
   const proj = projects.find((p: { name: string }) => p.name === PROJECT);

@@ -614,7 +614,16 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
       <div className="field">
         <div className="lab">Description <span className="opt">— what to do</span></div>
         <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
-        <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
+        {/* The description is injected into each SESSION's system prompt at
+            session start, so once a task has run this field is no longer the
+            thing steering the agent in front of you — it's the brief the NEXT
+            session gets. Said plainly, because the pre-start wording ("the body
+            of the prompt the agent starts with") invites the opposite reading. */}
+        {task.started === 1 ? (
+          <div className="hlp">Already sent to the agent — edits here update the task record and any future sessions, not the running one.</div>
+        ) : (
+          <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
+        )}
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       <div className="field">

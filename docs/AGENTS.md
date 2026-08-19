@@ -99,7 +99,12 @@ Three upstream differences are visible:
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
-  mid-turn approval mode. Claude's permission cards have no Codex equivalent yet: the
+  mid-turn approval mode, and asks Codex not to require approvals
+  (`approval_policy=never`). If an enterprise-managed Codex configuration disallows
+  that, Operator detects the CLI's downgrade warning on the first affected turn and
+  switches itself to the compatible `on-request` policy automatically — the failed
+  turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` remains the manual override.
+  Claude's permission cards have no Codex equivalent yet: the
   MCP bridge that carries `ask_user` could carry approvals the same way, but the CLI would
   first have to route an approval request to a tool call instead of a terminal prompt.
 - Codex tasks get Operator's own tools but **not** the MCP servers from your
