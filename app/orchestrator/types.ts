@@ -298,6 +298,12 @@ export const SEARCH_MIN = 6;
 // the full-workspace kanban board. Persisted alongside the other prefs.
 export type TaskView = "list" | "board";
 
+// What a save from the Edit-task dialog does BEYOND writing the fields:
+// "add" also accepts a suggestion out of the tray, "start" does that and
+// launches the first session. Both ride along on the one PATCH the save
+// already sends — see saveTask in useOrchestrator.ts.
+export type SaveAction = "add" | "start";
+
 // Which surface fills the work area (the right two columns). "workspace" is the
 // normal tasks+session view; "settings" replaces it with the app settings shell;
 // "insights" with the usage/analytics dashboard. Mirrored into the URL

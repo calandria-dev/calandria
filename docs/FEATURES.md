@@ -125,6 +125,18 @@ puts it back (clearing the strike-through and the note), **Start** runs it anywa
 dismisses it for good, exactly as before. Withdrawing is the only way an agent can retract
 work it proposed; it can't cancel or delete anything.
 
+Reviewing a suggestion is a decision made on its brief, so the tray lets you read the whole
+thing: each row has a **disclosure triangle** that unclamps the one-line summary (click the
+brief itself, too — it's the same toggle). A withdrawn row expands to show what was proposed
+underneath why it was pulled, which the struck-through row otherwise replaces entirely.
+Expanding is per-reading, not a saved preference — nothing stays open across a project
+switch. The ✎ opens the full **Edit task** dialog, and the tray's own verbs are in its footer:
+**Save** keeps the sharpened brief in the tray, **Add** accepts it into the task list, and
+**Add & start** does that and launches the first session — one write, so an edit and the
+decision it led to can't half-apply. An already-added task that hasn't started yet gets
+**Save & start** in the same place. Start is greyed out, with the reason, while a blocker is
+unfinished or the task's agent isn't connected.
+
 When a task stops blocking — you mark it done, you cancel it, or an agent withdraws it —
 anything set to **Start when unblocked** behind it launches just as it would have from your
 click. Cancelling counts because a cancelled task will never finish: waiting on one would

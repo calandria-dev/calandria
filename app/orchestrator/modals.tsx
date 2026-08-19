@@ -5,7 +5,7 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -546,7 +546,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   );
 }
 
-export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }, action?: SaveAction) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -559,7 +559,23 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
   const can = title.trim().length > 0;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = () => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0 });
+  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0 }, action);
+  // Editing a suggestion is usually the last step before deciding on it, so the
+  // tray's two verbs live here too: sharpen the brief and accept it in one
+  // gesture, rather than saving, closing, and hunting for the row again.
+  // (`add` is meaningless once it's out of the tray; `start` still isn't — an
+  // added-but-unstarted task can be launched from here the same way.)
+  const isSuggestion = task.suggested === 1;
+  const startable = !task.started;
+  // Same two gates the New-task dialog puts on "Start session immediately":
+  // an unfinished blocker means the task isn't allowed to run yet, and a
+  // disconnected agent has no session to launch.
+  const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
+  const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
+  const agentReady = selAgent ? selAgent.authenticated : true;
+  const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks — clear them or drop the dependency first"
+    : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
+  const canStartNow = can && !blocked && agentReady;
   return (
     <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
       footer={<>
@@ -570,7 +586,25 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={!can} onClick={save}>{Icon.check()} Save changes</button>
+        {/* Save stays the primary action only when it's the only one — on an
+            unstarted task, launching it is what the dialog is usually open for.
+            Its label shortens beside the tray verbs so five buttons still fit
+            one row of the footer. */}
+        <button className={`btn ${startable ? "btn-line" : "btn-accent"}`} disabled={!can} onClick={() => save()}
+          title={isSuggestion ? "Save the edits and leave this in the suggestions tray" : undefined}>
+          {Icon.check()} {isSuggestion ? "Save" : "Save changes"}
+        </button>
+        {isSuggestion && (
+          <button className="btn btn-line" disabled={!can} onClick={() => save("add")}
+            title={task.status === "cancelled" ? "Disagree with the withdrawal — save and restore it to the task list" : "Save and move this out of the suggestions tray, to start later"}>
+            {Icon.plus()} {task.status === "cancelled" ? "Restore" : "Add"}
+          </button>
+        )}
+        {startable && (
+          <button className="btn btn-accent" disabled={!canStartNow} onClick={() => save("start")} title={startWhy ?? "Save and launch the first session now"}>
+            {Icon.play()} {isSuggestion ? "Add & start" : "Save & start"}
+          </button>
+        )}
       </>}>
       <div className="field">
         <div className="lab">Title</div>

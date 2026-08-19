@@ -71,12 +71,14 @@ export async function createProject(
   return res.json();
 }
 
+// `suggested` files the row straight into the tray the way an agent's
+// suggest_task does — the tray's own behaviors don't need a turn to run first.
 export async function createTask(
   request: APIRequestContext,
-  opts: { projectId: string; title: string; description?: string }
+  opts: { projectId: string; title: string; description?: string; suggested?: boolean }
 ): Promise<{ id: string; title: string }> {
   const res = await request.post("/api/tasks", {
-    data: { project_id: opts.projectId, title: opts.title, description: opts.description ?? "", priority: "med", agent: "mock" },
+    data: { project_id: opts.projectId, title: opts.title, description: opts.description ?? "", priority: "med", agent: "mock", ...(opts.suggested ? { suggested: true } : {}) },
   });
   expect(res.status()).toBe(201);
   return res.json();

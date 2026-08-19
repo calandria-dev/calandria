@@ -163,6 +163,27 @@ function usePicked(scope: string, order: string[]) {
   return { picked, pick, clearPicked: () => { setPicked(new Set()); anchor.current = null; } };
 }
 
+/**
+ * Which suggestion rows have their brief expanded. A suggestion's description
+ * is the whole case FOR it, and the tray clamps it to one line — so every row
+ * gets a disclosure triangle.
+ *
+ * Deliberately NOT persisted, and dropped when the project changes: expanding
+ * is a reading gesture, not a preference. A remembered set would also re-open
+ * rows whose text the user has already read, which is the opposite of what the
+ * clamp is for.
+ */
+function useExpanded(scope: string) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  useEffect(() => { setExpanded(new Set()); }, [scope]);
+  const toggle = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
+  return { expanded, toggleExpanded: toggle };
+}
+
 // Per-group collapsed flag, persisted in localStorage under `key`.
 function useCollapsed(key: string, def: boolean) {
   const [collapsed, setCollapsed] = useState(def);
@@ -233,6 +254,7 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
     ...shownSuggested,
   ].filter(canPick).map((t) => t.id);
   const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}`, order);
+  const { expanded, toggleExpanded } = useExpanded(project.id);
 
   return (
     <div className="col col-tasks" style={{ flexBasis: width }}>
@@ -305,24 +327,52 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
               // Add/Start revive it (clearing the cancel server-side), the ✕
               // still dismisses it for good.
               const gone = isWithdrawn(s);
-              return (
-              <div key={s.id} className={`sug ${picked.has(s.id) ? "picked" : ""} ${gone ? "withdrawn" : ""}`}>
-                <PickBox picked={picked.has(s.id)} pickable={canPick(s)} onPick={(range) => pick(s.id, range)} />
-                <StatusDot status={gone ? "cancelled" : "not_started"} />
-                <div className="sg-meta">
+              // The brief is clamped to one line, so anything with text behind
+              // that clamp gets a disclosure triangle. A withdrawn row has two
+              // things to reveal — the retraction reason AND the proposal it
+              // retracts, which the collapsed row replaces entirely.
+              const expandable = gone ? !!(s.withdrawn_reason || s.description) : !!s.description;
+              const open = expandable && expanded.has(s.id);
+              const meta = (
+                <>
                   <div className="sg-name">{s.title}</div>
                   {gone ? (
-                    <div className="sg-why gone" title={s.withdrawn_reason || undefined}>
+                    <div className="sg-why gone" title={open ? undefined : s.withdrawn_reason || undefined}>
                       Withdrawn{s.withdrawn_reason ? ` — ${s.withdrawn_reason}` : ""}
                     </div>
                   ) : (
                     s.description && <div className="sg-why">{s.description}</div>
                   )}
+                  {/* Expanded, a withdrawn row shows what was proposed under
+                      why it was pulled — otherwise accepting or dismissing it
+                      is a decision made on the retraction alone. */}
+                  {open && gone && s.description && <div className="sg-why">{s.description}</div>}
+                </>
+              );
+              return (
+              <div key={s.id} className={`sug ${picked.has(s.id) ? "picked" : ""} ${gone ? "withdrawn" : ""} ${open ? "open" : ""}`}>
+                <PickBox picked={picked.has(s.id)} pickable={canPick(s)} onPick={(range) => pick(s.id, range)} />
+                {/* The spacer keeps titles aligned on a row with nothing to expand. */}
+                {expandable ? (
+                  <button className="sug-chev" aria-expanded={open} onClick={() => toggleExpanded(s.id)}
+                    title={open ? "Collapse" : "Show the full description"}>{Icon.chevDown()}</button>
+                ) : <span className="sug-chev is-spacer" aria-hidden />}
+                <StatusDot status={gone ? "cancelled" : "not_started"} />
+                {/* The brief itself toggles too — the triangle alone is a small
+                    target, and the row has no other click behavior. */}
+                {expandable ? (
+                  <button className="sg-meta" aria-expanded={open} onClick={() => toggleExpanded(s.id)}
+                    title={open ? "Collapse" : "Show the full description"}>{meta}</button>
+                ) : <div className="sg-meta">{meta}</div>}
+                {/* Grouped so the whole set can drop to its own line when the
+                    row is expanded — inline, four buttons leave the brief a
+                    column barely wide enough for one word. */}
+                <div className="sug-acts">
+                  <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
+                  <button className="sug-add" title={gone ? "Disagree — restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
+                  <button className="sug-btn" onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
+                  <button className="sug-dismiss" title="Dismiss" onClick={() => onDismissSuggestion(s.id)}>{Icon.x()}</button>
                 </div>
-                <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
-                <button className="sug-add" title={gone ? "Disagree — restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
-                <button className="sug-btn" onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
-                <button className="sug-dismiss" title="Dismiss" onClick={() => onDismissSuggestion(s.id)}>{Icon.x()}</button>
               </div>
               );
             })}

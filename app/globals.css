@@ -609,10 +609,27 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .suggest-h{display:flex;align-items:center;gap:7px;padding:10px 13px 8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);}
 [data-theme="dark"] .suggest-h{color:#D98C6A;}
 .suggest-h .sp{margin-left:auto;font-weight:600;}
-.sug{display:flex;align-items:center;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
-.sug .sg-meta{flex:1;min-width:0;}
+.sug{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
+.sug-acts{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
+.sug .sg-meta{flex:1;min-width:0;text-align:left;padding:0;}
 .sug .sg-name{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sug .sg-why{font-size:10.5px;color:var(--ink-2);margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;}
+/* The disclosure triangle: a suggestion's brief is the case for accepting it,
+   and one clamped line rarely carries it. `.is-spacer` is the same-width stand-in
+   a row with nothing to reveal renders instead, so titles stay aligned. Negative
+   margins because the row is cramped — four action buttons leave the title ~45px
+   in a default-width column, and the triangle must not take much of it. */
+.sug-chev{flex:0 0 auto;width:14px;height:16px;margin:0 -3px;display:grid;place-items:center;color:var(--ink-4);transform:rotate(-90deg);transition:transform .15s,color .12s;}
+.sug-chev svg{width:13px;height:13px;}
+.sug-chev:hover{color:var(--accent-ink);}
+.sug.open .sug-chev{transform:none;}
+/* Expanded: the clamps come off (title included — it ellipsises too) and the
+   actions drop to a line of their own, so the brief gets the column's full
+   width instead of the ~50px four inline buttons leave it. */
+.sug.open{align-items:flex-start;}
+.sug.open .sg-name{white-space:normal;overflow:visible;text-overflow:clip;}
+.sug.open .sg-why{-webkit-line-clamp:unset;line-clamp:unset;display:block;}
+.sug.open .sug-acts{flex-basis:100%;justify-content:flex-end;}
 .sug-btn{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--on-accent);background:var(--accent);padding:5px 9px;border-radius:var(--r-sm);}
 .sug-btn:hover{filter:brightness(1.06);}
 .sug-add{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent-ink);background:transparent;border:1px solid rgba(194,96,60,.4);padding:4px 8px;border-radius:var(--r-sm);}
