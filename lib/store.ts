@@ -358,6 +358,8 @@ export function createTask(input: {
    * every other creation path relies on.
    */
   permission_mode?: string | null;
+  /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
+  schedule_id?: string | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -374,26 +376,70 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.permission_mode || null, position, now, now
+      agent, sendContext ? 1 : 0, input.permission_mode || null, input.schedule_id ?? null, position, now, now
     );
   return getTask(id)!;
+}
+
+// The fields listTasks sorts by — everything needed to tell whether a reorder
+// actually moves a card, read before the write rewrites the positions.
+type OrderRow = { id: string; project_id: string; suggested: number; position: number; created_at: number };
+
+// listTasks' `suggested ASC, position ASC, created_at ASC`, with the id as a
+// final tiebreak so the comparison below is total (two rows CAN share a
+// position — reorderTasks only renumbers the ids it's given).
+function byRenderedOrder(a: OrderRow, b: OrderRow): number {
+  return a.suggested - b.suggested || a.position - b.position || a.created_at - b.created_at || (a.id < b.id ? -1 : 1);
+}
+
+/** The listed ids per project, in the order given. */
+function idsByProject(rows: OrderRow[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const r of rows) {
+    const seq = out.get(r.project_id);
+    if (seq) seq.push(r.id);
+    else out.set(r.project_id, [r.id]);
+  }
+  return out;
 }
 
 // Persist a manual task ordering (board drag / drop). `ids` is the desired
 // order — each task's position is set to its index. The client sends the
 // project's full task list flattened in column order; only relative order
 // within a status group is ever rendered, so cross-group interleaving is fine.
-export function reorderTasks(ids: string[]) {
+//
+// Returns the project ids whose RENDERED order actually changed — what POST
+// /api/tasks/reorder announces on the bus. Rendered order, not raw position
+// values, because the two come apart in both directions and only the first is
+// something another tab could be drawing wrong:
+//   - Positions go non-contiguous when a task is deleted (0, 1, 3), so the next
+//     drop renumbers a row to 2 without moving a single card.
+//   - The board submits ONE flat list with the Suggested column at the front,
+//     while the tray renders suggestions last — so the submitted sequence is
+//     compared per `suggested` group, the way the read sorts it.
+// A drag that drops a card back where it started (or that only tidies the
+// numbering) is therefore silent, instead of costing every open tab a refetch.
+export function reorderTasks(ids: string[]): string[] {
   const db = getDb();
+  // Read first: the write below is what we're comparing against.
+  const sel = db.prepare("SELECT id, project_id, suggested, position, created_at FROM tasks WHERE id = ?");
+  const rows = ids.map((id) => sel.get(id) as OrderRow | undefined).filter((r): r is OrderRow => !!r);
   const stmt = db.prepare("UPDATE tasks SET position = ? WHERE id = ?");
   db.transaction(() => {
     ids.forEach((id, i) => stmt.run(i, id));
   })();
+
+  const submitted = new Map(ids.map((id, i) => [id, i]));
+  const before = idsByProject([...rows].sort(byRenderedOrder));
+  // After the write every listed row holds a distinct position (its index), so
+  // `suggested` then submitted index is the whole sort key.
+  const after = idsByProject([...rows].sort((a, b) => a.suggested - b.suggested || submitted.get(a.id)! - submitted.get(b.id)!));
+  return [...after].filter(([pid, seq]) => before.get(pid)!.join() !== seq.join()).map(([pid]) => pid);
 }
 
 // Why a task may not change projects right now — null when it may. A task with
@@ -670,9 +716,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, schedule_id=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.schedule_id ?? null, n.updated_at, id);
   return getTask(id);
 }
 

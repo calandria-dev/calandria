@@ -28,6 +28,7 @@ import type {
 import { describeToolUse } from "./agents/shared";
 import { waitForAnswer, cancelAsk } from "./asks";
 import { watcherCount } from "./events";
+import { interactionDenied } from "./runContext";
 
 // ---------- step 1: the built-in allowlist ----------
 
@@ -306,6 +307,16 @@ export async function waitForPermission(opts: {
   // published card can't miss it. The registry keys on the id, not questions.
   const answer = waitForAnswer(taskId, id, [], signal);
 
+  // A scheduled turn is unattended BY DECLARATION, whatever watcherCount()
+  // says: the user didn't launch it, so an open tab is not consent to be
+  // interrupted by it. Settle at once rather than parking — there is no answer
+  // coming, and the runner already knows what to do with an unattended deny.
+  const denied = interactionDenied(taskId);
+  if (denied) {
+    cancelAsk(taskId, id, "unattended: scheduled run");
+    await answer.catch(() => {});
+    return { expired: "unattended" };
+  }
   let attended = unattendedMs <= 0 || watcherCount() > 0;
   let deadline = deadlineFrom(attended ? attendedMs : unattendedMs);
   let expired: "unattended" | "timeout" | null = null;
@@ -342,6 +353,9 @@ const deadlineFrom = (msFromNow: number): number => (msFromNow > 0 ? Date.now() 
  * Advisory: the gate extends it if a client appears during an unattended grace,
  * which is why the UI phrases it as "declines automatically", not a countdown.
  */
-export function promptDeadline(attendedMs: number, unattendedMs: number): number {
+export function promptDeadline(attendedMs: number, unattendedMs: number, taskId?: string): number {
+  // A declared-unattended turn is decided immediately; anything else is the
+  // presence heuristic.
+  if (taskId && interactionDenied(taskId)) return Date.now();
   return deadlineFrom(unattendedMs > 0 && watcherCount() === 0 ? unattendedMs : attendedMs);
 }

@@ -60,6 +60,7 @@ export interface Task {
   withdrawn_reason: string; // why an agent retracted this suggestion ("" = not withdrawn); only meaningful with status "cancelled" + suggested 1
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
+  schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   created_at: number;
   updated_at: number;
 }
@@ -400,4 +401,45 @@ export interface ToolData {
   // request is persisted so a reload re-renders an answerable card, and
   // `outcome` is absent while the turn is parked, set once it settles.
   permission?: { request: PermissionRequest; outcome?: PermissionOutcome };
+}
+
+/** A recurring prompt. See docs/superpowers/specs/2026-08-14-scheduled-tasks-design.md. */
+export interface Schedule {
+  id: string;
+  project_id: string;
+  name: string;
+  prompt: string;
+  days_mask: number;   // Sun=1 … Sat=64; weekdays = 62
+  time_of_day: string; // 'HH:MM' wall clock in `timezone`
+  timezone: string;    // IANA zone name
+  enabled: number;
+  agent: string;
+  permission_mode: string | null;
+  send_context: number;
+  priority: Priority;
+  catch_up_ms: number;  // -1 = inherit the instance default
+  next_fire_at: number; // cached from lib/schedule/time.ts
+  created_at: number;
+  updated_at: number;
+}
+
+export type ScheduleRunStatus =
+  | "claimed" | "running" | "succeeded" | "failed" | "stopped" | "interrupted"
+  | "missed" | "skipped_overlap";
+
+export type ScheduleTrigger = "scheduled" | "catch_up" | "manual";
+
+/** One occurrence of a schedule — including occurrences that never ran. */
+export interface ScheduleRun {
+  id: string;
+  schedule_id: string;
+  scheduled_for: number;
+  claimed_at: number;
+  fired_at: number;
+  finished_at: number;
+  task_id: string | null;
+  status: ScheduleRunStatus;
+  trigger: ScheduleTrigger;
+  detail: string;
+  dst_adjusted: string;
 }

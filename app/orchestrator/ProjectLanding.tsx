@@ -3,14 +3,15 @@
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { relTime } from "./format";
+import { Schedules } from "./Schedules";
 import { ErrNote } from "./shared";
-import type { ProjectRow, RecapInfo } from "./types";
+import type { AgentsBundle, ProjectRow, RecapInfo } from "./types";
 
 // Shown in the session pane when a project is open but no task is selected.
 // Surfaces the auto-generated "where you left off" recap when one exists / is
 // brewing; otherwise the plain create-a-task prompt.
-export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
-  project: ProjectRow; recap?: RecapInfo; onNewTask: () => void; onRefreshRecap: () => void;
+export function ProjectLanding({ project, agents, recap, onNewTask, onRefreshRecap }: {
+  project: ProjectRow; agents: AgentsBundle; recap?: RecapInfo; onNewTask: () => void; onRefreshRecap: () => void;
 }) {
   const generating = recap?.generating && !recap?.recap;
   const hasRecap = !!recap?.recap;
@@ -70,17 +71,37 @@ export function ProjectLanding({ project, recap, onNewTask, onRefreshRecap }: {
               <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} New task</button>
             </div>
           </div>
+          <Schedules project={project} agents={agents} />
         </div>
       </div>
     );
   }
 
+  // `.empty`'s centering (used above too) is a single-flex-item auto-margin
+  // trick — it only works when its parent both establishes a flex context and
+  // has real height to give away, which is why `.session-body` (flex:1;
+  // display:flex) was doing the centering directly before Schedules needed
+  // somewhere to sit below it. `.transcript`/`.tw` are plain scrolling blocks
+  // (shared with the real chat transcript, so their own CSS can't change), so
+  // that flex context is rebuilt here with inline styles: `.transcript` becomes
+  // the flex column, `.tw` stretches to fill it (`flex: 1`) so there's height
+  // to center within, and `.empty`'s own `margin: auto` centers it in
+  // whatever's left over — the full height for the brief flash before
+  // Schedules' own fetch resolves (it still renders nothing until then), or
+  // the space above the card once the card has loaded (Task 12: the card
+  // itself always renders now, even for a project with zero schedules, so
+  // there's somewhere to click "New schedule" from).
   return (
-    <div className="empty" style={{ margin: "auto" }}>
-      <div className="e-ic">{Icon.bolt()}</div>
-      <div className="e-t">No task selected</div>
-      <div className="e-s">Create a task to start an agent session.</div>
-      <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
+    <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
+      <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
+        <div className="empty" style={{ margin: "auto" }}>
+          <div className="e-ic">{Icon.bolt()}</div>
+          <div className="e-t">No task selected</div>
+          <div className="e-s">Create a task to start an agent session.</div>
+          <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
+        </div>
+        <Schedules project={project} agents={agents} />
+      </div>
     </div>
   );
 }
