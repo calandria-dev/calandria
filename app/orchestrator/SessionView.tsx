@@ -173,6 +173,17 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  // Retry for an approval-blocked failure (Transcript's APPROVAL_BLOCKED_NOTICE
+  // branch): resend the user message that preceded the failure line — the Codex
+  // driver has since negotiated a working approval policy, so the same message
+  // goes through on the second attempt. Resolved at click time so the memoized
+  // MessageView never needs the surrounding messages.
+  const stableRetry = useStableHandler((msgId: string) => {
+    const at = messages.findIndex((m) => m.id === msgId);
+    for (let j = (at === -1 ? messages.length : at) - 1; j >= 0; j--) {
+      if (messages[j].role === "user") { onSend(messages[j].content); return; }
+    }
+  });
   useEffect(() => {
     if (!clearConfirming) { setClearEstimate(null); return; }
     let alive = true;
@@ -291,7 +302,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 const prev = s.messages[mi - 1];
                 // collapse the repeated "Claude Code" header across an assistant run (text → tool → text)
                 const hideWho = m.role === "assistant" && !!prev && (prev.role === "assistant" || prev.role === "tool");
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} />;
               })}
             </div>
           ))}
