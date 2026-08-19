@@ -53,8 +53,17 @@ export function buildProjectContext(project: Project, task: Task): string {
       `When the work belongs to a DIFFERENT project (another repo the user manages here), ` +
       `pass \`project\` — the id or exact name of the target. Call \`list_projects\` first to ` +
       `get the real ids and names: an unrecognized value is refused outright rather than ` +
-      `filed into this project, so don't guess. \`blocked_by\` refs must be tasks in the same ` +
-      `project the new task is filed into.`
+      `filed into this project, so don't guess.\n` +
+      `ORDER THE PLAN. A plan whose steps must happen in sequence is half a plan until you ` +
+      `say so: a task can be blocked by others, and it can't be started until every one of ` +
+      `them is done. Whenever you file more than one task, ask which of them can't sensibly ` +
+      `begin before another finishes, and record it. Do it in two phases — (1) call ` +
+      `\`suggest_task\` for every task and WAIT for the ids it returns, then (2) call ` +
+      `\`update_task\` once per dependent task with \`blocked_by\` set to the complete list of ` +
+      `ids it waits on. Both phases can be parallel internally; what matters is that phase 2 ` +
+      `starts only after you have real ids. Independent tasks stay unblocked — don't invent a ` +
+      `chain where the work can genuinely run in any order. Dependencies never cross projects: ` +
+      `refs must be tasks in the same project the dependent task is filed into.`
   );
   lines.push(
     `\nYou also have an \`expose_service\` MCP tool. When you start a long-running server ` +

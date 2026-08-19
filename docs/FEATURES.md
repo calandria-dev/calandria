@@ -110,6 +110,14 @@ unreviewed in a Suggested tray — in any project — so a planning turn can go 
 the roadmap it just filed. Anything you've accepted, or another session has started, is
 refused: no session rearranges the board around it, and cancelling stays your call.
 
+Sharpening a suggestion includes **ordering** it. A plan whose steps have to happen in
+sequence is half a plan until the sequence is written down, so an agent asked to break work
+down files the tasks first, then goes back and sets what each one is blocked by — the same
+links you'd tick in the edit dialog, arriving already drawn. It can only do that to
+suggestions still sitting in a tray, it can't chain a task to one in another project, and it
+can't mark its own running task as blocked by anything (blockers decide whether a task may
+*start*, and that one already has).
+
 An agent that decides one of its own suggestions was redundant can **withdraw** it, and has
 to say why. The card stays in your tray, struck through with the reason underneath and
 sorted below the live suggestions — a recommendation to drop it, not a deletion. **Restore**
