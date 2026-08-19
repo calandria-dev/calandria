@@ -216,6 +216,58 @@ export function init(db: Database.Database) {
       UNIQUE(project_id, tool, match_kind, value)
     );
 
+    -- A recurring prompt: "run /jira-tasks at 08:30 on weekdays". Project-keyed
+    -- and deliberately its OWN table rather than a column on a task row, so a
+    -- schedule outlives the tasks it mints (each firing creates a fresh one).
+    -- time_of_day is wall clock in 'timezone', which is an IANA zone name and
+    -- never an offset — the offset changes twice a year and the wall time must
+    -- not. next_fire_at is a CACHE of lib/schedule/time.ts, recomputed on edit,
+    -- after each firing, and revalidated on boot (tzdata moves).
+    CREATE TABLE IF NOT EXISTS schedules (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name            TEXT NOT NULL,
+      prompt          TEXT NOT NULL,
+      days_mask       INTEGER NOT NULL,          -- Sun=1 … Sat=64; weekdays = 62
+      time_of_day     TEXT NOT NULL,             -- 'HH:MM'
+      timezone        TEXT NOT NULL,             -- IANA zone
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      agent           TEXT NOT NULL DEFAULT 'claude',
+      permission_mode TEXT,
+      send_context    INTEGER NOT NULL DEFAULT 1,
+      priority        TEXT NOT NULL DEFAULT 'med',
+      catch_up_ms     INTEGER NOT NULL DEFAULT -1, -- -1 = use the instance default
+      next_fire_at    INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+
+    -- One row per OCCURRENCE, including the ones that never ran. Without the
+    -- non-firing rows a schedule that quietly stopped looks exactly like one
+    -- that had nothing to do, which is the failure this feature must not have.
+    --
+    -- UNIQUE(schedule_id, scheduled_for) is the DURABLE CLAIM: it is what makes
+    -- a double fire impossible when two ticks overlap, when a tick races "Run
+    -- now", or when a restart re-adjudicates a slot it already handled. A
+    -- select-then-insert check is racy; this is not.
+    CREATE TABLE IF NOT EXISTS schedule_runs (
+      id            TEXT PRIMARY KEY,
+      schedule_id   TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      scheduled_for INTEGER NOT NULL,
+      claimed_at    INTEGER NOT NULL,
+      fired_at      INTEGER NOT NULL DEFAULT 0,
+      finished_at   INTEGER NOT NULL DEFAULT 0,
+      task_id       TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      status        TEXT NOT NULL,
+      trigger       TEXT NOT NULL,
+      detail        TEXT NOT NULL DEFAULT '',
+      dst_adjusted  TEXT NOT NULL DEFAULT '',
+      UNIQUE(schedule_id, scheduled_for)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id);
+    CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id, scheduled_for DESC);
+
     -- App-level key/value preferences that must be readable server-side (e.g. the
     -- default reasoning level + permission mode a task inherits when it hasn't
     -- overridden them). Distinct from the browser-local UI settings in localStorage.
@@ -293,6 +345,8 @@ export function init(db: Database.Database) {
         AND json_extract(content, '$.permission.outcome') IS NULL`
   ).run();
 
+  reapInFlightScheduleRuns(db);
+
   seedIfEmpty(db);
   ensureOnboardingFlag(db);
 
@@ -302,6 +356,41 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
+}
+
+/**
+ * Settle any schedule run left mid-flight by the previous process.
+ *
+ * The same class of reason as the `tasks.running` reset above, and it lives
+ * beside it for the same reason: the turn that owned the row died with that
+ * process, and nothing else will ever come back for it. Here the consequence is
+ * worse than a stuck spinner, because a `claimed`/`running` row is what
+ * isScheduleBusy() reads for overlap detection: a row orphaned in the launch
+ * window (a crash between claimRun and startRun — the whole preflight, CLI
+ * probe included) makes the schedule look permanently busy, so every later
+ * occurrence records `skipped_overlap`, and the card's Stop control is gated on
+ * the blocking run having a task_id, which this one never got. The schedule
+ * goes quiet until retention prunes the row ~50 occurrences later.
+ *
+ * Deliberately here rather than in startScheduler(): this runs once per process
+ * before anything can read the ledger, whereas startScheduler() is skipped
+ * entirely when ORCH_SCHEDULER is off — the one configuration where nothing
+ * else would ever clear the wedge, while the API still serves it.
+ *
+ * Exported so tests/scheduleStore.test.ts can drive it directly; init below is
+ * the only production caller.
+ */
+export function reapInFlightScheduleRuns(db: Database.Database): number {
+  const info = db
+    .prepare(
+      `UPDATE schedule_runs
+          SET status = 'interrupted',
+              detail = CASE WHEN detail = '' THEN 'the app restarted while this run was in flight' ELSE detail END,
+              finished_at = ?
+        WHERE status IN ('claimed', 'running') AND finished_at = 0`
+    )
+    .run(Date.now());
+  return info.changes;
 }
 
 // The first-run wizard shows when `onboarding_complete` is unset. A brand-new DB
@@ -417,6 +506,9 @@ export function migrate(db: Database.Database) {
   // Why an agent withdrew a tray suggestion (lib/agentTools withdrawSuggestionForAgent).
   // Empty on every pre-existing row, which is correct: nothing was ever withdrawn before.
   if (!taskCols.includes("withdrawn_reason")) db.exec("ALTER TABLE tasks ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''");
+  // Which schedule minted this task (lib/scheduler.ts). SET NULL rather than
+  // cascade — deleting a schedule must not delete the work it produced.
+  if (!taskCols.includes("schedule_id")) db.exec("ALTER TABLE tasks ADD COLUMN schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL");
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

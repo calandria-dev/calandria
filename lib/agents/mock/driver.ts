@@ -139,7 +139,7 @@ export const mockDriver: AgentDriver = {
           type: "permission",
           request: {
             id, tool: "Bash", title: described.title, detail: described.detail, scope,
-            expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+            expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, task.id),
           },
         };
         const waited = await waitForPermission({

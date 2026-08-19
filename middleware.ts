@@ -16,7 +16,10 @@ import {
   instanceServiceTokenOk,
   verifyOriginRequest,
 } from "@/lib/auth/origin.mjs";
-import { localHttpRequestAllowed } from "@/lib/auth/local-origin.mjs";
+import {
+  localHttpRequestAllowed,
+  sameOriginHttpRequestAllowed,
+} from "@/lib/auth/local-origin.mjs";
 
 // The non-Access paths: health probes (Docker HEALTHCHECK / monitoring) and
 // the build-version stamp present the shared SERVICE_TOKEN instead of an Access
@@ -26,12 +29,15 @@ const VERSION_PATH = "/api/version";
 const USAGE_PATH = "/api/instance/usage";
 // The boot-time self-ping from server.js that restores persisted services.
 const SERVICES_RESTORE_PATH = "/api/instance/services-restore";
+// The boot-time self-ping from server.js that starts the schedule ticker.
+const SCHEDULER_PATH = "/api/instance/scheduler";
 function isServiceTokenPath(pathname: string): boolean {
   return (
     pathname === HEALTH_PATH ||
     pathname === VERSION_PATH ||
     pathname === USAGE_PATH ||
-    pathname === SERVICES_RESTORE_PATH
+    pathname === SERVICES_RESTORE_PATH ||
+    pathname === SCHEDULER_PATH
   );
 }
 
@@ -63,6 +69,22 @@ export async function middleware(req: NextRequest) {
           status: 403,
           headers: { "content-type": "text/plain" },
         });
+  }
+
+  // Access mode: the JWT proves WHO, never WHETHER THEY MEANT IT. `CF_Authorization`
+  // is SameSite=None, so the edge stamps a valid assertion onto a request a hostile
+  // page made the victim's browser send. Reject a cross-origin browser caller before
+  // any of the auth paths below — deliberately the narrow Origin-vs-Host rule, not
+  // local mode's, so a cross-site link to the instance still opens. See the audit in
+  // lib/auth/local-origin.mjs for what is reachable without it.
+  if (!sameOriginHttpRequestAllowed({
+    host: req.headers.get("host"),
+    origin: req.headers.get("origin"),
+  })) {
+    return new NextResponse("Forbidden: cross-origin request.\n", {
+      status: 403,
+      headers: { "content-type": "text/plain" },
+    });
   }
 
   if (isServiceTokenPath(pathname) && serviceTokenOk(req.headers.get("x-service-token"))) {

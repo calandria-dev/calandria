@@ -33,6 +33,10 @@ const PINNED = [
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
+  "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
+  "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only
+  "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",

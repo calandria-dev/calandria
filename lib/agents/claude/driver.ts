@@ -59,6 +59,7 @@ import {
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
+import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
 import {
@@ -99,7 +100,16 @@ import { claudeUsage } from "./usage";
 // server may actually DO is decided downstream by permissionMode + canUseTool
 // like any other tool — auto-approved under bypassPermissions, screened by the
 // classifier under the "auto" default, and a permission card otherwise.
-const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
+//
+// EXPORTED because it is load-bearing outside this file too: the schedule
+// preflight (lib/schedule/commands.ts) opens a throwaway session purely to read
+// the slash-command registry a scheduled turn would get, and validates against
+// it. A second hardcoded copy there would mean the two could drift — and a
+// drifted registry doesn't degrade quietly: an unknown command settles the run
+// `failed` and mints nothing, every morning. Pinned by
+// tests/claudeSettingSources.test.ts, which drives the real probe through the
+// mocked SDK and reads the sources back.
+export const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
 
 // Where a session for this task runs: its isolated worktree, falling back to
 // the shared repo path (non-git projects, or worktree creation skipped).
@@ -517,7 +527,7 @@ async function* runTurn(
         : opts.description?.trim() || opts.decisionReason?.trim() || undefined,
       diff: described.diff,
       scope,
-      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS),
+      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, task.id),
     };
     queue.push({ type: "permission", request });
     const settle = (outcome: PermissionOutcome) => queue.push({ type: "permission_decided", id, outcome });
@@ -624,6 +634,54 @@ async function* runTurn(
                 const ti = (input as { tool_input?: { questions?: AskQuestion[] } }).tool_input;
                 const questions = (ti?.questions ?? []) as AskQuestion[];
                 const id = toolUseId || (input as { tool_use_id?: string }).tool_use_id || `ask-${sessionId ?? "x"}-${askSeq++}`;
+                // A turn that DECLARED itself unattended (a scheduled firing)
+                // has nobody to ask, and this hook is the one interactive path
+                // that fires in every permission mode — bypassPermissions
+                // short-circuits canUseTool, but not this. Parking here holds
+                // the turn slot, the CLI child and the schedule's overlap lock
+                // open forever, which turns every future occurrence into
+                // `skipped_overlap`: the schedule goes quiet, permanently, with
+                // nothing in the ledger to say why.
+                //
+                // So settle it now, and settle it VISIBLY. It rides the
+                // permission-card machinery rather than the ask machinery on
+                // purpose: an ask card implies an answer is coming, while a
+                // decided permission card is exactly what this is — a request
+                // that was refused, on the record, with the question preserved
+                // so the user can see what the run wanted. It also lands the
+                // refusal in the one place the runner already watches, so the
+                // run settles `failed` with an actionable reason instead of a
+                // green "ran".
+                if (interactionDenied(task.id)) {
+                  // Registered exactly as an answered ask is, so the hook's own
+                  // deny text — written for the model, and long — is suppressed
+                  // when it comes back as a tool_result. The card below is the
+                  // user-facing record; the raw refusal is not a second one.
+                  askIds.add(id);
+                  const asked = questions.map((q) => q.header?.trim() || q.question?.trim()).filter(Boolean).join(" · ");
+                  queue.push({
+                    type: "permission",
+                    request: {
+                      id,
+                      tool: "AskUserQuestion",
+                      title: asked ? `Question for you: ${clip(asked, 200)}` : "The agent asked a question",
+                      detail: questions.map((q) => q.question).filter(Boolean).join("\n\n"),
+                      expiresAt: Date.now(),
+                    },
+                  });
+                  queue.push({
+                    type: "permission_decided",
+                    id,
+                    outcome: { decision: "deny", auto: true, reason: "unattended", note: UNATTENDED_ASK_NOTE },
+                  });
+                  return {
+                    hookSpecificOutput: {
+                      hookEventName: "PreToolUse",
+                      permissionDecision: "deny",
+                      permissionDecisionReason: UNATTENDED_ASK_DENIAL,
+                    },
+                  };
+                }
                 askIds.add(id);
                 queue.push({ type: "ask", id, questions });
                 let reason: string;

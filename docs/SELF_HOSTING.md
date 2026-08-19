@@ -107,15 +107,21 @@ WebSocket upgrade** (`server.js`, in front of the `/pty` terminal proxy). No val
 assertion → 403. [`lib/cf-access.mjs`](../lib/cf-access.mjs) is the single shared
 verifier; the titlebar shows the authenticated email.
 
-WebSocket upgrades get a **second** check on top of the JWT: the browser's `Origin` must
-match the `Host` the request was aimed at. Access proves *who* is calling, not that they
-meant to call — the `CF_Authorization` cookie is `SameSite=None` by default, so a hostile
-page could otherwise open `wss://your-host/pty` in a logged-in user's browser and be
-handed a shell with a perfectly valid assertion. `PUBLIC_BASE_URL` is **not** required for
-this; the check compares the request's own two headers. Set it only if your proxy rewrites
-`Host` (Cloudflare Tunnel's `httpHostHeader`), which would otherwise make the two
-disagree. The pty sidecar independently repeats both checks, so reaching `PTY_PORT`
-directly grants nothing either.
+Requests get a **second** check on top of the JWT: if the browser sends an `Origin`, it
+must match the `Host` the request was aimed at. Access proves *who* is calling, not that
+they meant to call — the `CF_Authorization` cookie is `SameSite=None` by default, so a
+hostile page can make a logged-in user's browser issue a request and the edge will attach
+a perfectly valid assertion to it. Without this check that page could open
+`wss://your-host/pty` and be handed a shell, or POST to any mutating API route
+(cross-site CSRF: browsers skip the CORS preflight for form and `text/plain` bodies, and
+several routes act on the URL path alone). WebSocket upgrades **require** an `Origin`;
+HTTP requests only require that one, if sent, matches — so an ordinary cross-site link to
+your instance from an email or a wiki still opens normally.
+
+`PUBLIC_BASE_URL` is **not** required for this; the check compares the request's own two
+headers. Set it only if your proxy rewrites `Host` (Cloudflare Tunnel's `httpHostHeader`),
+which would otherwise make the two disagree. The pty sidecar independently repeats the
+upgrade checks, so reaching `PTY_PORT` directly grants nothing either.
 
 Unset (the local default), the app has no login, but it still enforces a browser-origin
 boundary: loopback hosts are accepted, cross-site requests are rejected, and `/pty`
@@ -215,7 +221,9 @@ npm start
   agent isn't pre-approved for parks on a permission card in the transcript, with
   Allow once / Always allow / Decline. Read-only tools pass silently; "Always
   allow" remembers a command for that one project and is revocable in
-  Settings → Run defaults → Remembered approvals. A prompt nobody answers denies
+  Settings → Run defaults → Remembered approvals — which also takes a rule typed
+  in ahead of time, through the same Bash-only, prefix-checked policy, so an
+  unattended task doesn't have to trip a card you'll never see. A prompt nobody answers denies
   itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
   `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
   wedge a turn overnight. Operator is a control layer, not a sandbox — the

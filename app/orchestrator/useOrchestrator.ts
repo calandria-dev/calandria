@@ -101,6 +101,12 @@ export function useOrchestrator() {
   const selProjRef = useRef(selProj);
   useEffect(() => { selProjRef.current = selProj; }, [selProj]);
 
+  // Board drops in flight, shared with the live stream handler: a reorder
+  // echoes back as tasks_reordered, and applying that echo on top of a newer
+  // optimistic drop would snap the card back. `missed` records that an echo was
+  // held so moveTask can flush it once the writes settle. See useGlobalEvents.
+  const reorderRef = useRef({ pending: 0, missed: false });
+
   // Latest agents bundle for the live stream handler (context-window sizing),
   // read without re-subscribing the EventSource.
   const agentsRef = useRef(agents);
@@ -155,7 +161,7 @@ export function useOrchestrator() {
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
   // stream ISN'T open — only the selected task has one.
-  useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
+  useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
   // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
   // session view shows a transcript skeleton instead of an empty chat flash.
@@ -168,6 +174,28 @@ export function useOrchestrator() {
     usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask });
 
   // ---------- project recaps + landing decision ----------
+  //
+  // "I want the project home" as an explicit intent, held as the project it was
+  // asked for. The landing decision (useRecaps) auto-picks the first real task
+  // whenever no task is selected and there's no recap to show, which is the
+  // right default on arrival and made the project-home button in the tasks
+  // banner a DEAD control: it cleared selTask, and the effect — which has
+  // selTask in its deps — immediately put a task back. For any project with a
+  // task, no stored recap, and activity in the last 8 hours (i.e. the one
+  // you're working in), the landing pane was simply unreachable, and with it
+  // the Schedules card and its pause control.
+  //
+  // Held per project id, and cleared the moment a task is selected, so it's a
+  // one-shot intent rather than a mode: the next time you enter this project
+  // normally, auto-selection is back.
+  const [homeProj, setHomeProj] = useState<string | null>(null);
+  const showProjectHome = useCallback(() => {
+    setSelTask(null);
+    setHomeProj(selProjRef.current);
+  }, []);
+  useEffect(() => { if (selTask) setHomeProj(null); }, [selTask]);
+  useEffect(() => { setHomeProj(null); }, [selProj]);
+
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
@@ -176,6 +204,7 @@ export function useOrchestrator() {
     settingsReady: appDefaultsReady,
     backgroundJobs: appDefaults.background_jobs !== "off",
     recapMode,
+    homeRequested: !!selProj && homeProj === selProj,
   });
 
   // Load server-backed app defaults (reasoning / permission mode) once.
@@ -535,6 +564,10 @@ export function useOrchestrator() {
       // Mirror the server: a manual status change clears the "your turn" flag.
       return hasPatch ? next.map((t) => (t.id === id ? { ...t, ...patch, awaiting_input: patch.status ? 0 : t.awaiting_input } : t)) : next;
     });
+    // The whole optimistic window, not just the reorder POST: the echo of our
+    // own write must not be applied while the card is sitting where the user
+    // dropped it but the server hasn't been told yet.
+    reorderRef.current.pending += 1;
     try {
       if (hasPatch) {
         const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
@@ -542,7 +575,17 @@ export function useOrchestrator() {
       }
       await jsend("/api/tasks/reorder", "POST", { ids: orderedIds });
     } catch {
+      // Server truth is about to be reloaded anyway, so any held echo is moot.
+      reorderRef.current.missed = false;
       if (selProjRef.current) void loadTasks(selProjRef.current, false);
+    } finally {
+      reorderRef.current.pending -= 1;
+      // Last drop out settles up: an echo held mid-flight (ours, or another
+      // tab's concurrent drag) is applied now that the server has every write.
+      if (reorderRef.current.pending === 0 && reorderRef.current.missed) {
+        reorderRef.current.missed = false;
+        if (selProjRef.current) void loadTasks(selProjRef.current, false);
+      }
     }
   }, [loadTasks]);
 
@@ -697,7 +740,7 @@ export function useOrchestrator() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    setSelTask, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
+    setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
     setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,

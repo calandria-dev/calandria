@@ -59,6 +59,14 @@ export interface AgentCapabilities {
    * offering tools that can't work (lib/agents/codex/mcp.ts).
    */
   inheritsUserMcpServers: boolean;
+  /**
+   * One line of driver-supplied detail for the flag above, rendered next to it
+   * in Settings → Agents. The verdict is the boolean; the WHY is per-driver
+   * (which config file the servers come from, why they're unmounted, which env
+   * var opts back in), so it's data here rather than a per-agent string in the
+   * UI — same reason the flag is. null = the verdict says everything.
+   */
+  userMcpServersNote: string | null;
   /** Usage events carry a real dollar cost (not just token counts). */
   reportsCostUsd: boolean;
   /**
