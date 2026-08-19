@@ -452,9 +452,19 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 to a task that has run — its title and description are the
                 agent's task context on every future turn, its dependencies
                 still gate it, and it can still be re-filed under another
-                project (by discarding the worktree it cut from this one). */}
+                project (by discarding the worktree it cut from this one).
+                Deliberately NOT disabled mid-turn: the transcript has replaced
+                the only surface showing the description, so a live turn is
+                exactly when "what did I actually ask for?" gets asked, and the
+                modal is the sole way left to read or copy it. Nothing in there
+                is unsafe against a running turn — the description is injected
+                at SESSION start so an edit provably can't reach the turn in
+                flight (which the field now says), the agent picker is already
+                gated on `running`, Move is refused by the server with the
+                reason shown inline, and Delete aborts the turn under the task
+                lock before it tears the worktree down. */}
             {hasSession && (
-              <button className="btn btn-line btn-sm" title="Edit title, description, dependencies — or move this task to another project" onClick={onEdit} disabled={running}>{Icon.edit()} Edit</button>
+              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies — or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
             )}
             {hasSession && task.started === 1 && (
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
