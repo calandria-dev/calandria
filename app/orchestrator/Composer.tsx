@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { attachmentMarker, fileAttachmentMarker } from "./format";
 import { PASTE_ATTACH_THRESHOLD } from "@/lib/promptLimits";
+import type { AgentCommand } from "@/lib/agents/types";
 import type { TaskRow } from "./types";
 
 // Drafts persist per-task in localStorage so switching tasks, opening Settings,
@@ -39,9 +40,26 @@ type Attachment = {
   error?: string;
 };
 
+// One row in the "/" menu. Operator's own commands carry a `run` (they're
+// actions this component performs, not text the agent expands); the agent's own
+// commands don't — picking one completes it into the box and the ordinary send
+// path hands it to the CLI, which is what already made typing them in full work.
+type MenuCommand = { name: string; desc: string; hint?: string; aliases?: string[]; run?: () => void };
+
 export function Composer({ task, agentLabel, disabled, running, onSend, onStop, onClear }: { task: TaskRow; agentLabel: string; disabled: boolean; running: boolean; onSend: (t: string) => void; onStop: () => void; onClear: () => void }) {
   const [val, setVal] = useState(() => loadDraft(task.id));
   const [slash, setSlash] = useState(false);
+  // The agent's own slash commands, fetched once per task the first time the
+  // user types "/". Lazy because a task the user only reads should never spawn
+  // a CLI, and empty is a fine steady state — a driver may have none (Codex),
+  // and the route answers [] rather than failing when discovery doesn't work.
+  const [agentCmds, setAgentCmds] = useState<AgentCommand[]>([]);
+  // Highlighted row, driven by ↑/↓. Reset whenever the query changes, because
+  // index 3 of the old list means nothing in the new one.
+  const [active, setActive] = useState(0);
+  const asked = useRef(false);
+  const cancelLoad = useRef<(() => void) | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [stopping, setStopping] = useState(false);
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -62,6 +80,25 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     setSlash(val.trim().startsWith("/"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
+
+  // Ask the task's agent what it would actually expand. Once per mount (the
+  // route caches server-side anyway), and only when the menu is first wanted.
+  const loadCommands = useCallback(() => {
+    if (asked.current || disabled) return;
+    asked.current = true;
+    let alive = true;
+    cancelLoad.current = () => { alive = false; };
+    fetch(`/api/tasks/${task.id}/commands`)
+      .then((r) => (r.ok ? r.json() : { commands: [] }))
+      .then((j: { commands?: AgentCommand[] }) => { if (alive) setAgentCmds(j.commands ?? []); })
+      // Discovery failing costs the menu its long tail, nothing else — typing a
+      // command in full still works, so there's no error worth showing here.
+      .catch(() => {});
+  }, [task.id, disabled]);
+  // Discovery outlives a fast task switch (a cold CLI spawn is ~300ms, a click
+  // is faster) — drop a late response rather than let one task's commands land
+  // in another's menu.
+  useEffect(() => () => cancelLoad.current?.(), []);
 
   const addFiles = (files: File[]) => {
     if (disabled) return;
@@ -99,15 +136,68 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
 
   const ready = atts.filter((a) => a.status === "ready");
   const uploading = atts.some((a) => a.status === "uploading");
-  const cmds = [
-    { cmd: "/clear", desc: "save summary · fresh session", run: () => { onClear(); setVal(""); setSlash(false); } },
+  // Operator's own commands, then the agent's. /clear is ours and only ours:
+  // it summarizes the transcript and starts the next generation of the task's
+  // session lineage, which the CLI's same-named command does not do — so the
+  // server drops the CLI's (lib/agentCommands.ts) and this one stands alone.
+  // It's also the one command that can't run mid-turn (it would collide with
+  // the live session), so while a turn runs it simply isn't offered.
+  const cmds: MenuCommand[] = [
+    ...(running ? [] : [{ name: "clear", desc: "save summary · fresh session", run: () => { onClear(); setVal(""); setSlash(false); } }]),
+    ...agentCmds.map((c) => ({ name: c.name, desc: c.description, hint: c.argumentHint, aliases: c.aliases })),
   ];
+
+  // The menu is for picking a command, so it's only live while the value IS a
+  // bare command token — once there's a space the user has moved on to writing
+  // arguments and a dropdown over the box is just in the way.
+  const token = val.trim();
+  const picking = token.startsWith("/") && !/\s/.test(token);
+  const q = picking ? token.slice(1).toLowerCase() : "";
+  // Prefix matches first, then a match on the part after "plugin:", then any
+  // substring — so "/plan" still finds superpowers:writing-plans, but "/cl"
+  // puts /clear at the top where muscle memory expects it. Aliases match too
+  // (the CLI resolves /cost and /stats to /usage) but the canonical name is
+  // what's shown and inserted.
+  const names = (c: MenuCommand) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
+  const rank = (c: MenuCommand) =>
+    Math.min(...names(c).map((n) => (n.startsWith(q) ? 0 : n.slice(n.indexOf(":") + 1).startsWith(q) ? 1 : 2)));
+  const filtered = (q ? cmds.filter((c) => names(c).some((n) => n.includes(q))) : cmds)
+    .map((c, i) => ({ c, i, r: rank(c) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c);
+  const menuOpen = slash && picking && filtered.length > 0;
+  const idx = Math.min(active, Math.max(filtered.length - 1, 0));
+  const highlighted = filtered[idx];
+  // Enter normally commits the highlighted completion rather than sending —
+  // that's the predictable rule when a menu is open. The one exception is a
+  // command that's already fully typed, still highlighted, and takes no
+  // arguments: completing it would be a no-op keystroke, so Enter acts. That's
+  // what keeps `/clear`-and-Enter working exactly as it always has, while
+  // arrowing away from an exact match correctly commits what's highlighted.
+  const enterActs = !!highlighted && highlighted.name.toLowerCase() === q && !highlighted.hint;
+
+  // Pick a row: an Operator action runs; an agent command completes into the
+  // box with a trailing space, ready for arguments, and is sent by the user.
+  const choose = (c: MenuCommand) => {
+    if (c.run) { c.run(); return; }
+    setVal(`/${c.name} `);
+    setSlash(false);
+    const el = ref.current;
+    if (el) { el.focus(); requestAnimationFrame(() => autosize(el)); }
+  };
+
+  // /clear can't run mid-turn — it would collide with the live session. It also
+  // must not be QUEUED as an ordinary follow-up: the agent's CLI has a /clear of
+  // its own, so the queued text would reach it and wipe the session's context
+  // behind Operator's back, with no handoff summary and no new generation to
+  // show for it. So mid-turn it's refused outright (canSend goes false and the
+  // footer says why) rather than sent.
+  const blockedClear = running && val.trim() === "/clear" && ready.length === 0;
+
   const submit = () => {
     const v = val.trim();
-    if ((!v && ready.length === 0) || disabled || uploading) return;
-    // /clear can't run mid-turn (it would collide with the live session) — while
-    // running, everything you type is queued as a follow-up instead.
-    if (v === "/clear" && !running && ready.length === 0) { onClear(); setVal(""); setSlash(false); if (ref.current) ref.current.style.height = "auto"; return; }
+    if ((!v && ready.length === 0) || disabled || uploading || blockedClear) return;
+    if (v === "/clear" && ready.length === 0) { onClear(); setVal(""); setSlash(false); if (ref.current) ref.current.style.height = "auto"; return; }
     // Attachments ride along as marker lines after the typed text — an image or
     // file marker depending on the attachment kind.
     onSend([v, ...ready.map((a) => (a.kind === "image" ? attachmentMarker(a.path) : fileAttachmentMarker(a.path)))].filter(Boolean).join("\n\n"));
@@ -115,16 +205,29 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     setAtts([]); setVal(""); setSlash(false);
     if (ref.current) ref.current.style.height = "auto";
   };
-  const canSend = (!!val.trim() || ready.length > 0) && !uploading;
-  const filtered = cmds.filter((c) => c.cmd.startsWith(val.trim()));
+  const canSend = (!!val.trim() || ready.length > 0) && !uploading && !blockedClear;
+
+  // Keep the highlighted row visible — the list scrolls once an agent brings
+  // dozens of commands, and arrowing into an offscreen row looks like nothing
+  // happened.
+  useEffect(() => {
+    menuRef.current?.querySelector(".slash-item.act")?.scrollIntoView({ block: "nearest" });
+  }, [active, menuOpen, val]);
+
   return (
     <div className="composer">
       <div className="composer-inner">
-        {slash && !running && filtered.length > 0 && (
-          <div className="slash">
-            {filtered.map((c) => (
-              <div key={c.cmd} className="slash-item" onMouseDown={(e) => { e.preventDefault(); c.run(); }}>
-                <span className="cmd">{c.cmd}</span><span className="cd">{c.desc}</span>
+        {menuOpen && (
+          <div className="slash" ref={menuRef}>
+            {filtered.map((c, i) => (
+              <div
+                key={c.name}
+                className={`slash-item${i === idx ? " act" : ""}`}
+                onMouseDown={(e) => { e.preventDefault(); choose(c); }}
+              >
+                <span className="cmd">/{c.name}</span>
+                {c.hint && <span className="arg">{c.hint}</span>}
+                <span className="cd">{c.desc}</span>
               </div>
             ))}
           </div>
@@ -157,8 +260,32 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
               placeholder={disabled ? "Start the session to reply…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
-              onChange={(e) => { setVal(e.target.value); autosize(e.target); setSlash(e.target.value.trim().startsWith("/")); }}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } if (e.key === "Escape") setSlash(false); }}
+              onChange={(e) => {
+                const v = e.target.value;
+                setVal(v); autosize(e.target); setActive(0);
+                const open = v.trim().startsWith("/");
+                setSlash(open);
+                if (open) loadCommands();
+              }}
+              onKeyDown={(e) => {
+                // Mid-composition Enter is the IME committing a candidate, not
+                // the user sending — never act on it.
+                if (e.nativeEvent.isComposing) return;
+                if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                  e.preventDefault();
+                  setActive(() => (idx + (e.key === "ArrowDown" ? 1 : filtered.length - 1)) % filtered.length);
+                  return;
+                }
+                // Tab always completes the highlighted row; Enter does too,
+                // except for the already-typed-in-full case (see enterActs).
+                if (menuOpen && highlighted && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !enterActs))) {
+                  e.preventDefault();
+                  choose(highlighted);
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+                if (e.key === "Escape") setSlash(false);
+              }}
               onPaste={(e) => {
                 const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
                 if (imgs.length) { e.preventDefault(); addFiles(imgs); return; }
@@ -184,9 +311,17 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             )}
           </div>
           <div className="comp-foot">
-            <span className="hint"><span className="kbd">⏎</span> send</span>
-            <span className="hint"><span className="kbd">⇧⏎</span> newline</span>
-            <span className="hint"><span className="kbd">/</span> commands</span>
+            {blockedClear ? (
+              // The one input the composer refuses outright — say so, rather
+              // than leaving Enter silently dead (see blockedClear).
+              <span className="hint warn">/clear can’t run mid-turn — stop the turn first</span>
+            ) : (
+              <>
+                <span className="hint"><span className="kbd">⏎</span> send</span>
+                <span className="hint"><span className="kbd">⇧⏎</span> newline</span>
+                <span className="hint"><span className="kbd">/</span> commands</span>
+              </>
+            )}
             <span className="spacer" />
             <input
               ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden

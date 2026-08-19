@@ -116,25 +116,45 @@ export function bashCommandOf(tool: string, input: Record<string, unknown>): str
 const tokens = (cmd: string): string[] => cmd.trim().split(/\s+/).filter(Boolean);
 
 /**
+ * The prefix decision, with the REASON when the answer is no. One
+ * implementation, two callers: the card only needs the yes/no (bashPrefixOf
+ * below), while a rule typed into Settings has no proposed command in front of
+ * the user to explain itself, so a refusal there has to say what it objected to.
+ */
+type PrefixVerdict = { prefix: string } | { refused: string };
+
+function prefixVerdict(command: string): PrefixVerdict {
+  if (!PLAIN_COMMAND_RE.test(command))
+    return {
+      refused:
+        "it contains characters the shell can reinterpret (quotes, $, backticks, |, &, ;, redirects, globs, newlines), " +
+        "so the leading words don't describe what would actually run",
+    };
+  const parts = tokens(command);
+  const head = parts[0];
+  if (!head || head.startsWith("-")) return { refused: "it doesn't start with a command" };
+  // `FOO=bar cmd` — the real command is further along, so the prefix would lie.
+  if (head.includes("=")) return { refused: "it starts with an environment assignment, so the command being run is further along the line" };
+  const name = head.split("/").pop() ?? head;
+  if (WRAPPER_COMMANDS.has(name)) return { refused: `\`${name}\` runs whatever its arguments say, so allowing it by prefix would mean allowing anything` };
+  // Only widen to two tokens for a subcommand-shaped word (`push`, `run`,
+  // `test:unit`). A flag or a path as token 2 means the rest of the line is
+  // operands — `rm -rf x` must never become "always allow `rm -rf …`".
+  const second = parts[1];
+  if (second && /^[a-z][a-z0-9:_-]*$/.test(second)) return { prefix: `${head} ${second}` };
+  if (parts.length === 1) return { prefix: head };
+  return { refused: `\`${second}\` is a flag or an operand rather than a subcommand, so the rule would have to be \`${head} …\` — every other use of \`${head}\` included` };
+}
+
+/**
  * The prefix a Bash command may be remembered under — its command word plus,
  * when the next token reads as a subcommand (`git status`, `npm test`), that
  * too. Returns null when the command isn't plain, starts with an env
  * assignment, or leads with a wrapper that would execute its own arguments.
  */
 export function bashPrefixOf(command: string): string | null {
-  if (!PLAIN_COMMAND_RE.test(command)) return null;
-  const parts = tokens(command);
-  const head = parts[0];
-  // `FOO=bar cmd` — the real command is further along, so the prefix would lie.
-  if (!head || head.includes("=") || head.startsWith("-")) return null;
-  const name = head.split("/").pop() ?? head;
-  if (WRAPPER_COMMANDS.has(name)) return null;
-  // Only widen to two tokens for a subcommand-shaped word (`push`, `run`,
-  // `test:unit`). A flag or a path as token 2 means the rest of the line is
-  // operands — `rm -rf x` must never become "always allow `rm -rf …`".
-  const second = parts[1];
-  if (second && /^[a-z][a-z0-9:_-]*$/.test(second)) return `${head} ${second}`;
-  return parts.length === 1 ? head : null;
+  const verdict = prefixVerdict(command);
+  return "prefix" in verdict ? verdict.prefix : null;
 }
 
 /**
@@ -151,6 +171,49 @@ export function scopeOfferFor(tool: string, input: Record<string, unknown>): Per
   return prefix
     ? { scope: "project", match_kind: "bash_prefix", value: prefix, label: `Always allow \`${prefix} …\` here` }
     : { scope: "project", match_kind: "bash_exact", value: command, label: "Always allow this exact command here" };
+}
+
+// ---------- step 2b: a rule written by hand, with no call to look at ----------
+//
+// Settings can mint the same rule without waiting for a prompt to happen ("I
+// already know I want `npm test` allowed here"), which matters most for the
+// unattended turns whose card would auto-deny before anyone saw it. The grant
+// must be no wider than the card's, so it goes through the SAME prefix policy —
+// and the two ways it must NOT differ:
+//
+//   - The value stored is what bashPrefixOf() returns, never what was typed.
+//     Otherwise this becomes the way to mint `bash_prefix: "sudo"`.
+//   - A refused prefix is an ERROR, not a quiet downgrade to bash_exact. The
+//     card can fall back because it shows the user the exact rule it's about to
+//     create; a form that silently narrows "allow npm test and its arguments"
+//     into one literal line stores a rule nobody asked for, which the user then
+//     believes covers calls it doesn't.
+//
+// Bash-only, and not a choice worth re-opening here: ruleMatches() consults
+// bashCommandOf(), so a rule naming any other tool can never match anything.
+// Accepting one would store a row that reads like a grant and does nothing —
+// and if it ever DID work, "always allow WebFetch here" is every URL.
+
+/** How long a hand-typed command may be. Past this it's a script, not a rule. */
+const TYPED_COMMAND_CAP = 2_000;
+
+export type TypedRule =
+  | { ok: true; tool: "Bash"; match_kind: PermissionMatchKind; value: string }
+  | { ok: false; error: string };
+
+export function ruleFromTypedCommand(rawCommand: string, matchKind: PermissionMatchKind): TypedRule {
+  const command = String(rawCommand ?? "").trim();
+  if (!command) return { ok: false, error: "Type the command you want to allow." };
+  if (command.length > TYPED_COMMAND_CAP)
+    return { ok: false, error: `That's longer than ${TYPED_COMMAND_CAP.toLocaleString()} characters — approve something that size from the permission card, where you can read what's being run.` };
+  if (matchKind === "bash_exact") return { ok: true, tool: "Bash", match_kind: "bash_exact", value: command };
+  const verdict = prefixVerdict(command);
+  if ("refused" in verdict)
+    return {
+      ok: false,
+      error: `\`${command}\` can't be allowed by prefix — ${verdict.refused}. Add it as an exact command instead, and it will match that line and nothing else.`,
+    };
+  return { ok: true, tool: "Bash", match_kind: "bash_prefix", value: verdict.prefix };
 }
 
 /** Does a remembered rule cover this call? */

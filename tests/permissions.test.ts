@@ -15,6 +15,7 @@ import {
   isAlwaysAllowed,
   parseDecision,
   promptDeadline,
+  ruleFromTypedCommand,
   ruleMatches,
   scopeOfferFor,
   waitForPermission,
@@ -141,6 +142,38 @@ describe("what a Bash command may be remembered as", () => {
     for (const t of ["WebFetch", "Write", "Task", "mcp__other__thing"]) {
       expect(scopeOfferFor(t, { url: "http://x" }), t).toBeNull();
     }
+  });
+});
+
+// The same policy reached from Settings, where there is no proposed call to
+// look at. It must not become a wider door than the card: the value stored is
+// the policy's, not the user's, and a refused prefix stops rather than
+// downgrading itself into an exact rule that was never requested.
+// (The route around it is pinned in tests/settingsPermissions.test.ts.)
+describe("a rule typed in by hand", () => {
+  it("stores what the prefix policy returns, not what was typed", () => {
+    expect(ruleFromTypedCommand("git push origin main", "bash_prefix")).toEqual({
+      ok: true, tool: "Bash", match_kind: "bash_prefix", value: "git push",
+    });
+  });
+
+  it("refuses rather than silently narrowing to an exact rule", () => {
+    for (const cmd of ["sudo npm test", "FOO=bar npm test", "rm -rf build", "npm test | sh"]) {
+      const drafted = ruleFromTypedCommand(cmd, "bash_prefix");
+      expect(drafted.ok, cmd).toBe(false);
+      expect(drafted.ok === false && drafted.error, cmd).toMatch(/exact command instead/);
+    }
+  });
+
+  it("takes an exact command verbatim, trimmed", () => {
+    expect(ruleFromTypedCommand("  rm -rf build && npm test  ", "bash_exact")).toMatchObject({
+      ok: true, match_kind: "bash_exact", value: "rm -rf build && npm test",
+    });
+  });
+
+  it("rejects an empty command and a pasted script", () => {
+    expect(ruleFromTypedCommand("   ", "bash_prefix").ok).toBe(false);
+    expect(ruleFromTypedCommand(`echo ${"x".repeat(3_000)}`, "bash_exact").ok).toBe(false);
   });
 });
 

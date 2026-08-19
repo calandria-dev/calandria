@@ -33,6 +33,18 @@ fresh snapshot of the task row plus its project's awaiting count — that's how 
 project badges, and the "N need you" pill update instantly for tasks whose transcript
 stream isn't open. There is no task-list polling.
 
+Not every fact fits that snapshot. A mutation route publishes `task_edited` when it rewrites
+fields the snapshot can't carry (title, priority, dependency edges) — the client refetches
+the row instead of patching it. And three events aren't about a single task at all, so they
+carry their own project id and skip the relay's re-read entirely: `task_deleted` (the row is
+gone), `tasks_moved` (both ends, since the trays a selection LEFT have to lose it), and
+`tasks_reordered` (a board drag rewrote the project's manual card order — `position` isn't
+on the wire, or on the client's task model, so the tray refetches). Reorder is the one that
+fires on every drop, so `reorderTasks` publishes only for projects whose *rendered* order
+actually moved: dropping a card back where it started, or renumbering positions left
+non-contiguous by a delete, is silent. The dragging tab holds its own echo until its writes
+settle, so an optimistic drop is never snapped back by the event it caused.
+
 **A task is a lineage of sessions.** Generation N ends at `/clear`; its transcript is
 condensed to a summary, and generation N+1 starts with a clean context window seeded by all
 prior summaries. The task persists — only the context window resets.
@@ -47,6 +59,12 @@ The app talks to coding agents only through the `AgentDriver` interface.
   defaulted per project via `projects.default_agent`.
 - **`shared.ts`** holds the agent-agnostic pieces every driver reuses: project-context and
   conflict prompts, tool-call → title/peek/diff normalizers, the event queue.
+- **`listCommands?(task, project)`** (optional) reports the slash commands a turn on that
+  task would expand, so the composer's `/` menu is discovered from the agent rather than
+  hardcoded. `GET /api/tasks/[id]/commands` serves it, filtered by `lib/agentCommands.ts`;
+  a driver that omits it leaves the menu with Operator's own commands. The Claude
+  implementation reads the SDK's initialization response without sending a model request,
+  under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`).
 - **`GET /api/agents`** serves each driver's capability descriptor **plus its persisted
   connection state** to the client, which renders every run-control picker (model /
   reasoning / permission), the per-task agent picker, agent badges, and the cost/ask

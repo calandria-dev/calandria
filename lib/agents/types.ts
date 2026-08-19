@@ -126,6 +126,30 @@ export interface OneShotResult {
 }
 
 /**
+ * One slash command a task session would expand — a skill, a plugin command, a
+ * user/project command in `.claude/commands`, or one of the CLI's built-ins.
+ * `name` carries no leading slash and may be namespaced (`plugin:command`).
+ *
+ * These are the agent's OWN commands, discovered from its config; Operator adds
+ * its own (`/clear`) on top in the composer. Which of them the menu actually
+ * offers is decided by lib/agentCommands.ts.
+ */
+export interface AgentCommand {
+  name: string;
+  description: string;
+  /** Usage hint for the arguments, e.g. "<file>". Empty when the command takes none. */
+  argumentHint?: string;
+  /**
+   * Other names that resolve to this same command (the CLI maps /cost and
+   * /stats onto /usage). Carried so the menu can MATCH on them — dropping them
+   * would leave a user who knows the alias unable to find the command, which is
+   * the exact discoverability hole this whole surface exists to close. The
+   * canonical `name` is still what's displayed and inserted.
+   */
+  aliases?: string[];
+}
+
+/**
  * The "I have an API key instead" alternative to the subscription login, as a
  * small surface a driver optionally provides (mirrors lib/anthropic-key.ts /
  * lib/openai-key.ts). The key is persisted to a 0600 file on the volume and
@@ -169,6 +193,19 @@ export interface AgentDriver {
    * must end the stream without emitting an error event.
    */
   runTurn(task: Task, project: Project, userText: string, abort?: AbortController): AsyncGenerator<StreamEvent>;
+
+  /**
+   * The slash commands a turn on this task WOULD expand, so the composer's "/"
+   * menu can offer them instead of guessing. Scoped to the task because the
+   * answer depends on its worktree: `.claude/commands` in the checked-out repo
+   * counts, and two tasks on different projects get different lists.
+   *
+   * OPTIONAL. A driver whose agent has no command surface (Codex) omits it and
+   * the menu falls back to Operator's own commands alone — the same
+   * implement-what-you-support rule as the one-shot helpers above. Must be
+   * cheap and non-mutating: it runs on a keystroke, not a turn.
+   */
+  listCommands?(task: Task, project: Project): Promise<AgentCommand[]>;
 
   // ---------- one-shot helpers (no session, text in → text out) ----------
   //

@@ -99,6 +99,15 @@ export async function GET(req: Request) {
           send({ type: "tasks_moved", taskIds: ev.taskIds, fromProjectIds: ev.fromProjectIds, toProjectId: ev.toProjectId });
           return;
         }
+        // A board drop rewrote the project's manual order. Project-keyed, so it
+        // bypasses the getTask re-read below the same way task_deleted does:
+        // the bus key is one arbitrary member of the reordered set (`taskId` is
+        // ignored here), and the row snapshot has nothing to say about order —
+        // `position` isn't even on the wire payload.
+        if (ev.type === "tasks_reordered") {
+          send({ type: "tasks_reordered", projectId: ev.projectId });
+          return;
+        }
         const event = coarse(ev);
         if (!event) return;
         // Task deleted mid-turn (rows are hard-deleted) — nothing to report;

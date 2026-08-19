@@ -24,6 +24,7 @@ import type {
 } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CLAUDE_CAPABILITIES } from "./capabilities";
+import { listClaudeCommands } from "./commands";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import {
   createSuggestedTask,
@@ -109,6 +110,15 @@ import { claudeUsage } from "./usage";
 // tests/claudeSettingSources.test.ts, which drives the real probe through the
 // mocked SDK and reads the sources back.
 export const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
+
+// Where a session for this task runs: its isolated worktree, falling back to
+// the shared repo path (non-git projects, or worktree creation skipped).
+// Shared with command discovery deliberately — `.claude/commands` in the
+// checked-out repo is part of the answer, so the menu is only telling the truth
+// while it's rooted where the turn will be.
+function sessionCwd(task: Task, project: Project): string {
+  return task.worktree_path || project.repo_path || process.cwd();
+}
 
 // The one-shots below are a different animal, and they get a different policy.
 // A handoff note or a four-bullet recap is an internal transformation, not a
@@ -576,9 +586,7 @@ async function* runTurn(
   const response = query({
     prompt,
     options: {
-      // Prefer the task's isolated worktree; fall back to the shared repo path
-      // (non-git projects, or worktree creation skipped).
-      cwd: task.worktree_path || project.repo_path || process.cwd(),
+      cwd: sessionCwd(task, project),
       resume: task.session_id ?? undefined,
       // Per-task model selection ("opus"/"sonnet"/"haiku" alias). Omit to inherit
       // Claude Code's default model.
@@ -949,6 +957,10 @@ export const claudeDriver: AgentDriver = {
   label: "Claude Code",
   capabilities: CLAUDE_CAPABILITIES,
   runTurn,
+  // What a turn on this task would actually expand — read from the same
+  // settings a turn loads, rooted at the same cwd. See ./commands.ts.
+  listCommands: (task, project) =>
+    listClaudeCommands(sessionCwd(task, project), SETTING_SOURCES),
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,

@@ -23,6 +23,15 @@ A task is a lineage of agent sessions. `/clear` summarizes the current conversat
 starts a clean context window with that history, allowing long-running work to continue
 without turning into one unbounded prompt.
 
+Typing `/` in the composer opens the command menu. It lists the commands the task's own
+agent would actually expand — your skills, plugin commands, and the `.claude/commands` in
+the checked-out repo — discovered from the agent itself rather than from a list Operator
+maintains, so a command you install shows up without an Operator release. Arrow keys move
+the highlight, Enter or Tab completes it, and a command typed in full sends as usual.
+Operator's own `/clear` heads the list; the agent's same-named command is hidden so one
+name can't mean two things, as are the run-control commands (`/model`, `/effort`, `/fast`)
+that the task's own pickers own.
+
 ## Review and delivery
 
 Operator puts the task conversation and git diff side by side. From there you can:
