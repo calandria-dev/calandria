@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { LS, loadPersist } from "./persist";
 import { reconcileHistory, closeOneLevel, type NavSel } from "./navHistory";
 import {
-  DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT,
+  DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH,
   type Appearance, type Settings, type Layout, type View, type TaskView,
 } from "./types";
 
@@ -55,6 +55,7 @@ export function usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask }
     if (!hydrated) return;
     document.documentElement.setAttribute("data-theme", appearance.theme);
     document.documentElement.style.setProperty("--density", appearance.density);
+    document.documentElement.style.setProperty("--text-width", appearance.wide === "1" ? TEXT_WIDTH.full : TEXT_WIDTH.reading);
     localStorage.setItem(LS, JSON.stringify({ selProj, selTask, appearance, settings, layout, taskView }));
 
     // Mirror the open project/task + active view into the URL (refresh-restore)

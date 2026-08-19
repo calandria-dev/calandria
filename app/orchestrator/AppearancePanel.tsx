@@ -29,6 +29,15 @@ export function AppearancePanel({ appearance, setAppearance, onClose }: { appear
             <button className={appearance.density === "0.72" ? "on" : ""} onClick={() => setAppearance("density", "0.72")}>Compact</button>
           </div>
         </Row>
+        {/* How wide the transcript + composer run. "Reading" keeps the 760px measure
+            the design was drawn at; "Full" spends the whole session pane, which is
+            what a wide monitor or a collapsed rail is for. */}
+        <Row label={`Text width · ${appearance.wide === "1" ? "full pane" : "reading measure"}`}>
+          <div className="seg">
+            <button className={appearance.wide !== "1" ? "on" : ""} onClick={() => setAppearance("wide", "0")}>Reading</button>
+            <button className={appearance.wide === "1" ? "on" : ""} onClick={() => setAppearance("wide", "1")}>Full</button>
+          </div>
+        </Row>
       </div>
     </div>
   );
