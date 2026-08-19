@@ -101,6 +101,11 @@ Use `npm run dev` only when developing Operator itself. For Docker tags and prov
 authentication, networking, and secure access from anywhere, see the
 [self-hosting guide](docs/SELF_HOSTING.md).
 
+One instance per database: Operator locks `orchestrator.db` at boot and refuses to start
+if another process already owns it, naming the holder — two servers sharing one database
+overwrite each other's running tasks. Want a second instance? Give it its own
+`ORCH_DB_DIR`.
+
 ## Hosted
 
 [**getoperator.dev**](https://getoperator.dev) gives you an always-on Operator instance

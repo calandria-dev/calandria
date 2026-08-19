@@ -112,7 +112,11 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # mode-aware gate as the app — and arrive with the lib/auth copy below.
 # lib/resolveHostname.js is CommonJS and require()'d synchronously (the bind
 # address is needed before listen), but it is COPY'd for the same reason.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/resolveHostname.js ./lib/
+# lib/db-lock.mjs (the single-instance boot lock) is in the same set: server.js
+# imports it un-bundled to claim the database before serving, and lib/db.ts
+# imports the bundled copy to decide whether crash recovery may run. Missing
+# here, the container would fail to boot.
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/orch-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so

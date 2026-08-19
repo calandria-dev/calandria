@@ -60,6 +60,15 @@ const serviceRouterImport = import("./lib/service-router.mjs");
 // init; ORCH_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
 const envKeysImport = import("./lib/env-keys.mjs");
 
+// One app process per orchestrator.db. Two processes against one database
+// silently corrupt each other — the loser of the race is whichever one is
+// mid-turn when the other boots and runs its crash-recovery pass. Claimed HERE,
+// before app.prepare(), so nothing can open a turn, a service or a schedule
+// against a database we don't own; and only from this entrypoint, so `next
+// build` and the test suite never contend for a lock they shouldn't hold.
+// See lib/db-lock.mjs.
+const dbLockImport = import("./lib/db-lock.mjs");
+
 // Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). PTY_HOST/PTY_PORT must
 // match what pty-server.js binds — the sidecar is loopback-only by default and
 // is reached exclusively through this proxy.
@@ -177,7 +186,28 @@ function proxyPtyUpgrade(req, socket, head) {
   proxyReq.end();
 }
 
-Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys]) => {
+// Claim the database, THEN prepare Next — sequenced, not raced: preparing Next
+// warms route modules that can reach getDb(), and a process about to be told it
+// may not run must not have touched the database first.
+const prepared = dbLockImport
+  .then(async (dbLock) => {
+    const held = await dbLock.acquireDbLock();
+    if (held.mode === "bypass") {
+      console.warn(
+        "[server] WARN: ORCH_DB_LOCK=off — the single-instance check is DISABLED. " +
+          "If a second process is running against this database, the two will overwrite " +
+          "each other's running tasks, queued follow-ups and open permission prompts.",
+      );
+    }
+  })
+  .catch((err) => {
+    // Not a crash — a refusal. The only useful thing to say is who has it.
+    console.error(`[server] ${err.message}`);
+    process.exit(1);
+  })
+  .then(() => app.prepare());
+
+Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys]) => {
   // Before listen (= before any request can read env): drop inherited billing
   // keys so turns can't silently switch from the subscription login to
   // per-token API billing. See lib/env-keys.mjs.

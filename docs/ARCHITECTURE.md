@@ -355,10 +355,51 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 | What | Where |
 |-|-|
 | Projects, tasks, transcripts, summaries, session index | `orchestrator.db` (SQLite) in `ORCH_DB_DIR`, default `~/.zen-orchestrator` |
+| The single-instance boot lock | `orchestrator.lock.db` beside it — a pure mutex holding no data (see below) |
 | Per-task git worktrees | `ORCH_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
 | Cloned project repos | `ORCH_PROJECTS_DIR`, default `~/projects` |
 | Your apps' actual code | each project's working directory — never inside Operator's own tree |
 | Claude Code's raw session logs | `~/.claude/projects/...` (managed by Claude Code) |
+
+### One process per database
+
+Single-process isn't a limitation to work around, it's the design: turns run detached
+and owned by the server, the event bus and the abort/ask registries are in-memory on
+`globalThis`, and `init()` opens every boot by clearing what a crash left behind —
+running flags, the pending-message queue, unanswered permission cards, in-flight
+schedule runs. Point a second process at the same database and that recovery pass runs
+against a *live* instance: it wipes the first's running flags, drops its queued
+follow-ups and settles cards a human is still reading, while the first keeps writing to
+rows the second believes are idle.
+
+So **`server.js` claims the database before `app.prepare()`** (`lib/db-lock.mjs`) and
+exits with the holder's pid and host if it can't. The mutex is a kernel file lock — a
+`BEGIN IMMEDIATE` transaction opened on a dedicated `orchestrator.lock.db` and never
+committed, holding SQLite's RESERVED lock for the life of the connection. That's chosen
+over a pid+heartbeat lease file deliberately: there's no heartbeat to miss, no staleness
+window to tune, and no pid-liveness heuristic to get wrong (pids are small and reused
+inside a container, and `docker restart` keeps the hostname, so "pid 7 on host abc is
+alive" proves nothing). The OS drops the lock when the process dies, so recovery after a
+SIGKILL is immediate. Boot still retries for `ORCH_DB_LOCK_WAIT_MS`, which covers only
+the second or so a predecessor spends shutting down. `locking_mode = EXCLUSIVE` is
+pointedly *not* layered on top: in that mode a connection retains its SHARED lock even
+after a failed write, so two racing processes could deadlock each other out of the
+upgrade forever.
+
+A separate lock file, rather than locking `orchestrator.db` itself, keeps a concurrent
+read-only `sqlite3 orchestrator.db` inspection working and leaves WAL alone. Who holds
+it is a best-effort JSON sidecar read only to write a good error message — it never
+decides ownership, so one left by a hard kill can't wedge anything.
+
+The recovery pass then sits behind `consumeDbRecoveryAuthorization()`, true at most once
+and only for a database this process actually claimed. Under vitest and `next build` it
+is never authorized, which is correct: recovery belongs to the owner. Ownership state
+lives on `globalThis` because `server.js` loads the module through Node's ESM loader
+while `lib/db.ts` loads it through Turbopack's bundle — two module instances, one realm.
+
+The lock coordinates processes sharing a kernel. Two *containers* on one volume may not
+see each other's locks, but sharing a WAL database across sandboxes is independently
+unsafe; one instance, one volume.
 
 **Stack:** Next.js (App Router) + TypeScript · React 19 · better-sqlite3 ·
 `@anthropic-ai/claude-agent-sdk` · xterm.js + node-pty sidecar · streaming over SSE.

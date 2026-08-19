@@ -27,6 +27,7 @@ const PINNED = [
   "lib/store.ts", //     imported by nearly everything; the original poison edge
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",
+  "lib/db-lock.mjs", //          the boot lock; server.js loads it in plain Node, before Next exists
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)

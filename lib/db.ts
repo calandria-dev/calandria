@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import path from "node:path";
 import fs from "node:fs";
 import { DB_DIR, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
+import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
 
@@ -323,29 +324,9 @@ export function init(db: Database.Database) {
 
   migrate(db);
 
-  // Reset any stale "running" flags left over from a crash/restart.
-  db.prepare("UPDATE tasks SET running = 0 WHERE running = 1").run();
-  // Drop any queued follow-ups: the turns they were lined up behind died with
-  // the previous process, so there's nothing left to dequeue them.
-  db.prepare("DELETE FROM pending_messages").run();
-  // Settle any tool-permission card still open. The turn parked on it died with
-  // the previous process and the pending-ask registry it was waiting on is
-  // in-memory, so the card can never be answered — left alone it would render
-  // as live buttons that resolve nothing. Same reasoning as the running reset
-  // above. (json_valid guards the handful of tool rows that predate JSON
-  // content; json_extract would raise on those.)
-  db.prepare(
-    `UPDATE messages
-        SET content = json_set(content, '$.permission.outcome',
-              json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
-      WHERE role = 'tool'
-        AND content LIKE '%"permission"%'
-        AND json_valid(content)
-        AND json_extract(content, '$.permission.request.id') IS NOT NULL
-        AND json_extract(content, '$.permission.outcome') IS NULL`
-  ).run();
-
-  reapInFlightScheduleRuns(db);
+  // Crash recovery runs only for the process that OWNS this database, and only
+  // on the boot that claimed it — see recoverFromCrash().
+  if (consumeDbRecoveryAuthorization(DB_DIR)) recoverFromCrash(db);
 
   seedIfEmpty(db);
   ensureOnboardingFlag(db);
@@ -356,6 +337,50 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
+}
+
+/**
+ * Clear the wreckage a dead process left behind: turns that will never finish,
+ * follow-ups queued behind them, permission cards nobody can answer, and
+ * schedule runs stuck mid-flight.
+ *
+ * Every statement here is destructive, and every one of them is destructive
+ * against a LIVE instance too — which is why this is gated on owning the
+ * database rather than run unconditionally at boot. Before the boot lock
+ * existed, starting a second process while the first was mid-turn wiped the
+ * first's running flags, dropped its queued follow-ups and settled cards a
+ * human was still looking at, all silently. See lib/db-lock.mjs.
+ *
+ * One transaction: these four facts describe a single moment (the state the
+ * predecessor died in), and a crash halfway through recovery would leave a
+ * database that is neither the old truth nor the new one.
+ */
+function recoverFromCrash(db: Database.Database) {
+  db.transaction(() => {
+    // Reset any stale "running" flags left over from a crash/restart.
+    db.prepare("UPDATE tasks SET running = 0 WHERE running = 1").run();
+    // Drop any queued follow-ups: the turns they were lined up behind died with
+    // the previous process, so there's nothing left to dequeue them.
+    db.prepare("DELETE FROM pending_messages").run();
+    // Settle any tool-permission card still open. The turn parked on it died with
+    // the previous process and the pending-ask registry it was waiting on is
+    // in-memory, so the card can never be answered — left alone it would render
+    // as live buttons that resolve nothing. Same reasoning as the running reset
+    // above. (json_valid guards the handful of tool rows that predate JSON
+    // content; json_extract would raise on those.)
+    db.prepare(
+      `UPDATE messages
+          SET content = json_set(content, '$.permission.outcome',
+                json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
+        WHERE role = 'tool'
+          AND content LIKE '%"permission"%'
+          AND json_valid(content)
+          AND json_extract(content, '$.permission.request.id') IS NOT NULL
+          AND json_extract(content, '$.permission.outcome') IS NULL`
+    ).run();
+
+    reapInFlightScheduleRuns(db);
+  })();
 }
 
 /**
@@ -377,8 +402,8 @@ export function init(db: Database.Database) {
  * entirely when ORCH_SCHEDULER is off — the one configuration where nothing
  * else would ever clear the wedge, while the API still serves it.
  *
- * Exported so tests/scheduleStore.test.ts can drive it directly; init below is
- * the only production caller.
+ * Exported so tests/scheduleStore.test.ts can drive it directly;
+ * recoverFromCrash above is the only production caller.
  */
 export function reapInFlightScheduleRuns(db: Database.Database): number {
   const info = db
@@ -752,6 +777,27 @@ export function getDb(): Database.Database {
     const db = new Database(DB_PATH);
     init(db);
     global.__orchDb = db;
+    warnIfUnowned();
   }
   return global.__orchDb;
+}
+
+/**
+ * server.js claims the database before it serves anything (lib/db-lock.mjs), so
+ * a production process opening it read/write WITHOUT that claim reached the DB
+ * some other way — a bare `next start`, a stray script — and is exactly the
+ * second writer the lock exists to stop. It gets a warning rather than a throw:
+ * the same code path is how `next build` and the test suite legitimately open a
+ * database they should never claim, and failing those closed would cost more
+ * than this catches. Skipped entirely under the ORCH_DB_LOCK=off escape hatch,
+ * which is a deliberate choice to run unguarded.
+ */
+function warnIfUnowned() {
+  if (process.env.NODE_ENV !== "production") return;
+  if (dbLockMode(DB_DIR) !== "unowned") return;
+  console.warn(
+    `[db] WARN: opened ${DB_PATH} without holding the boot lock. If another Operator ` +
+      `process is running against this database, the two will corrupt each other's task ` +
+      `state. Start the app via server.js, which claims the lock before serving.`
+  );
 }

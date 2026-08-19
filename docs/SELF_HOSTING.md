@@ -188,6 +188,8 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the idle/health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
 | `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same three read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
 | `ORCH_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
+| `ORCH_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
+| `ORCH_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
 | `ORCH_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `ORCH_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
 | `ORCH_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
@@ -228,6 +230,21 @@ npm start
   `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
   wedge a turn overnight. Operator is a control layer, not a sandbox — the
   isolated worktree is still the real boundary.
+- **One process per database:** Operator is single-process by design — turns run detached
+  and owned by the server, and boot opens by clearing what a crash left behind (running
+  flags, queued follow-ups, unanswered permission cards, in-flight schedule runs). Point a
+  second process at the same `orchestrator.db` and that recovery pass runs against a *live*
+  instance. So the app takes a lock on the database at boot and **refuses to start** if
+  another process holds it, naming the holder's pid and host; crash recovery only ever runs
+  for the process that owns the database. The lock is a kernel file lock on a separate
+  `orchestrator.lock.db`, so a killed instance releases it immediately and the next boot
+  takes over with no waiting — and a read-only `sqlite3 orchestrator.db` inspection is
+  unaffected, since the real database is never exclusively locked. Two instances need two
+  `ORCH_DB_DIR`s. `ORCH_DB_LOCK=off` disables the check; it is unsupported.
+  One limit worth stating: the lock coordinates processes that share a kernel. Two
+  *containers* mounting one volume may not see each other's locks (a sandboxed runtime like
+  gVisor need not share a lock table), but that configuration is already unsafe — SQLite's
+  WAL mode itself requires shared memory between its users. One instance, one volume.
 - **Parallel quota:** every concurrent task spends your rate limit — N tasks ≈ N× the
   token rate against one subscription.
 - **Terminal:** the `node-pty` sidecar stays bound to `127.0.0.1` only — the browser
