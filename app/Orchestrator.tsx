@@ -279,6 +279,8 @@ export default function Orchestrator() {
         <TerminalDrawer
           key={project.id}
           cwd={project.repo_path}
+          taskDir={task?.worktree_path || undefined}
+          taskTitle={task?.title}
           port={project.port}
           visible={o.termOpen}
           height={o.termHeight}
@@ -355,6 +357,8 @@ export default function Orchestrator() {
         <TerminalDrawer
           key={project.id}
           cwd={project.repo_path}
+          taskDir={task?.worktree_path || undefined}
+          taskTitle={task?.title}
           port={project.port}
           visible={o.termOpen}
           height={o.termHeight}
@@ -455,7 +459,7 @@ export default function Orchestrator() {
             <button
               className={`tb-btn${o.termOpen ? " on" : ""}`}
               disabled={!project}
-              title={project ? "Toggle terminal (runs in the project's working dir)" : "Select a project first"}
+              title={project ? "Toggle terminal (project working dir — switch it to the selected task's worktree from the drawer)" : "Select a project first"}
               onClick={() => { if (!project) return; o.setTermMounted(true); o.setTermOpen((t) => !t); }}
             >
               {Icon.terminal()} Terminal
