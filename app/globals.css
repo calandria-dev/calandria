@@ -1340,6 +1340,52 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .recap-body>:last-child{margin-bottom:0;}
 .recap-foot{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--line-2);}
 
+/* schedules card (project landing pane) — read/pause/run-now surface for
+   recurring prompts; sits below the recap card / empty state. */
+.sched-card{margin:18px 0;display:flex;flex-direction:column;gap:10px;}
+.sched-card h3{margin:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.sched-alert{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);}
+.sched-alert svg{width:14px;height:14px;flex:0 0 auto;}
+.sched-alert.sched-alert-bad{color:var(--red);background:var(--red-soft);border-color:var(--red);}
+.sched-row{border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--sh-1);padding:12px 14px;display:flex;flex-direction:column;gap:8px;}
+.sched-row.sched-paused{opacity:.6;}
+.sched-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;}
+.sched-head strong{font-size:13.5px;color:var(--ink);}
+.sched-spec{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.sched-next{flex:1;font-size:11.5px;color:var(--ink-2);}
+.sched-run{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--ink-2);}
+.sched-badge{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px;flex:0 0 auto;}
+.sched-badge.sched-ok{color:var(--green);background:var(--green-soft);}
+.sched-badge.sched-bad{color:var(--red);background:var(--red-soft);}
+.sched-badge.sched-warn{color:var(--amber);background:var(--amber-soft);}
+.sched-badge.sched-busy{color:var(--accent);background:var(--accent-soft);}
+.sched-badge.sched-muted{color:var(--ink-3);background:var(--surface-2);}
+.sched-when{color:var(--ink-2);}
+.sched-note{font-size:11px;color:var(--ink-3);font-style:italic;}
+.sched-detail{font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+.sched-header{display:flex;align-items:center;gap:10px;}
+.sched-header .spacer{flex:1;}
+
+/* the create/edit form — a dashed box distinguishes "not saved yet" from the
+   solid-bordered rows above and below it. */
+.sched-form{border:1px dashed var(--line-strong);border-radius:var(--r-lg);background:var(--raise);padding:14px;}
+.sched-form .field select,.sched-form .field input[type=time]{
+  width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);
+  padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;
+}
+.sched-form .field select:focus,.sched-form .field input[type=time]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.sched-days{display:flex;gap:6px;flex-wrap:wrap;}
+.sched-day{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-2);padding:5px 10px;border:1px solid var(--line-strong);border-radius:999px;cursor:pointer;background:var(--surface);}
+.sched-day input{margin:0;}
+.sched-preview{display:flex;flex-direction:column;gap:2px;margin:-2px 0 14px;}
+.sched-suggestions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;}
+.sched-actions{display:flex;justify-content:flex-end;gap:8px;}
+/* the slash-command check's failure box — stacked (error + suggestions + note),
+   unlike `.sched-alert`'s single icon+text row. A typo catcher, not a hard
+   rule, so it reads as a warning rather than blocking anything. */
+.sched-check{margin-top:8px;padding:9px 12px;border-radius:var(--r-sm);font-size:12px;display:flex;flex-direction:column;gap:2px;}
+.sched-check.bad{color:var(--red);background:var(--red-soft);border:1px solid var(--red);}
+
 /* responsive guard for narrow desktops / tablets — just tighten the columns */
 @media (min-width:761px) and (max-width:900px){
   .col-projects{flex-basis:200px;}

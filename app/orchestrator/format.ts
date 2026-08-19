@@ -186,6 +186,55 @@ export function relTime(ts: number): string {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
+// ---------- scheduler health ----------
+//
+// A schedule promises work at 08:30 with nobody logged in, so the ONE thing the
+// card must never do is show a confident "next run tomorrow 08:30" when nothing
+// is actually watching for it. Three ways that happens, in order of how much
+// they lie:
+//
+//   1. the ticker was never started (ORCH_SCHEDULER=off, a boot ping that never
+//      landed) — nothing will ever fire;
+//   2. the ticker is started but its sweeps have STOPPED COMING BACK. This is
+//      the quiet one: tickSchedules() is single-flight, so one call that never
+//      returns (a stalled agent CLI in the fire-time probe, a hung git op)
+//      leaves `ticking` true forever and every schedule on the instance stops,
+//      with no error anywhere because nothing threw. A stale lastTickAt is the
+//      only symptom it has, which is exactly why it's served;
+//   3. a sweep completed but one schedule inside it threw.
+//
+// Aged against the server's real tick interval rather than a guessed one. The
+// multiplier is generous (a sweep that fires several schedules serially can
+// legitimately outlast one interval) with a floor, so a fast dev tick can't
+// produce a banner that flickers on and off.
+const STALE_TICKS = 4;
+const STALE_FLOOR_MS = 120_000;
+
+export interface SchedulerHealthLike {
+  started: boolean;
+  startedAt: number;
+  lastTickAt: number;
+  lastError: string;
+  tickMs: number;
+}
+
+/** The banner the Schedules card should show, or null when all is well. */
+export function schedulerAlert(h: SchedulerHealthLike, now = Date.now()): string | null {
+  if (!h.started) return "The scheduler is not running on this instance — nothing will fire.";
+  const staleAfter = Math.max(STALE_TICKS * (h.tickMs || 0), STALE_FLOOR_MS);
+  // Before the first sweep returns there is no lastTickAt to age, so fall back
+  // to when the ticker started — that covers the worst case of all, a very
+  // first sweep that hung on boot.
+  const since = h.lastTickAt || h.startedAt;
+  if (since && now - since > staleAfter) {
+    return `The scheduler hasn't completed a check since ${relTime(since)} — it looks stuck, so nothing is firing. Restarting the app clears it.`;
+  }
+  if (h.lastError) {
+    return `A schedule failed on the last check — ${h.lastError}. The others still ran.`;
+  }
+  return null;
+}
+
 // How long a task has been waiting on the user, spelled out for the "need you"
 // dropdown ("waiting for 3 hours"). Coarser and more verbose than relTime — this
 // is the only subline a row gets, so it reads as prose rather than a chip.

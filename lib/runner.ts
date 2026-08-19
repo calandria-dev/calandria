@@ -7,19 +7,30 @@
 // /messages streams (including zero) can watch; disconnects never touch the
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
+import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
-import { worktreeSyncStatus, fastForwardWorktree } from "@/lib/git";
+import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { track } from "@/lib/analytics";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
+import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
+import { settleRun } from "@/lib/schedule/store";
 import type { Task, Project, PermissionOutcome, ToolData, TurnUsage } from "@/lib/types";
+
+// What a scheduled run says for itself when it stopped because there was
+// nobody to approve something. Named, because the docs promise the user that a
+// non-Auto-run schedule "can stop early with the job half done" — this is that
+// sentence arriving on the run it happened to, instead of a green "ran".
+export const SCHEDULE_UNATTENDED_DETAIL =
+  "the agent needed approval and nobody was watching, so it was declined automatically — " +
+  "the run may have stopped with the job half done. Use Auto-run, or start this one by hand.";
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -27,7 +38,14 @@ import type { Task, Project, PermissionOutcome, ToolData, TurnUsage } from "@/li
  * (the silent worktree fast-forward notice, if any) is persisted + published
  * first so it reads in order at the top of the turn.
  */
-export function startTurn(task: Task, project: Project, userText: string, syncNote: string, controller?: AbortController): void {
+export function startTurn(
+  task: Task,
+  project: Project,
+  userText: string,
+  syncNote: string,
+  controller?: AbortController,
+  runContext?: RunContext
+): void {
   // Lets the Stop button abort this turn. Registered by task id so the
   // separate /abort route can find and trip it — and so hasTurn() can report
   // turn liveness to the POST guard and the GET stream's snapshot. Callers
@@ -46,13 +64,18 @@ export function startTurn(task: Task, project: Project, userText: string, syncNo
     publish(task.id, { type: "queued", msgId: pm.id, content: userText, generation: task.generation, ts: pm.created_at });
     return;
   }
+  // Declare WHY this turn is running for its whole life. The permission gate
+  // reads this instead of guessing from open tabs, and the finally below uses
+  // it to settle the schedule run. Registered here rather than inside run() so
+  // it is in place before the first tool call can possibly arrive.
+  if (runContext) setRunContext(task.id, runContext);
   // Detached: nobody awaits this. `run()` guards its own body (try/catch/finally)
   // and unregisterTurn runs in that finally, but a throw from the finally itself
   // (e.g. the task row was deleted mid-turn, so updateTask/endSession hit a
   // FOREIGN KEY error) would surface here as an unhandled rejection and, under
   // Node's default policy, crash the entire server — taking down every other
   // tenant's turn. Swallow-and-log so one deleted task can never do that.
-  run(task, project, userText, syncNote, abortController).catch((err) => {
+  run(task, project, userText, syncNote, abortController, runContext).catch((err) => {
     console.error(`[runner] turn for task ${task.id} crashed after its finally settled:`, err);
     // Best-effort settle so even this last-resort path can't wedge the task in
     // a running-forever state. unregisterTurn is identity-checked, so a newer
@@ -70,17 +93,40 @@ export function startTurn(task: Task, project: Project, userText: string, syncNo
     } catch (settleErr) {
       console.error(`[runner] could not settle task ${task.id} after crash:`, settleErr);
     }
+    // A crash here means run()'s own finally never reached ITS settle block, so
+    // a scheduled run would otherwise leak two ways: the schedule_runs row stuck
+    // at claimed/running forever, and — worse — the stale RunContext entry left
+    // keyed on this task id, which a later ORDINARY turn on the same task would
+    // silently inherit via interactionDenied() (lib/runContext.ts) and have its
+    // own permission prompts auto-deny with no visible explanation. Settle both
+    // here, best-effort: this catch is the last line of defence for a detached
+    // promise, so nothing inside it may itself throw out.
+    if (runContext) {
+      try {
+        if (runContext.scheduleRunId) {
+          const detail = `runner crashed before settling: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500);
+          settleRun(runContext.scheduleRunId, "failed", detail);
+        }
+      } catch (scheduleErr) {
+        console.error(`[runner] could not settle schedule run ${runContext.scheduleRunId} after crash:`, scheduleErr);
+      }
+      try {
+        clearRunContext(task.id, runContext);
+      } catch (contextErr) {
+        console.error(`[runner] could not clear run context for task ${task.id} after crash:`, contextErr);
+      }
+    }
   });
 }
 
 /**
- * Begin a *resume* (non-initial) turn for a task: silently catch a
- * fast-forward-able worktree up to the base branch, persist + echo the user
- * message, flip running on, and hand off to the detached runner. Shared by the
- * POST /messages resume path and the queue drainer (a dequeued follow-up is
- * always a resume turn). Mirrors the prep the POST route does inline for the
- * very first turn; the initial turn stays in the route since it also creates
- * the worktree and persists the generic opening prompt.
+ * Begin a *resume* (non-initial) turn for a task: make sure the task has a
+ * worktree, silently catch a fast-forward-able one up to the base branch,
+ * persist + echo the user message, flip running on, and hand off to the
+ * detached runner. Shared by the POST /messages resume path and the queue
+ * drainer (a dequeued follow-up is always a resume turn). Mirrors the prep the
+ * POST route does inline for the very first turn; the initial turn stays in the
+ * route since it also persists the generic opening prompt.
  */
 export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController): Promise<void> {
   const id = task.id;
@@ -98,6 +144,36 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     return;
   }
   try {
+    // Isolation is this function's job, not its callers'. Both launch paths that
+    // create a worktree (POST /messages, lib/autoStart.ts) run the same self-heal
+    // before their FIRST turn, but a turn can also reach the runner through the
+    // queue drainer in run()'s finally — which only pops a message and calls
+    // here. If task.worktree_path were empty by then, the driver would fall back
+    // to project.repo_path and the agent would edit the user's actual checkout
+    // instead of an isolated worktree. Today the callers happen to make that
+    // unreachable (every drain follows a turn one of them launched); this makes
+    // it an invariant of the code rather than of three call sites agreeing.
+    // Same contract as those paths: ensureWorktree reattaches to a surviving
+    // branch so pruned work comes back, non-git/empty repos legitimately yield
+    // null and fall back to repo_path, and a git hiccup must never block the
+    // turn. Mutating `task` so the sync check below and the runner see the new
+    // cwd. Runs before the catch-up on purpose — that reads worktree_path.
+    // A project with no working directory set is skipped rather than isolated:
+    // both launch paths refuse that project outright, and ensureWorktree("")
+    // would be asking git to init a repo in an unknown place.
+    if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
+      try {
+        const wt = await ensureWorktree(project.repo_path, id, project.branch);
+        if (wt) {
+          task.worktree_path = wt.path;
+          task.work_branch = wt.branch;
+          task.base_sha = wt.baseSha;
+          updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+        }
+      } catch {
+        // fall back to repo_path
+      }
+    }
     // Catch the worktree up to base when it's a clean, zero-conflict fast-forward
     // (no divergent commits, clean tree) so follow-up work isn't built on stale
     // code. Anything riskier is left to the user-driven Sync/Fix banner. A git
@@ -182,7 +258,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
   }
 }
 
-async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController): Promise<void> {
+async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext?: RunContext): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   let sessionId: string | null = task.session_id;
@@ -465,9 +541,50 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // A turn that actually ran and ended mid-task — whether it finished on its
     // own or was Stopped — is now waiting on the user, so flag awaiting_input
     // (cleared on the next send / done) leaving it cleanly resumable.
+    //
+    // A scheduled turn that finished cleanly is NOT waiting on anybody: nobody
+    // asked for it, and awaiting_input feeds the shared NEEDS_YOU predicate
+    // behind the "N need you" pill. Left at 1 it would park a permanent,
+    // unanswerable item there every single morning, which is how a user learns
+    // to ignore the pill. Success is quiet; a scheduled turn that FAILED still
+    // raises its hand exactly like any other.
+    // An interaction auto-denied by a path that doesn't emit a permission event
+    // — the Codex ask_user bridge (lib/agentTools.ts), which records it on the
+    // context instead. Folded in here, before anything below reads the flag, so
+    // "the turn was cut short because nobody was there" has exactly one meaning
+    // regardless of which agent hit it.
+    if (runContext?.deniedInteractions) unattendedDeny = true;
+    // Success is quiet — but only actual success. A turn whose tool calls (or
+    // questions) were auto-denied because nobody is watching did NOT do the job
+    // it was scheduled for; it stopped partway with the work half done. Reported
+    // as a quiet green "ran", that is precisely the silent skip this feature
+    // exists to make impossible, so it raises its hand like any other failure.
+    const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
     if (!generationAdvanced && !superseded) {
-      updateTask(id, { running: 0, session_id: sessionId, awaiting_input: opened ? 1 : 0 });
+      updateTask(id, { running: 0, session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
     }
+
+    // Settle the schedule run from HERE, because this is the only place that
+    // knows the outcome: whether a session opened, whether it errored, whether
+    // it was stopped. Polling task.running from outside cannot reconstruct it.
+    if (runContext?.scheduleRunId) {
+      const status = stopped
+        ? "stopped"
+        : turnError || unattendedDeny
+          ? "failed"
+          : opened ? "succeeded" : "interrupted";
+      const detail = turnError && !stopped
+        ? String(turnError).slice(0, 500)
+        : unattendedDeny && !stopped
+          ? SCHEDULE_UNATTENDED_DETAIL
+          : !opened ? "the agent session never opened" : "";
+      try {
+        settleRun(runContext.scheduleRunId, status, detail);
+      } catch (err) {
+        console.error(`[runner] could not settle schedule run ${runContext.scheduleRunId}:`, err);
+      }
+    }
+    if (runContext) clearRunContext(id, runContext);
     // Keyed by (task_id, generation), so this settles THIS generation's session
     // row and never touches the fresh generation — safe to run either way.
     if (opened) endSession(id, gen);

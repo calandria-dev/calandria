@@ -5,6 +5,7 @@
 // built-in default (see DEFAULT_CODEX_MODEL in ./pricing).
 
 import type { AgentCapabilities } from "../types";
+import { CODEX_INHERIT_MCP } from "../../config";
 import { codexApiKey } from "./auth";
 
 // Every current preset runs the same 272k window, so unlike Claude there's no
@@ -86,7 +87,15 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // rather than dangle tools that can't work (lib/agents/codex/mcp.ts, and
   // CODEX_INHERIT_MCP in lib/config.ts to opt back in). This flag exists so the
   // asymmetry is visible as data instead of buried in a driver.
-  inheritsUserMcpServers: false,
+  //
+  // It tracks the escape hatch rather than being a flat `false`: with the env
+  // var set the driver really does mount the user's servers, and Settings
+  // renders this flag verbatim — a hardcoded false would tell that user the
+  // opposite of what their own turns do.
+  inheritsUserMcpServers: CODEX_INHERIT_MCP,
+  userMcpServersNote: CODEX_INHERIT_MCP
+    ? "Mounted because CODEX_INHERIT_MCP is set. Their tools only work on servers where you've set default_tools_approval_mode = \"approve\" — codex exec has nobody to ask."
+    : "The MCP servers in your ~/.codex/config.toml are unmounted: codex exec can't approve their tool calls, so every one comes back cancelled. Set CODEX_INHERIT_MCP=1 to mount them anyway.",
   // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
   // cost the driver emits is an estimate (tokens × published API prices for
   // the resolved model). The descriptor stays honest: reportsCostUsd=false,

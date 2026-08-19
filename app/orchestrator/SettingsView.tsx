@@ -116,9 +116,30 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
               ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Sign-in stopped working">{Icon.bolt()}</span>
               : <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>)}
           </div>
+          <McpInheritance agent={a} />
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// Whether a task on this agent can use the MCP servers the user configured for
+// its own CLI — the one capability difference between the agents that changes
+// what a task can DO, rather than how its controls look. A Claude task reaches
+// the tools in ~/.claude; an otherwise-identical Codex task reaches only
+// Operator's, so it's worth knowing before choosing an agent for a task. Both
+// the verdict and the explanation come from the driver's descriptor
+// (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
+// agent states its own position here with no edit to this file.
+function McpInheritance({ agent }: { agent: AgentInfoT }) {
+  const { inheritsUserMcpServers: inherits, userMcpServersNote: note } = agent.capabilities;
+  return (
+    <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
+      <strong style={{ color: "var(--ink-2)" }}>
+        {inherits ? "Uses your own MCP servers." : "Operator's tools only."}
+      </strong>
+      {note ? ` ${note}` : ""}
     </div>
   );
 }

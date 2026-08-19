@@ -12,7 +12,7 @@
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
-import type { Project, Task, ServiceInfo, Priority, Status, AskQuestion, ToolData } from "./types";
+import type { Project, Task, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData } from "./types";
 import {
   createTask,
   setTaskDeps,
@@ -28,6 +28,7 @@ import {
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
+import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "./runContext";
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
@@ -606,6 +607,13 @@ export function withdrawSuggestionForAgent(
  */
 export function startAskUser(task: Task, questions: AskQuestion[]): { askId: string } {
   const askId = `ask-${nanoid()}`;
+  // A turn that declared itself unattended (a scheduled firing) has nobody to
+  // answer, and parking here is worse than useless: the bridge would poll for
+  // an answer that never comes, holding the turn slot for as long as the
+  // process lives, which makes every later occurrence of that schedule
+  // `skipped_overlap`. Settle it at once — the same contract lib/permissions.ts
+  // honors for the permission gate, on the other interactive path.
+  if (interactionDenied(task.id)) return denyAskUnattended(task, askId, questions);
   const data: ToolData = { title: "Question for you", ask: { id: askId, questions } };
   const m = addMessage(task.id, task.generation, "tool", JSON.stringify(data));
   // The turn is live but parked on the user — same flag the runner sets for
@@ -629,6 +637,40 @@ export function startAskUser(task: Task, questions: AskQuestion[]): { askId: str
       settleAsk(task.id, askId, "The user dismissed the question without answering.");
     });
 
+  return { askId };
+}
+
+/**
+ * Refuse an ask_user for a declared-unattended turn, on the record.
+ *
+ * Written as a SETTLED permission card rather than an ask card, for the same
+ * reason the Claude driver's hook does it that way: an ask card in the
+ * transcript promises an answer is coming, and this one never was. A decided
+ * card says what was asked, that it was refused, and why — and it leaves
+ * `awaiting_input` alone, because there is nothing for the user to do.
+ * `recordUnattendedDenial` is what stops the schedule run from settling green
+ * on a turn that stopped short of the job.
+ */
+function denyAskUnattended(task: Task, askId: string, questions: AskQuestion[]): { askId: string } {
+  const asked = questions.map((q) => q.header?.trim() || q.question?.trim()).filter(Boolean).join(" · ");
+  const request: PermissionRequest = {
+    id: askId,
+    tool: "ask_user",
+    title: asked ? `Question for you: ${asked.slice(0, 200)}` : "The agent asked a question",
+    detail: questions.map((q) => q.question).filter(Boolean).join("\n\n"),
+    expiresAt: Date.now(),
+  };
+  const outcome: PermissionOutcome = { decision: "deny", auto: true, reason: "unattended", note: UNATTENDED_ASK_NOTE };
+  const data: ToolData = { title: "Permission needed", permission: { request, outcome } };
+  const m = addMessage(task.id, task.generation, "tool", JSON.stringify(data));
+  recordUnattendedDenial(task.id);
+  // Create-then-settle, exactly as the runner publishes a decided card, so a
+  // live viewer and a reloaded snapshot render the identical row.
+  publish(task.id, { type: "permission", request, msgId: m.id, generation: task.generation, ts: m.created_at });
+  publish(task.id, { type: "permission_decided", id: askId, outcome, msgId: m.id, generation: task.generation });
+  // The bridge polls for this; handing it the model-facing text now means the
+  // very next poll returns instead of looping until the process dies.
+  settleAsk(task.id, askId, UNATTENDED_ASK_DENIAL);
   return { askId };
 }
 

@@ -210,7 +210,7 @@ export default function Orchestrator() {
       loading={o.tasksLoading}
       view={o.taskView} onSetView={setTaskView} onMoveTask={o.moveTask}
       onSelectTask={o.setSelTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
-      onShowSessions={() => o.setModal("sessions")} onShowRecap={() => o.setSelTask(null)} onEditTask={o.setEditId}
+      onShowSessions={() => o.setModal("sessions")} onShowRecap={o.showProjectHome} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
       onBulkMove={setBulkMoveIds}
       baseBranchTick={o.baseBranchTick}
@@ -251,6 +251,7 @@ export default function Orchestrator() {
         ) : project ? (
           <ProjectLanding
             project={project}
+            agents={o.agents}
             recap={o.recaps[project.id]}
             onNewTask={() => o.setModal("task")}
             onRefreshRecap={() => o.fetchRecap(project.id, true)}

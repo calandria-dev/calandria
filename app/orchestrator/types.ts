@@ -202,6 +202,11 @@ export type ClaudeVerifyT = {
 export type AgentCapabilitiesT = {
   apiKeyHint: string | null;
   loginStyle: "paste_code" | "device_code";
+  // Whether a task on this agent also gets the MCP servers the user configured
+  // for its CLI, plus the driver's one-line why. A real difference between the
+  // agents when picking one for a task, so the Agents section states it.
+  inheritsUserMcpServers: boolean;
+  userMcpServersNote: string | null;
 };
 export type AgentInfoT = {
   id: string;
@@ -308,3 +313,57 @@ export const DEFAULT_LAYOUT: Layout = { projW: 236, taskW: 352, railW: 430, proj
 export const PROJ_W = { min: 170, max: 460 };
 export const TASK_W = { min: 240, max: 620 };
 export const RAIL_W = { min: 320, max: 760 };
+
+// ---------- scheduled tasks (project landing "Schedules" card) ----------
+// Mirrors lib/store.ts's schedule + schedule_run rows as served by
+// GET /api/projects/[id]/schedules (Task 10). `last_run`/`runs` are joined in
+// server-side so the card never needs a second round trip to show an outcome.
+export interface ScheduleRunRow {
+  id: string;
+  scheduled_for: number;
+  fired_at: number;
+  finished_at: number;
+  task_id: string | null;
+  status: "claimed" | "running" | "succeeded" | "failed" | "stopped" | "interrupted" | "missed" | "skipped_overlap";
+  trigger: "scheduled" | "catch_up" | "manual";
+  detail: string;
+  dst_adjusted: string;
+}
+
+export interface ScheduleRow {
+  id: string;
+  project_id: string;
+  name: string;
+  prompt: string;
+  days_mask: number;
+  time_of_day: string;
+  timezone: string;
+  enabled: number;
+  agent: string;
+  permission_mode: string | null;
+  next_fire_at: number;
+  last_run: ScheduleRunRow | null;
+  runs: ScheduleRunRow[];
+  // The row still `claimed`/`running` for this schedule, if any — served
+  // explicitly rather than left for the client to find inside `runs`, which is
+  // a 5-row history window a long-wedged run can fall out of entirely.
+  active_run: ScheduleRunRow | null;
+}
+
+/** lib/scheduler.ts's schedulerHealth(), as served by the schedules endpoints. */
+export interface SchedulerHealth {
+  started: boolean;
+  /** When the ticker was started; the baseline before any sweep has finished. */
+  startedAt: number;
+  /** When the last sweep FINISHED. A stale value is the only symptom a wedged sweep has. */
+  lastTickAt: number;
+  /** The last per-schedule failure. Cleared by the next clean sweep. */
+  lastError: string;
+  /** The configured tick interval, so the client can age lastTickAt honestly. */
+  tickMs: number;
+}
+
+export interface SchedulesResponse {
+  schedules: ScheduleRow[];
+  scheduler: SchedulerHealth;
+}
