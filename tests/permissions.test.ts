@@ -302,9 +302,16 @@ describe("parking on a human", () => {
   });
 
   it("stamps the short grace deadline only while nobody is watching", () => {
+    // Bracketed against the clock either side of the call, not against one
+    // reading of it: promptDeadline stamps `Date.now() + grace` internally, so
+    // a single millisecond ticking between `before` and that stamp made
+    // `unwatched - before` 45001 and failed the run (seen in CI). The window is
+    // the assertion — the deadline is 45s from a moment inside this call.
     const before = Date.now();
     const unwatched = promptDeadline(60 * 60_000, 45_000);
-    expect(unwatched - before).toBeLessThanOrEqual(45_000);
+    const after = Date.now();
+    expect(unwatched).toBeGreaterThanOrEqual(before + 45_000);
+    expect(unwatched).toBeLessThanOrEqual(after + 45_000);
     withWatcher(() => {
       expect(promptDeadline(60 * 60_000, 45_000) - before).toBeGreaterThan(45_000);
       // 0 attended cap = park indefinitely, reported as no deadline at all.
