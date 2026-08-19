@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { orchestratorMcpConfig } from "@/lib/agents/codex/driver";
 import { disableInheritedServers, ORCHESTRATOR_SERVER } from "@/lib/agents/codex/mcp";
 import { getCapabilities } from "@/lib/agents/capabilities";
@@ -86,9 +86,31 @@ describe("codex does not inherit the user's MCP servers", () => {
 
   it("is declared in the capability descriptors, both ways", () => {
     // app/api/agents hands these to the client, so the asymmetry is data rather
-    // than per-agent knowledge hardcoded in a driver or the UI.
+    // than per-agent knowledge hardcoded in a driver or the UI. Settings →
+    // Agents renders both halves verbatim (McpInheritance in SettingsView.tsx),
+    // so every driver owes the note as well as the verdict.
     expect(getCapabilities("codex").inheritsUserMcpServers).toBe(false);
     expect(getCapabilities("claude").inheritsUserMcpServers).toBe(true);
+    expect(getCapabilities("codex").userMcpServersNote).toContain("CODEX_INHERIT_MCP");
+    expect(getCapabilities("claude").userMcpServersNote).toContain("~/.claude");
+  });
+
+  it("tracks CODEX_INHERIT_MCP rather than claiming a flat no", async () => {
+    // With the opt-in set the driver really does mount the user's servers
+    // (inheritedServerOverrides above returns nothing to disable), and the
+    // Settings line is rendered straight from this flag — so a hardcoded false
+    // would tell that user the opposite of what their own turns do. Read at
+    // import time via lib/config, hence the module reset.
+    vi.stubEnv("CODEX_INHERIT_MCP", "1");
+    vi.resetModules();
+    try {
+      const caps = (await import("@/lib/agents/capabilities")).getCapabilities("codex");
+      expect(caps.inheritsUserMcpServers).toBe(true);
+      expect(caps.userMcpServersNote).toContain("default_tools_approval_mode");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });
 
