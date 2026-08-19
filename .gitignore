@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# optional local vitest env layer (see vitest.config.ts setupFiles)
+/tests/setup.local.ts
 
 # next.js
 /.next/
