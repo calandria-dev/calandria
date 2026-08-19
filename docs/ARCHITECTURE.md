@@ -59,6 +59,12 @@ The app talks to coding agents only through the `AgentDriver` interface.
   defaulted per project via `projects.default_agent`.
 - **`shared.ts`** holds the agent-agnostic pieces every driver reuses: project-context and
   conflict prompts, tool-call → title/peek/diff normalizers, the event queue.
+- **`listCommands?(task, project)`** (optional) reports the slash commands a turn on that
+  task would expand, so the composer's `/` menu is discovered from the agent rather than
+  hardcoded. `GET /api/tasks/[id]/commands` serves it, filtered by `lib/agentCommands.ts`;
+  a driver that omits it leaves the menu with Operator's own commands. The Claude
+  implementation reads the SDK's initialization response without sending a model request,
+  under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`).
 - **`GET /api/agents`** serves each driver's capability descriptor **plus its persisted
   connection state** to the client, which renders every run-control picker (model /
   reasoning / permission), the per-task agent picker, agent badges, and the cost/ask
