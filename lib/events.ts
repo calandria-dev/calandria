@@ -31,11 +31,18 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // be announcing a row other than the calling task's) — and it
 // SUPERSEDES task_updated when one write is both (a refetch settles the status
 // too, so the pair would be a duplicate).
+// tasks_reordered is task_edited's project-keyed cousin: a board drop rewrote
+// the manual order (POST /api/tasks/reorder). `position` isn't a task field the
+// client even models — the list endpoint just returns rows already sorted — and
+// the fact is project-wide rather than about any one row, so it can't ride on
+// task_edited's task key. Like task_deleted it carries its project id and
+// BYPASSES the relay's re-read-the-task enrichment, which has nothing to add.
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
-  | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string };
+  | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
+  | { type: "tasks_reordered"; projectId: string };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -65,7 +72,23 @@ export type TasksMovedWireEvent = {
   fromProjectIds: string[];
   toProjectId: string;
 };
-export type GlobalWireEvent = GlobalTaskWireEvent | TaskDeletedWireEvent | TasksMovedWireEvent | AgentAuthEvent;
+// A project's manual task order was rewritten. Deliberately payload-free
+// beyond the project: the order the client would need is a whole sequence, and
+// the one that matters is the SERVER's — the ids the drag submitted are one
+// tab's view of the project, already stale if a task was created elsewhere and
+// wrong outright if two tabs dragged at once (last write wins in the DB, but
+// relayed ids would have every tab render whichever event landed last). So this
+// says "refetch the tray", exactly like task_edited.
+export type TasksReorderedWireEvent = {
+  type: "tasks_reordered";
+  projectId: string;
+};
+export type GlobalWireEvent =
+  | GlobalTaskWireEvent
+  | TaskDeletedWireEvent
+  | TasksMovedWireEvent
+  | TasksReorderedWireEvent
+  | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
 type GlobalListener = (taskId: string, ev: BusEvent) => void;

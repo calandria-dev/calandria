@@ -101,6 +101,12 @@ export function useOrchestrator() {
   const selProjRef = useRef(selProj);
   useEffect(() => { selProjRef.current = selProj; }, [selProj]);
 
+  // Board drops in flight, shared with the live stream handler: a reorder
+  // echoes back as tasks_reordered, and applying that echo on top of a newer
+  // optimistic drop would snap the card back. `missed` records that an echo was
+  // held so moveTask can flush it once the writes settle. See useGlobalEvents.
+  const reorderRef = useRef({ pending: 0, missed: false });
+
   // Latest agents bundle for the live stream handler (context-window sizing),
   // read without re-subscribing the EventSource.
   const agentsRef = useRef(agents);
@@ -155,7 +161,7 @@ export function useOrchestrator() {
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
   // stream ISN'T open — only the selected task has one.
-  useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
+  useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
   // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
   // session view shows a transcript skeleton instead of an empty chat flash.
@@ -535,6 +541,10 @@ export function useOrchestrator() {
       // Mirror the server: a manual status change clears the "your turn" flag.
       return hasPatch ? next.map((t) => (t.id === id ? { ...t, ...patch, awaiting_input: patch.status ? 0 : t.awaiting_input } : t)) : next;
     });
+    // The whole optimistic window, not just the reorder POST: the echo of our
+    // own write must not be applied while the card is sitting where the user
+    // dropped it but the server hasn't been told yet.
+    reorderRef.current.pending += 1;
     try {
       if (hasPatch) {
         const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
@@ -542,7 +552,17 @@ export function useOrchestrator() {
       }
       await jsend("/api/tasks/reorder", "POST", { ids: orderedIds });
     } catch {
+      // Server truth is about to be reloaded anyway, so any held echo is moot.
+      reorderRef.current.missed = false;
       if (selProjRef.current) void loadTasks(selProjRef.current, false);
+    } finally {
+      reorderRef.current.pending -= 1;
+      // Last drop out settles up: an echo held mid-flight (ours, or another
+      // tab's concurrent drag) is applied now that the server has every write.
+      if (reorderRef.current.pending === 0 && reorderRef.current.missed) {
+        reorderRef.current.missed = false;
+        if (selProjRef.current) void loadTasks(selProjRef.current, false);
+      }
     }
   }, [loadTasks]);
 
