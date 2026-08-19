@@ -83,12 +83,34 @@ test.describe("full-width text", () => {
     await waitForIdle(request, task.id);
   });
 
-  // The transcript column and the composer share the measure, so both move together.
-  const columnWidths = async (page: import("@playwright/test").Page) => {
-    const transcript = await page.locator(".transcript").boundingBox();
-    const tw = await page.locator(".transcript .tw").boundingBox();
-    const composer = await page.locator(".composer-inner").boundingBox();
-    return { pane: transcript!.width, tw: tw!.width, composer: composer!.width };
+  // The transcript column and the composer share the measure, so both move
+  // together. Read in ONE page.evaluate rather than three boundingBox() calls,
+  // and polled: the three widths are supposed to describe a single layout, and
+  // React remounts the transcript moments after a reload, so a handle Playwright
+  // resolved could be replaced before it measured and come back null — the
+  // element was there the whole time (connected, display:block, 981px wide),
+  // it just wasn't the same node any more. That raced ~10% of the time and
+  // failed on the deref, not on an assertion.
+  type Widths = { pane: number; tw: number; composer: number };
+  const columnWidths = async (page: import("@playwright/test").Page): Promise<Widths> => {
+    let last: Widths | null = null;
+    await expect
+      .poll(async () => {
+        last = await page.evaluate(() => {
+          const pane = document.querySelector(".transcript");
+          const tw = document.querySelector(".transcript .tw");
+          const composer = document.querySelector(".composer-inner");
+          if (!pane || !tw || !composer) return null;
+          return {
+            pane: pane.getBoundingClientRect().width,
+            tw: tw.getBoundingClientRect().width,
+            composer: composer.getBoundingClientRect().width,
+          };
+        });
+        return last?.pane ?? 0;
+      }, { message: "transcript never settled into a measurable layout" })
+      .toBeGreaterThan(0);
+    return last!;
   };
 
   test("widens the transcript to the pane and persists across a reload", async ({ page }) => {
