@@ -221,7 +221,9 @@ npm start
   agent isn't pre-approved for parks on a permission card in the transcript, with
   Allow once / Always allow / Decline. Read-only tools pass silently; "Always
   allow" remembers a command for that one project and is revocable in
-  Settings → Run defaults → Remembered approvals. A prompt nobody answers denies
+  Settings → Run defaults → Remembered approvals — which also takes a rule typed
+  in ahead of time, through the same Bash-only, prefix-checked policy, so an
+  unattended task doesn't have to trip a card you'll never see. A prompt nobody answers denies
   itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
   `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
   wedge a turn overnight. Operator is a control layer, not a sandbox — the
