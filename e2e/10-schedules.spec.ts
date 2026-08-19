@@ -37,9 +37,18 @@ test("a schedule can be created, run on demand, and paused", async ({ page }) =>
   await page.getByLabel("Time").fill("08:30");
   await page.getByRole("button", { name: "Create schedule" }).click();
 
-  await expect(page.getByText("Morning triage")).toBeVisible();
+  // Everything below asserts against THIS schedule's own row, never the page.
+  // The status words this test cares about ("ran", "running", "paused",
+  // "next …") are ordinary English, and the sidebar lists every project every
+  // other spec in the suite created — e2e/07-move-tasks-bulk.spec.ts alone
+  // leaves two projects named "Bulk ran …" sitting there. A page-wide
+  // getByText for a status is one fixture rename away from resolving to two
+  // elements and failing strict mode, so scope to the element that actually
+  // carries the status.
+  const row = page.locator(".sched-row").filter({ hasText: "Morning triage" });
+  await expect(row).toBeVisible();
   // The preview is the guard against a timezone mistake, so it must render.
-  await expect(page.getByText(/next /)).toBeVisible();
+  await expect(row.locator(".sched-next")).toHaveText(/^next /);
 
   // Run now exercises the entire firing path without waiting until 08:30.
   // No waitForIdle() here — that helper polls a TASK id, and this button
@@ -47,13 +56,16 @@ test("a schedule can be created, run on demand, and paused", async ({ page }) =>
   // firing). It doesn't need to: lib/scheduler.ts's runScheduleNow() calls
   // startRun() (which flips the run to "running") before the fire-and-forget
   // startTurn() ever runs, so the row this click's own reload fetches is
-  // already "running" — Playwright's normal retry-until-visible covers the
-  // rest.
-  await page.getByRole("button", { name: "Run now" }).click();
-  await expect(page.getByText(/\b(ran|running)\b/)).toBeVisible();
+  // already "running" — Playwright's normal retrying covers the rest. Either
+  // label is a pass: a mock turn can settle to "ran" before the reload lands.
+  await row.getByRole("button", { name: "Run now" }).click();
+  await expect(row.locator(".sched-badge")).toHaveText(/^(ran|running)$/);
 
-  await page.getByRole("button", { name: "Pause" }).click();
-  await expect(page.getByText("paused")).toBeVisible();
+  await row.getByRole("button", { name: "Pause" }).click();
+  // Same span as the "next …" preview above — pausing is what replaces one
+  // with the other, so asserting on the span proves the swap, not just that
+  // the word appears somewhere on screen.
+  await expect(row.locator(".sched-next")).toHaveText("paused");
 });
 
 test("an unverifiable slash prompt warns but does not block saving", async ({ page }) => {
