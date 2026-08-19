@@ -29,12 +29,15 @@ const VERSION_PATH = "/api/version";
 const USAGE_PATH = "/api/instance/usage";
 // The boot-time self-ping from server.js that restores persisted services.
 const SERVICES_RESTORE_PATH = "/api/instance/services-restore";
+// The boot-time self-ping from server.js that starts the schedule ticker.
+const SCHEDULER_PATH = "/api/instance/scheduler";
 function isServiceTokenPath(pathname: string): boolean {
   return (
     pathname === HEALTH_PATH ||
     pathname === VERSION_PATH ||
     pathname === USAGE_PATH ||
-    pathname === SERVICES_RESTORE_PATH
+    pathname === SERVICES_RESTORE_PATH ||
+    pathname === SCHEDULER_PATH
   );
 }
 

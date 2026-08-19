@@ -97,19 +97,17 @@ const countsAsActivity = (url) => {
     p !== "/api/instance/idle" &&
     p !== "/api/instance/usage" &&
     p !== "/api/version" &&
-    p !== "/api/instance/services-restore"
+    p !== "/api/instance/services-restore" &&
+    p !== "/api/instance/scheduler"
   );
 };
 
-// Restore the persisted service registry (lib/services.ts) as soon as the
-// server is up: managed dev servers with desired_state='running' restart with
-// the box, keeping their public <slug>--<host> URLs live without anyone opening
-// the app. Done via a loopback self-ping (the route runs inside Next's module
-// graph, which this plain-Node file can't import); the service token clears the
-// origin gate the same way the health probes do. Retries paper over Next's
-// route compilation on a cold dev boot.
-function restorePersistedServices() {
-  const url = `http://127.0.0.1:${port}/api/instance/services-restore`;
+// Loopback boot pings: work the SERVER must start on its own, without waiting
+// for a browser. The service token clears the origin gate the same way the
+// health probes do; retries paper over Next's route compilation on a cold dev
+// boot.
+function bootPing(label, path) {
+  const url = `http://127.0.0.1:${port}${path}`;
   const headers = process.env.SERVICE_TOKEN
     ? { "x-service-token": process.env.SERVICE_TOKEN }
     : {};
@@ -122,7 +120,7 @@ function restorePersistedServices() {
       })
       .catch((err) => {
         if (attempts < 5) setTimeout(ping, 3000).unref?.();
-        else console.warn(`[services] boot restore ping failed: ${err?.message || err}`);
+        else console.warn(`[${label}] boot ping failed: ${err?.message || err}`);
       });
   };
   ping();
@@ -262,7 +260,10 @@ Promise.all([app.prepare(), cfAccessImport, localOriginImport, serviceRouterImpo
   }
 
   server.listen(port, hostname, () => {
-    restorePersistedServices();
+    // Managed dev servers with desired_state='running' restart with the box.
+    bootPing("services", "/api/instance/services-restore");
+    // Scheduled tasks fire with the server, not with a browser.
+    bootPing("scheduler", "/api/instance/scheduler");
     const auth = cfAccess.originAuthEnabled()
       ? `origin auth ON — Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`
       : "origin auth OFF — set CF_ACCESS_*" +

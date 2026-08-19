@@ -168,6 +168,28 @@ export function useOrchestrator() {
     usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask });
 
   // ---------- project recaps + landing decision ----------
+  //
+  // "I want the project home" as an explicit intent, held as the project it was
+  // asked for. The landing decision (useRecaps) auto-picks the first real task
+  // whenever no task is selected and there's no recap to show, which is the
+  // right default on arrival and made the project-home button in the tasks
+  // banner a DEAD control: it cleared selTask, and the effect — which has
+  // selTask in its deps — immediately put a task back. For any project with a
+  // task, no stored recap, and activity in the last 8 hours (i.e. the one
+  // you're working in), the landing pane was simply unreachable, and with it
+  // the Schedules card and its pause control.
+  //
+  // Held per project id, and cleared the moment a task is selected, so it's a
+  // one-shot intent rather than a mode: the next time you enter this project
+  // normally, auto-selection is back.
+  const [homeProj, setHomeProj] = useState<string | null>(null);
+  const showProjectHome = useCallback(() => {
+    setSelTask(null);
+    setHomeProj(selProjRef.current);
+  }, []);
+  useEffect(() => { if (selTask) setHomeProj(null); }, [selTask]);
+  useEffect(() => { setHomeProj(null); }, [selProj]);
+
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
@@ -176,6 +198,7 @@ export function useOrchestrator() {
     settingsReady: appDefaultsReady,
     backgroundJobs: appDefaults.background_jobs !== "off",
     recapMode,
+    homeRequested: !!selProj && homeProj === selProj,
   });
 
   // Load server-backed app defaults (reasoning / permission mode) once.
@@ -697,7 +720,7 @@ export function useOrchestrator() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    setSelTask, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
+    setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
     setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
