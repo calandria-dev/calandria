@@ -305,8 +305,14 @@ export type TaskView = "list" | "board";
 // consistent with how project/task selection is persisted.
 export type View = "workspace" | "settings" | "insights";
 // Purely cosmetic, client-only look-and-feel prefs (the "Appearance" panel).
-export interface Appearance { theme: "light" | "dark"; density: string; }
-export const DEFAULT_APPEARANCE: Appearance = { theme: "dark", density: "1" };
+// `wide` is a string ("0"/"1") rather than a boolean so every field goes through
+// the same `setAppearance(key, value: string)` setter that theme and density use.
+export interface Appearance { theme: "light" | "dark"; density: string; wide: string; }
+export const DEFAULT_APPEARANCE: Appearance = { theme: "dark", density: "1", wide: "0" };
+// What `.tw` / `.composer-inner` cap their column at, applied as --text-width on
+// <html>. "Reading" is the 760px measure the design was drawn at; "full" lets the
+// transcript and composer use the whole session pane (the 28px gutter stays).
+export const TEXT_WIDTH = { reading: "760px", full: "none" };
 
 // App-level preferences (distinct from Appearance, which is purely cosmetic). These
 // are personal/client-only so they live in the same localStorage store as Appearance;

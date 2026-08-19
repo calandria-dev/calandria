@@ -3,7 +3,7 @@
 // UI is covered by 02-core-flow); this spec is about how they render.
 
 import { expect, test } from "@playwright/test";
-import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
+import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, sendMessage, uid, waitForIdle } from "./helpers";
 
 const PROJECT = `Views ${uid()}`;
 
@@ -60,6 +60,69 @@ test("board view shows kanban columns with cards in the right places", async ({ 
   await page.getByRole("tab", { name: "List", exact: true }).click();
   await expect(page.locator(".bcol.k-done")).toBeHidden();
   await expect(listRow(page, "Alpha task")).toBeVisible();
+});
+
+// Appearance → Text width. Needs a viewport wide enough that the session pane is
+// bigger than the 760px reading measure, otherwise "reading" and "full" render
+// identically and the test would pass on a no-op. Default columns are
+// 236 + 352 + 430 = 1018px, so 2000 leaves ~980 for the transcript.
+test.describe("full-width text", () => {
+  test.use({ viewport: { width: 2000, height: 900 } });
+
+  const READING = 760;
+  const WIDE_TASK = "Width task";
+
+  // The transcript only exists once a task has a session — an unstarted one shows
+  // the "Start session" hero instead. Its own task so the layout tests above keep
+  // their fixtures untouched.
+  test.beforeAll(async ({ request }) => {
+    const projects = await (await request.get("/api/projects")).json();
+    const proj = projects.find((p: { name: string }) => p.name === PROJECT);
+    const task = await createTask(request, { projectId: proj.id, title: WIDE_TASK });
+    await sendMessage(request, task.id);
+    await waitForIdle(request, task.id);
+  });
+
+  // The transcript column and the composer share the measure, so both move together.
+  const columnWidths = async (page: import("@playwright/test").Page) => {
+    const transcript = await page.locator(".transcript").boundingBox();
+    const tw = await page.locator(".transcript .tw").boundingBox();
+    const composer = await page.locator(".composer-inner").boundingBox();
+    return { pane: transcript!.width, tw: tw!.width, composer: composer!.width };
+  };
+
+  test("widens the transcript to the pane and persists across a reload", async ({ page }) => {
+    await gotoApp(page);
+    await page.getByText(PROJECT).first().click();
+    await listRow(page, WIDE_TASK).click();
+    await expect(page.locator(".transcript .tw")).toBeVisible();
+
+    // Default off: the capped reading measure, narrower than the pane it sits in.
+    const before = await columnWidths(page);
+    expect(before.tw).toBeCloseTo(READING, 0);
+    expect(before.composer).toBeCloseTo(READING, 0);
+    expect(before.pane).toBeGreaterThan(READING + 50);
+
+    // Two "Appearance" buttons open the same panel (projects rail + titlebar).
+    await page.getByTitle("Appearance").first().click();
+    await page.getByRole("button", { name: "Full", exact: true }).click();
+
+    const after = await columnWidths(page);
+    expect(after.tw).toBeCloseTo(after.pane, 0);
+    expect(after.tw).toBeGreaterThan(READING);
+    expect(after.composer).toBeGreaterThan(READING);
+
+    // Persisted, not just in-memory: survives a full reload of the app.
+    await page.reload();
+    await expect(page.locator(".transcript .tw")).toBeVisible();
+    const reloaded = await columnWidths(page);
+    expect(reloaded.tw).toBeCloseTo(after.tw, 0);
+
+    // And it toggles back off.
+    await page.getByTitle("Appearance").first().click();
+    await page.getByRole("button", { name: "Reading", exact: true }).click();
+    expect((await columnWidths(page)).tw).toBeCloseTo(READING, 0);
+  });
 });
 
 async function idOf(page: import("@playwright/test").Page, title: string): Promise<string> {
