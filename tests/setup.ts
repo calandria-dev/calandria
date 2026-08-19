@@ -5,6 +5,9 @@ import { afterAll } from "vitest";
 
 // This file runs before each test file's module graph is loaded, so env set
 // here is seen by lib/config.ts (which reads ORCH_WORKTREES_DIR at import time).
+// Everything here is a default the whole suite depends on; env that only a fork
+// or one machine needs goes in the optional tests/setup.local.ts layer instead
+// (see vitest.config.ts).
 
 // realpathSync: os.tmpdir() is a symlink on macOS (/var -> /private/var) and git
 // reports realpaths, so resolve it up front to keep path comparisons exact.
@@ -15,13 +18,6 @@ process.env.ORCH_WORKTREES_DIR = path.join(root, "worktrees");
 // isolated orchestrator.db instead of the user's real one. Read at import time
 // by lib/config.ts, so it must be set here (before the module graph loads).
 process.env.ORCH_DB_DIR = path.join(root, "db");
-
-// Control plane v2: isolate its SQLite db and pin the seams to their in-process
-// mocks. Set here (before the module graph loads) so lib/control-plane/config.ts
-// reads ORCH_CP_DB_DIR at import time and cpDb() opens the throwaway file.
-process.env.ORCH_CP_DB_DIR = path.join(root, "cp-db");
-process.env.ORCH_PROVISIONER = "mock";
-process.env.ORCH_BILLING_PROVIDER = "mock";
 
 // Hermetic agent credentials: a developer's real API key exported in their
 // shell would otherwise leak into the suite — hasApiKey()/hasOpenAiKey() are
