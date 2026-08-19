@@ -202,6 +202,11 @@ export type ClaudeVerifyT = {
 export type AgentCapabilitiesT = {
   apiKeyHint: string | null;
   loginStyle: "paste_code" | "device_code";
+  // Whether a task on this agent also gets the MCP servers the user configured
+  // for its CLI, plus the driver's one-line why. A real difference between the
+  // agents when picking one for a task, so the Agents section states it.
+  inheritsUserMcpServers: boolean;
+  userMcpServersNote: string | null;
 };
 export type AgentInfoT = {
   id: string;
