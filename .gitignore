@@ -36,6 +36,14 @@ yarn-error.log*
 .env*
 !.env.example
 
+# machine-local files. The `.local.` infix is the near-universal signal for
+# "this describes THIS machine" — host paths, LAN addresses, ports, credential
+# wiring — none of which belongs in a public repo. A `docker-compose.local.yml`
+# was a tracked file here once, which is the gap this closes.
+# Opt in the same way .env.example does, with an explicit negation:
+#   !docker-compose.local.yml
+*.local.*
+
 # vercel
 .vercel
 
