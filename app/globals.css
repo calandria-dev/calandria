@@ -949,6 +949,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .perm-rule{display:flex;align-items:center;gap:10px;padding:7px 11px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel);}
 .perm-rule code{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--ink-1);word-break:break-all;}
 .perm-rule .opt{font-size:11px;color:var(--ink-4);white-space:nowrap;}
+/* Add-a-rule row: project · command · how much of it · Allow. The command is
+   the only part that grows, so the two selects and the button keep their size. */
+.perm-add{display:flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:620px;margin-bottom:8px;}
+.perm-add select{flex-shrink:0;font-size:11.5px;color:var(--ink-2);background:var(--raise);border:1px solid var(--line-strong);border-radius:7px;padding:7px 6px;cursor:pointer;max-width:170px;}
+.field .perm-add input[type=text]{flex:1;min-width:160px;padding:7px 10px;font-size:12.5px;}
+.perm-add .btn{flex-shrink:0;}
 
 /* ---------------- markdown (assistant / user message bodies) ---------------- */
 .md > :first-child{margin-top:0;}
