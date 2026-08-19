@@ -43,9 +43,34 @@ const PINNED = [
   "app/api/instance/services-restore/route.ts",
 ];
 
+// Modules that MAY reach an SDK, but only ever through a dynamic `import()`.
+//
+// Different failure from the one above, same async externals. lib/runner.ts
+// statically imports the driver registry, so it IS an async module — and under
+// Turbopack an async module's `namespaceObject` is a PROMISE until its factory
+// settles, so every static importer of it must be compiled async too. Turbopack
+// does that for POST /messages and lib/scheduler.ts but NOT for lib/autoStart.ts,
+// because that file closes a cycle back into the async graph:
+//
+//   autoStart → runner → agents/registry → agents/claude/driver
+//             → (call-time import) autoStart
+//
+// Every emitted copy of autoStart came out a plain sync factory, so `startTurn`
+// was read off a pending Promise and EVERY auto-start launch died with
+// "(0 , n.startTurn) is not a function" in production while dev worked fine.
+// A dynamic import doesn't depend on that propagation — Turbopack's asyncModule
+// resolves its promise with the populated namespace — so these entries must not
+// grow a STATIC path to an SDK, even though a dynamic one is expected and fine.
+const DYNAMIC_ONLY = [
+  "lib/autoStart.ts", // in the driver's cycle; must not rely on async propagation
+];
+
 // import/export/require specifiers, coarse but sufficient for this repo's
-// plain static imports (no dynamic import() in the pinned graph).
+// plain static imports.
 const SPECIFIER_RE = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["']([^"']+)["']/g;
+// The same set minus `import(`: what the module graph links at INIT time, which
+// is the only edge async-ness propagates along.
+const STATIC_SPECIFIER_RE = /(?:from\s+|require\s*\(\s*)["']([^"']+)["']/g;
 const IMPORT_BARE_RE = /^\s*import\s+["']([^"']+)["']/gm;
 
 function resolveLocal(fromFile: string, spec: string): string | null {
@@ -60,8 +85,11 @@ function resolveLocal(fromFile: string, spec: string): string | null {
   throw new Error(`unresolvable import "${spec}" from ${path.relative(ROOT, fromFile)}`);
 }
 
-/** All bare-package deps reachable from `entry`, with one witness path each. */
-function reachablePackages(entry: string): Map<string, string[]> {
+/**
+ * All bare-package deps reachable from `entry`, with one witness path each.
+ * `staticOnly` drops dynamic `import()` edges, leaving the init-time graph.
+ */
+function reachablePackages(entry: string, staticOnly = false): Map<string, string[]> {
   const packages = new Map<string, string[]>();
   const seen = new Set<string>();
   const queue: { file: string; trail: string[] }[] = [{ file: path.join(ROOT, entry), trail: [entry] }];
@@ -70,7 +98,7 @@ function reachablePackages(entry: string): Map<string, string[]> {
     if (seen.has(file)) continue;
     seen.add(file);
     const src = fs.readFileSync(file, "utf8");
-    for (const re of [SPECIFIER_RE, IMPORT_BARE_RE]) {
+    for (const re of [staticOnly ? STATIC_SPECIFIER_RE : SPECIFIER_RE, IMPORT_BARE_RE]) {
       re.lastIndex = 0;
       for (let m; (m = re.exec(src)); ) {
         const spec = m[1];
@@ -96,6 +124,25 @@ describe("import-graph layering (async-external poisoning)", () => {
             `import capability data from lib/agents/capabilities.ts instead of the driver registry.`
         ).toBeUndefined();
       }
+    });
+  }
+
+  for (const entry of DYNAMIC_ONLY) {
+    it(`${entry} reaches an agent SDK only through a dynamic import()`, () => {
+      const staticPackages = reachablePackages(entry, true);
+      for (const sdk of FORBIDDEN) {
+        const trail = staticPackages.get(sdk);
+        expect(
+          trail,
+          trail && `${entry} STATICALLY reaches ${sdk} via:\n  ${trail.join("\n  → ")}\n` +
+            `Turbopack does not propagate async-ness into this module (it closes a cycle back ` +
+            `through the driver registry), so a static import of an async module reads every ` +
+            `export off a pending Promise. Reach lib/runner.ts with \`await import()\` instead.`
+        ).toBeUndefined();
+      }
+      // …and the pin is not vacuous: it still reaches one dynamically.
+      const all = reachablePackages(entry);
+      expect(FORBIDDEN.some((sdk) => all.has(sdk))).toBe(true);
     });
   }
 
