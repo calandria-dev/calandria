@@ -297,6 +297,17 @@ export function listAutoStartCandidates(dependsOnId: string): Task[] {
     .all(dependsOnId) as Task[];
 }
 
+/**
+ * Same dependency set, order-insensitively — edges have no order, so a caller
+ * that resubmits the stored list in a different order hasn't changed anything.
+ * Shared by the two writers that have to tell a real edit from a resubmission:
+ * PATCH /api/tasks/[id] (the edit dialog posts every field, touched or not) and
+ * update_task (which must not report a change it didn't make).
+ */
+export function sameDepSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
+}
+
 // Replace a task's dependency set. Drops self-references and ids outside the
 // task's project, then guards against cycles before persisting. Throws on a cycle.
 export function setTaskDeps(taskId: string, dependsOn: string[]): void {

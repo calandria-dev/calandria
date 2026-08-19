@@ -245,7 +245,23 @@ implication — the user-facing PATCH can write `suggested` directly.
 Fields are title, description, priority and status, minus `cancelled` — on the caller's own
 row that calls `abortTurn()` and would tear down the very turn making the call, and on
 anyone else's it's a decision that needs a stated reason a bare status write has nowhere to
-put (see `withdraw_suggestion` below). Like `createSuggestedTask`, `updateTaskForAgent()`
+put (see `withdraw_suggestion` below) — plus **`blocked_by`**, which is the only way an agent
+can order a plan at all. `suggest_task` takes blockers in the very call that invents the
+task, i.e. before any of them has an id, so a planning turn — which files its tasks as one
+parallel batch and works out the sequence afterwards — could never use it, and never did:
+every dependency edge on a real board was drawn by the UI's edit dialog. The supported recipe
+is two-phase, and the prompt in `buildProjectContext()` now spells it out rather than
+mentioning dependencies once as a constraint: file every task, **wait for the ids**, then
+call `update_task` per dependent task. Two rules differ from `suggest_task`'s version of the
+param, both because this one REPLACES a set rather than filling a blank one. It is refused on
+the **caller's own row** — blockers gate whether a task may START and a session calling this
+already has, so the edge would be inert on the scheduler and a lie on the board (`on_hold` is
+the honest verb, and the refusal says so). And an unusable ref **fails the whole call**, named
+one at a time with its reason (not a task id / in another project / the task itself), where
+`suggest_task` partitions and reports: wiring the refs we recognized and dropping the rest
+would delete edges the agent never mentioned and still report success. A cycle refuses
+everything too, `setTaskDeps` first and the row patch after, so a rename in the same call
+can't land under a refusal that says nothing changed. Like `createSuggestedTask`, `updateTaskForAgent()`
 re-reads both rows before writing, because a detached turn's snapshot can outlive the row
 and a target read a moment ago may have been started since; the eligibility check and the
 write share one synchronous block, which is atomic given better-sqlite3 and a single Node

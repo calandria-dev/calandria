@@ -163,6 +163,16 @@ describe("agent tool defs reach both servers", () => {
     }
   });
 
+  it("offers update_task's `blocked_by` on both sides", () => {
+    // The only way an agent can order a plan: suggest_task takes blockers in the
+    // call that invents the task, so a batch of new tasks has no ids to
+    // reference yet. Mounted on one side only, that agent can file a roadmap but
+    // never say what waits on what.
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+      expect(read(rel), `update_task's \`blocked_by\` param is missing from ${rel}`).toContain("UPDATE_TASK.params.blocked_by");
+    }
+  });
+
   it("offers withdraw_suggestion's `task` + `reason` on both sides", () => {
     // The retraction verb, and the explanation that makes it worth having.
     // Mounted on one side only, an agent on the other has nothing but

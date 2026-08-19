@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createProject, createTask, getTask, updateTask } from "@/lib/store";
+import { createProject, createTask, getTask, getTaskDeps, updateTask } from "@/lib/store";
 import { createSuggestedTask } from "@/lib/agentTools";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 
@@ -147,6 +147,49 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       });
       expect(res.status).toBe(400);
       expect(getTask(bystander.id)!.title).toBe("Bystander");
+    } finally {
+      await close();
+    }
+  });
+
+  it("orders a plan in two phases, and refuses to order the caller's own row", async () => {
+    // The whole point of the parameter: a planning turn files its tasks, gets
+    // ids back, and comes BACK to say what waits on what. Driven over the real
+    // bridge because this is where the model names the target, and asserted on
+    // the DB because a "Blocked by 1 task(s)" that wrote no edge is the exact
+    // failure this feature is meant to end.
+    const project = createProject({ name: "Codex-Order" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const first = createSuggestedTask(project, { title: "Phase one", description: "" }).task!;
+    const second = createSuggestedTask(project, { title: "Phase two", description: "" }).task!;
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const ok = (await client.callTool({
+        name: "update_task",
+        arguments: { task: second.id, blocked_by: [first.id] },
+      })) as ToolResult;
+      expect(ok.isError).toBeFalsy();
+      expect(getTaskDeps(second.id)).toEqual([first.id]);
+
+      // The caller's own row is refused — it's already running, so an edge on it
+      // would gate nothing and mislabel the board.
+      const own = (await client.callTool({
+        name: "update_task",
+        arguments: { blocked_by: [first.id] },
+      })) as ToolResult;
+      expect(own.isError).toBe(true);
+      expect(own.content[0].text).toContain("on_hold");
+      expect(getTaskDeps(caller.id)).toEqual([]);
+
+      // A ref the server can't use fails the WHOLE call: the edge already there
+      // survives rather than being replaced by the half we recognized.
+      const bad = (await client.callTool({
+        name: "update_task",
+        arguments: { task: second.id, blocked_by: [first.id, "ghost"] },
+      })) as ToolResult;
+      expect(bad.isError).toBe(true);
+      expect(getTaskDeps(second.id)).toEqual([first.id]);
     } finally {
       await close();
     }

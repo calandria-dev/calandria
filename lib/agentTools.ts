@@ -24,6 +24,7 @@ import {
   getTaskDeps,
   listProjectsPlain,
   listTasks,
+  sameDepSet,
 } from "./store";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
@@ -346,6 +347,15 @@ export interface UpdateTaskInput {
   description?: string;
   priority?: Priority;
   status?: Status;
+  /**
+   * The COMPLETE set of task ids this task is blocked by — it replaces whatever
+   * was there, the way the edit dialog's DepPicker does, and `[]` clears it.
+   * Omitted leaves the edges alone. Ids only: unlike suggest_task's version of
+   * this parameter there is no per-session title map to resolve against here,
+   * and inventing one would make the same string mean different things in the
+   * two tools depending on what the process happened to have created.
+   */
+  blocked_by?: string[];
 }
 
 const PRIORITIES: Priority[] = ["hi", "med", "lo"];
@@ -379,8 +389,12 @@ export function isInertSuggestion(t: Task): boolean {
 
 /**
  * The `update_task` tool. Mirrors the user-facing PATCH /api/tasks/[id] over the
- * fields it accepts, minus the run-control and dependency plumbing that belongs
- * to the UI.
+ * fields it accepts, minus the run-control plumbing that belongs to the UI.
+ * `blocked_by` is here rather than there-only because it is the ONLY way an
+ * agent can express order at all: suggest_task takes blockers in the same call
+ * that invents the task, so a planning turn — which files its tasks in one
+ * parallel batch and therefore has no ids yet — could never use it. See the
+ * dependency block below for the two rules that differ from suggest_task's.
  *
  * `caller` is the session's own task and is TRUSTED — it never comes from the
  * model. The Claude driver closes over it; the bridge's endpoint reads it from
@@ -486,14 +500,85 @@ export function updateTaskForAgent(
     }
   }
 
+  // Dependencies. This is the parameter that makes an ordered plan expressible
+  // at all: suggest_task can only take blockers in the call that invents the
+  // task, i.e. before any of them has an id, so a planning turn that files its
+  // tasks in one batch and works out the order afterwards had nowhere to put it.
+  //
+  // Two rules that differ from suggest_task's version, both because this one
+  // REPLACES an existing set rather than filling in a blank one:
+  //   - never on the caller's own row (below): blockers gate whether a task may
+  //     START, and a session calling this has already started, so the edge would
+  //     be inert on the scheduler and a lie on the board;
+  //   - fail-closed on a ref it can't use. suggest_task partitions and reports,
+  //     which is safe when the task is new and has no blockers to lose; here,
+  //     wiring the refs we recognized and dropping the rest would quietly delete
+  //     edges the agent never mentioned and still report success.
+  let nextDeps: string[] | null = null;
+  if (input.blocked_by !== undefined) {
+    if (own)
+      return fail(
+        "Could not update this task: `blocked_by` can't be set on the task this session is running in. Dependencies gate " +
+          "whether a task may START and this one already has, so the edge would do nothing but show the board a blocked task " +
+          'that is running. Use status "on_hold" to park this task, or set the dependency on the suggestion that has to wait. ' +
+          "Nothing was changed."
+      );
+    const here = getProject(cur.project_id)?.name ?? "this project";
+    // The element type is only a promise on the HTTP path — the bridge's array
+    // arrives from JSON, so a stray number would reach .trim() as a TypeError
+    // and surface as a 500 instead of the refusal the agent can act on.
+    const wanted = [...new Set(input.blocked_by.map((r) => (typeof r === "string" ? r.trim() : "")).filter(Boolean))];
+    // Named one by one with the reason each failed — "ignored 2 refs" tells an
+    // agent nothing it can act on, and the fix differs per reason (re-read the
+    // id, file the blocker into the same project, drop the self-reference).
+    const problems = wanted.flatMap((ref) => {
+      if (ref === cur.id) return [`"${ref}" is this task itself`];
+      const blocker = getTask(ref);
+      if (!blocker) return [`"${ref}" isn't a task id`];
+      if (blocker.project_id !== cur.project_id)
+        return [`"${ref}" is in ${getProject(blocker.project_id)?.name ?? "another project"}, not ${here}`];
+      return [];
+    });
+    if (problems.length)
+      return fail(
+        `Could not update ${what}: ${problems.join("; ")}. \`blocked_by\` takes task ids (from suggest_task or list_tasks) ` +
+          `in the same project, and it replaces the whole set — so nothing was changed rather than wiring the refs that did ` +
+          `work and silently dropping the rest. Pass the complete list of blockers.`
+      );
+    if (!sameDepSet(getTaskDeps(cur.id), wanted)) {
+      nextDeps = wanted;
+      changed.push(wanted.length ? `blocked by ${wanted.length} task(s)` : "no longer blocked by anything");
+    }
+  }
+
   if (!changed.length) {
     return {
       task: cur,
-      text: `No change: "${cur.title}" already matches what you passed (status ${cur.status}, priority ${cur.priority}).`,
+      // The dep count rides along only when deps were part of the call — edges
+      // have no order, so resubmitting the same set in a different order lands
+      // here, and "status not_started, priority med" alone would read as if the
+      // tool had ignored the blockers.
+      text:
+        `No change: "${cur.title}" already matches what you passed (status ${cur.status}, priority ${cur.priority}` +
+        `${input.blocked_by !== undefined ? `, blocked by ${getTaskDeps(cur.id).length} task(s)` : ""}).`,
       autoStartDependents: false,
     };
   }
 
+  // Edges before fields, so the two writes can't half-land. setTaskDeps runs its
+  // cycle guard BEFORE it opens its transaction, so a rejection here has touched
+  // nothing at all — whereas patching the row first and then throwing would
+  // leave a rename applied under a refusal that says nothing changed.
+  if (nextDeps) {
+    try {
+      setTaskDeps(cur.id, nextDeps);
+    } catch (e) {
+      return fail(
+        `Could not update ${what}: ${(e as Error).message} — those blockers would make a loop, so the task could never ` +
+          `start. Nothing was changed. Check what each task is already blocked by with list_tasks.`
+      );
+    }
+  }
   const updated = updateTask(cur.id, patch);
   if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 
@@ -501,8 +586,16 @@ export function updateTaskForAgent(
   // "task_edited" rather than "task_updated" because title/description/priority
   // moved too, and the coarse snapshot on the wire only carries status —
   // listeners have to refetch the row to see the rest (app/api/events/route.ts).
+  // A deps-only change needs it most: the edges live in their own table, so the
+  // refetch is the only thing that redraws the blocked badge — on the NEIGHBOUR
+  // rows as well, which is why PATCH /api/tasks/[id] counts deps as an edit too.
   publishGlobal(updated.id, { type: "task_edited" });
 
+  // No auto-start sweep for a dependency change, and none is missing: clearing
+  // a task's last blocker could only launch the task ITSELF, and the only rows
+  // this tool writes edges on are inert tray suggestions — listAutoStartCandidates
+  // requires `suggested = 0`, so an unreviewed suggestion is never a candidate.
+  // The sweep below is for the OTHER direction: tasks blocked by this one.
   const done = updated.status === "done" && cur.status !== "done";
   return {
     task: updated,

@@ -21,6 +21,27 @@
 // (claim the turn slot, ensure the worktree under the per-task lock, persist +
 // publish the generic opening prompt, hand off to lib/runner.ts) — kept in
 // step with that route; the turn itself runs detached exactly like any other.
+//
+// lib/runner.ts is reached through a call-time `await import()`, NOT a static
+// import, and that is load-bearing in the production build. The runner imports
+// the driver registry and therefore both ESM-only agent SDKs, which Turbopack
+// emits as ASYNC externals — so lib/runner.ts compiles to an async module,
+// whose `module.namespaceObject` is a PROMISE until its factory settles. Every
+// static importer of it must therefore be compiled async too, and Turbopack
+// does that for the other two (POST /messages, lib/scheduler.ts) but NOT for
+// this file, because this file sits in a cycle with the async graph:
+//
+//   autoStart → runner → agents/registry → agents/claude/driver
+//             → (call-time import) autoStart
+//
+// The driver's edge is already dynamic so the cycle isn't closed at init, but
+// Turbopack still sees it and bails out of propagating async-ness here: every
+// emitted copy of this module was a plain sync factory, so `startTurn` was read
+// off a pending Promise and auto-start died with "startTurn is not a function"
+// on every single launch. A dynamic import is immune — Turbopack's asyncModule
+// resolves its promise WITH the populated namespace — which is the same reason
+// /api/instance/scheduler reaches lib/scheduler.ts that way. Pinned by the
+// dynamic-only case in tests/importGraph.test.ts.
 
 import fs from "node:fs";
 import {
@@ -31,7 +52,6 @@ import {
   addMessage,
   listAutoStartCandidates,
 } from "@/lib/store";
-import { startTurn } from "@/lib/runner";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
@@ -89,11 +109,23 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
   // task blocked-but-startable; the user gets the route's error when they try.
   if (!project || !project.repo_path.trim()) return;
   // Atomically claim the turn slot. Occupied means a turn is already live
-  // (e.g. the user pressed Start in the same instant) — nothing to do.
+  // (e.g. the user pressed Start in the same instant) — nothing to do. Claimed
+  // before the first await, deliberately: the claim is what makes a concurrent
+  // launch a no-op rather than a double turn, and tests/autoStart.ts reads its
+  // synchronous absence as proof that no launch is in flight at all.
   const controller = claimTurn(taskId);
   if (!controller) return;
   let launched = false;
+  // The generation the row was marked `running` under, once it has been — i.e.
+  // how far a failed launch has to unwind. Null while there's nothing to undo.
+  let claimedGen: number | null = null;
+  // See the header note on why this import is dynamic. Resolved outside the
+  // per-task lock (loading the runner pulls in both agent SDKs the first time)
+  // and before anything is written, so a module that fails to load unwinds
+  // through the finally's claim release and nothing else.
+  let runner: typeof import("@/lib/runner") | null = null;
   try {
+    const { startTurn } = (runner = await import("@/lib/runner"));
     fs.mkdirSync(project.repo_path, { recursive: true });
     // Same lock the merge/sync routes and the POST route hold: never launch a
     // turn into a worktree mid-rewrite.
@@ -126,6 +158,7 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
       // Mark running immediately, but defer `started` until the agent actually
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });
+      claimedGen = gen;
       publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
       // The note rides the runner's syncNote slot: persisted + published at the
       // top of the turn, so the transcript records WHY this session began — and
@@ -136,6 +169,20 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
       startTurn(fresh, project, userText, note, controller);
       launched = true;
     });
+  } catch (err) {
+    // Nobody is watching this launch — it's fire-and-forget behind a status
+    // change — so a throw after the row was marked running would leave the task
+    // spinning forever on a turn that never started, with an opening prompt and
+    // no answer, until the next server boot's recoverFromCrash() noticed. Undo
+    // the flag and put the failure where the user will actually see it: the
+    // task's own transcript, through the same notice the runner uses when a
+    // turn dies. Honours the promise the comment above makes — a failed launch
+    // leaves the task cleanly retryable.
+    if (claimedGen !== null) {
+      updateTask(taskId, { running: 0 });
+      runner?.publishTurnError(taskId, claimedGen, err instanceof Error ? err.message : String(err));
+    }
+    throw err;
   } finally {
     if (!launched) unregisterTurn(taskId, controller);
   }

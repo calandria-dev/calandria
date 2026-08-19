@@ -309,8 +309,9 @@ function orchestratorServer(
           // tests/codexMcpBridge.test.ts pins these against the shared arrays.
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_TASK.params.priority),
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
+          blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
         },
-        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus }) => {
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[] }) => {
           // The closed-over `task` is the CALLER — the snapshot taken at turn
           // start, and the one identity the model can't influence. `args.task`
           // is the target it named; updateTaskForAgent decides whether that may
