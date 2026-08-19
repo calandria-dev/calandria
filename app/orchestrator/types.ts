@@ -132,6 +132,21 @@ export interface BulkMoveResult {
   dropped: { task_id: string; depends_on_id: string }[];
   /** Edges that survived because both ends moved together. */
   kept: { task_id: string; depends_on_id: string }[];
+  /** One per worktree torn down to let a started task move — the part of the
+   *  account nobody can get back, so the report names it. */
+  discarded: { id: string; branch: string; dirty: boolean; ahead: number }[];
+}
+
+// What discarding a task's checkout would cost — GET /api/tasks/[id]/move for
+// one, GET /api/tasks/move?ids=… for a selection. Mirrors lib/taskMove.ts
+// DiscardPreview.
+export interface DiscardPreview {
+  has_worktree: boolean;
+  safe: boolean;
+  dirty: boolean;
+  ahead: number;
+  reason: string | null;
+  branch: string;
 }
 
 // Divergence status for the reopened-task sync banner (GET /api/tasks/:id/sync).

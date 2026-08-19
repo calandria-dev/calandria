@@ -5,7 +5,7 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, permissionOptions, type BulkMoveResult, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
 import { agentLabel, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -178,17 +178,6 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
   return { switching, contextFlip };
 }
 
-// What a started task's move would destroy — GET /api/tasks/[id]/move, mirroring
-// lib/taskMove.ts DiscardPreview.
-type DiscardPreview = {
-  has_worktree: boolean;
-  safe: boolean;
-  dirty: boolean;
-  ahead: number;
-  reason: string | null;
-  branch: string;
-};
-
 // Re-parent a misfiled task. Acts immediately (like Delete below it) rather
 // than riding along with Save: a move isn't a field set — it renumbers the
 // task's order in the destination, re-derives what it inherited from the old
@@ -204,8 +193,8 @@ type DiscardPreview = {
 // clean" and "an afternoon of unsaved work" are the same button otherwise.
 //
 // (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
-// which can keep a link whose both ends are moving, as one task alone can't.
-// Discarding worktrees is deliberately not offered there; see the bulk route.)
+// which can keep a link whose both ends are moving, as one task alone can't,
+// and which asks this same question once per started row.)
 function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle;
   onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>;
@@ -308,13 +297,23 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
  * in the wrong project, which used to be one open-edit-pick-move round trip
  * each. One request, one transaction, one event for the other tabs.
  *
- * Two things it says that the single-task field can't. Dependencies: a link
+ * Three things it says that the single-task field can't. Dependencies: a link
  * whose BOTH ends are in the selection SURVIVES the move (it stays inside one
  * project, so nothing is violated) — the count of what's kept is previewed
  * beside the count of what drops, because "select the whole chain" is the
- * difference between the two. And refusals are per task: a started one in the
- * selection is reported by name afterwards rather than quietly left behind, so
- * the modal stays open on a partial result instead of closing on a half-truth.
+ * difference between the two. Refusals are per task: a task that couldn't move
+ * is reported by name afterwards rather than quietly left behind, so the modal
+ * stays open on a partial result instead of closing on a half-truth.
+ *
+ * And the started ones. A task that has run holds a worktree cut from the old
+ * repo and can only move by having it destroyed, which is a different
+ * irreversible answer for every row — so every row gets its OWN checkbox, off
+ * until ticked, carrying what that particular checkout holds (read for the
+ * whole selection in one go by GET /api/tasks/move). One switch over eleven of
+ * them would be a shrug; eleven answers is the thing itself. Ticking none is
+ * the old behaviour exactly, and a row left unticked is reported in `skipped`
+ * with its checkout untouched — three dirty worktrees don't refuse the eight
+ * clean ones.
  */
 export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjectId, onClose, onMove, onMoved }: {
   /** The picked rows, in list order. */
@@ -323,7 +322,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   tasks: TaskRow[];
   projects: ProjectRow[]; agents: AgentsBundle; sourceProjectId: string;
   onClose: () => void;
-  onMove: (ids: string[], projectId: string) => Promise<BulkMoveResult>;
+  onMove: (ids: string[], projectId: string, opts?: { discard?: string[]; discardUnsafe?: string[] }) => Promise<BulkMoveResult>;
   /** Ids that actually moved, so the caller can drop them from the selection. */
   onMoved: (movedIds: string[]) => void;
 }) {
@@ -331,15 +330,60 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   const [moving, setMoving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<BulkMoveResult | null>(null);
+  // Null until the read lands: "not known yet" and "nothing to discard" are
+  // different answers, and only one of them may be ticked.
+  const [previews, setPreviews] = useState<Record<string, DiscardPreview> | null>(null);
+  const [previewErr, setPreviewErr] = useState(false);
+  const [discard, setDiscard] = useState<string[]>([]);
+  const [confirm, setConfirm] = useState(false);
   const targets = useMemo(() => projects.filter((p) => p.id !== sourceProjectId), [projects, sourceProjectId]);
   const dest = targets.find((p) => p.id === target) ?? null;
   const src = projects.find((p) => p.id === sourceProjectId);
 
-  // The server's own eligibility rule, as far as the client can see it (it also
-  // refuses a task whose turn is merely in flight — hence the skip report).
-  const movable = selected.filter((t) => t.started === 0 && t.running === 0);
+  // What each row's checkout holds, for the whole selection in one read — a
+  // checkbox that doesn't say what it destroys is the blanket switch again,
+  // just spelled out N times. Fetched on open rather than when a destination is
+  // picked (unlike the single-task field): here it decides which rows can be
+  // ticked at all, so it's part of the list, not part of the confirmation.
+  const idKey = selected.map((t) => t.id).join(",");
+  useEffect(() => {
+    let alive = true;
+    if (!idKey) return;
+    jget<{ previews: Record<string, DiscardPreview> }>(`/api/tasks/move?${new URLSearchParams({ ids: idKey })}`)
+      .then((r) => { if (alive) setPreviews(r.previews); })
+      // Not fatal — the unstarted rows still move — but no row can be ticked
+      // without it, so the failure has to be visible rather than looking like
+      // "these worktrees hold nothing".
+      .catch(() => { if (alive) setPreviewErr(true); });
+    return () => { alive = false; };
+  }, [idKey]);
+
+  // A live turn can't be moved by any answer — nothing may delete a worktree an
+  // agent is writing into. Everything else that has run needs one: `started`
+  // alone is enough (the server refuses it even with the worktree already
+  // reclaimed), and a worktree on a task that never opened a session — a failed
+  // launch — needs it too, which only the preview can see.
+  const pv = previews ?? {};
+  const isLive = (t: TaskRow) => t.running === 1;
+  const needsAck = (t: TaskRow) => !isLive(t) && (t.started === 1 || !!pv[t.id]?.has_worktree);
+  // An answer can only be given once the question is on screen: until the read
+  // lands, a started row's box is inert. Ticking one on a "nothing to discard"
+  // that only meant "still loading" would destroy a checkout nobody described.
+  const canAck = previews !== null;
+  const ticked = new Set(discard);
+  const unsafeOf = (t: TaskRow) => { const p = pv[t.id]; return !!p?.has_worktree && !p.safe; };
+  const movable = selected.filter((t) => !isLive(t) && (!needsAck(t) || ticked.has(t.id)));
   const stuck = selected.length - movable.length;
   const moving_ = new Set(movable.map((t) => t.id));
+  // Only what's actually going: a ticked row whose turn started under the modal
+  // is refused anyway, and its answer shouldn't ride along.
+  const discarding = movable.filter((t) => ticked.has(t.id));
+  const unsafeTicked = discarding.filter(unsafeOf);
+  const toggle = (id: string, on: boolean) => {
+    // Arming describes the answers as they stand, so changing one disarms.
+    setConfirm(false);
+    setDiscard((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id)));
+  };
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
@@ -357,6 +401,9 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
 
   const move = async () => {
     if (!dest) return;
+    // Two-step once anything is being destroyed, like the single-task field and
+    // like Delete: the first click only arms it, with the total on screen.
+    if (discarding.length > 0 && !confirm) return setConfirm(true);
     setMoving(true);
     setErr(null);
     try {
@@ -365,7 +412,15 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
       // started while this was open, or one whose turn is merely in flight,
       // which the client can't see at all). Sending them all means the server
       // reports what it refused instead of us quietly dropping it.
-      const res = await onMove(selected.map((t) => t.id), dest.id);
+      //
+      // The acknowledgements are the narrow half: only the rows ticked, and
+      // `discardUnsafe` only where the user was actually shown unsaved work.
+      // A row that picked one up since is refused by the server's own re-read,
+      // which is what keeps "nothing unsaved dies unnamed" true here too.
+      const res = await onMove(selected.map((t) => t.id), dest.id, {
+        discard: discarding.map((t) => t.id),
+        discardUnsafe: unsafeTicked.map((t) => t.id),
+      });
       onMoved(res.moved);
       // A clean sweep needs no report — anything left behind does.
       if (res.skipped.length === 0) onClose();
@@ -385,8 +440,11 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>{result ? "Done" : "Cancel"}</button>
         {!result && (
-          <button className="btn btn-accent" disabled={!dest || moving || movable.length === 0} onClick={move}>
-            {Icon.check()} {moving ? "Moving…" : dest ? `Move to ${dest.name}` : "Move"}
+          <button className={confirm ? "btn-danger on" : "btn btn-accent"} disabled={!dest || moving || movable.length === 0} onClick={move}>
+            {confirm ? Icon.x() : Icon.check()}{" "}
+            {moving ? "Moving…" : !dest ? "Move" : discarding.length === 0 ? `Move to ${dest.name}` : confirm
+              ? `Move and discard ${discarding.length} worktree${discarding.length !== 1 ? "s" : ""}`
+              : `Discard ${discarding.length} worktree${discarding.length !== 1 ? "s" : ""} and move…`}
           </button>
         )}
       </>}>
@@ -394,44 +452,81 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
         <div className="field">
           <div className="lab">Result</div>
           <div className="hlp">{result.moved.length} task{result.moved.length !== 1 ? "s" : ""} moved to {dest?.name}.</div>
-          <div className="hlp" style={{ color: "var(--amber)", marginTop: 8 }}>
-            {result.skipped.length} stayed behind:
-          </div>
-          <div className="dep-list" style={{ marginTop: 6 }}>
-            {result.skipped.map((s) => (
-              <div key={s.id} className="dep-row" style={{ cursor: "default" }}>
-                <span className="dep-title">{byId.get(s.id)?.title ?? s.id}</span>
-                <span className="dep-status">{s.reason.split(" — ")[0]}</span>
+          {result.discarded.length > 0 && (
+            <div className="hlp" style={{ color: "var(--amber)", marginTop: 4 }}>
+              {result.discarded.length} worktree{result.discarded.length !== 1 ? "s" : ""} and{" "}
+              {result.discarded.length !== 1 ? "their branches" : "its branch"} were deleted from {src?.name ?? "the old project"}
+              &rsquo;s repo. The next turn cuts a fresh one from {dest?.name}.
+            </div>
+          )}
+          {result.skipped.length > 0 && (
+            <>
+              <div className="hlp" style={{ color: "var(--amber)", marginTop: 8 }}>
+                {result.skipped.length} stayed behind:
               </div>
-            ))}
-          </div>
+              <div className="dep-list" style={{ marginTop: 6 }}>
+                {result.skipped.map((s) => (
+                  <div key={s.id} className="dep-row" style={{ cursor: "default" }}>
+                    <span className="dep-title">{byId.get(s.id)?.title ?? s.id}</span>
+                    <span className="dep-status">{s.reason.split(" — ")[0]}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <>
           <div className="field">
-            <div className="lab">Moving <span className="opt">— unstarted tasks only</span></div>
+            <div className="lab">Moving <span className="opt">— tick a started task to discard its worktree</span></div>
             <div className="dep-list">
               {selected.map((t) => {
+                const ack = needsAck(t);
+                const on = ticked.has(t.id);
+                const p = pv[t.id];
+                const unsafe = unsafeOf(t);
                 const can = moving_.has(t.id);
                 return (
-                  <div key={t.id} className="dep-row" style={{ cursor: "default", opacity: can ? 1 : 0.55 }}>
+                  // The row IS the question for a started task: the checkbox
+                  // beside the cost of that one checkout, off until answered.
+                  <label key={t.id} className={`dep-row ${on ? "on" : ""}`} style={{ cursor: ack && canAck ? "pointer" : "default", opacity: can || ack ? 1 : 0.55 }}>
+                    {ack && <input type="checkbox" checked={on} disabled={!canAck} onChange={(e) => toggle(t.id, e.target.checked)} />}
                     <StatusDot status={t.status} />
                     <span className="dep-title">{t.title}</span>
-                    {!can && <span className="dep-status" style={{ color: "var(--amber)" }}>started — stays</span>}
-                  </div>
+                    <span className="dep-status" style={{ color: unsafe || previewErr ? "var(--red)" : ack || isLive(t) ? "var(--amber)" : undefined }}>
+                      {isLive(t) ? "running — stays"
+                        : !ack ? ""
+                        : !canAck ? (previewErr ? "couldn't read its worktree" : "reading its worktree…")
+                        : unsafe ? `${on ? "discards" : "holds"} ${p!.reason}`
+                        : p?.has_worktree ? `${on ? "discards" : "holds"} worktree ${p.branch}`
+                        : on ? "started — moves, no worktree left" : "started — nothing to discard"}
+                    </span>
+                  </label>
                 );
               })}
             </div>
+            {previewErr && (
+              <div className="hlp" style={{ color: "var(--red)" }}>
+                Couldn&rsquo;t read what these worktrees hold, so none of them can be discarded from here — a checkbox that
+                can&rsquo;t say what it destroys isn&rsquo;t worth ticking. The rest of the selection still moves.
+              </div>
+            )}
+            {unsafeTicked.length > 0 && (
+              <div className="hlp" style={{ color: "var(--red)" }}>
+                {unsafeTicked.length === 1 ? "One ticked worktree holds" : `${unsafeTicked.length} ticked worktrees hold`} work
+                nothing else has: it is destroyed permanently, with no way back.
+              </div>
+            )}
             {stuck > 0 && (
               <div className="hlp" style={{ color: "var(--amber)" }}>
-                {stuck} of these {stuck === 1 ? "has" : "have"} a git worktree cut from {src?.name ?? "this project"}&rsquo;s repo, so
-                {stuck === 1 ? " it stays" : " they stay"} put. The rest still move.
+                {stuck} of these {stuck === 1 ? "stays" : "stay"} put — {stuck === 1 ? "it holds" : "they hold"} a git worktree cut
+                from {src?.name ?? "this project"}&rsquo;s repo, or {stuck === 1 ? "is" : "are"} mid-turn. The rest still move.
               </div>
             )}
           </div>
           <div className="field">
             <div className="lab">Destination</div>
-            <ProjectTargetList targets={targets} value={target} name="move-tasks-project" onChange={(id) => { setTarget(id); setErr(null); }} />
+            <ProjectTargetList targets={targets} value={target} name="move-tasks-project" onChange={(id) => { setTarget(id); setErr(null); setConfirm(false); }} />
             {dest ? (
               <div className="hlp" style={{ color: "var(--amber)" }}>
                 Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.

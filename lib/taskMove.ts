@@ -37,17 +37,22 @@ export interface TaskMoveOutcome extends TaskMoveBatch {
 
 export interface MoveOptions {
   /**
-   * Tear down each mover's worktree + branch so a started task can move. The
-   * caller's acknowledgement that the checkout is being thrown away.
+   * The ids whose worktree + branch may be torn down so a started task can
+   * move — the caller's acknowledgement that those checkouts are being thrown
+   * away. A list rather than a flag over the batch: each worktree is a separate
+   * irreversible answer, and one switch over eleven of them isn't consent. A
+   * started task not named here is refused and reported like any other.
    */
-  discardWorktree?: boolean;
+  discardWorktree?: readonly string[];
   /**
-   * The second acknowledgement, required only when the worktree turns out to
-   * hold work that removing it would lose (uncommitted edits, or commits the
-   * base branch never absorbed). Without it such a task is refused rather than
-   * quietly shredded — see the comment on the check below.
+   * The second acknowledgement, required only for a task whose worktree turns
+   * out to hold work that removing it would lose (uncommitted edits, or commits
+   * the base branch never absorbed). Per id for the same reason as above, and
+   * on the same footing: naming one task's unsaved work says nothing about its
+   * neighbour's. Without it such a task is refused rather than quietly
+   * shredded — see the comment on the check below.
    */
-  discardUnsafe?: boolean;
+  discardUnsafe?: readonly string[];
 }
 
 /** Prefix the routes and the UI match on to offer the stronger acknowledgement. */
@@ -73,11 +78,12 @@ export const UNSAFE_DISCARD_REASON = "the worktree has unsaved work";
  * With `discardWorktree` the critical section is no longer synchronous — the
  * teardown is git — but the locks are what made it safe, not its shortness.
  * The order is deliberate: check the destination, screen for liveness, remove
- * the worktrees, and only then write. Teardown before the write means a crash
- * between the two leaves a row pointing at a directory that isn't there, which
- * both launch paths already self-heal (they treat a missing worktree_path as
- * "cut a new one"); the other order would strand a worktree and branch in the
- * old repo with nothing left pointing at them, which nothing cleans up.
+ * the worktrees named in it, and only then write. Teardown before the write
+ * means a crash between the two leaves a row pointing at a directory that
+ * isn't there, which both launch paths already self-heal (they treat a missing
+ * worktree_path as "cut a new one"); the other order would strand a worktree
+ * and branch in the old repo with nothing left pointing at them, which nothing
+ * cleans up.
  *
  * Returns null when the destination doesn't exist. Callers check the project up
  * front too (so a bad id fails without queueing behind anyone's lock), but it
@@ -99,20 +105,33 @@ export async function moveTasksToProject(
     const live = new Set(ids.filter((id) => hasTurn(id) && getTask(id)?.project_id !== projectId));
     let candidates = ids.filter((id) => !live.has(id));
 
+    // Only the tasks the caller answered for. Everything else keeps the plain
+    // rules — a started one among them is still refused, with its checkout
+    // untouched, which is what makes a partly-acknowledged selection safe to
+    // send whole.
+    const discardIds = new Set(opts.discardWorktree ?? []);
+    const unsafeIds = new Set(opts.discardUnsafe ?? []);
     const discarded: WorktreeDiscard[] = [];
     const refused: { id: string; reason: string }[] = [];
-    if (opts.discardWorktree) {
-      for (const id of candidates) {
-        const outcome = await discardCheckout(id, projectId, opts);
-        if (!outcome) continue;
-        if ("reason" in outcome) refused.push({ id, reason: outcome.reason });
-        else discarded.push(outcome);
-      }
-      const stuck = new Set(refused.map((r) => r.id));
-      candidates = candidates.filter((id) => !stuck.has(id));
+    for (const id of candidates) {
+      if (!discardIds.has(id)) continue;
+      const outcome = await discardCheckout(id, projectId, { discardUnsafe: unsafeIds.has(id) });
+      if (!outcome) continue;
+      if ("reason" in outcome) refused.push({ id, reason: outcome.reason });
+      else discarded.push(outcome);
     }
+    const stuck = new Set(refused.map((r) => r.id));
+    candidates = candidates.filter((id) => !stuck.has(id));
 
-    const result = moveTasks(candidates, projectId, { resetCheckout: opts.discardWorktree });
+    // Asked again after the teardowns, which is the only part of this that
+    // awaits: the destination was checked above while nothing had happened yet,
+    // and a project deleted during a git subprocess would reach moveTasks as a
+    // throw — a 500 where the contract, and the caller, expect 404. The
+    // checkouts are gone either way; nothing can undo that. What this avoids is
+    // answering with a crash.
+    if (discarded.length > 0 && !getProject(projectId)) return null;
+
+    const result = moveTasks(candidates, projectId, { resetCheckout: discardIds });
     const skipped = [
       ...result.skipped,
       ...refused,
@@ -149,7 +168,7 @@ export async function moveTasksToProject(
 async function discardCheckout(
   id: string,
   projectId: string,
-  opts: MoveOptions
+  opts: { discardUnsafe: boolean }
 ): Promise<WorktreeDiscard | { reason: string } | null> {
   const task = getTask(id);
   if (!task || task.project_id === projectId) return null;
@@ -216,6 +235,26 @@ export interface DiscardPreview {
   reason: string | null;
   /** The branch that would be deleted with it. */
   branch: string;
+}
+
+/**
+ * The same read for a whole selection, keyed by id — what the bulk modal needs
+ * to put a cost beside each started row before any box is ticked. Unknown ids
+ * are simply absent: a stale selection shouldn't cost the other ten their
+ * preview, and the move itself reports them anyway.
+ *
+ * Sequential on purpose. Every started task costs a pair of git subprocesses,
+ * and running a whole tray of them at once would fork a small army for a read
+ * nobody is waiting on with their finger on a button; tasks with no checkout
+ * (the common case in a selection) answer without touching git at all.
+ */
+export async function previewDiscards(ids: string[]): Promise<Record<string, DiscardPreview>> {
+  const out: Record<string, DiscardPreview> = {};
+  for (const id of new Set(ids)) {
+    const preview = await previewDiscard(id);
+    if (preview) out[id] = preview;
+  }
+  return out;
 }
 
 export async function previewDiscard(taskId: string): Promise<DiscardPreview | null> {

@@ -47,8 +47,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
  * the bulk route — this one just translates a one-task result into the strict
  * manner it has always had: a refusal is a 409, not a report. (POST
  * /api/tasks/move is the same operation for a selection, where a refusal is a
- * line item instead — and where discarding worktrees is deliberately not on
- * offer, since each one is its own irreversible acknowledgement.)
+ * line item instead, and where both acknowledgements are lists of ids — one per
+ * worktree the user answered for.)
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -60,12 +60,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (!getProject(projectId)) return NextResponse.json({ error: "project not found" }, { status: 404 });
 
+  // The operation takes the acknowledgements per id, since a selection can
+  // answer for some of its tasks and not others; one task's answer is that
+  // list with one entry in it.
   const result = await moveTasksToProject([id], projectId, {
-    discardWorktree: body?.discard_worktree === true,
+    discardWorktree: body?.discard_worktree === true ? [id] : [],
     // Only meaningful alongside the first acknowledgement, and the operation
     // reads it that way — but never infer one from the other: they answer
     // different questions ("drop the checkout" vs "drop the work in it").
-    discardUnsafe: body?.discard_unsafe === true,
+    discardUnsafe: body?.discard_unsafe === true ? [id] : [],
   });
   // The destination was deleted while we queued for the task lock.
   if (!result) return NextResponse.json({ error: "project not found" }, { status: 404 });

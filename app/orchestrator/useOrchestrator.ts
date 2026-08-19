@@ -603,8 +603,21 @@ export function useOrchestrator() {
   // task_moved event for every other tab. Unlike the single move it does NOT
   // reject on a refusal; a task that couldn't move comes back in `skipped` and
   // stays where it is, so the caller can report it and keep it selected.
-  const moveTasksToProject = async (ids: string[], projectId: string): Promise<BulkMoveResult> => {
-    const res = await jsend<BulkMoveResult>("/api/tasks/move", "POST", { ids, project_id: projectId });
+  //
+  // `discard` carries the ids whose worktree the user ticked, and `discardUnsafe`
+  // those whose unsaved work they were shown by name — per task, because that's
+  // how the answers were given.
+  const moveTasksToProject = async (
+    ids: string[],
+    projectId: string,
+    opts?: { discard?: string[]; discardUnsafe?: string[] }
+  ): Promise<BulkMoveResult> => {
+    const res = await jsend<BulkMoveResult>("/api/tasks/move", "POST", {
+      ids,
+      project_id: projectId,
+      ...(opts?.discard?.length ? { discard_worktree: opts.discard } : {}),
+      ...(opts?.discardUnsafe?.length ? { discard_unsafe: opts.discardUnsafe } : {}),
+    });
     const gone = new Set(res.moved);
     setTasks((prev) => prev.filter((x) => !gone.has(x.id)));
     setSelTask((cur) => (cur && gone.has(cur) ? null : cur));
