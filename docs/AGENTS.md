@@ -102,7 +102,9 @@ Three upstream differences are visible:
   the point above: an inherited server's tools are offered to the model and every call
   returns `user cancelled MCP tool call`. Operator unmounts them rather than dangle tools
   that cannot work. Set `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you
-  have set `default_tools_approval_mode = "approve"` on your own servers.
+  have set `default_tools_approval_mode = "approve"` on your own servers. Each agent's
+  card in **Settings → Agents** says which side of this it is on, so you can see it
+  before picking an agent for a task.
 
 ## Adding another agent
 

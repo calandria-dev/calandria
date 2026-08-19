@@ -16,6 +16,7 @@ export const MOCK_CAPABILITIES: AgentCapabilities = {
   supportsMcpTools: true,
   // Hermetic by construction: the mock agent reads no user configuration at all.
   inheritsUserMcpServers: false,
+  userMcpServersNote: null,
   reportsCostUsd: false,
   costIsEstimated: false,
   supportsResume: true,
