@@ -41,8 +41,13 @@ test("a list row snoozes into the Snoozed group and wakes back into its own", as
   await expect(group(page, "Snoozed")).toHaveCount(0);
 
   // The moon button in the row's right gutter, then a one-click preset.
+  // Selected by data-preset, NOT by text: each row also renders its wake time,
+  // so after ~21:00 local the "3 hours" row's sub-label reads "tomorrow at
+  // 12:07 AM" and a hasText:"Tomorrow" filter matches two rows (Playwright's
+  // hasText is case-insensitive substring). That made this test pass all
+  // afternoon and fail in CI at 21:07 UTC.
   await row(page, "Snooze me").locator(".snz-set").click();
-  await page.locator(".popover .pop-item").filter({ hasText: "Tomorrow" }).click();
+  await page.locator('.popover .pop-item[data-preset="tomorrow"]').click();
 
   // It left Not started for Snoozed, and says when it comes back.
   await expect(group(page, "Snoozed")).toBeVisible();

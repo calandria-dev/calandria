@@ -48,7 +48,11 @@ export function SnoozeMenu({ onPick, onClose }: { onPick: (until: number) => voi
     <Popover onClose={onClose}>
       <div className="pop-sec">Snooze until</div>
       {snoozePresets(now).map((p) => (
-        <div key={p.key} className="pop-item" onClick={() => commit(p.until, p.label)}>
+        // data-preset is a stable hook for tests. Matching these rows on their
+        // TEXT is ambiguous by nature: every row also renders its wake time, so
+        // late in the evening the "3 hours" row's sub-label reads "tomorrow
+        // at 12:07 AM" and collides with the "Tomorrow" row's label.
+        <div key={p.key} data-preset={p.key} className="pop-item" onClick={() => commit(p.until, p.label)}>
           <div>
             <div>{p.label}</div>
             <div className="pi-sub">{wakeLabel(p.until, now)}</div>
