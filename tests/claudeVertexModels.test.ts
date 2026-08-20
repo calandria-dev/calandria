@@ -126,8 +126,10 @@ describe("claudeCapabilities on Vertex", () => {
     caps = claudeCapabilities({ CLAUDE_CONFIG_DIR: configDir(VERTEX_SETTINGS) });
   });
 
-  it("offers exactly the same set of values — nothing measured as working is dropped", () => {
-    expect(caps.models.map((m) => m.value)).toEqual(CLAUDE_CAPABILITIES.models.map((m) => m.value));
+  it("drops only fable — every value measured as working is still offered", () => {
+    expect(caps.models.map((m) => m.value)).toEqual(
+      CLAUDE_CAPABILITIES.models.map((m) => m.value).filter((v) => v !== "fable")
+    );
   });
 
   it("does not disturb anything but the model list", () => {
@@ -188,11 +190,14 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "sonnet[1m]").sub).toContain("same as sonnet");
   });
 
-  // The one entry that genuinely fails here — and it fails on GCP project
-  // configuration, not on anything Operator controls, so it is labeled rather
-  // than dropped (another Vertex project with data sharing on can select it).
-  it("names the reason Fable 403s instead of silently offering or dropping it", () => {
-    expect(optionFor(caps, "fable").sub).toMatch(/data sharing/i);
+  // The one entry that genuinely fails here (403, publisher data sharing not
+  // enabled). Dropped rather than labeled: on this fork Fable arrives with the
+  // direct-platform arrangement with Anthropic, not by flipping a GCP setting,
+  // so until then it would 403 every turn it was picked for.
+  it("drops fable, which 403s on this project", () => {
+    expect(caps.models.find((m) => m.value === "fable")).toBeUndefined();
+    // still offered on the plain Anthropic path, where it works
+    expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable 5");
   });
 
   it("leaves an unmapped family alone rather than inventing a resolution for it", () => {

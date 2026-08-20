@@ -128,14 +128,12 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
 //    measured against a fifth of its real window. The aliases below take their
 //    window and their subtitle from the id the mapping actually resolves to.
 //
-// The one entry that does NOT run is `fable`, and it fails on Vertex project
-// configuration rather than on anything Operator controls: HTTP 403, "Access to
-// this model requires data sharing to be enabled for publisher 'anthropic'".
-// It's kept in the list, labeled with that reason, because the requirement is
-// per-project — another Vertex instance with data sharing on can select it, and
-// dropping the row would also strand any task already persisted on `fable`.
-// Detecting it for real would take a live inference call per capability read,
-// which this module (sync, offline, on lib/store.ts's hot path) can't make.
+// The one entry that does NOT run is `fable`: HTTP 403, "Access to this model
+// requires data sharing to be enabled for publisher 'anthropic'". It's dropped
+// rather than labeled with that reason, because on this fork the answer isn't
+// "flip a GCP setting" — Fable arrives when the direct-platform arrangement with
+// Anthropic is finalized, and until then an entry that 403s every turn is just a
+// trap. Restoring it is deleting one line from the filter below.
 
 /** The window Claude Code runs for a resolved model id: `[1m]` opts into the 1M
  *  beta, everything else gets the standard window. Fable is 1M natively. */
@@ -168,10 +166,7 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     "opus[1m]": "Opus (1M)",
     "sonnet[1m]": "Sonnet (1M)",
   };
-  return CLAUDE_CAPABILITIES.models.map((m) => {
-    if (m.value === "fable") {
-      return { ...m, sub: "needs `anthropic` data sharing enabled on the GCP project" };
-    }
+  return CLAUDE_CAPABILITIES.models.filter((m) => m.value !== "fable").map((m) => {
     const base = family[m.value];
     if (!base) return m; // a pinned id, or a family this instance doesn't map
 
