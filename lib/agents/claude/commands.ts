@@ -19,6 +19,27 @@
 // CONFIG that decides the answer (settingSources — the menu has to describe the
 // commands a REAL turn would honor, so this list must match the turn's), and
 // isolate everything else.
+//
+// This is the app's ONLY slash-command enumeration. lib/schedule/commands.ts
+// used to have a second one (send "noop", read `slash_commands` off the init
+// message) which answered the same question with none of the isolation above —
+// firing the user's SessionStart hooks unattended inside the scheduler's sweep,
+// on every save and every fire. Two implementations of one question is how the
+// composer's menu and the schedule validator come to disagree, and a
+// disagreement there means the editor rejects a command the menu offers.
+//
+// One thing the mechanism genuinely cannot see, measured rather than assumed
+// (CLI 2.1.228, a machine with four MCP servers exposing 16 prompts): MCP
+// PROMPT commands — the `/mcp__<server>__<prompt>` form — are absent from
+// `supportedCommands()` and present in the init message's `slash_commands`. Not
+// a timing artifact and not strictMcpConfig: re-asking at 3s, 8s and 15s with
+// the user's whole fleet inheritable returned the same 59 commands, byte for
+// byte, and the init message never arrives at all while the prompt generator
+// withholds (no turn, no init). Getting those names therefore costs a real
+// prompt and a real MCP fleet spawn, which is the whole thing this path exists
+// not to do — so callers that must not produce a false negative treat an absent
+// `mcp__` command as unverifiable rather than unknown (see the schedule
+// validator).
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
@@ -36,30 +57,48 @@ const TTL_MS = 60_000;
 // A hung CLI must not hang the menu. The measured cost of a real enumeration is
 // ~330ms (see the note on strictMcpConfig below), so this is generous by an
 // order of magnitude and only ever fires on a genuinely wedged process.
+//
+// This is the ENUMERATION's deadline, not any one caller's, and deliberately
+// not a parameter: several callers share one in-flight probe, so a caller's
+// deadline expiring must not kill a probe the others are still waiting on. A
+// caller that needs a tighter bound than this races the returned promise
+// against its own clock (lib/schedule/commands.ts does; SCHEDULE_PROBE_MS is
+// 20s, so in the default configuration this fires first and the child dies
+// here rather than being left to the backstop).
 const TIMEOUT_MS = 15_000;
 
-// Cache entries are keyed by worktree, and worktrees are per task — an instance
+// Most cache entries are a worktree, and worktrees are per task — an instance
 // that's been up for weeks would otherwise accumulate one entry per task ever
 // opened, including the deleted ones. Small enough to be free, large enough
-// that no realistic session evicts a task the user is still typing in.
+// that no realistic session evicts a task the user is still typing in (the
+// schedule validator's project repo paths are a handful on top of that).
 const MAX_ENTRIES = 64;
 
 type Entry = { at: number; commands: AgentCommand[] };
 
 // HMR-surviving, like every other piece of long-lived server state in this app
-// (lib/events.ts, lib/abort.ts, lib/asks.ts). Keyed by cwd because that IS the
-// input that changes the answer: a task's worktree decides which project-level
-// .claude/commands are in scope.
+// (lib/events.ts, lib/abort.ts, lib/asks.ts). Keyed by cwd AND setting sources,
+// because those are the two inputs that change the answer: a task's worktree
+// decides which project-level .claude/commands are in scope, and the sources
+// decide whether project-level ones are read at all. Sources are a constant
+// today (every caller passes the driver's SETTING_SOURCES), which is exactly
+// why keying on cwd alone would go wrong silently the first time they aren't.
 const g = globalThis as unknown as {
   __orchClaudeCommands?: Map<string, Entry>;
-  __orchClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[]>>;
+  __orchClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[] | null>>;
 };
 const cache = (g.__orchClaudeCommands ??= new Map());
 const inFlight = (g.__orchClaudeCommandsInFlight ??= new Map());
 
+const cacheKey = (cwd: string, settingSources: SettingSource[]) => `${settingSources.join(",")} @ ${cwd}`;
+
 async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<AgentCommand[]> {
   const abort = new AbortController();
+  // unref'd: this is a watchdog on a background probe, not work anyone is owed.
+  // The server's own listeners hold the loop open; a short-lived process (the
+  // suite, a script) should be free to exit without waiting out the deadline.
   const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
+  timer.unref?.();
   let q: ReturnType<typeof query> | null = null;
   try {
     q = query({
@@ -111,40 +150,71 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
 }
 
 /**
- * The slash commands a Claude session rooted at `cwd` would expand.
- *
- * Cached with a short TTL and deduped while in flight, because this is called
- * from a UI keystroke: several tabs opening the same task must not each spawn a
- * CLI. Best-effort by contract — a missing CLI, a dead login or a wedged
- * process resolves to an empty list, which degrades the menu to Operator's own
- * commands rather than failing the composer.
+ * One enumeration per (cwd, sources), shared by everyone who asks while it is
+ * running. Resolves to `null` on failure and never rejects; the caller decides
+ * what a failure means, because they don't agree — see listClaudeCommands.
  */
-export async function listClaudeCommands(cwd: string, settingSources: SettingSource[]): Promise<AgentCommand[]> {
-  const hit = cache.get(cwd);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.commands;
-
-  const pending = inFlight.get(cwd);
-  if (pending) return pending;
+function startEnumeration(
+  key: string,
+  cwd: string,
+  settingSources: SettingSource[]
+): Promise<AgentCommand[] | null> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
 
   const run = enumerate(cwd, settingSources)
     .then((commands) => {
       // Re-insert to make this the newest key, so the eviction below drops the
       // least recently RESOLVED entry rather than an arbitrary one.
-      cache.delete(cwd);
-      cache.set(cwd, { at: Date.now(), commands });
+      cache.delete(key);
+      cache.set(key, { at: Date.now(), commands });
       while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
       return commands;
     })
-    .catch(() => {
-      // Don't cache a failure: the next keystroke should retry, not inherit a
-      // minute of emptiness from one bad spawn.
-      const stale = cache.get(cwd);
-      return stale?.commands ?? [];
-    })
+    // Don't cache a failure: the next keystroke should retry, not inherit a
+    // minute of emptiness from one bad spawn.
+    .catch(() => null)
     .finally(() => {
-      inFlight.delete(cwd);
+      inFlight.delete(key);
     });
 
-  inFlight.set(cwd, run);
+  inFlight.set(key, run);
   return run;
+}
+
+/**
+ * The slash commands a Claude session rooted at `cwd` would expand, or `null`
+ * when we could not find out.
+ *
+ * That distinction is the contract. An empty list and a failed spawn are the
+ * same shape and opposite facts, and the two callers need opposite things from
+ * them: the composer's menu degrades to Operator's own commands either way
+ * (`?? []` at the driver), while the schedule validator must say "couldn't
+ * check" rather than "that command doesn't exist" — reading a dead login as an
+ * empty registry there settles a scheduled run `failed` and mints nothing,
+ * every morning, for a command that is in fact registered.
+ *
+ * Cached with a short TTL and deduped while in flight, because this is called
+ * from a UI keystroke: several tabs opening the same task must not each spawn a
+ * CLI, and several schedules on one project must not each spawn one inside a
+ * single sweep.
+ *
+ * `refresh` bypasses the TTL and, on failure, refuses the stale entry too — for
+ * the caller that is about to turn "absent from this list" into a refusal and
+ * needs the absence to be a fact rather than a fact from a minute ago.
+ */
+export async function listClaudeCommands(
+  cwd: string,
+  settingSources: SettingSource[],
+  { refresh = false }: { refresh?: boolean } = {}
+): Promise<AgentCommand[] | null> {
+  const key = cacheKey(cwd, settingSources);
+  if (!refresh) {
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < TTL_MS) return hit.commands;
+  }
+
+  const commands = await startEnumeration(key, cwd, settingSources);
+  if (commands) return commands;
+  return refresh ? null : (cache.get(key)?.commands ?? null);
 }

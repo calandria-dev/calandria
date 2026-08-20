@@ -64,7 +64,9 @@ The app talks to coding agents only through the `AgentDriver` interface.
   hardcoded. `GET /api/tasks/[id]/commands` serves it, filtered by `lib/agentCommands.ts`;
   a driver that omits it leaves the menu with Operator's own commands. The Claude
   implementation reads the SDK's initialization response without sending a model request,
-  under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`).
+  under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`). It is the
+  app's only command enumeration: the schedule editor's prompt validation asks the same
+  function, so the menu and the validator cannot disagree about what a session expands.
 - **`GET /api/agents`** serves each driver's capability descriptor **plus its persisted
   connection state** to the client, which renders every run-control picker (model /
   reasoning / permission), the per-task agent picker, agent badges, and the cost/ask

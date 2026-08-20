@@ -12,12 +12,21 @@
 // an empty tray, and the user would conclude Jira had nothing for them. A
 // silent skip wearing a green check.
 //
-// The guard is free: the session's `init` message carries the whole registry
-// and arrives BEFORE any model call (~1.5s), so we start a session, read the
-// list, and abandon it without spending a token.
+// The guard is free: enumerating a session's commands costs no model request at
+// all. This file does not do that enumeration — lib/agents/claude/commands.ts
+// does, for the composer's "/" menu too, and asking it is the entire point.
+// There used to be a second implementation here (send "noop", read
+// `slash_commands` off the init message) which answered the same question with
+// none of that one's isolation: it ran the user's SessionStart hooks on every
+// save and every fire, unattended, inside the ticker's single-flight sweep; it
+// left an unresumable session in ~/.claude/projects each time; and it had no
+// cache, so a validate-per-blur editor paid a cold spawn per keystroke. What
+// remains here is the SCHEDULE'S half — which token is a command, what to do
+// when it isn't in the list, and the hard time bound the sweep needs.
 
 import { SCHEDULE_PROBE_MS } from "@/lib/config";
 import { SETTING_SOURCES } from "@/lib/agents/claude/driver";
+import { listClaudeCommands } from "@/lib/agents/claude/commands";
 import type { Project } from "@/lib/types";
 
 /**
@@ -73,73 +82,72 @@ function editDistance(a: string, b: string): number {
 }
 
 /**
- * The slash commands a session in this project would have. Costs no tokens: we
- * read the init message and abandon the session before the model is called.
+ * A command the shared probe structurally cannot see, so its absence from the
+ * registry proves nothing.
+ *
+ * MCP servers publish prompts as `/mcp__<server>__<prompt>`, and those names
+ * live only on a session's `init` message — never in `supportedCommands()`,
+ * which is what the probe reads (measured on CLI 2.1.228: 16 such prompts, 0 of
+ * them returned, unchanged by strictMcpConfig and unchanged 15s in). A
+ * scheduled turn DOES inherit the user's MCP servers and would expand them, so
+ * rejecting one here would fail a working job every morning. Reading them costs
+ * a real prompt plus the user's whole server fleet spawning unattended, which
+ * is the trade this path exists to refuse — so they come back `unchecked`.
+ */
+const isMcpPrompt = (command: string) => command.startsWith("mcp__");
+
+/**
+ * The slash commands a session in this project would have. Costs no tokens.
  * Best-effort — on any failure the caller degrades to "can't check" rather than
  * blocking the user.
  *
  * BOUNDED, and that is not a nicety. This runs inside fireSchedule(), which runs
- * inside tickSchedules()'s single-flight sweep: an unbounded `for await` on a
- * stalled CLI (a hung transport, a binary waiting on something that never
- * arrives) leaves `ticking` true forever and every schedule on the instance
- * silently stops firing — with no error, because nothing ever threw. So the
- * probe carries both an AbortSignal (which the SDK honors, killing the child)
- * and a hard race against the clock (which does not depend on the SDK honoring
- * anything): whichever fires, the caller gets `null` — "couldn't check" — and
- * the sweep moves on.
+ * inside tickSchedules()'s single-flight sweep: an unbounded read on a stalled
+ * CLI (a hung transport, a binary waiting on something that never arrives)
+ * leaves `ticking` true forever and every schedule on the instance silently
+ * stops firing — with no error, because nothing ever threw.
+ *
+ * Two bounds, and they COMPOSE rather than one replacing the other. The probe
+ * owns an abort on its own 15s deadline, which kills the child; the race below
+ * owns this caller's deadline, which does not depend on the SDK honoring
+ * anything. The inner one is the shorter of the two by default (15s against
+ * SCHEDULE_PROBE_MS's 20s), so the ordinary stall is cleaned up properly and
+ * this race is the backstop for an SDK that ignores its own signal. Aborting
+ * from here is deliberately NOT done: several schedules on one project share
+ * one in-flight probe, and one caller's deadline must not kill it out from
+ * under the others.
  */
 export async function listSlashCommands(
   project: Project,
   agent: string,
-  timeoutMs = SCHEDULE_PROBE_MS
+  timeoutMs = SCHEDULE_PROBE_MS,
+  { refresh = false }: { refresh?: boolean } = {}
 ): Promise<string[] | null> {
   if (agent !== "claude") return null; // only the Claude CLI has this surface
-  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const giveUp = new Promise<null>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      resolve(null);
-    }, Math.max(1, timeoutMs));
+    timer = setTimeout(() => resolve(null), Math.max(1, timeoutMs));
     timer.unref?.();
   });
   try {
-    // Promise.race, not just the abort: if a future SDK/CLI ignores the signal,
-    // the dangling read is leaked (bounded, and the child is killed) rather than
-    // allowed to hold the whole sweep hostage.
-    return await Promise.race([readRegistry(project, controller), giveUp]);
+    // The driver's own SETTING_SOURCES, and the driver's own probe: validating
+    // against a different registry than the scheduled turn actually gets would
+    // settle a run `failed` and mint nothing on a command that really is
+    // registered. Pinned by tests/claudeSettingSources.test.ts.
+    const commands = await Promise.race([
+      listClaudeCommands(project.repo_path || process.cwd(), SETTING_SOURCES, { refresh }),
+      giveUp,
+    ]);
+    if (!commands) return null;
+    // Aliases are registrations too — the CLI resolves /writing-plans to
+    // superpowers:writing-plans — and a false rejection here is the expensive
+    // kind, so they count.
+    return [...new Set(commands.flatMap((c) => [c.name, ...(c.aliases ?? [])]))];
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function readRegistry(project: Project, abortController: AbortController): Promise<string[] | null> {
-  const { query } = await import("@anthropic-ai/claude-agent-sdk");
-  const session = query({
-    prompt: "noop",
-    options: {
-      cwd: project.repo_path || process.cwd(),
-      // The driver's own constant, imported rather than copied: validating
-      // against a different set of sources than the scheduled turn actually
-      // gets would settle a run `failed` and mint nothing on a command that
-      // really is registered. Pinned by tests/claudeSettingSources.test.ts.
-      settingSources: SETTING_SOURCES,
-      permissionMode: "bypassPermissions",
-      abortController,
-    },
-  });
-  let commands: string[] | null = null;
-  for await (const message of session) {
-    if (message.type === "system" && message.subtype === "init") {
-      commands = (message as { slash_commands?: string[] }).slash_commands ?? [];
-      break;
-    }
-    if (message.type === "assistant") break; // shouldn't happen; don't spend a turn
-  }
-  await session.interrupt?.().catch(() => {});
-  return commands;
 }
 
 export interface PromptValidation {
@@ -149,9 +157,24 @@ export interface PromptValidation {
   suggestions?: string[];
   /** True when we could not reach the registry — save is allowed, with a note. */
   unchecked?: boolean;
+  /** Why it went unchecked, when the reason isn't "the probe failed". */
+  note?: string;
 }
 
-/** Validate a schedule's prompt. Non-slash prompts are always fine. */
+/**
+ * Validate a schedule's prompt. Non-slash prompts are always fine.
+ *
+ * The two verdicts are not symmetric, and the asymmetry is the design. "It's in
+ * the list" is cheap and safe to answer from a cached read. "It isn't in the
+ * list" is a refusal that, at fire time, settles the run `failed` and mints
+ * nothing — so it's re-read fresh before it's said, since the registry is
+ * cached for a minute and a command installed inside that minute would
+ * otherwise be refused for existing too recently.
+ *
+ * Both reads share ONE deadline. Two sequential probes each bounded by
+ * SCHEDULE_PROBE_MS would bound this at twice it, and the bound is what keeps a
+ * stalled CLI from wedging the sweep.
+ */
 export async function validatePrompt(
   prompt: string,
   project: Project,
@@ -160,12 +183,25 @@ export async function validatePrompt(
 ): Promise<PromptValidation> {
   const command = slashCommandOf(prompt);
   if (!command) return { ok: true };
+  const deadline = Date.now() + timeoutMs;
+
   const registry = await listSlashCommands(project, agent, timeoutMs);
   if (!registry) return { ok: true, unchecked: true };
   if (isRegistered(command, registry)) return { ok: true };
+  if (isMcpPrompt(command)) {
+    return {
+      ok: true,
+      unchecked: true,
+      note: `/${command} looks like an MCP prompt, which this check can't see. Saving without verifying.`,
+    };
+  }
+
+  const fresh = await listSlashCommands(project, agent, deadline - Date.now(), { refresh: true });
+  if (!fresh) return { ok: true, unchecked: true };
+  if (isRegistered(command, fresh)) return { ok: true };
   return {
     ok: false,
     error: `/${command} is not a command this project's sessions have. An unknown command does not fail — the run would report success having done nothing.`,
-    suggestions: suggestionsFor(command, registry),
+    suggestions: suggestionsFor(command, fresh),
   };
 }
