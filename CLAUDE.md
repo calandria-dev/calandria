@@ -88,3 +88,8 @@ This is the **open-source repo** — the whole local app lives here and all core
 
 `README.md` (concise product overview and quick start) · `docs/` (features, agents,
 services, self-hosting, and architecture) · `.env.example` (every env var, documented).
+
+**Before adding to this file, read `docs/CONTEXT_BUDGET.md`** — it is 19,250 measured tokens
+loaded into every session (37.8% of a real session's starting context), so new material
+belongs in the nearest directory-scoped `CLAUDE.md` unless it's needed before you'd open that
+directory. Don't restate `docs/` prose here; that duplication has already drifted.
