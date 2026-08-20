@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
  * future one) the orchestrator's task tools (suggest_task / list_tasks /
- * get_task / update_task / withdraw_suggestion), list_projects, expose_service
- * and ask_user.
+ * get_task / update_task / withdraw_suggestion), its runbook tools
+ * (create_runbook / list_runbooks / update_runbook), list_projects,
+ * expose_service and ask_user.
  *
  * The Claude driver mounts these as an in-process SDK MCP server, a construct
  * that only exists inside the Claude Agent SDK. This is the portable equivalent:
@@ -25,7 +26,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.ORCH_TASK_ID || "";
 const PROJECT_ID = process.env.ORCH_PROJECT_ID || "";
@@ -245,6 +246,63 @@ server.registerTool(
         return { content: [{ type: "text", text: "The user did not answer the question. Proceed with your best judgment." }] };
       }
     }
+  }
+);
+
+// ---- runbooks: a saved recipe the user can dispatch later. Inert until they
+// do, which is why create needs no review gate — but also why there is no
+// delete verb, and why update is refused for any runbook a schedule fires. The
+// bridge holds none of that policy; lib/runbookTools.ts does, shared with the
+// in-process Claude server so the two cannot drift.
+server.registerTool(
+  CREATE_RUNBOOK.name,
+  {
+    description: CREATE_RUNBOOK.description,
+    inputSchema: {
+      name: z.string().describe(CREATE_RUNBOOK.params.name),
+      description: z.string().describe(CREATE_RUNBOOK.params.description),
+      prompt: z.string().describe(CREATE_RUNBOOK.params.prompt),
+      priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
+      permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
+      project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+    },
+  },
+  async (args) => {
+    // No agent id is sent: the endpoint reads it off the CALLER'S row, so a
+    // model cannot file a recipe under another agent's name.
+    const data = await callInternal("create-runbook", args);
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  LIST_RUNBOOKS.name,
+  {
+    description: LIST_RUNBOOKS.description,
+    inputSchema: { project: z.string().optional().describe(LIST_RUNBOOKS.params.project) },
+  },
+  async ({ project }) => {
+    const data = await callInternal("list-runbooks", { project });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  UPDATE_RUNBOOK.name,
+  {
+    description: UPDATE_RUNBOOK.description,
+    inputSchema: {
+      runbook: z.string().describe(UPDATE_RUNBOOK.params.runbook),
+      name: z.string().optional().describe(UPDATE_RUNBOOK.params.name),
+      description: z.string().optional().describe(UPDATE_RUNBOOK.params.description),
+      prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
+      priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
+      permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+    },
+  },
+  async (args) => {
+    const data = await callInternal("update-runbook", args);
+    return { content: [{ type: "text", text: data.text }] };
   }
 );
 

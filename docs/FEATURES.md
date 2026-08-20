@@ -142,6 +142,86 @@ anything set to **Start when unblocked** behind it launches just as it would hav
 click. Cancelling counts because a cancelled task will never finish: waiting on one would
 leave the task behind it blocked forever.
 
+## Runbooks
+
+Plenty of work isn't one-off. "We have a lot of unpushed changes — push them and babysit the
+CI/CD." "Sweep my Jiras, IMs and email and report." The brief is the same every time, and
+before runbooks the only way to run one was to retype it.
+
+A **runbook** is a saved task-launch preset: a name, a one-line description, the prompt its
+first turn sends, and the agent, permission mode, priority and context setting to run it
+under. It lives on the project landing pane, above **Schedules** — click the project's name
+at the top of the task list to get there. Pressing **Run** mints a **fresh task**, exactly as
+a schedule firing does, and launches its first turn.
+
+That shared machinery is not a coincidence: a runbook is a schedule with the clock taken off.
+Both go through one dispatch path, so a recipe behaves identically whether a person pressed
+the button or the ticker did. The one deliberate difference is that a runbook dispatch is
+**attended** — you're standing there — so its turn may legitimately stop and ask you a
+permission question, where a scheduled run declines automatically because nobody is around
+to answer.
+
+**Instructions for this run** is the one field that changes per dispatch: an optional box
+appended to the saved prompt. It covers "…and focus on CEAP-1234" without turning the prompt
+into a template language with variables, defaults, escaping and validation — and without
+raising the question of what a *schedule* would fill those variables in with. If the recipe
+is a slash command, the extra text becomes part of that command's arguments.
+
+Everything else is decided when you save the runbook, and **copied onto the task at dispatch
+time** rather than read back later. The task is the record of what actually ran; editing the
+recipe tomorrow must not rewrite the history of what happened today.
+
+**There is no run history of its own.** A schedule needs one because its defining failure is
+silently *not happening* at 08:30 with nobody watching — an occurrence that never fired leaves
+no other trace. A dispatch produces a visible task immediately, in the tray you're already
+looking at, so "last run" is just a link to the most recent task the runbook created.
+
+Other things the card does:
+
+- **Copy to…** duplicates a recipe into another project as an independent row. Not a shared
+  reference: projects have different repos, different agents connected and different command
+  registries, so a link would quietly mean something else at the far end.
+- The **prompt is validated** against the project's real slash-command registry before you
+  save, with one-click suggestions — the same check the schedules editor runs, for the same
+  reason (see the slash-command gotcha below). It never blocks saving.
+- **⌘K** offers every runbook in the current project as its own row (`Run: Push & babysit
+  CI`), dispatching immediately rather than opening the sheet. The palette is behind the
+  `omniSearch` feature flag, which ships **off** — set `ORCH_FEATURE_OMNI_SEARCH=1` to
+  enable it. The card works either way.
+
+### Schedules that fire a runbook
+
+"The morning sweep" is one procedure, so keeping it in step in two places is how the two
+quietly diverge. A schedule can therefore point at a runbook and take its prompt and config
+from that row at fire time.
+
+The cost is that unattended automation now reads from something you can edit, so the app says
+so rather than hiding it: the schedule editor names the runbook and warns that editing it
+changes what fires there, and the runbook's row lists the schedules it feeds.
+
+**Deleting a linked runbook does not break the schedule.** The recipe is copied back into the
+schedule's own columns in the same transaction as the delete, so it keeps firing exactly what
+it fired yesterday and the whole prompt is visible in its editor again. Simply clearing the
+link would leave a schedule with an empty prompt firing nothing every morning — the precise
+silent failure the schedules design exists to rule out. A link across projects is refused
+outright, at save time and again at fire time, because a runbook is written against one
+repo's commands.
+
+### Agents can write runbooks
+
+An agent that has just worked out a procedure with you can save it: `create_runbook`,
+`list_runbooks` and `update_runbook` are available to every task session. An
+agent-created recipe is tagged on the card with which agent filed it, and — like any other
+runbook — sits inert until you dispatch it, so there's no review tray to clear.
+
+Two things an agent deliberately cannot do:
+
+- **Delete a runbook.** Delete is hard delete with no undo throughout Operator, and retiring
+  a recipe is your call.
+- **Edit a runbook that a schedule fires.** That would silently change work which runs
+  unattended. The refusal names the schedules involved, so the agent can tell you what it
+  would have changed and let you decide — or save a new recipe instead.
+
 ## Scheduled tasks
 
 A schedule is a saved prompt plus a recurring day/time, owned by the project it lives in —

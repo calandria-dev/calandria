@@ -37,6 +37,8 @@ const PINNED = [
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only
+  "lib/runbooks/store.ts", //    saved task-launch presets; DB only, no driving
+  "lib/runbookTools.ts", //      runbook agent-tool policy, behind the internal agent-tools routes
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",

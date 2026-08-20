@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteSchedule, getSchedule, listRuns, updateSchedule } from "@/lib/schedule/store";
+import { getRunbook } from "@/lib/runbooks/store";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!getSchedule(id)) return NextResponse.json({ error: "no such schedule" }, { status: 404 });
+  const schedule = getSchedule(id);
+  if (!schedule) return NextResponse.json({ error: "no such schedule" }, { status: 404 });
   const body = await req.json();
   const fields: Record<string, unknown> = {};
   for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms"]) {
@@ -22,6 +24,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // for a month doesn't greet the user with a month of missed occurrences.
   if (body.enabled !== undefined) fields.enabled = body.enabled ? 1 : 0;
   if (body.send_context !== undefined) fields.send_context = body.send_context ? 1 : 0;
+  // Link or unlink the runbook this schedule fires. Compared against the
+  // SCHEDULE's project, not a path id — see the POST route's note on why a
+  // cross-project link is refused rather than resolved.
+  if (body.runbook_id !== undefined) {
+    if (body.runbook_id === null || body.runbook_id === "") {
+      fields.runbook_id = null;
+    } else if (typeof body.runbook_id !== "string") {
+      return NextResponse.json({ error: "runbook_id must be a string or null" }, { status: 400 });
+    } else {
+      const rb = getRunbook(body.runbook_id);
+      if (!rb) return NextResponse.json({ error: "no such runbook" }, { status: 400 });
+      if (rb.project_id !== schedule.project_id) {
+        return NextResponse.json({ error: "that runbook belongs to a different project" }, { status: 400 });
+      }
+      fields.runbook_id = body.runbook_id;
+    }
+  }
   try {
     const schedule = updateSchedule(id, fields);
     return NextResponse.json(schedule);
