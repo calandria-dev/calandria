@@ -6,7 +6,8 @@
 // null model/reasoning/permission means "inherit the driver default", so the
 // lists carry only explicit choices.
 
-import type { AgentCapabilities } from "../types";
+import type { AgentCapabilities, AgentModelOption } from "../types";
+import { configuredProvider, claudeDefaultModels } from "./provider";
 
 // Every value below is a string `claude --model` accepts: a family alias
 // ("opus" → the current Opus), a `[1m]` variant (the 1M-context beta of that
@@ -100,3 +101,105 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   apiKeyHint: "sk-ant-…",
   loginStyle: "paste_code",
 };
+
+// ---------- Vertex ----------
+//
+// Unlike the Bedrock case, the catalog above is very nearly RIGHT on Vertex, so
+// this is a set of corrections rather than a replacement list. That's a finding,
+// not an assumption: every entry was probed with a one-shot `claude -p --model
+// <value>` against Vertex project example-vertex-project (region global,
+// CLI 2.1.228), reading the resolved id back out of the run's `modelUsage`.
+// 13 of the 14 ran. Two things came out of it, and only two things change here.
+//
+// 1. THE "PINNED VERSIONS" GROUP IS FINE. The suspicion going in was that
+//    Vertex needs an `@version` suffix (ANTHROPIC_DEFAULT_HAIKU_MODEL on this
+//    machine is `claude-haiku-4-5@20251001`), so bare ids like
+//    `claude-opus-4-8` would 404. They don't. All four bare pins and both
+//    `[1m]` pins ran, and a direct rawPredict to the Vertex REST endpoint
+//    returns 200 for bare `claude-opus-4-8`/`claude-sonnet-4-6`/
+//    `claude-opus-4-7`/`claude-opus-4-6`. `@version` is an optional pin on
+//    Vertex, not the required spelling — so the pinned group is left alone.
+//
+// 2. THE FAMILY ALIASES CARRY THE WRONG CONTEXT WINDOW. A bare alias resolves
+//    through ANTHROPIC_DEFAULT_*_MODEL, and on this instance those mappings
+//    carry `[1m]`: `opus` → `claude-opus-5[1m]`, a 1M window where the catalog
+//    says 200k. contextWindow is not cosmetic — modelContextWindow() feeds the
+//    context gauge and the overflow notice, so a task on plain `opus` was being
+//    measured against a fifth of its real window. The aliases below take their
+//    window and their subtitle from the id the mapping actually resolves to.
+//
+// The one entry that does NOT run is `fable`: HTTP 403, "Access to this model
+// requires data sharing to be enabled for publisher 'anthropic'". It's dropped
+// rather than labeled with that reason, because on this fork the answer isn't
+// "flip a GCP setting" — Fable arrives when the direct-platform arrangement with
+// Anthropic is finalized, and until then an entry that 403s every turn is just a
+// trap. Restoring it is deleting one line from the filter below.
+
+/** The window Claude Code runs for a resolved model id: `[1m]` opts into the 1M
+ *  beta, everything else gets the standard window. Fable is 1M natively. */
+const windowFor = (id: string): number => (/\[1m\]/i.test(id) || /fable/i.test(id) ? M1 : K200);
+
+function vertexModels(env: Record<string, string | undefined>): AgentModelOption[] {
+  const mapped = claudeDefaultModels(env);
+  // Which family mapping each alias reads. opusplan plans on Opus and runs on
+  // Sonnet afterwards, so the mapping that governs the session — and its window
+  // — is Sonnet's: probing `opusplan` resolved `claude-sonnet-5[1m]`, not the
+  // opus mapping.
+  const family: Record<string, string | null> = {
+    opus: mapped.opus,
+    "opus[1m]": mapped.opus,
+    sonnet: mapped.sonnet,
+    "sonnet[1m]": mapped.sonnet,
+    haiku: mapped.haiku,
+    opusplan: mapped.sonnet,
+    "opusplan[1m]": mapped.sonnet,
+  };
+  // An alias's label must not claim a version. "Opus 5" is a guess about where
+  // ANTHROPIC_DEFAULT_OPUS_MODEL points, and it's wrong the moment an instance
+  // maps opus at 4.8; the version now lives in the subtitle, which is measured.
+  // (This is f82f66d's relabel, applied only here — the pinned rows below DO
+  // name a version, correctly, because they pin one.)
+  const alias: Record<string, string> = {
+    opus: "Opus (provider default)",
+    sonnet: "Sonnet (provider default)",
+    haiku: "Haiku (provider default)",
+    "opus[1m]": "Opus (1M)",
+    "sonnet[1m]": "Sonnet (1M)",
+  };
+  return CLAUDE_CAPABILITIES.models.filter((m) => m.value !== "fable").map((m) => {
+    const base = family[m.value];
+    if (!base) return m; // a pinned id, or a family this instance doesn't map
+
+    // A `[1m]` picker value asks for the 1M variant OF the mapped id, so it
+    // stays 1M whatever the mapping is — `opus[1m]` against a plain
+    // `claude-opus-4-8` mapping is `claude-opus-4-8[1m]`, which is a real
+    // Vertex model (probed, 1M). Only the BARE alias inherits the mapping's own
+    // window, which is the case that was wrong: a mapping carrying `[1m]` makes
+    // plain `opus` a 1M session while the catalog called it 200k.
+    const wants1m = /\[1m\]$/i.test(m.value);
+    const resolved = wants1m && !/\[1m\]/i.test(base) ? `${base}[1m]` : base;
+    // When the mapping ALREADY carries `[1m]`, the variant and the bare alias
+    // are the same model string — say so rather than presenting the same thing
+    // twice under a group heading that implies they differ.
+    const duplicate = wants1m && resolved === base;
+    return {
+      ...m,
+      label: alias[m.value] ?? m.label,
+      sub: duplicate ? `${resolved} — same as ${m.value.replace(/\[1m\]$/i, "")}` : resolved,
+      contextWindow: wants1m ? M1 : windowFor(resolved),
+    };
+  });
+}
+
+/** The live capability descriptor: the Anthropic-hosted catalog normally, and a
+ *  corrected one when the instance routes Claude through Vertex. Computed per
+ *  read because the provider and its model mappings are instance config, not
+ *  code — the plain Anthropic-login path returns the constant untouched. */
+export function claudeCapabilities(env: Record<string, string | undefined> = process.env): AgentCapabilities {
+  // Bedrock deliberately gets no special-casing here: this fork runs Vertex and
+  // has no Bedrock instance to measure against, and upstream's Bedrock list
+  // (b5d995f) drops the `[1m]` variants — which demonstrably DO work on Vertex,
+  // so it is not a list to rename and reuse.
+  if (configuredProvider(env) !== "vertex") return CLAUDE_CAPABILITIES;
+  return { ...CLAUDE_CAPABILITIES, models: vertexModels(env) };
+}
