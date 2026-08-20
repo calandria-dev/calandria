@@ -66,6 +66,17 @@ export function buildProjectContext(project: Project, task: Task): string {
       `refs must be tasks in the same project the dependent task is filed into.`
   );
   lines.push(
+    `\nYou also have \`create_runbook\`, \`list_runbooks\` and \`update_runbook\`. A RUNBOOK is a ` +
+      `saved recipe — a prompt plus how to run it — that the user can dispatch later in one ` +
+      `click, minting a fresh task each time. When the user asks you to save a procedure, or ` +
+      `mentions they do something regularly ("every Monday I…", "I always have to…"), offer to ` +
+      `save it as one. A runbook RUNS NOTHING on its own, so creating one is safe; use ` +
+      `\`suggest_task\` for work that should actually happen. Two things you cannot do, both ` +
+      `deliberate: you cannot DELETE a runbook, and you cannot EDIT one that a schedule fires — ` +
+      `that would silently change work which runs unattended, so it is the user's to change. ` +
+      `\`list_runbooks\` shows you which those are before you try.`
+  );
+  lines.push(
     `\nYou also have an \`expose_service\` MCP tool. When you start a long-running server ` +
       `(dev server, API, preview, Storybook, etc.) and it's listening, call ` +
       `\`expose_service(name, port)\` to register it — it appears in the project's Services ` +
