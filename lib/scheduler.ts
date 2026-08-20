@@ -22,6 +22,7 @@ import {
 } from "@/lib/schedule/store";
 import { describeSpec, formatWallClock } from "@/lib/schedule/time";
 import { dispatchPromptTask } from "@/lib/dispatch";
+import { getRunbook } from "@/lib/runbooks/store";
 import { hasTurn } from "@/lib/abort";
 import { SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import type { Schedule, ScheduleRun } from "@/lib/types";
@@ -158,6 +159,34 @@ export async function runScheduleNow(scheduleId: string): Promise<ScheduleRun | 
   return run;
 }
 
+/** What a firing actually runs: the linked runbook's recipe, or the schedule's own. */
+export type ScheduleRecipe = Pick<Schedule, "prompt" | "agent" | "permission_mode" | "send_context" | "priority">;
+
+/**
+ * A schedule may point at a runbook so "the morning sweep" is one recipe edited
+ * in one place. The schedule's own columns stay populated as the fallback and
+ * are refreshed FROM the runbook if it is ever deleted (deleteRunbook copies
+ * them back), so a missing link degrades to yesterday's behavior rather than to
+ * an empty prompt firing every morning.
+ *
+ * A cross-project link is refused rather than resolved: both objects are
+ * project-scoped, the runbook was written against a different repo's commands,
+ * and firing it here would run the wrong recipe under a name promising
+ * otherwise. Refused at save time too — this is the backstop for a row that got
+ * linked some other way, or whose project changed underneath it.
+ */
+export function resolveScheduleRecipe(schedule: Schedule): { recipe: ScheduleRecipe } | { error: string } {
+  if (!schedule.runbook_id) return { recipe: schedule };
+  const rb = getRunbook(schedule.runbook_id);
+  // Not an error: the FK's ON DELETE SET NULL races deleteRunbook's own detach,
+  // and either way the schedule's columns hold the recipe.
+  if (!rb) return { recipe: schedule };
+  if (rb.project_id !== schedule.project_id) {
+    return { error: `the runbook "${rb.name}" belongs to a different project, so this schedule cannot fire it` };
+  }
+  return { recipe: rb };
+}
+
 /**
  * Preflight, mint, launch. The mint-and-launch half now lives in
  * lib/dispatch.ts, shared with runbooks — everything left here is the part
@@ -165,6 +194,12 @@ export async function runScheduleNow(scheduleId: string): Promise<ScheduleRun | 
  * unattended RunContext.
  */
 export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promise<void> {
+  const resolved = resolveScheduleRecipe(schedule);
+  if ("error" in resolved) {
+    settleRun(run.id, "failed", resolved.error);
+    return;
+  }
+  const recipe = resolved.recipe;
   // In the SCHEDULE's zone, not UTC: an 08:30 America/Los_Angeles job titled
   // "15:30" is the feature contradicting, on its most visible artifact, the one
   // thing it is fastidious about.
@@ -175,14 +210,17 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
     project_id: schedule.project_id,
     title: `${schedule.name} — ${stamp}`,
     description: `Created automatically by the "${schedule.name}" schedule (${describeSpec(specOf(schedule))}).`,
-    prompt: schedule.prompt,
-    agent: schedule.agent,
-    permission_mode: schedule.permission_mode,
-    send_context: schedule.send_context !== 0,
-    priority: schedule.priority,
+    prompt: recipe.prompt,
+    agent: recipe.agent,
+    permission_mode: recipe.permission_mode,
+    send_context: recipe.send_context !== 0,
+    priority: recipe.priority,
     note: `▶ Scheduled — ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`,
     runContext: { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: run.id },
     schedule_id: schedule.id,
+    // Tagged on the minted task too, so a run is traceable to the recipe that
+    // produced it and not just to the schedule that timed it.
+    runbook_id: schedule.runbook_id,
     // The turn actually launched: link the task and mark the run live. Done
     // inside the dispatch rather than after it, so a launch that dies half-way
     // is still attributable to this run.

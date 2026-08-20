@@ -370,6 +370,8 @@ export interface ScheduleRow {
   agent: string;
   permission_mode: string | null;
   next_fire_at: number;
+  /** The runbook this schedule fires, if any — it supplies the prompt and config. */
+  runbook_id: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
   // The row still `claimed`/`running` for this schedule, if any — served

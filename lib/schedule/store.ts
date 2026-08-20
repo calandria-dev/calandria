@@ -44,6 +44,8 @@ export function createSchedule(input: {
   send_context?: boolean;
   priority?: Priority;
   catch_up_ms?: number;
+  /** Fire this runbook's recipe instead of `prompt` and the config above. */
+  runbook_id?: string | null;
 }): Schedule {
   const now = Date.now();
   const id = nanoid();
@@ -56,13 +58,13 @@ export function createSchedule(input: {
   getDb()
     .prepare(
       `INSERT INTO schedules (id, project_id, name, prompt, days_mask, time_of_day, timezone, enabled,
-                              agent, permission_mode, send_context, priority, catch_up_ms, next_fire_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, next_fire_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.name, input.prompt, input.days_mask, input.time_of_day, input.timezone,
       input.agent || "claude", input.permission_mode ?? null, input.send_context === false ? 0 : 1,
-      input.priority ?? "med", input.catch_up_ms ?? -1, next, now, now
+      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, next, now, now
     );
   return getSchedule(id)!;
 }
@@ -72,7 +74,7 @@ const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone"] as const;
 export function updateSchedule(
   id: string,
   fields: Partial<Pick<Schedule, "name" | "prompt" | "days_mask" | "time_of_day" | "timezone" | "enabled"
-    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms">>
+    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id">>
 ): Schedule | null {
   const before = getSchedule(id);
   if (!before) return null;

@@ -7,7 +7,7 @@ import { jget, jsend } from "./api";
 import { agentLabel, capsFor, defaultAgentFor } from "./agents";
 import { schedulerAlert } from "./format";
 import { ErrNote } from "./shared";
-import type { AgentPickerOption, AgentsBundle, ProjectRow, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
+import type { AgentPickerOption, AgentsBundle, ProjectRow, RunbookRow, RunbooksResponse, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAYS = 62; // Mon–Fri: bits 1..5
@@ -152,6 +152,15 @@ function ScheduleForm({
   const [permissionMode, setPermissionMode] = useState(initial?.permission_mode ?? "bypassPermissions");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  // The runbook this schedule fires, if any ("" = it owns its own prompt).
+  const [runbookId, setRunbookId] = useState(initial?.runbook_id ?? "");
+  const [runbooks, setRunbooks] = useState<RunbookRow[]>([]);
+  useEffect(() => {
+    jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`)
+      .then((d) => setRunbooks(d.runbooks))
+      .catch(() => setRunbooks([]));
+  }, [projectId]);
+  const linked = runbooks.find((r) => r.id === runbookId) ?? null;
 
   // The modes actually on offer for the CURRENTLY selected agent. Recomputed
   // whenever the agent changes, and the value is clamped to stay inside it —
@@ -210,13 +219,26 @@ function ScheduleForm({
 
   const toggleDay = (i: number) => setMask((m) => (m & (1 << i) ? m & ~(1 << i) : m | (1 << i)));
 
-  const canSave = name.trim().length > 0 && prompt.trim().length > 0 && mask > 0 && /^\d{2}:\d{2}$/.test(time) && tz.trim().length > 0 && !saving;
+  // A linked schedule needs no prompt of its own — the runbook supplies it.
+  // The `prompt` column is still written, as the fallback deleteRunbook
+  // refreshes, but it is no longer what the user is filling in.
+  const hasPrompt = runbookId ? !!linked : prompt.trim().length > 0;
+  const canSave = name.trim().length > 0 && hasPrompt && mask > 0 && /^\d{2}:\d{2}$/.test(time) && tz.trim().length > 0 && !saving;
 
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     setErr("");
-    const body = { name: name.trim(), prompt, days_mask: mask, time_of_day: time, timezone: tz, agent, permission_mode: permissionMode };
+    // The runbook's recipe is copied into the schedule's own columns as well as
+    // linked. They are the fallback the moment the link goes away, and writing
+    // them now means an unlink leaves a working schedule rather than a blank one.
+    const recipe = linked
+      ? { prompt: linked.prompt, agent: linked.agent, permission_mode: linked.permission_mode }
+      : { prompt, agent, permission_mode: permissionMode };
+    const body = {
+      name: name.trim(), days_mask: mask, time_of_day: time, timezone: tz,
+      runbook_id: runbookId || null, ...recipe,
+    };
     try {
       if (initial) await jsend(`/api/schedules/${initial.id}`, "PATCH", body);
       else await jsend(`/api/projects/${projectId}/schedules`, "POST", body);
@@ -234,6 +256,38 @@ function ScheduleForm({
         <input id={`${uid}-name`} type="text" value={name} placeholder="e.g. Morning triage"
           onChange={(e) => setName(e.target.value)} />
       </div>
+      {/* A schedule either owns its prompt or fires a runbook. The second is the
+          reason runbooks and schedules aren't one table — one recipe, two
+          triggers — and its cost is stated rather than implied: editing that
+          runbook changes what fires here, on the mornings nobody is watching. */}
+      <div className="field">
+        <label className="lab">Prompt source</label>
+        <div className="seg">
+          <button className={!runbookId ? "on" : ""} onClick={() => setRunbookId("")}>Write a prompt</button>
+          <button
+            className={runbookId ? "on" : ""}
+            disabled={!runbooks.length}
+            title={runbooks.length ? undefined : "This project has no runbooks yet"}
+            onClick={() => setRunbookId(runbooks[0]?.id ?? "")}
+          >
+            Use a runbook
+          </button>
+        </div>
+        {!runbooks.length && <div className="hlp">This project has no runbooks yet — save one on the Runbooks card first.</div>}
+      </div>
+      {runbookId ? (
+        <div className="field">
+          <label className="lab" htmlFor={`${uid}-runbook`}>Runbook</label>
+          <select id={`${uid}-runbook`} value={runbookId} onChange={(e) => setRunbookId(e.target.value)}>
+            {runbooks.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <pre className="rb-preview" style={{ marginTop: 8 }}>{linked?.prompt ?? ""}</pre>
+          <p className="sched-note">
+            This schedule runs the <strong>{linked?.name}</strong> runbook, on {agentLabel(agents, linked?.agent ?? agent)}.
+            Editing that runbook changes what fires here — including on the mornings nobody is watching.
+          </p>
+        </div>
+      ) : (
       <div className="field">
         <label className="lab" htmlFor={`${uid}-prompt`}>Prompt</label>
         <textarea id={`${uid}-prompt`} value={prompt} placeholder="/jira-tasks, or plain instructions"
@@ -266,6 +320,7 @@ function ScheduleForm({
           <div className="hlp">{Icon.check()} recognized command</div>
         )}
       </div>
+      )}
       <div className="field">
         <label className="lab" id={`${uid}-days-lab`}>Days</label>
         <div className="sched-days" role="group" aria-labelledby={`${uid}-days-lab`}>
@@ -296,6 +351,11 @@ function ScheduleForm({
           preview.map((ms, i) => <div key={i} className="sched-note">next {whenLabel(ms, tz)}{zoneSuffix(tz)}</div>)
         )}
       </div>
+      {/* Hidden while a runbook is linked: it owns the agent and the permission
+          mode, so leaving these on screen would show controls that no longer
+          decide anything about what fires. */}
+      {!runbookId && (
+      <>
       <div className="field">
         <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
         <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
@@ -323,6 +383,8 @@ function ScheduleForm({
         )}
         <p className="sched-note">{permissionConsequence(permissionMode, modeCaps, agentLabel(agents, agent))}</p>
       </div>
+      </>
+      )}
       {err && <ErrNote>{err}</ErrNote>}
       <div className="sched-actions">
         <button className="btn btn-ghost" onClick={onCancel} disabled={saving}>Cancel</button>
