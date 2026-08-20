@@ -253,10 +253,12 @@ export default function Orchestrator() {
         ) : project ? (
           <ProjectLanding
             project={project}
+            projects={o.activeProjects}
             agents={o.agents}
             recap={o.recaps[project.id]}
             onNewTask={() => o.setModal("task")}
             onRefreshRecap={() => o.fetchRecap(project.id, true)}
+            onOpenTask={o.setSelTask}
           />
         ) : (
           <div className="empty" style={{ margin: "auto" }}>
@@ -601,6 +603,18 @@ export default function Orchestrator() {
           commands={([
             { id: "new-project", label: "New project", keywords: "create add repo", icon: Icon.plus(), run: () => o.setModal("project") },
             project && { id: "new-task", label: "New task", hint: `in ${project.name}`, keywords: "new session create start", icon: Icon.plus(), run: () => o.setModal("task") },
+            // One row per runbook rather than a "Run runbook…" row that opens a
+            // picker: the whole value of a saved recipe is ⌘K, three letters,
+            // Enter, and a picker costs an extra keystroke and a second list to
+            // read — enough to send someone back to retyping the prompt.
+            ...(project ? o.runbooks.map((r): PaletteCommand => ({
+              id: `runbook-${r.id}`,
+              label: `Run: ${r.name}`,
+              hint: r.description || `in ${project.name}`,
+              keywords: `runbook dispatch ${r.name} ${r.description}`,
+              icon: Icon.play(),
+              run: () => void o.runRunbook(r.id),
+            })) : []),
             project && { id: "toggle-task-view", label: o.taskView === "board" ? "Show tasks as list" : "Show tasks as board", hint: "⌘⇧B", keywords: "kanban board list columns view", icon: o.taskView === "board" ? Icon.list() : Icon.board(), run: () => setTaskView(o.taskView === "board" ? "list" : "board") },
             { id: "toggle-theme", label: "Toggle theme", hint: isDark ? "switch to light" : "switch to dark", keywords: "dark light mode appearance", icon: isDark ? Icon.sun() : Icon.moon(), run: () => o.setAppearance("theme", isDark ? "light" : "dark") },
             { id: "toggle-text-width", label: o.appearance.wide === "1" ? "Use reading-width text" : "Use full-width text", hint: o.appearance.wide === "1" ? "760px measure" : "fill the pane", keywords: "wide full width narrow measure transcript column appearance", icon: Icon.sliders(), run: () => o.setAppearance("wide", o.appearance.wide === "1" ? "0" : "1") },

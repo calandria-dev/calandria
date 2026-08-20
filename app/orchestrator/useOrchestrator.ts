@@ -7,7 +7,7 @@ import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
-import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type SaveAction, type TaskRow } from "./types";
+import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow } from "./types";
 import { agentLabel } from "./agents";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
@@ -24,6 +24,7 @@ export function useOrchestrator() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selProj, setSelProj] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [runbooks, setRunbooks] = useState<RunbookRow[]>([]);
   const [selTask, setSelTask] = useState<string | null>(null);
   // First-paint state: booted flips once the initial project fetch lands, so the
   // shell can show a column skeleton instead of a blank flash; a failed boot
@@ -138,6 +139,17 @@ export function useOrchestrator() {
   // set with the server's global truth drains any stale entries.
   const reconcileRunning = useCallback(async () => {
     try { const { ids } = await jget<{ ids: string[] }>("/api/running"); setRunning(new Set(ids)); } catch {}
+  }, []);
+
+  const loadRunbooks = useCallback(async (projectId: string) => {
+    // Swallowed: the palette degrades to having no runbook rows, which is the
+    // pre-feature behavior. The Runbooks card is where a fetch failure is worth
+    // reporting, and it reports its own.
+    try {
+      setRunbooks((await jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`)).runbooks);
+    } catch {
+      setRunbooks([]);
+    }
   }, []);
 
   // Load the agent capability bundle (drives every run-control picker AND the
@@ -283,6 +295,26 @@ export function useOrchestrator() {
   // Entering a project loads its tasks but does NOT auto-pick one — the landing
   // decision (recap vs. first task) is made in useRecaps once recap status is known.
   useEffect(() => { if (selProj) loadTasks(selProj, false); }, [selProj, loadTasks]);
+
+  // The selected project's runbooks, for the ⌘K palette. Fetched on the project
+  // switch rather than when the palette opens: it's a handful of rows, and the
+  // palette has to feel instant — fetching on open would render an empty
+  // Commands group for a beat, every time.
+  useEffect(() => {
+    if (!selProj) { setRunbooks([]); return; }
+    void loadRunbooks(selProj);
+  }, [selProj, loadRunbooks]);
+
+  // A create/edit/copy/delete anywhere (this tab, another tab, or an agent's
+  // create_runbook) — same window event the Runbooks card listens on, so the
+  // palette can't offer a row that no longer exists or miss one just saved.
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === selProjRef.current) void loadRunbooks((e as CustomEvent<string>).detail);
+    };
+    window.addEventListener("orch:runbooks", onChanged);
+    return () => window.removeEventListener("orch:runbooks", onChanged);
+  }, [loadRunbooks]);
 
   // A hidden tab gets throttled and its SSE streams may quietly die, so the
   // project badges / "needs you" counts drift while you're away. On the
@@ -601,6 +633,37 @@ export function useOrchestrator() {
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
 
+  /**
+   * Dispatch a runbook straight from ⌘K — no sheet.
+   *
+   * The sheet exists for the run you want to tweak; the palette exists for the
+   * run you want NOW, and interposing a dialog on the accelerator path defeats
+   * the whole point. Everything the sheet would ask is already saved on the
+   * runbook.
+   *
+   * A failure has nowhere to render here — the palette has closed, and the user
+   * may be deep in another task's session — so it goes to the project home,
+   * where the Runbooks card owns an error slot and the offending recipe is
+   * right there to fix. That is also where a half-minted task (the launch
+   * failed, the row exists) is reachable from.
+   */
+  const runRunbook = useCallback(async (id: string) => {
+    const projectId = selProjRef.current;
+    try {
+      const { task } = await jsend<{ task: TaskRow }>(`/api/runbooks/${id}/run`, "POST", {});
+      if (projectId) await loadTasks(projectId, false);
+      setSelTask(task.id);
+    } catch (e) {
+      if (projectId) {
+        setSelTask(null);
+        setHomeProj(projectId);
+        window.dispatchEvent(new CustomEvent("orch:runbook-error", {
+          detail: { projectId, message: e instanceof Error ? e.message : String(e) },
+        }));
+      }
+    }
+  }, [loadTasks]);
+
   const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null }) => {
     if (!project) return;
     // permission_mode goes in the CREATE, not a follow-up PATCH: `startNow`
@@ -828,7 +891,7 @@ export function useOrchestrator() {
     // state + derived
     booted, bootError, retryBoot: boot, tasksLoading, transcriptLoading,
     projects, activeProjects, deprecatedProjects, selProj, setSelProj, project,
-    tasks, realTasks, suggested, selTask, task, messages, running,
+    tasks, realTasks, suggested, selTask, task, messages, running, runbooks,
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
@@ -840,7 +903,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask,
-    setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

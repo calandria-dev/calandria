@@ -37,12 +37,18 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // the fact is project-wide rather than about any one row, so it can't ride on
 // task_edited's task key. Like task_deleted it carries its project id and
 // BYPASSES the relay's re-read-the-task enrichment, which has nothing to add.
+// runbooks_changed is tasks_reordered's sibling: a project's saved runbooks were
+// created, edited, copied into or deleted from. No task row is involved AT ALL —
+// not even an arbitrary one to key the bus by, so its publishers pass "" — and
+// the card refetches wholesale, so like tasks_reordered it carries its own
+// project id and says only "go again".
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
-  | { type: "tasks_reordered"; projectId: string };
+  | { type: "tasks_reordered"; projectId: string }
+  | { type: "runbooks_changed"; projectId: string };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -83,11 +89,17 @@ export type TasksReorderedWireEvent = {
   type: "tasks_reordered";
   projectId: string;
 };
+/** A project's saved runbooks changed. Same "refetch" shape as the reorder above. */
+export type RunbooksChangedWireEvent = {
+  type: "runbooks_changed";
+  projectId: string;
+};
 export type GlobalWireEvent =
   | GlobalTaskWireEvent
   | TaskDeletedWireEvent
   | TasksMovedWireEvent
   | TasksReorderedWireEvent
+  | RunbooksChangedWireEvent
   | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;

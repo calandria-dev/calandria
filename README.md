@@ -62,9 +62,13 @@ window while preserving the task's lineage.
   create a GitHub PR from the same screen.
 - **Branching task pipelines:** make tasks depend on one or several earlier tasks, branch
   work into parallel paths, and launch each task automatically when its blockers finish.
+- **Runbooks:** save a task you run often — "push everything unpushed and babysit CI",
+  "sweep my Jiras and report" — as a named recipe, then dispatch it in one click. Each run
+  mints a fresh task, and a box for this-run-only instructions covers the bits that change.
 - **Scheduled tasks:** run a saved prompt on a recurring day/time in its own timezone —
   a weekday morning triage, a nightly sweep — with nobody logged in. Each firing mints a
-  fresh task you can review like any other.
+  fresh task you can review like any other, and can fire a runbook so one recipe serves
+  both the clock and the button.
 - **A complete workspace:** chat, terminal, managed services, live logs, and transparent
   token and usage insights stay together.
 

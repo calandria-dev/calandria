@@ -61,6 +61,7 @@ export interface Task {
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
+  runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
   // of now the task is drawn in the Snoozed category and hidden from the "needs
   // you" surfaces; behind it, the task is back in its own status group with a
@@ -425,6 +426,32 @@ export interface Schedule {
   priority: Priority;
   catch_up_ms: number;  // -1 = inherit the instance default
   next_fire_at: number; // cached from lib/schedule/time.ts
+  /**
+   * The runbook this schedule fires, if any. When set, fireSchedule() reads the
+   * prompt and dispatch config from that row instead of the columns above —
+   * which stay populated as the fallback, and are refreshed from the runbook if
+   * it is ever deleted (see deleteRunbook).
+   */
+  runbook_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A saved task-launch preset. See docs/superpowers/specs/2026-08-20-runbooks-design.md. */
+export interface Runbook {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  /** The first user message of every task this dispatches — so a /slash command expands. */
+  prompt: string;
+  agent: string;
+  permission_mode: string | null;
+  send_context: number;
+  priority: Priority;
+  position: number;
+  /** '' = written by the user; otherwise the agent id that filed it. */
+  created_by: string;
   created_at: number;
   updated_at: number;
 }

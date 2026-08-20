@@ -376,6 +376,8 @@ export interface ScheduleRow {
   agent: string;
   permission_mode: string | null;
   next_fire_at: number;
+  /** The runbook this schedule fires, if any — it supplies the prompt and config. */
+  runbook_id: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
   // The row still `claimed`/`running` for this schedule, if any — served
@@ -400,4 +402,30 @@ export interface SchedulerHealth {
 export interface SchedulesResponse {
   schedules: ScheduleRow[];
   scheduler: SchedulerHealth;
+}
+
+/** A saved task-launch preset, as served by the runbooks endpoints. */
+export interface RunbookRow {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  agent: string;
+  permission_mode: string | null;
+  send_context: number;
+  priority: Priority;
+  /** '' = the user wrote it; otherwise the agent id that filed it. */
+  created_by: string;
+  /** The most recent task this dispatched — null until it has run once. */
+  last_run: { id: string; title: string; status: string; created_at: number } | null;
+  /**
+   * The schedules that fire this runbook, by name. Editing it changes what they
+   * run, unattended, so the card says so rather than leaving it implicit.
+   */
+  used_by: { id: string; name: string }[];
+}
+
+export interface RunbooksResponse {
+  runbooks: RunbookRow[];
 }

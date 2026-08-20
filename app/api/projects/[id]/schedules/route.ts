@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { activeRun, createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
+import { getRunbook } from "@/lib/runbooks/store";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // try/catch below, turning a 400 into an unhandled 500.
   if (typeof body?.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
   if (typeof body?.prompt !== "string" || !body.prompt.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
+  // Both objects are project-scoped, so a cross-project link would fire the
+  // wrong repo's recipe under this schedule's name. Refused at save time as
+  // well as at fire time (resolveScheduleRecipe) — a 400 now beats a red run
+  // tomorrow morning that nobody is awake to read.
+  if (body.runbook_id !== undefined && body.runbook_id !== null) {
+    if (typeof body.runbook_id !== "string") return NextResponse.json({ error: "runbook_id must be a string or null" }, { status: 400 });
+    const rb = getRunbook(body.runbook_id);
+    if (!rb) return NextResponse.json({ error: "no such runbook" }, { status: 400 });
+    if (rb.project_id !== id) return NextResponse.json({ error: "that runbook belongs to a different project" }, { status: 400 });
+  }
   try {
     // createSchedule computes next_fire_at and throws on an unusable spec — a
     // 400 now beats a schedule that silently never fires.
@@ -44,6 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       send_context: typeof body.send_context === "boolean" ? body.send_context : undefined,
       priority: body.priority,
       catch_up_ms: typeof body.catch_up_ms === "number" ? body.catch_up_ms : undefined,
+      runbook_id: typeof body.runbook_id === "string" ? body.runbook_id : null,
     });
     const { startScheduler } = await import("@/lib/scheduler");
     startScheduler();

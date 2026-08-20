@@ -6,27 +6,25 @@
 // has to run at 08:30 with nobody logged in, so it lives here, in the server
 // process, started from a boot self-ping — see app/api/instance/scheduler.)
 //
-// Reaches lib/runner.ts to launch turns, exactly as lib/autoStart.ts does, and
-// is therefore NOT in tests/importGraph.test.ts's SDK-free PINNED set. The
-// decision logic lives in lib/schedule/due.ts, which IS pinned.
+// Reaches lib/runner.ts (through lib/dispatch.ts) to launch turns, exactly as
+// lib/autoStart.ts does, and is therefore NOT in tests/importGraph.test.ts's
+// SDK-free PINNED set. The decision logic lives in lib/schedule/due.ts, which
+// IS pinned.
+//
+// The mint-a-task-and-launch-its-first-turn half of fireSchedule() lives in
+// lib/dispatch.ts, shared with runbooks — a runbook is this feature with the
+// clock taken off, and two copies of that sequence would have drifted.
 
-import fs from "node:fs";
 import { SCHEDULER_ENABLED, SCHEDULE_TICK_MS } from "@/lib/config";
-import { getProject, createTask, updateTask, addMessage } from "@/lib/store";
 import { adjudicate } from "@/lib/schedule/due";
 import {
   activeRun, getSchedule, listEnabledSchedules, refreshNextFire, claimRun, settleRun, startRun, specOf,
 } from "@/lib/schedule/store";
 import { describeSpec, formatWallClock } from "@/lib/schedule/time";
-import { validatePrompt } from "@/lib/schedule/commands";
-import { startTurn } from "@/lib/runner";
-import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
-import { withTaskLock } from "@/lib/taskLock";
-import { publish } from "@/lib/events";
-import { ensureWorktree } from "@/lib/git";
-import { isAgentConnected } from "@/lib/agents/connections";
+import { dispatchPromptTask } from "@/lib/dispatch";
+import { getRunbook } from "@/lib/runbooks/store";
+import { hasTurn } from "@/lib/abort";
 import { SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
-import { workEnded, workStarted } from "@/lib/idle";
 import type { Schedule, ScheduleRun } from "@/lib/types";
 
 interface SchedulerState {
@@ -161,106 +159,74 @@ export async function runScheduleNow(scheduleId: string): Promise<ScheduleRun | 
   return run;
 }
 
+/** What a firing actually runs: the linked runbook's recipe, or the schedule's own. */
+export type ScheduleRecipe = Pick<Schedule, "prompt" | "agent" | "permission_mode" | "send_context" | "priority">;
+
 /**
- * Preflight, mint, launch. Mirrors the initial-turn branch of
- * POST /api/tasks/[id]/messages (and lib/autoStart.ts launchInitialTurn) —
- * keep in step with those.
+ * A schedule may point at a runbook so "the morning sweep" is one recipe edited
+ * in one place. The schedule's own columns stay populated as the fallback and
+ * are refreshed FROM the runbook if it is ever deleted (deleteRunbook copies
+ * them back), so a missing link degrades to yesterday's behavior rather than to
+ * an empty prompt firing every morning.
+ *
+ * A cross-project link is refused rather than resolved: both objects are
+ * project-scoped, the runbook was written against a different repo's commands,
+ * and firing it here would run the wrong recipe under a name promising
+ * otherwise. Refused at save time too — this is the backstop for a row that got
+ * linked some other way, or whose project changed underneath it.
+ */
+export function resolveScheduleRecipe(schedule: Schedule): { recipe: ScheduleRecipe } | { error: string } {
+  if (!schedule.runbook_id) return { recipe: schedule };
+  const rb = getRunbook(schedule.runbook_id);
+  // Not an error: the FK's ON DELETE SET NULL races deleteRunbook's own detach,
+  // and either way the schedule's columns hold the recipe.
+  if (!rb) return { recipe: schedule };
+  if (rb.project_id !== schedule.project_id) {
+    return { error: `the runbook "${rb.name}" belongs to a different project, so this schedule cannot fire it` };
+  }
+  return { recipe: rb };
+}
+
+/**
+ * Preflight, mint, launch. The mint-and-launch half now lives in
+ * lib/dispatch.ts, shared with runbooks — everything left here is the part
+ * that makes a firing a FIRING: the ledger link, the wall-clock stamp, and the
+ * unattended RunContext.
  */
 export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promise<void> {
-  // ---- preflight: fail with something actionable rather than minting a task
-  // that cannot possibly work.
-  const project = getProject(schedule.project_id);
-  if (!project) {
-    settleRun(run.id, "failed", "the project this schedule belongs to no longer exists");
+  const resolved = resolveScheduleRecipe(schedule);
+  if ("error" in resolved) {
+    settleRun(run.id, "failed", resolved.error);
     return;
   }
-  if (!project.repo_path.trim()) {
-    settleRun(run.id, "failed", `"${project.name}" has no working directory set, so a session cannot start`);
-    return;
-  }
-  if (!isAgentConnected(schedule.agent)) {
-    // Checked for THIS agent — never allowed to fall back to another, which
-    // would silently run the work on the wrong login.
-    settleRun(run.id, "failed", `${schedule.agent} is not connected — reconnect it and the next run will work`);
-    return;
-  }
-  // Re-check the slash command at FIRE time, not just at save time: a plugin
-  // can be uninstalled or renamed between the two, and an unknown command does
-  // not fail — it returns "Unknown command: /x" as a SUCCESS, so the run would
-  // report green having done nothing. Best-effort: `unchecked` (no registry
-  // reachable) proceeds rather than blocking the morning's work on a probe.
-  const check = await validatePrompt(schedule.prompt, project, schedule.agent);
-  if (!check.ok) {
-    const hint = check.suggestions?.length ? ` Did you mean ${check.suggestions.map((c) => `/${c}`).join(", ")}?` : "";
-    settleRun(run.id, "failed", `${check.error}${hint}`);
-    return;
-  }
+  const recipe = resolved.recipe;
+  // In the SCHEDULE's zone, not UTC: an 08:30 America/Los_Angeles job titled
+  // "15:30" is the feature contradicting, on its most visible artifact, the one
+  // thing it is fastidious about.
+  const stamp = formatWallClock(run.scheduled_for, schedule.timezone);
+  const late = run.trigger === "catch_up" ? " (catching up — the app was not running at the scheduled time)" : "";
 
-  workStarted();
-  try {
-    fs.mkdirSync(project.repo_path, { recursive: true });
-    // In the SCHEDULE's zone, not UTC: an 08:30 America/Los_Angeles job titled
-    // "15:30" is the feature contradicting, on its most visible artifact, the
-    // one thing it is fastidious about.
-    const stamp = formatWallClock(run.scheduled_for, schedule.timezone);
-    const task = createTask({
-      project_id: schedule.project_id,
-      title: `${schedule.name} — ${stamp}`,
-      description: `Created automatically by the "${schedule.name}" schedule (${describeSpec(specOf(schedule))}).`,
-      priority: schedule.priority,
-      agent: schedule.agent,
-      send_context: schedule.send_context !== 0,
-      permission_mode: schedule.permission_mode,
-      // Set at creation rather than patched on afterwards — not because
-      // updateTask would drop it (it merges {...cur, ...patch}, so an omitted
-      // field is preserved from the current row), but because there's no
-      // reason to pay a create-then-update round trip for a value we already
-      // know at insert time.
-      schedule_id: schedule.id,
-    });
-    startRun(run.id, task.id);
+  const result = await dispatchPromptTask({
+    project_id: schedule.project_id,
+    title: `${schedule.name} — ${stamp}`,
+    description: `Created automatically by the "${schedule.name}" schedule (${describeSpec(specOf(schedule))}).`,
+    prompt: recipe.prompt,
+    agent: recipe.agent,
+    permission_mode: recipe.permission_mode,
+    send_context: recipe.send_context !== 0,
+    priority: recipe.priority,
+    note: `▶ Scheduled — ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`,
+    runContext: { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: run.id },
+    schedule_id: schedule.id,
+    // Tagged on the minted task too, so a run is traceable to the recipe that
+    // produced it and not just to the schedule that timed it.
+    runbook_id: schedule.runbook_id,
+    // The turn actually launched: link the task and mark the run live. Done
+    // inside the dispatch rather than after it, so a launch that dies half-way
+    // is still attributable to this run.
+    onTaskCreated: (taskId) => startRun(run.id, taskId),
+  });
 
-    const controller = claimTurn(task.id);
-    if (!controller) {
-      settleRun(run.id, "failed", "the task's turn slot was already taken");
-      return;
-    }
-    let launched = false;
-    try {
-      await withTaskLock(task.id, async () => {
-        let fresh = { ...task };
-        try {
-          const wt = await ensureWorktree(project.repo_path, task.id, project.branch);
-          if (wt) {
-            fresh = { ...fresh, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha };
-            updateTask(task.id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
-          }
-        } catch {
-          // fall back to repo_path, exactly as the route and autoStart do
-        }
-        const userMsg = addMessage(task.id, fresh.generation, "user", schedule.prompt);
-        updateTask(task.id, { running: 1, awaiting_input: 0 });
-        publish(task.id, {
-          type: "user", content: userMsg.content, msgId: userMsg.id,
-          generation: fresh.generation, ts: userMsg.created_at,
-        });
-        const late = run.trigger === "catch_up" ? " (catching up — the app was not running at the scheduled time)" : "";
-        const note = `▶ Scheduled — ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`;
-        startTurn(fresh, project, schedule.prompt, note, controller, {
-          ...SCHEDULED_RUN_CONTEXT,
-          scheduleRunId: run.id,
-        });
-        launched = true;
-      });
-    } finally {
-      if (!launched) {
-        unregisterTurn(task.id, controller);
-        settleRun(run.id, "failed", "the turn could not be launched");
-      }
-    }
-  } catch (err) {
-    settleRun(run.id, "failed", err instanceof Error ? err.message : String(err));
-  } finally {
-    workEnded();
-  }
+  if (!result.ok) settleRun(run.id, "failed", result.error);
 }
+

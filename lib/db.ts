@@ -277,6 +277,37 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id);
     CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id, scheduled_for DESC);
 
+    -- A saved task-launch preset: "push everything unpushed and babysit CI".
+    -- Project-keyed and its OWN table for the same reason schedules are one —
+    -- it outlives every task it dispatches, and each Run MINTS A FRESH TASK.
+    --
+    -- This is a schedules row with the clock taken off, which is why the two
+    -- share lib/dispatch.ts. What it deliberately does NOT have is a run
+    -- ledger: a schedule needs one because an occurrence that never fired at
+    -- 08:30 leaves no other trace, whereas a dispatch produces a visible task
+    -- immediately. "Last run" is a tasks.runbook_id query, and denormalized
+    -- counters would start lying the first time a minted task is deleted.
+    CREATE TABLE IF NOT EXISTS runbooks (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name            TEXT NOT NULL,
+      description     TEXT NOT NULL DEFAULT '',   -- becomes the minted task's brief
+      prompt          TEXT NOT NULL,              -- the minted task's first USER message
+      agent           TEXT NOT NULL DEFAULT 'claude',
+      permission_mode TEXT,
+      send_context    INTEGER NOT NULL DEFAULT 1,
+      priority        TEXT NOT NULL DEFAULT 'med',
+      position        INTEGER NOT NULL DEFAULT 0,
+      -- '' = the user wrote it; otherwise the agent id that filed it via
+      -- create_runbook. Provenance only — a runbook is inert until someone
+      -- presses Run, so an agent-created one needs no review tray.
+      created_by      TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
+
     -- App-level key/value preferences that must be readable server-side (e.g. the
     -- default reasoning level + permission mode a task inherits when it hasn't
     -- overridden them). Distinct from the browser-local UI settings in localStorage.
@@ -547,6 +578,25 @@ export function migrate(db: Database.Database) {
   // because the state is derived from the value rather than stored beside it,
   // there is no companion column to backfill consistently.
   if (!taskCols.includes("snoozed_until")) db.exec("ALTER TABLE tasks ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0");
+  // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for the
+  // same reason — and it is also what "last run" is read from, since runbooks
+  // deliberately keep no ledger of their own.
+  if (!taskCols.includes("runbook_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
+  }
+  // Created here rather than in the schema block above: on an older DB that
+  // block runs BEFORE this ALTER, so indexing the column there fails with
+  // "no such column: runbook_id".
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_runbook ON tasks(runbook_id)");
+  // An optional link from a schedule to the runbook it fires, so "the morning
+  // sweep" is one recipe edited in one place. SET NULL is the FK's answer;
+  // deleteRunbook() gets there first and copies the recipe back into the
+  // schedule (lib/runbooks/store.ts), because a schedule left with no prompt
+  // fires nothing every morning and says nothing about why.
+  const schedCols = (db.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map((c) => c.name);
+  if (!schedCols.includes("runbook_id")) {
+    db.exec("ALTER TABLE schedules ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
+  }
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't
