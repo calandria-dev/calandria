@@ -55,6 +55,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
+  // `model` is the one whitelisted field with an open-ended value: the picker
+  // offers a catalog, but the column takes whatever a client sends and the
+  // driver passes it to the CLI, so the route is the only place that can say
+  // what a model id may LOOK like. Kept deliberately permissive about content
+  // (provider-native ids and inference-profile ARNs are the driver's business,
+  // not this route's) and strict about shape — a control character would reach
+  // a spawned process and the transcript, and an unbounded string has no
+  // legitimate form. An empty/blank string means "inherit", which the rest of
+  // the app spells `null`.
+  if ("model" in body) {
+    if (body.model !== null && typeof body.model !== "string")
+      return NextResponse.json({ error: "model must be a string or null" }, { status: 400 });
+    if (typeof body.model === "string") {
+      const model = body.model.trim();
+      if (model.length > 2048 || /[\0-\x1f\x7f]/.test(model))
+        return NextResponse.json({ error: "invalid model id" }, { status: 400 });
+      allowed.model = model || null;
+    }
+  }
   // Snoozing. Two spellings, because they answer to two different clocks:
   //   - `snoozed_until` is a deadline the USER picked, so it's theirs to state;
   //   - `unsnooze` means "back now", which has to resolve against the SERVER's
