@@ -70,3 +70,43 @@ describe("editing a task's agent", () => {
     expect(getTask(task.id)?.agent).toBe("claude");
   });
 });
+
+// The model id is the one whitelisted field with an open-ended value — the
+// picker offers a catalog, but nothing stops a direct call to this route, and
+// whatever lands in the column is handed to the CLI on the next turn.
+describe("editing a task's model", () => {
+  it("accepts a provider-native model id, trimmed", async () => {
+    const project = createProject({ name: "Native model" });
+    const task = createTask({ project_id: project.id, title: "Pin a model", agent: "claude" });
+
+    const response = await patch(task.id, { model: "  claude-haiku-4-5@20251001  " });
+
+    expect(response.status).toBe(200);
+    expect(getTask(task.id)?.model).toBe("claude-haiku-4-5@20251001");
+  });
+
+  it("reads a blank model as inherit-the-default", async () => {
+    const project = createProject({ name: "Blank model" });
+    const task = createTask({ project_id: project.id, title: "Unpin", agent: "claude" });
+    updateTask(task.id, { model: "claude-opus-5" });
+
+    const response = await patch(task.id, { model: "   " });
+
+    expect(response.status).toBe(200);
+    expect(getTask(task.id)?.model).toBeNull();
+  });
+
+  it.each([
+    ["non-string", { model: { id: "opus" } }],
+    ["control character", { model: "opus\nsonnet" }],
+    ["oversized", { model: "m".repeat(2049) }],
+  ])("rejects an invalid model id: %s", async (name, body) => {
+    const project = createProject({ name: `Bad model ${name}` });
+    const task = createTask({ project_id: project.id, title: "Invalid model", agent: "claude" });
+
+    const response = await patch(task.id, body);
+
+    expect(response.status).toBe(400);
+    expect(getTask(task.id)?.model).toBeNull();
+  });
+});
