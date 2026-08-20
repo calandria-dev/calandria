@@ -10,6 +10,8 @@ import {
   modelOptions, reasoningOptions, permissionOptions, RAIL_W,
   type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate,
 } from "./types";
+import { isSnoozed, wakeLabel } from "./snooze";
+import { SnoozeButton } from "./SnoozeMenu";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
 import { MessageView, SessionBreak } from "./Transcript";
@@ -139,7 +141,7 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -148,6 +150,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
   onSetSendContext: (v: boolean) => void;
+  onSnooze: (until: number) => void; onUnsnooze: () => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -447,6 +450,18 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 </Popover>
               )}
             </div>
+            {/* Snoozing, beside the status it deliberately does NOT change —
+                the status is the category this task drops back into when the
+                deadline passes. While parked, the control becomes the wake
+                button and says when it would have come back on its own. */}
+            {isSnoozed(task) ? (
+              <button className="status-ctl snz-on" title={`Snoozed — wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
+                onClick={onUnsnooze}>
+                {Icon.moon()} <span className="cv">Wakes {wakeLabel(task.snoozed_until)}</span>
+              </button>
+            ) : (
+              <SnoozeButton className="status-ctl" label="Snooze" onSnooze={onSnooze} />
+            )}
             {/* The counterpart to TaskHero's Edit button, which only exists
                 before the first session. Everything in that modal still applies
                 to a task that has run — its title and description are the

@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
-import { SLABEL, AWAIT_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
+import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
+import { SnoozeButton } from "./SnoozeMenu";
+import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
 import { TaskCardSkeleton } from "./Layout";
-import { TaskBoard } from "./TaskBoard";
+import { TaskBoard, type TaskMovePatch } from "./TaskBoard";
 import { BaseBranchBanner } from "./BaseBranchBanner";
 
 // The multi-select checkbox that sits in every row's left gutter. Rendered
@@ -28,28 +30,42 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
   );
 }
 
-function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void }) {
+function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
-  const awaiting = isAwaiting(task);
+  const snoozed = isSnoozed(task);
+  // Snoozed beats awaiting: the whole point of parking a task that's asking you
+  // a question is that it stops reading as "waiting on you" until it's back.
+  const awaiting = !snoozed && isAwaiting(task);
   const blocked = !!blockedBy?.length && !task.started;
   // Awaiting wins over running: a turn parked on a question is live but really
   // waiting on you, so it should read "waiting", not "working".
-  const activity = awaiting ? `waiting on you · ${relTime(task.updated_at)}`
+  const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
+    : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : running ? "live · working"
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
   return (
-    <div className={`task-row ${picked ? "picked" : ""}`}>
+    <div className={`task-row ${picked ? "picked" : ""} ${snoozed ? "snoozed" : ""}`}>
       <PickBox picked={picked} pickable={canPick(task)} onPick={(range) => onPick(task.id, range)} />
       <button className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} onClick={onSelect}>
       <div className="task-top">
         <StatusDot status={task.status} running={running} awaiting={awaiting} />
         <span className="ttitle">{task.title}</span>
+        {/* Snoozed reports the category it came from, not "Snoozed": the group
+            header already says that, and where it goes BACK to is the fact the
+            row can't otherwise show. */}
         <span className={`slabel ${awaiting ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
         <AgentBadge label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         <PriPill p={task.priority} />
       </div>
+      {/* Why this card is back where you didn't leave it. An unread marker, not
+          history — opening the task clears it (useOrchestrator). */}
+      {!snoozed && wasSnoozed(task) && (
+        <div className="snz-chip was" title={`Snoozed until ${new Date(task.snoozed_until).toLocaleString()}`}>
+          {Icon.moon()} Was snoozed
+        </div>
+      )}
       {blocked && (task.auto_start ? (
         // Queued to auto-start ≠ plain blocked: this one launches itself the
         // moment its last blocker is marked done.
@@ -68,6 +84,21 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
       </button>
+      {/* Right gutter, mirroring the pickbox on the left — and outside the card
+          for the same reason it is: the card IS a button, and a button inside a
+          button is invalid. Snoozing fades in on hover like the checkbox does;
+          waking stays visible, because "unsnooze it from here" is the one
+          action a parked row exists to offer. */}
+      <div className="task-snz">
+        {snoozed ? (
+          <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)} — click to wake it now`}
+            onClick={(e) => { e.stopPropagation(); onUnsnooze(task.id); }}>
+            {Icon.sun()}
+          </button>
+        ) : (
+          <SnoozeButton className="snz-set" onSnooze={(until) => onSnooze(task.id, until)} />
+        )}
+      </div>
     </div>
   );
 }
@@ -83,11 +114,12 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
 // no answer moves a task an agent is writing into.
 const canPick = (t: TaskRow) => t.running === 0;
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, accent, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; accent?: boolean; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, accent, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; accent?: boolean; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
   const cards = tasks.map((t) => (
     <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
-      blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick} />
+      blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick}
+      onSnooze={onSnooze} onUnsnooze={onUnsnooze} />
   ));
   if (collapsible) {
     return (
@@ -201,10 +233,11 @@ function useCollapsed(key: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBulkMove, onCollapse, mobile, onBack, baseBranchTick }: {
+export function TasksColumn({ project, agents, tasks, suggested, selTaskId, running, blockedBy, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
-  onMoveTask: (id: string, patch: Partial<Pick<TaskRow, "status" | "suggested">>, orderedIds: string[]) => void;
+  onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
+  onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
@@ -228,13 +261,20 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
   // Withdrawn suggestions sink to the bottom of the tray: they're retractions
   // awaiting a decision, not proposals competing for attention.
   const shownSuggested = suggested.filter(match).sort(withdrawnLast);
-  const needsYou = shown.filter((t) => isAwaiting(t));
+  // Snoozed is a category ABOVE the status groups, not one of them: a parked
+  // task keeps its status the whole time (that's what it returns to), so it has
+  // to be lifted out of `awake` before anything else partitions the list, or it
+  // would be drawn twice.
+  const snoozedGroup = shown.filter((t) => isSnoozed(t)).sort((a, b) => a.snoozed_until - b.snoozed_until);
+  const awake = shown.filter((t) => !isSnoozed(t));
+  const needsYou = awake.filter((t) => isAwaiting(t));
   const groups = {
-    a: shown.filter((t) => t.status === "in_progress" && !isAwaiting(t)),
-    h: shown.filter((t) => t.status === "on_hold" && !isAwaiting(t)),
-    r: shown.filter((t) => t.status === "not_started"),
-    g: shown.filter((t) => t.status === "done").sort((a, b) => b.updated_at - a.updated_at),
-    x: shown.filter((t) => t.status === "cancelled").sort((a, b) => b.updated_at - a.updated_at),
+    a: awake.filter((t) => t.status === "in_progress" && !isAwaiting(t)),
+    h: awake.filter((t) => t.status === "on_hold" && !isAwaiting(t)),
+    r: awake.filter((t) => t.status === "not_started"),
+    z: snoozedGroup,
+    g: awake.filter((t) => t.status === "done").sort((a, b) => b.updated_at - a.updated_at),
+    x: awake.filter((t) => t.status === "cancelled").sort((a, b) => b.updated_at - a.updated_at),
   };
   const canSearch = tasks.length + suggested.length >= SEARCH_MIN;
   const noMatches = q && shown.length === 0 && shownSuggested.length === 0;
@@ -248,7 +288,7 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
   // Suggested rows are ordinary unstarted task rows server-side, so a range
   // crossing into the tray is a real selection, not a category error.
   const order = [
-    ...needsYou, ...groups.a, ...groups.h, ...groups.r,
+    ...needsYou, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
     ...(doneCollapsed && !q ? [] : groups.g),
     ...(cancelledCollapsed && !q ? [] : groups.x),
     ...shownSuggested,
@@ -303,6 +343,7 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
             running={running} blockedBy={blockedBy} canDrag={!q}
             onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
             onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
+            onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}
           />
         </div>
       ) : (
@@ -310,12 +351,15 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
         <div className="task-scroll">
           {tasks.length === 0 && <div className="empty" style={{ padding: "30px 16px" }}><div className="e-t">No tasks yet</div><div className="e-s">Create one to start an agent session.</div></div>}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} accent />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} accent />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} />
+          {/* Parked work sits between the live groups and the terminal ones —
+              it isn't finished, but it isn't asking for anything either. */}
+          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">

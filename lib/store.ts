@@ -19,7 +19,19 @@ export { addInternalUsage, type InternalJob } from "./internalUsage";
 // Shared by listProjects' awaiting_count subquery, listNeedsYou, and
 // countAwaiting so the project badges, the titlebar "N need you" pill, and its
 // dropdown can never disagree.
-const NEEDS_YOU = "t.suggested = 0 AND t.status = 'in_progress' AND t.awaiting_input = 1";
+// A snooze deadline still ahead of us hides the task from every attention
+// surface — a task you parked until Tuesday must stop asking until Tuesday, or
+// snoozing the thing that keeps nagging you achieves nothing. Evaluated against
+// SQLITE'S OWN CLOCK rather than a bound Date.now(), so all three callers share
+// one `now` no matter how their parameters are ordered; second precision is
+// ample for a feature whose shortest offered deadline is an hour.
+//
+// The consequence to know about: a deadline passing writes nothing, so a count
+// taken before it and not recomputed will under-report until the next event on
+// the bus. The client closes that by refetching when its own wake timer fires
+// (app/orchestrator/snooze.ts nextWake) — the same refetch a task_edited does.
+const NOT_SNOOZED = "(t.snoozed_until = 0 OR t.snoozed_until <= CAST(strftime('%s','now') AS INTEGER) * 1000)";
+const NEEDS_YOU = `t.suggested = 0 AND t.status = 'in_progress' AND t.awaiting_input = 1 AND ${NOT_SNOOZED}`;
 
 export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[] {
   return getDb()
@@ -739,9 +751,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, schedule_id=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, schedule_id=?, snoozed_until=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.schedule_id ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.schedule_id ?? null, n.snoozed_until ?? 0, n.updated_at, id);
   return getTask(id);
 }
 

@@ -212,6 +212,7 @@ export default function Orchestrator() {
       onSelectTask={o.setSelTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onShowRecap={o.showProjectHome} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
+      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask}
       onBulkMove={setBulkMoveIds}
       baseBranchTick={o.baseBranchTick}
     />
@@ -235,6 +236,7 @@ export default function Orchestrator() {
             onReconnect={() => openSettings("agents")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
             onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
+                onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
             onResolveWithAI={o.resolveConflictsWithAI}
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
@@ -302,6 +304,7 @@ export default function Orchestrator() {
       onSelectTask={openBoardTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
+      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask}
     >
       {task && boardPanel && (
         <>
@@ -325,6 +328,7 @@ export default function Orchestrator() {
                 onReconnect={() => openSettings("agents")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
                 onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
+                onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
                 onResolveWithAI={o.resolveConflictsWithAI}
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}

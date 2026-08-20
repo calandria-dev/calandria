@@ -404,6 +404,48 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .blocked-chip svg{flex:0 0 auto;}
 /* "queued to auto-start" — blocked, but armed to launch itself (blue, not amber) */
 .blocked-chip.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
+
+/* ---------- snoozed tasks (app/orchestrator/snooze.ts) ----------
+   Deliberately the quietest state in the app: a parked task has nothing to say
+   until its deadline, so it recedes (muted ink, reduced opacity) rather than
+   taking a signal color the way "needs you" or "blocked" do. It brightens back
+   to normal on hover, because it's still a card you can act on. */
+.task-row.snoozed .task,.bcard.snoozed{opacity:.62;}
+.task-row.snoozed:hover .task,.bcard.snoozed:hover{opacity:1;}
+
+/* The right gutter, mirroring .pickbox on the left. */
+.task-snz{flex:0 0 22px;display:grid;place-items:center;height:34px;}
+.snz-set{opacity:0;transition:opacity .12s,color .12s;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--ink-4);display:grid;place-items:center;}
+.task-row:hover .snz-set,.bcard:hover .snz-set,.snz-set:focus-visible{opacity:1;}
+.snz-set:hover{color:var(--ink-2);}
+.snz-set svg{width:14px;height:14px;}
+/* Waking stays visible — it's the whole reason a parked row is on screen. */
+.snz-wake{background:transparent;border:1px solid var(--line);border-radius:var(--r-sm);padding:3px;cursor:pointer;color:var(--amber);display:grid;place-items:center;}
+.snz-wake:hover{border-color:var(--amber);background:var(--amber-soft);}
+.snz-wake svg{width:13px;height:13px;}
+
+/* "Was snoozed" — the unread marker on a card that has come back. */
+.snz-chip{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line);}
+.snz-chip svg{width:11px;height:11px;flex:0 0 auto;}
+.bc-chip.snz{margin-top:7px;align-self:flex-start;color:var(--ink-3);}
+
+/* Board: the corner affordance, out of the card's content flow. */
+.bc-snz{position:absolute;top:8px;right:8px;}
+.bcard.snoozed .bc-act{color:var(--ink-3);}
+
+/* Session header: the control becomes the wake button while parked. */
+.status-ctl.snz-on{color:var(--ink-2);cursor:pointer;}
+.status-ctl.snz-on:hover{border-color:var(--amber);color:var(--amber);}
+
+/* The menu's custom-duration rows. */
+.snz-row{display:flex;align-items:center;gap:7px;padding:6px 13px 9px;}
+.snz-row .snz-lead{font-size:12px;color:var(--ink-3);}
+.snz-num{width:56px;}
+.snz-unit{flex:1;min-width:0;}
+.snz-when{flex:1;min-width:0;font-family:var(--mono);font-size:11px;}
+.snz-num,.snz-unit,.snz-when{height:28px;padding:0 7px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-size:12px;}
+.snz-num:focus,.snz-unit:focus,.snz-when:focus{outline:none;border-color:var(--accent);}
+.snz-err{padding:0 13px 9px;font-size:11px;color:var(--coral);}
 /* hero banner shown above a blocked task's disabled Start button */
 .hero-blocked{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);}
 .hero-blocked svg{flex:0 0 auto;}

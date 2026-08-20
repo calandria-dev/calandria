@@ -58,6 +58,7 @@ export interface TaskRow {
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
+  snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
 }
 // A single row in the titlebar "need you" dropdown: an awaiting task plus enough
 // of its project to label and color it. Mirrors lib/store.ts listNeedsYou().
@@ -247,6 +248,11 @@ export type AgentLoginT = ClaudeLoginT & { code?: string | null };
 export const SCLS: Record<Status, "r" | "a" | "g" | "h" | "x"> = { not_started: "r", in_progress: "a", on_hold: "h", done: "g", cancelled: "x" };
 export const SLABEL: Record<Status, string> = { not_started: "Not started", in_progress: "In progress", on_hold: "On hold", done: "Done", cancelled: "Cancelled" };
 export const AWAIT_LABEL = "Needs your input";
+// The derived category a snoozed task is drawn in — one constant so the list
+// group, the board column and any copy referring to it can't drift apart. NOT
+// a Status: a snooze leaves the status alone, which is what the task goes back
+// to when it wakes (see ./snooze.ts).
+export const SNOOZE_LABEL = "Snoozed";
 export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused — pick up later", done: "work complete / merged", cancelled: "abandoned — won't be finished" };
 export const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done", "cancelled"];
 export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo: "Low" };

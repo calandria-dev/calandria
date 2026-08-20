@@ -53,6 +53,9 @@ window while preserving the task's lineage.
 - **Web-based and self-hostable:** run Operator on your own machine or server, then securely
   access the same workspace from desktop or mobile.
 - **One “Needs you” inbox:** jump directly to any session waiting for an answer.
+- **Snooze a task:** park anything until an hour from now, tomorrow morning, or an exact
+  date — it moves to Snoozed and stops counting toward the inbox, then comes back to the
+  category it left, marked as having been snoozed.
 - **Persistent context:** reuse project knowledge and continue long-running work across
   fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve conflicts, merge, or

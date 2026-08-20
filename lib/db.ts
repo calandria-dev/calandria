@@ -88,6 +88,14 @@ export function init(db: Database.Database) {
       -- Cleared by whatever revives the row, so it can never outlive the state
       -- it describes (PATCH /api/tasks/[id]).
       withdrawn_reason TEXT NOT NULL DEFAULT '',
+      -- When a snoozed task comes back (ms epoch; 0 = never snoozed). The whole
+      -- of snoozing is this one column and the fact that the status column is
+      -- left alone: ahead of now the task is drawn in the Snoozed category,
+      -- behind it the task is back in its own status group wearing a "was
+      -- snoozed" chip, and the user opening it clears the value to 0. Nothing
+      -- sweeps this — a past deadline simply stops matching — so a wake can't
+      -- be missed by an app that was shut down when it came due.
+      snoozed_until INTEGER NOT NULL DEFAULT 0,
       position    INTEGER NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
@@ -534,6 +542,11 @@ export function migrate(db: Database.Database) {
   // Which schedule minted this task (lib/scheduler.ts). SET NULL rather than
   // cascade — deleting a schedule must not delete the work it produced.
   if (!taskCols.includes("schedule_id")) db.exec("ALTER TABLE tasks ADD COLUMN schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL");
+  // When a snoozed task comes back (see the CREATE TABLE note). 0 on every
+  // pre-existing row is exactly right — nothing was ever snoozed before — and
+  // because the state is derived from the value rather than stored beside it,
+  // there is no companion column to backfill consistently.
+  if (!taskCols.includes("snoozed_until")) db.exec("ALTER TABLE tasks ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0");
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

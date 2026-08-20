@@ -37,7 +37,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -55,6 +55,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
+  // Snoozing. Two spellings, because they answer to two different clocks:
+  //   - `snoozed_until` is a deadline the USER picked, so it's theirs to state;
+  //   - `unsnooze` means "back now", which has to resolve against the SERVER's
+  //     clock — the one lib/store's NEEDS_YOU predicate compares against. A
+  //     browser running minutes fast that sent its own Date.now() would write a
+  //     deadline still in the future and leave the task it just woke hidden
+  //     from the pill until the skew elapsed.
+  // Validated rather than coerced: the column is a ms epoch and a stray float
+  // or NaN would land in SQLite as a value no comparison reads the way the
+  // caller meant.
+  if ("snoozed_until" in body) {
+    const v = body.snoozed_until;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
+      return NextResponse.json({ error: "snoozed_until must be a non-negative epoch in milliseconds" }, { status: 400 });
+    allowed.snoozed_until = v;
+  }
+  if ((body as { unsnooze?: unknown }).unsnooze === true) allowed.snoozed_until = Date.now();
   if ("agent" in body) {
     if (typeof body.agent !== "string" || !isAgentId(body.agent))
       return NextResponse.json({ error: "valid agent required" }, { status: 400 });

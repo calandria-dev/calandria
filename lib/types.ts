@@ -61,6 +61,12 @@ export interface Task {
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
+  // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
+  // of now the task is drawn in the Snoozed category and hidden from the "needs
+  // you" surfaces; behind it, the task is back in its own status group with a
+  // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
+  // what makes going back to the previous category free rather than restored.
+  snoozed_until: number;
   created_at: number;
   updated_at: number;
 }

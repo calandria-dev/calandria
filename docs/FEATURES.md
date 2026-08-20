@@ -67,8 +67,25 @@ anything about the task.
 ## Planning and orchestration
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,
-Needs input, and Done states. Tasks can depend on other tasks; **Start when unblocked**
+Needs input, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
+
+### Snoozing
+
+Not everything needs deciding today. The moon button on a task — in the list gutter, in the
+corner of a board card, or beside the status picker in the session header — parks it until a
+time you pick: a one-click preset (an hour, this evening, tomorrow, next week), a relative
+duration ("in 3 days"), or an exact date and time. While it's parked the task moves to
+**Snoozed**, showing when it comes back and a sun button to wake it immediately, and it drops
+out of the "needs you" pill, its dropdown and the project badge — snoozing the thing that
+keeps nagging you is the whole point.
+
+Snoozing changes *where a task is shown*, never what it is. Its status is untouched, so when
+the deadline passes — or you wake it by hand, or drag its card out of the column — it returns
+to exactly the group it came from, marked **Was snoozed** so an unexpected reappearance
+explains itself. Opening the task clears that marker. Nothing sweeps for due snoozes on a
+timer, so one that comes due while the app is closed is simply already awake next time you
+look, and a running turn is unaffected: a snoozed task still works, it just stops asking.
 
 A misfiled task can be moved to another project from **Edit task**, keeping its description
 and transcript. The move drops any blocked-by links it had, since dependencies can't span

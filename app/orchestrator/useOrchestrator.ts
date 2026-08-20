@@ -5,9 +5,11 @@ import type { Priority, Status, AskQuestion, AskAnswers, PermissionDecision, Per
 import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
+import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
 import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type SaveAction, type TaskRow } from "./types";
 import { agentLabel } from "./agents";
+import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
 import { usePrefs } from "./usePrefs";
@@ -497,6 +499,72 @@ export function useOrchestrator() {
   const decAwaiting = (t: TaskRow) =>
     setProjects((prev) => prev.map((p) => (p.id === t.project_id ? { ...p, awaiting_count: Math.max(0, p.awaiting_count - 1) } : p)));
 
+  // ---------- snoozing (see ./snooze.ts for the model) ----------
+  //
+  // Both writes are ordinary PATCHes, so the `task_edited` they publish carries
+  // the project's recomputed awaiting count and re-syncs every other tab's
+  // badge for free — a snoozed task drops out of the "needs you" surfaces
+  // server-side, and reappears in them when it wakes.
+  const snoozeTask = async (id: string, until: number) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { snoozed_until: until });
+    setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
+  };
+  // "Wake it now" is resolved by the SERVER, not by sending our own clock: the
+  // deadline is compared against SQLite's `now` in the needs-you predicate, so
+  // a browser running fast would otherwise write a future timestamp and leave
+  // the task it just woke hidden from the pill until the skew elapsed.
+  const unsnoozeTask = async (id: string) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { unsnooze: true });
+    setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
+  };
+
+  /**
+   * The wake timer. A deadline passing writes NOTHING — a snooze decays by
+   * being compared against the clock, which is what makes it survive the app
+   * being closed — so the one thing the client owes the user is a re-render at
+   * the moment the card should move. One timeout set to the soonest deadline
+   * does that for the whole board; polling every task on an interval would be
+   * the same answer recomputed continuously.
+   *
+   * `wakeTick` is in the deps as well as `tasks` so the next deadline is armed
+   * after this one fires (nothing else changes, so the effect wouldn't re-run).
+   * It terminates: the task that just woke no longer matches nextWake, and an
+   * empty answer arms nothing at all.
+   */
+  const [wakeTick, setWakeTick] = useState(0);
+  useEffect(() => {
+    const at = nextWake(tasks);
+    if (at === null) return;
+    // The second of slack guarantees the predicates read "awake" when the
+    // re-render lands, rather than racing the deadline by a millisecond.
+    const timer = setTimeout(() => {
+      setWakeTick((n) => n + 1);
+      // The awaiting counts were computed server-side against a deadline that
+      // has only just passed, and no write means no event to carry the new
+      // ones. This is the one place they'd stay stale, so re-read them.
+      jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
+    }, Math.max(0, at - Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [tasks, wakeTick]);
+
+  /**
+   * The "was snoozed" chip is an unread marker, not history: it exists to
+   * explain why a card the user didn't expect is back in its old category.
+   * Opening the task IS the acknowledgement, so selecting it clears the column
+   * to 0. Guarded by a ref because the effect re-runs on the optimistic patch
+   * that lands before the response does.
+   */
+  const clearingSnooze = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!task || !wasSnoozed(task) || clearingSnooze.current.has(task.id)) return;
+    const id = task.id;
+    clearingSnooze.current.add(id);
+    jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { snoozed_until: 0 })
+      .then((fresh) => setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x))))
+      .catch(() => {})
+      .finally(() => clearingSnooze.current.delete(id));
+  }, [task]);
+
   const setStatus = async (s: Status) => {
     if (!task) return;
     const wasAwaiting = isAwaiting(task);
@@ -552,7 +620,7 @@ export function useOrchestrator() {
   // column) and persist the new manual order. `orderedIds` is the project's
   // full task list flattened in column order. Optimistic on both counts — the
   // card lands where it was dropped instantly; a failure reloads server truth.
-  const moveTask = useCallback(async (id: string, patch: Partial<Pick<TaskRow, "status" | "suggested">>, orderedIds: string[]) => {
+  const moveTask = useCallback(async (id: string, patch: TaskMovePatch, orderedIds: string[]) => {
     const hasPatch = Object.keys(patch).length > 0;
     setTasks((prev) => {
       const byId = new Map(prev.map((t) => [t.id, t]));
@@ -771,7 +839,7 @@ export function useOrchestrator() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
-    selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel,
+    selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask,
     setReasoning, setPermission, setSendContext, createTask, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
