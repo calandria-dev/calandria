@@ -124,22 +124,22 @@ describe("claude driver setting sources", () => {
 
 describe("the schedule preflight validates against the same sources a turn gets", () => {
   it("probes with SETTING_SOURCES itself, not a second copy of the list", async () => {
-    // lib/schedule/commands.ts opens a throwaway session purely to read the
-    // slash-command registry a scheduled turn WOULD have, and refuses the run
-    // if the prompt's command isn't in it. It used to hardcode its own
-    // ["user","project","local"], so the two could drift — and drift doesn't
-    // degrade quietly here: the preflight would validate against a different
-    // registry than the turn actually gets, settle the run `failed` and mint
-    // nothing, every morning, for a command that is in fact registered.
+    // lib/schedule/commands.ts reads the slash-command registry a scheduled turn
+    // WOULD have, and refuses the run if the prompt's command isn't in it. It
+    // used to hardcode its own ["user","project","local"], so the two could
+    // drift — and drift doesn't degrade quietly here: the preflight would
+    // validate against a different registry than the turn actually gets, settle
+    // the run `failed` and mint nothing, every morning, for a command that is
+    // in fact registered.
     //
     // Asserted behaviourally (what the probe HANDED the SDK) rather than by
     // grepping for an import, so any future way of getting the value wrong —
     // a re-declared local, a spread that drops an entry — still fails here.
+    // Since the probe is now the composer's own (lib/agents/claude/commands.ts),
+    // this pins BOTH callers to the turn's sources at once.
     queryMock.mockImplementation(() => ({
-      async *[Symbol.asyncIterator]() {
-        yield { type: "system", subtype: "init", slash_commands: ["jira-tasks"] };
-      },
-      interrupt: async () => {},
+      supportedCommands: async () => [{ name: "jira-tasks", description: "", argumentHint: "" }],
+      close: () => {},
     }));
 
     expect(await listSlashCommands(project, "claude")).toEqual(["jira-tasks"]);

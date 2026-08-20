@@ -196,7 +196,13 @@ shows the failure with one-click suggestions; the same check runs again when the
 fires, where an unknown command records the run as **failed** and creates no task, because a
 plugin can be uninstalled or renamed between the two. A prompt that merely *starts* with a
 filesystem path is not a command at all — `/etc/passwd, tell me what's in it` is an ordinary
-prompt about a file, and a token followed by `/` is read as a path.
+prompt about a file, and a token followed by `/` is read as a path. The check reads the same
+command list the composer's `/` menu offers, so the two can't disagree — and it only ever
+*refuses* on a freshly read list, never a cached one, so a command you installed a minute ago
+isn't rejected for being new. Two things it declines to judge rather than get wrong: an MCP
+server's `/mcp__server__prompt` (those names aren't in the list it can read without spawning
+your whole server fleet) and any prompt it couldn't check at all — both save with a note, and
+run.
 
 Save is never blocked on the check, because the check is a typo catcher and not an authority:
 it reads one session's command list, so a conditionally-registered command can read as
