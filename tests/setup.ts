@@ -27,6 +27,28 @@ for (const v of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", 
   delete process.env[v];
 }
 
+// Hermetic provider config: Claude's capability descriptor is now computed per
+// read from the backend the instance routes through — and that is read out of
+// ~/.claude/settings.json and the process env (lib/agents/claude/provider.ts).
+// A developer on Vertex or Bedrock would otherwise get a different model list,
+// with different context windows, than a developer on a plain Anthropic login,
+// and modelContextWindow() feeds store-level assertions. Point the reader at an
+// empty config dir and strip the provider flags so the suite always sees the
+// default Anthropic-hosted catalog.
+process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude-config");
+fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+for (const v of [
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_MANTLE",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+]) {
+  delete process.env[v];
+}
+
 // Hermetic agent config: CODEX_INHERIT_MCP is read at import time by
 // lib/config.ts and flips whether the Codex driver unmounts the user's own MCP
 // servers, so a developer who set it in their shell would otherwise invert
