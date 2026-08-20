@@ -53,7 +53,21 @@
   --diff-add-bg:rgba(56,211,159,.10);
   --diff-del-bg:rgba(255,106,69,.10);
 
-  --sans:'Space Grotesk', system-ui, sans-serif;
+  /* Geist, not Space Grotesk. Space Grotesk has no upright quote: its U+0027
+     and U+0022 are composite glyphs built from the SAME component, at the same
+     identity transform, as U+2019/U+201D — the CLOSING curly marks (the opening
+     forms are that component rotated 180°). So a typed 'foo' rendered as a pair
+     of closing curly quotes in the composer, which reads as the prompt being
+     corrupted on its way to the agent. It never was: the characters are plain
+     ASCII, confirmed against the whole message store. But the composer is where
+     shell commands, paths and regexes get typed, so a quote that looks like a
+     different character than it is costs real debugging time — it cost a full
+     investigation once already. Geist draws both marks upright, is built for
+     developer tooling, and unlike Hanken Grotesk (which this app was loading in
+     five weights and using nowhere) it ships `tnum`, which .tnum below needs.
+     Requested as a variable font so the 550/650 weights used in this file
+     render as authored instead of being rounded to a static instance. */
+  --sans:'Geist', system-ui, sans-serif;
   --mono:'JetBrains Mono', ui-monospace, monospace;
 
   --r-sm:7px;
