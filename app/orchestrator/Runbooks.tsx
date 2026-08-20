@@ -369,6 +369,19 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
     return () => window.removeEventListener("orch:runbooks", onChanged);
   }, [projectId, load]);
 
+  // A ⌘K dispatch that failed. The palette has closed by then and the user may
+  // have been anywhere, so useOrchestrator sends them here and hands the
+  // message to the one surface that can show it next to the recipe that
+  // produced it.
+  useEffect(() => {
+    const onErr = (e: Event) => {
+      const d = (e as CustomEvent<{ projectId: string; message: string }>).detail;
+      if (d.projectId === projectId) setError(d.message);
+    };
+    window.addEventListener("orch:runbook-error", onErr);
+    return () => window.removeEventListener("orch:runbook-error", onErr);
+  }, [projectId]);
+
   const act = async (id: string, fn: () => Promise<unknown>) => {
     setBusy(id);
     try {

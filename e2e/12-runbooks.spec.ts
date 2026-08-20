@@ -141,6 +141,13 @@ test("deleting a runbook removes it from the card", async ({ page }) => {
   await expect(row).toBeHidden();
 });
 
+// The ⌘K rows are deliberately NOT covered here. The palette lives behind
+// `omniSearch`, which DEFAULT_FEATURES ships off (lib/features.ts), so this
+// suite's server doesn't render it — and switching the flag on for the whole
+// run would test a build nobody gets by default and put an omni-search bar in
+// front of every other spec's toolbar. The ranking those rows depend on is
+// pinned in tests/runbookPalette.test.ts instead.
+
 test("the dispatched task remembers which project it belongs to", async ({ request }) => {
   // A dispatch mints into the RUNBOOK's project, never the one on screen — the
   // API is the honest place to assert that, since the UI only ever shows one.
