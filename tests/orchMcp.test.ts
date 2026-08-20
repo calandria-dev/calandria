@@ -60,6 +60,19 @@ beforeAll(async () => {
         res.end(JSON.stringify({ ok: true, id: body.taskId, title: body.title, text: `Updated "${body.title}".` }));
       } else if (req.url?.endsWith("/withdraw-suggestion")) {
         res.end(JSON.stringify({ ok: true, id: body.task, status: "cancelled", text: `Withdrew "${body.task}".` }));
+      } else if (req.url?.endsWith("/create-runbook")) {
+        res.end(JSON.stringify({ ok: true, id: "rb-1", name: body.name, project_id: "proj-abc", text: `Saved runbook "${body.name}".` }));
+      } else if (req.url?.endsWith("/list-runbooks")) {
+        res.end(JSON.stringify({ ok: true, project: "Here", runbooks: [], text: "[]" }));
+      } else if (req.url?.endsWith("/update-runbook")) {
+        // Stand in for the real policy: a runbook a schedule fires is refused,
+        // with the reason travelling back as the tool's error text.
+        if (body.runbook === "rb-scheduled") {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: `"Morning sweep" fires this runbook, so editing it would silently change unattended work.` }));
+          return;
+        }
+        res.end(JSON.stringify({ ok: true, id: body.runbook, name: body.name, text: `Updated runbook "${body.name}".` }));
       } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: "not found" }));
@@ -97,14 +110,21 @@ describe("orch-mcp stdio bridge", () => {
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
         "ask_user",
+        "create_runbook",
         "expose_service",
         "get_task",
         "list_projects",
+        "list_runbooks",
         "list_tasks",
         "suggest_task",
+        "update_runbook",
         "update_task",
         "withdraw_suggestion",
       ]);
+      // No delete_runbook, and that is a policy rather than an omission: delete
+      // is hard delete with no undo here, so retiring a recipe stays the user's
+      // call. See lib/runbookTools.ts.
+      expect(tools.map((t) => t.name)).not.toContain("delete_runbook");
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
     } finally {
@@ -130,6 +150,54 @@ describe("orch-mcp stdio bridge", () => {
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
       expect(schema.properties!.status.enum).toContain("done");
+    } finally {
+      await close();
+    }
+  });
+
+  it("never offers create_runbook the agent id it will be recorded under", async () => {
+    const { client, close } = await connectBridge();
+    try {
+      const { tools } = await client.listTools();
+      const schema = tools.find((t) => t.name === "create_runbook")!.inputSchema as {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      };
+      // `created_by` is deliberately absent. The endpoint reads the agent off
+      // the CALLER'S task row, so a model can't file a recipe under another
+      // agent's name — the card shows that value to the user as provenance.
+      expect(Object.keys(schema.properties ?? {})).not.toContain("created_by");
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
+        ["description", "name", "permission_mode", "priority", "project", "prompt"]
+      );
+      expect((schema.required ?? []).sort()).toEqual(["description", "name", "prompt"]);
+
+      const res = await client.callTool({
+        name: "create_runbook",
+        arguments: { name: "Sweep", description: "d", prompt: "/sweep" },
+      });
+      expect((res.content as { text: string }[])[0].text).toContain("Sweep");
+      const call = calls.find((c) => c.path.endsWith("/create-runbook"))!;
+      // The caller identity the bridge supplies from ORCH_TASK_ID, not the model.
+      expect(call.body.taskId).toBe("task-xyz");
+    } finally {
+      await close();
+    }
+  });
+
+  it("relays update_runbook's refusal for a schedule-linked runbook, with the reason", async () => {
+    const { client, close } = await connectBridge();
+    try {
+      // The refusal has to reach the MODEL as text it can act on: "you may not"
+      // with no reason leaves it nothing to tell the user and nothing to try
+      // instead. The policy itself lives in lib/runbookTools.ts and is proved
+      // in tests/runbookAgentTools.test.ts; this pins that it survives the trip.
+      const res = await client.callTool({
+        name: "update_runbook",
+        arguments: { runbook: "rb-scheduled", prompt: "/hijacked" },
+      });
+      expect(res.isError).toBe(true);
+      expect((res.content as { text: string }[])[0].text).toContain("Morning sweep");
     } finally {
       await close();
     }

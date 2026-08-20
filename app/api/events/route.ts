@@ -108,6 +108,15 @@ export async function GET(req: Request) {
           send({ type: "tasks_reordered", projectId: ev.projectId });
           return;
         }
+        // A project's saved runbooks changed — a create/edit/copy/delete here,
+        // in another tab, or an agent's create_runbook. Bypasses the getTask
+        // re-read below for a stronger reason than the branches above: there is
+        // no task row in this mutation at all, so its publishers key the bus
+        // with "" and `taskId` is meaningless here.
+        if (ev.type === "runbooks_changed") {
+          send({ type: "runbooks_changed", projectId: ev.projectId });
+          return;
+        }
         const event = coarse(ev);
         if (!event) return;
         // Task deleted mid-turn (rows are hard-deleted) — nothing to report;

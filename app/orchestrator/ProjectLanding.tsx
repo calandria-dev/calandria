@@ -3,6 +3,7 @@
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { relTime } from "./format";
+import { Runbooks } from "./Runbooks";
 import { Schedules } from "./Schedules";
 import { ErrNote } from "./shared";
 import type { AgentsBundle, ProjectRow, RecapInfo } from "./types";
@@ -10,8 +11,9 @@ import type { AgentsBundle, ProjectRow, RecapInfo } from "./types";
 // Shown in the session pane when a project is open but no task is selected.
 // Surfaces the auto-generated "where you left off" recap when one exists / is
 // brewing; otherwise the plain create-a-task prompt.
-export function ProjectLanding({ project, agents, recap, onNewTask, onRefreshRecap }: {
-  project: ProjectRow; agents: AgentsBundle; recap?: RecapInfo; onNewTask: () => void; onRefreshRecap: () => void;
+export function ProjectLanding({ project, projects, agents, recap, onNewTask, onRefreshRecap, onOpenTask }: {
+  project: ProjectRow; projects: ProjectRow[]; agents: AgentsBundle; recap?: RecapInfo;
+  onNewTask: () => void; onRefreshRecap: () => void; onOpenTask: (taskId: string) => void;
 }) {
   const generating = recap?.generating && !recap?.recap;
   const hasRecap = !!recap?.recap;
@@ -71,6 +73,7 @@ export function ProjectLanding({ project, agents, recap, onNewTask, onRefreshRec
               <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} New task</button>
             </div>
           </div>
+          <Runbooks project={project} projects={projects} agents={agents} onOpenTask={onOpenTask} />
           <Schedules project={project} agents={agents} />
         </div>
       </div>
@@ -100,6 +103,7 @@ export function ProjectLanding({ project, agents, recap, onNewTask, onRefreshRec
           <div className="e-s">Create a task to start an agent session.</div>
           <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
         </div>
+        <Runbooks project={project} projects={projects} agents={agents} onOpenTask={onOpenTask} />
         <Schedules project={project} agents={agents} />
       </div>
     </div>

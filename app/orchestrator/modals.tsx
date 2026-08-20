@@ -141,10 +141,10 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   );
 }
 
-// The destination radio list, shared by the single-task field below and the
-// bulk MoveTasksModal — one rendering of "which project", so the two paths
-// can't drift on what a destination looks like.
-function ProjectTargetList({ targets, value, onChange, name }: {
+// The destination radio list, shared by the single-task field below, the bulk
+// MoveTasksModal, and the Runbooks card's "Copy to…" — one rendering of "which
+// project", so those paths can't drift on what a destination looks like.
+export function ProjectTargetList({ targets, value, onChange, name }: {
   targets: ProjectRow[]; value: string; onChange: (id: string) => void; name: string;
 }) {
   return (
