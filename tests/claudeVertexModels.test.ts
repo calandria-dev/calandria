@@ -44,7 +44,9 @@ function configDir(settings?: unknown): string {
   return d;
 }
 
-// This machine's real configuration, as the probes found it.
+// This machine's real configuration, as the probes found it — except the project
+// id, which is a placeholder: nothing reads it here, and it doesn't belong in a
+// public repo. The model mappings below are the measured ones and do matter.
 const VERTEX_SETTINGS = {
   env: {
     CLAUDE_CODE_USE_VERTEX: "1",

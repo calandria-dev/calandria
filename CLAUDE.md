@@ -9,7 +9,7 @@ Orchestrator — a local-first web app that runs many Claude Code sessions in pa
 - `npm test` — vitest, serial on purpose (tests spawn many real git subprocesses). Single file: `npx vitest run tests/merge.test.ts`.
 - `npm run test:e2e` — Playwright end-to-end suite: builds, then boots the real prod server against a hermetic temp instance with the deterministic mock agent (`lib/agents/mock/`, registered only when `ORCH_E2E_MOCK_AGENT=1`) and drives onboarding → project → task → turn → diff → merge through the UI. `npm run preflight` = unit + e2e, the pre-push gate. See `e2e/README.md` (mock-turn directives, selector conventions, staleness gotcha: the server runs the **built** bundle).
 - `npm run typecheck` — `next typegen && tsc --noEmit`, a few seconds. CI runs this as its own job (`.github/workflows/test.yml`); the `next typegen` half writes the gitignored `next-env.d.ts` + `.next/types` that `tsconfig.json` includes, so a clean tree checks the same files `next build` does — including the generated validator that pins every App Router handler to its route.
-- **Run tests in a container** — `npm run test:docker` / `typecheck:docker` / `test:e2e:docker` / `preflight:docker` run those same scripts inside a Linux Node 22 image (`docker/test/Dockerfile`, driven by `scripts/docker-test.sh`; args pass through, e.g. `npm run test:docker -- tests/merge.test.ts`). A task worktree has no `node_modules` and the main checkout's is macOS-built, so the container installs its own into a shared named volume — one cold install, reused by every later run. The recipe, the two dead ends it encodes (don't borrow node_modules, don't build on the Playwright image — it's Node 24 with no `better-sqlite3` prebuild), and the `fatal: not a git repository` red herring are all in `e2e/README.md`.
+- **Run tests in a container** — `npm run test:docker` / `typecheck:docker` / `test:e2e:docker` / `preflight:docker` run those same scripts inside a Linux Node 22 image (`docker/test/Dockerfile`, driven by `scripts/docker-test.sh`; a file path passes through, e.g. `npm run test:docker -- tests/merge.test.ts`, but a vitest **flag** needs a second `--` or npm eats it — `-- -- tests/merge.test.ts -t "conflicts"`). A task worktree has no `node_modules` and the main checkout's is macOS-built, so the container installs its own into a shared named volume — one cold install, reused by every later run. The recipe, the two dead ends it encodes (don't borrow node_modules, don't build on the Playwright image — it's Node 24 with no `better-sqlite3` prebuild), and the `fatal: not a git repository` red herring are all in `e2e/README.md`. `.claude/skills/running-tests/SKILL.md` is the operating summary an agent session loads on demand — which command, the volume model, and the failures that read as environmental but aren't.
 - No lint script; TypeScript is strict, path alias `@/*` → repo root (mirrored in `vitest.config.ts`).
 
 ## Architecture
@@ -88,3 +88,8 @@ This is the **open-source repo** — the whole local app lives here and all core
 
 `README.md` (concise product overview and quick start) · `docs/` (features, agents,
 services, self-hosting, and architecture) · `.env.example` (every env var, documented).
+
+**Before adding to this file, read `docs/CONTEXT_BUDGET.md`** — it is 19,250 measured tokens
+loaded into every session (37.8% of a real session's starting context), so new material
+belongs in the nearest directory-scoped `CLAUDE.md` unless it's needed before you'd open that
+directory. Don't restate `docs/` prose here; that duplication has already drifted.

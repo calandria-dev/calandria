@@ -27,7 +27,9 @@ and `.next/types` that `tsconfig.json` includes, so a fresh clone checks the sam
 Every one of those has a `:docker` twin (`npm run test:docker`, `typecheck:docker`,
 `test:e2e:docker`, `preflight:docker`) that runs it in a throwaway Linux container with
 its own `node_modules` volume and matching Playwright browsers — the way to get a green
-run out of a checkout whose dependencies were installed on another platform.
+run out of a checkout whose dependencies were installed on another platform. If you work
+with an agent that reads Claude Code skills, `.claude/skills/running-tests/` encodes the
+same workflow.
 
 The end-to-end suite builds the production app and drives onboarding, project/task
 creation, turns, diff, merge, and workspace views against a disposable instance. It uses
