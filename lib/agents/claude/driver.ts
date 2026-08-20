@@ -23,7 +23,7 @@ import type {
   PermissionRequest,
 } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
-import { CLAUDE_CAPABILITIES } from "./capabilities";
+import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands } from "./commands";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import {
@@ -956,7 +956,14 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
 export const claudeDriver: AgentDriver = {
   id: "claude",
   label: "Claude Code",
-  capabilities: CLAUDE_CAPABILITIES,
+  // A getter, not a constant: the model list depends on which backend the
+  // instance routes through and on the alias mappings in the user's own
+  // settings, both of which are read from disk (./provider.ts). GET /api/agents
+  // therefore serves what a turn on this machine would really resolve, and
+  // picks up a settings edit without a restart.
+  get capabilities() {
+    return claudeCapabilities();
+  },
   runTurn,
   // What a turn on this task would actually expand — read from the same
   // settings a turn loads, rooted at the same cwd. See ./commands.ts.
