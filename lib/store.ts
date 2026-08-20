@@ -371,6 +371,8 @@ export function createTask(input: {
   permission_mode?: string | null;
   /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
   schedule_id?: string | null;
+  /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
+  runbook_id?: string | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -387,12 +389,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.permission_mode || null, input.schedule_id ?? null, position, now, now
+      agent, sendContext ? 1 : 0, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
+      position, now, now
     );
   return getTask(id)!;
 }
