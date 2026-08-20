@@ -967,8 +967,12 @@ export const claudeDriver: AgentDriver = {
   runTurn,
   // What a turn on this task would actually expand — read from the same
   // settings a turn loads, rooted at the same cwd. See ./commands.ts.
-  listCommands: (task, project) =>
-    listClaudeCommands(sessionCwd(task, project), SETTING_SOURCES),
+  //
+  // `null` there is "couldn't find out", a distinction the schedule validator
+  // needs and the menu does not: an unreachable CLI costs the composer its long
+  // tail and nothing else, so both failures land on the same empty list.
+  listCommands: async (task, project) =>
+    (await listClaudeCommands(sessionCwd(task, project), SETTING_SOURCES)) ?? [],
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,
