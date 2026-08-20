@@ -68,7 +68,7 @@ function RunLine({ run, timezone }: { run: ScheduleRunRow; timezone: string }) {
 
 // What the mock/real slash-command validator can return, mirrored from
 // lib/schedule/commands.ts's PromptValidation.
-type Check = { ok: boolean; error?: string; suggestions?: string[]; unchecked?: boolean };
+type Check = { ok: boolean; error?: string; suggestions?: string[]; unchecked?: boolean; note?: string };
 
 // Replace the leading slash command in a prompt with a suggested one, keeping
 // whatever follows it — "/jira, triage" + "plugin:jira" -> "/plugin:jira, triage".
@@ -258,7 +258,9 @@ function ScheduleForm({
           </div>
         )}
         {check?.ok && check.unchecked && (
-          <div className="hlp">Couldn&rsquo;t reach this project&rsquo;s command registry to check — saving without verifying.</div>
+          <div className="hlp">
+            {check.note ?? "Couldn’t reach this project’s command registry to check — saving without verifying."}
+          </div>
         )}
         {check?.ok && !check.unchecked && !!prompt.trim().startsWith("/") && (
           <div className="hlp">{Icon.check()} recognized command</div>
