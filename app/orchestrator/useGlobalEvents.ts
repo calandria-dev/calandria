@@ -74,6 +74,15 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
       void loadTasks(ev.projectId, false);
       return;
     }
+    // A project's saved runbooks changed — here, in another tab, or via an
+    // agent's create_runbook. Same "refetch" shape as the reorder above, but
+    // relayed as a window event rather than handled here: the consumers (the
+    // Runbooks card, the ⌘K list) own their own fetches, and this hook has no
+    // state of theirs to patch.
+    if (ev.type === "runbooks_changed") {
+      window.dispatchEvent(new CustomEvent("orch:runbooks", { detail: ev.projectId }));
+      return;
+    }
     if (ev.type !== "task") return;
     setTaskRunning(ev.taskId, ev.running);
     setTasks((prev) => prev.map((t) => {

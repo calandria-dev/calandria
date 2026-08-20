@@ -251,10 +251,12 @@ export default function Orchestrator() {
         ) : project ? (
           <ProjectLanding
             project={project}
+            projects={o.activeProjects}
             agents={o.agents}
             recap={o.recaps[project.id]}
             onNewTask={() => o.setModal("task")}
             onRefreshRecap={() => o.fetchRecap(project.id, true)}
+            onOpenTask={o.setSelTask}
           />
         ) : (
           <div className="empty" style={{ margin: "auto" }}>
