@@ -870,13 +870,18 @@ export function useOrchestrator() {
   };
 
   // Restore run defaults to built-ins: clear every server-backed default_* key
-  // (agent-scoped and legacy) plus the reset of client-only settings.
+  // (agent-scoped and legacy) plus the reset of client-only settings. The list
+  // must stay in step with what SettingsView's `isDefault` considers non-default
+  // — a key that enables the Reset button but isn't cleared here makes the click
+  // do nothing and leaves the button lit.
+  const RESET_KEYS = new Set([
+    "utility_agent", "background_jobs", "recap_mode",
+    "notifications", "notify_awaiting_input", "notify_turn_failed", "notify_schedule_failed",
+  ]);
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
     for (const key of Object.keys(appDefaults)) {
-      if (key.startsWith("default_") || key === "utility_agent" || key === "background_jobs" || key === "recap_mode") {
-        void setAppDefault(key, null);
-      }
+      if (key.startsWith("default_") || RESET_KEYS.has(key)) void setAppDefault(key, null);
     }
   };
 

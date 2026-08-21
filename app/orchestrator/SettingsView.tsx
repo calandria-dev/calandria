@@ -299,7 +299,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   setAppDefault: (key: string, value: string | null) => void;
 }) {
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
-  const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "error">("idle");
+  const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "failed" | "error">("idle");
   useEffect(() => { setPerm(notificationPermission()); }, []);
 
   const on = appDefaults.notifications !== "off";
@@ -312,8 +312,12 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   async function sendTest() {
     setTestState("sending");
     try {
-      const r = await jsend<{ ok: boolean }>("/api/notifications/test", "POST");
-      setTestState(r.ok ? "sent" : "off");
+      // `ok: false` has two causes and they need different answers: the master
+      // switch is off (nothing was attempted, and the fix is right above this
+      // button), or the emitter tried and the publish threw. Reporting the
+      // second as "switched off" sends the user to a switch that is already on.
+      const r = await jsend<{ ok: boolean; enabled: boolean }>("/api/notifications/test", "POST");
+      setTestState(r.ok ? "sent" : r.enabled ? "failed" : "off");
     } catch {
       setTestState("error");
     }
@@ -362,6 +366,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
         </div>
         {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent — it went through the same path a real notification takes.</div>}
         {testState === "off" && <div className="hlp" style={{ marginTop: 8 }}>Nothing sent: notifications are switched off above.</div>}
+        {testState === "failed" && <div className="hlp" style={{ marginTop: 8 }}>Notifications are on, but the server couldn&apos;t publish it — check the server log.</div>}
         {testState === "error" && <div className="hlp" style={{ marginTop: 8 }}>Couldn&apos;t reach the server to send it.</div>}
       </div>
 
