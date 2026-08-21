@@ -13,6 +13,7 @@ import {
 } from "@/lib/notifications/notify";
 import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
 import type { NotificationPayload } from "@/lib/notifications/types";
+import { GET as eventsRoute } from "@/app/api/events/route";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -213,5 +214,39 @@ describe("the notification dispatcher", () => {
       stopNotifier();
     }
     expect(watcherCount()).toBe(baseline);
+  });
+});
+
+describe("the /api/events relay", () => {
+  it("streams a notification payload verbatim, task row or not", async () => {
+    const task = parkedTask(projectId, "Streamed");
+    const ac = new AbortController();
+    const res = await eventsRoute(new Request("http://localhost/api/events", { signal: ac.signal }));
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // Drain the ": connected" preamble so the assertion below can't read it.
+    await reader.read();
+
+    emitAwaitingInput(task.id);
+    emitTestNotification();
+
+    let buf = "";
+    const frames: string[] = [];
+    while (frames.length < 2) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      for (const chunk of buf.split("\n\n")) if (chunk.startsWith("data: ")) frames.push(chunk.slice(6));
+      buf = "";
+    }
+    ac.abort();
+
+    const payloads = frames.map((f) => JSON.parse(f));
+    expect(payloads[0].type).toBe("notification");
+    expect(payloads[0].payload.taskId).toBe(task.id);
+    // The task-less test notification must survive the relay: the branch has to
+    // sit BEFORE the getTask re-read, which would drop it.
+    expect(payloads[1].payload.kind).toBe("test");
   });
 });

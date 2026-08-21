@@ -1,6 +1,7 @@
 import { getTask, countAwaiting } from "@/lib/store";
 import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
 import { sseOpened, sseClosed } from "@/lib/idle";
+import { ensureNotifier } from "@/lib/notifications/dispatcher";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -62,6 +63,11 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
  * missed while disconnected are gone; this stream is a live tail only).
  */
 export async function GET(req: Request) {
+  // The bus subscriber that mints notifications. Idempotent, so every tab's
+  // stream calls it and only the first one subscribes. Here rather than at boot
+  // because this stream IS the only channel today: a notification published
+  // with no tab open has nowhere to go.
+  ensureNotifier();
   const encoder = new TextEncoder();
   let cleanup = () => {};
   const stream = new ReadableStream({
@@ -115,6 +121,15 @@ export async function GET(req: Request) {
         // with "" and `taskId` is meaningless here.
         if (ev.type === "runbooks_changed") {
           send({ type: "runbooks_changed", projectId: ev.projectId });
+          return;
+        }
+        // A composed notification (lib/notifications/notify.ts). Bypasses the
+        // re-read below for the strongest reason of all these branches: the
+        // payload isn't a fact to look up but a message already written for a
+        // human, screened against the row when it was minted — and a test
+        // notification names no task at all, so the getTask bail would drop it.
+        if (ev.type === "notification") {
+          send({ type: "notification", payload: ev.payload });
           return;
         }
         const event = coarse(ev);
