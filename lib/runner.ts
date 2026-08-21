@@ -155,10 +155,10 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // unreachable (every drain follows a turn one of them launched); this makes
     // it an invariant of the code rather than of three call sites agreeing.
     // Same contract as those paths: ensureWorktree reattaches to a surviving
-    // branch so pruned work comes back, non-git/empty repos legitimately yield
-    // null and fall back to repo_path, and a git hiccup must never block the
-    // turn. Mutating `task` so the sync check below and the runner see the new
-    // cwd. Runs before the catch-up on purpose — that reads worktree_path.
+    // branch so pruned work comes back, and non-git/empty repos legitimately
+    // yield null and fall back to repo_path. Mutating `task` so the sync check
+    // below and the runner see the new cwd. Runs before the catch-up on
+    // purpose — that reads worktree_path.
     // A project with no working directory set is skipped rather than isolated:
     // both launch paths refuse that project outright, and ensureWorktree("")
     // would be asking git to init a repo in an unknown place.
