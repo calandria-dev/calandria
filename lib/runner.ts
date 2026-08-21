@@ -162,17 +162,31 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // A project with no working directory set is skipped rather than isolated:
     // both launch paths refuse that project outright, and ensureWorktree("")
     // would be asking git to init a repo in an unknown place.
+    // ensureWorktree returning null (non-git/empty repo) is the legitimate
+    // fallback described above, handled by the `if (wt)` guard. THROWING is
+    // different — a stale index.lock from a crashed process, a disk-full git
+    // op, a detached HEAD. The riskiest caller of this self-heal is the queue
+    // drain in run()'s finally below: a turn nobody is watching at the instant
+    // it fails. Swallowing the throw there would launch straight into
+    // task.worktree_path || project.repo_path — the user's real checkout,
+    // under whatever permission mode the task already carries — with no
+    // event, no transcript line, no banner. So it isn't caught here: it
+    // escapes to this function's own catch just below, which unregisters the
+    // claim and rethrows. The queue drainer's `.catch` on this same call
+    // already turns that rejection into a transcript line via
+    // publishTurnError, a settled `running: 0`, and a `turn_end` — the exact
+    // visible-failure path this file uses for every other kind of launch
+    // failure, so nothing new is needed here, just not swallowing it first.
+    // (The other caller, the POST route, ensures the worktree itself before
+    // ever reaching this function, so this branch is its safety net, not its
+    // primary path.)
     if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
-      try {
-        const wt = await ensureWorktree(project.repo_path, id, project.branch);
-        if (wt) {
-          task.worktree_path = wt.path;
-          task.work_branch = wt.branch;
-          task.base_sha = wt.baseSha;
-          updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
-        }
-      } catch {
-        // fall back to repo_path
+      const wt = await ensureWorktree(project.repo_path, id, project.branch);
+      if (wt) {
+        task.worktree_path = wt.path;
+        task.work_branch = wt.branch;
+        task.base_sha = wt.baseSha;
+        updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
       }
     }
     // Catch the worktree up to base when it's a clean, zero-conflict fast-forward
