@@ -305,6 +305,30 @@ Save is never blocked on the check, because the check is a typo catcher and not 
 it reads one session's command list, so a conditionally-registered command can read as
 unknown. If it *is* right, the run fails loudly rather than reporting a success it didn't earn.
 
+## Notifications
+
+Operator tells you when a task has STOPPED — that's the shared rule behind
+every notification it sends:
+
+|-|-|
+| A task is waiting for input | An agent asked a question or needs a tool approved. |
+| A turn failed | The session died: a dead login, a spent quota, a full context window, or a crash. |
+| A scheduled run failed | A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness. |
+
+A finished turn and a new suggestion deliberately don't notify.
+
+Today the only channel is a **browser notification**, which needs the app open
+in a tab (any tab, in any window — it doesn't have to be in front of you) and
+one grant of the browser's notification permission, from Settings →
+Notifications. The only time Operator stays quiet is when the tab is visible AND
+you already have that exact task selected.
+
+A snoozed task never notifies, and neither does an archived project's.
+
+Notifications are composed on the server, not in the browser, so the channels
+planned next — an outbound webhook (Slack, Discord, Teams) and an iMessage relay
+— will deliver exactly the same messages under exactly the same rules.
+
 ## Workspace tools
 
 The integrated terminal provides a real shell for each project. It opens in the project's

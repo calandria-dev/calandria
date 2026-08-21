@@ -33,6 +33,22 @@ Two facts worth notifying on are additionally missing from the bus altogether:
   the app's only genuinely unattended work, so a morning run that mints nothing
   is invisible until someone opens the schedules card.
 
+> **Correction, added 2026-08-21 during implementation (Task 6):** the premise
+> above is wrong on one point. `app/orchestrator/useOrchestrator.ts` already had
+> a client-side browser notifier — its own `new Notification()` call, wired
+> straight off `liveAwaiting`, with its own wording and its own `await-<id>`
+> dedupe tag — that fired when a task in the CURRENTLY SELECTED PROJECT started
+> awaiting input. It predates this design and was missed writing it. It was
+> retired in commit `9854665` once it was shown double-firing alongside the
+> server-composed channel this design builds, for the same event with different
+> text. So "there is no notion of a notification, no channel" should read as
+> "no notification that covers every project, no `turn_failed` or
+> `schedule_failed`, and no settings" — this feature is a replacement plus a
+> large extension, not a first-ever addition, though everything the Decisions
+> section below adds is genuinely new. `app/orchestrator/Welcome.tsx`'s
+> onboarding prompt for browser-notification permission is unrelated to either
+> notifier and was not touched.
+
 ## Decisions
 
 | Question | Decision |

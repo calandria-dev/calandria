@@ -44,7 +44,7 @@ function notes(page: import("@playwright/test").Page) {
 }
 
 test("a task parking on a permission card notifies a tab looking elsewhere", async ({ page, request }) => {
-  const watching = await createTask(request, { projectId, title: "Something else entirely" });
+  await createTask(request, { projectId, title: "Something else entirely" });
   const parking = await createTask(request, {
     projectId,
     title: "Needs a permission",

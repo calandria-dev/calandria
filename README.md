@@ -69,6 +69,9 @@ window while preserving the task's lineage.
   a weekday morning triage, a nightly sweep — with nobody logged in. Each firing mints a
   fresh task you can review like any other, and can fire a runbook so one recipe serves
   both the clock and the button.
+- **Notifications:** a browser notification when a task stops and waits for you, when a
+  turn fails, or when a scheduled run fails. Off-tab by design: it stays quiet only when
+  you're already looking at the task in question. Settings → Notifications.
 - **A complete workspace:** chat, terminal, managed services, live logs, and transparent
   token and usage insights stay together.
 
