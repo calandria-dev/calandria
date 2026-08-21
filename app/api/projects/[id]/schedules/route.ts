@@ -2,11 +2,9 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { activeRun, createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
-import type { Priority } from "@/lib/types";
+import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 /** Each schedule with the history the landing card needs to be trustworthy. */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {

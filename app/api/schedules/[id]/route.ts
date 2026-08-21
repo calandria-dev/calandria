@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 import { deleteSchedule, getSchedule, listRuns, updateSchedule } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
-import type { Priority } from "@/lib/types";
+import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

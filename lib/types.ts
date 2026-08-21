@@ -1,4 +1,6 @@
 export type Priority = "hi" | "med" | "lo";
+/** The one legal-value set for `priority` columns — no CHECK constraint backs them, so this is it. */
+export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 export type Status = "not_started" | "in_progress" | "on_hold" | "done" | "cancelled";
 export type MsgRole = "user" | "assistant" | "tool" | "system" | "session_break";
 

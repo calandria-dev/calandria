@@ -2,11 +2,9 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { createRunbook, lastRunOf, listRunbooks, schedulesUsing } from "@/lib/runbooks/store";
-import type { Priority } from "@/lib/types";
+import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 /** Each runbook with the two facts the card needs beyond its own row. */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
