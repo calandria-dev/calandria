@@ -64,7 +64,7 @@ import type { Project, Task } from "@/lib/types";
 // also includes 'local' (see SETTING_SOURCES in driver.ts for why that one's
 // dropped). 'project' is the load-bearing one of the two: per sdk.d.ts,
 // settingSources "must include 'project' to load CLAUDE.md files".
-const ALL_SOURCES = ["user", "project"];
+const TURN_SOURCES = ["user", "project"];
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null } as unknown as Task;
@@ -103,7 +103,7 @@ describe("claude driver setting sources", () => {
     // Explicitly present — the whole point. `undefined` here means we're back to
     // relying on an SDK default nobody in this repo controls (and that default
     // includes 'local', which we deliberately don't want).
-    expect(optionsOfCall(0).settingSources).toEqual(ALL_SOURCES);
+    expect(optionsOfCall(0).settingSources).toEqual(TURN_SOURCES);
   });
 
   it("never loads 'local', even though the SDK default would", async () => {
@@ -162,7 +162,7 @@ describe("the schedule preflight validates against the same sources a turn gets"
 
     expect(await listSlashCommands(project, "claude")).toEqual(["jira-tasks"]);
     expect(optionsOfCall(0).settingSources).toBe(SETTING_SOURCES);
-    expect(optionsOfCall(0).settingSources).toEqual(ALL_SOURCES);
+    expect(optionsOfCall(0).settingSources).toEqual(TURN_SOURCES);
   });
 });
 
