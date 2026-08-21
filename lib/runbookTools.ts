@@ -24,10 +24,49 @@
 import { getProject } from "@/lib/store";
 import { resolveTargetProject } from "@/lib/agentTools";
 import { resolveConnectedAgent } from "@/lib/agents/connections";
+import { getCapabilities, listAgentIds } from "@/lib/agents/capabilities";
 import {
   createRunbook, getRunbook, listRunbooks, schedulesUsing, updateRunbook,
 } from "@/lib/runbooks/store";
 import type { Priority, Project, Runbook } from "@/lib/types";
+
+// Every permission_mode value any registered driver honors — the same
+// capability data GET /api/agents renders into the human picker
+// (lib/agents/*/capabilities.ts, SDK-free by design; see tests/importGraph.test.ts).
+// Not scoped to the runbook's own agent: resolveConnectedAgent can pick a
+// different one than whatever created the row, so a mode valid for either
+// driver is accepted regardless of which one ends up running it.
+function knownPermissionModes(): Set<string> {
+  return new Set(listAgentIds().flatMap((id) => getCapabilities(id).permissionModes.map((m) => m.value)));
+}
+
+/**
+ * The one field these tools must never pass through unchecked. bypassPermissions
+ * ("Auto-run") skips every permission card, and the ⌘K palette dispatches a
+ * runbook with no preview step — so a model that can write this value into a
+ * saved runbook (e.g. steered by injected instructions in something it read)
+ * has planted unattended, full-auto execution for whenever a human next clicks
+ * Run. It's a RECOGNIZED mode, so the driver's forgiving resolution
+ * (permissionModeFor in lib/agents/claude/driver.ts) would honor it rather than
+ * degrade it to a safe default — the refusal has to happen here, before it's
+ * ever written. Only a human, from the UI, may set it.
+ *
+ * Any other unrecognized string is refused too, for a duller reason: silently
+ * coercing a typo to the default would hide the mistake from the one place
+ * (this tool call) that could report it.
+ */
+function refuseUnsafePermissionMode(mode: string, verb: "created" | "changed"): string | null {
+  if (mode === "bypassPermissions") {
+    return (
+      `permission_mode "bypassPermissions" runs unattended with no permission card to stop it — only a human can turn that ` +
+      `on, from the UI. Nothing was ${verb}.`
+    );
+  }
+  if (!knownPermissionModes().has(mode)) {
+    return `"${mode}" isn't a permission mode this app recognizes. Nothing was ${verb}.`;
+  }
+  return null;
+}
 
 export interface CreateRunbookToolInput {
   name: string;
@@ -57,6 +96,10 @@ export function createRunbookForAgent(
   if (!input.name?.trim()) return { runbook: null, text: "A runbook needs a name. Nothing was created." };
   if (!input.prompt?.trim()) {
     return { runbook: null, text: "A runbook needs a prompt — the message its first turn sends. Nothing was created." };
+  }
+  if (input.permission_mode !== undefined) {
+    const refusal = refuseUnsafePermissionMode(input.permission_mode, "created");
+    if (refusal) return { runbook: null, text: refusal };
   }
 
   const target = resolveTargetProject(current, input.project);
@@ -167,7 +210,11 @@ export function updateRunbookForAgent(
   }
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.priority !== undefined) patch.priority = fields.priority;
-  if (fields.permission_mode !== undefined) patch.permission_mode = fields.permission_mode;
+  if (fields.permission_mode !== undefined) {
+    const refusal = refuseUnsafePermissionMode(fields.permission_mode, "changed");
+    if (refusal) return { runbook: null, text: refusal };
+    patch.permission_mode = fields.permission_mode;
+  }
 
   const runbook = updateRunbook(cur.id, patch)!;
   const project = getProject(runbook.project_id);
