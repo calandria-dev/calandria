@@ -105,6 +105,26 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
   // the same false item the scheduler keeps out of the "N need you" pill by
   // leaving awaiting_input at 0 on success.
   if (interactionDenied(taskId)) return null;
+  // A turn that just DIED has already told the user, with the error text. The
+  // runner's finally then sets awaiting_input = 1 on any turn that opened a
+  // session and ended mid-task and publishes turn_end milliseconds later, so
+  // every failed turn reaches here right behind its own `error` event. The two
+  // ids differ, so neither the dedupe window nor the browser tag (which IS the
+  // id) collapses them: the user would get "Turn failed · X" and, stacked
+  // beside it, "Waiting for input · X" — which adds nothing and contradicts
+  // the first, since the session isn't waiting, it's dead. Same stand-down
+  // emitScheduleFailed makes, for the same reason, and it is what keeps a
+  // failed SCHEDULED run at one toast now that turn_end is mapped
+  // (clearRunContext has already run by then, so the guard above can't).
+  //
+  // Bounded by the same 10s window, which is why it can't swallow a real later
+  // question: reaching here again needs a NEW turn to start AND park, and the
+  // turn that failed settled the task first. The only route that fast is the
+  // user clicking Retry — in which case they are at the keyboard, and the
+  // browser channel is already silent for the task you are looking at. Even
+  // then the card, the transcript and the "N need you" pill are unaffected;
+  // only the toast is skipped.
+  if (recentlyDelivered(`turn_failed:${taskId}`, Date.now())) return null;
   const task = getTask(taskId);
   // The ROW decides, not the event: see taskNeedsYou in lib/store.ts.
   if (!task || !taskNeedsYou(taskId)) return null;

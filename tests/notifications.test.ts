@@ -248,6 +248,36 @@ describe("the notification dispatcher", () => {
     }
   });
 
+  it("does not follow a failed turn with a 'waiting for input' about the same task", () => {
+    // The real order inside the runner's finally, on ONE task: publishTurnError
+    // emits `error`, then the row is settled with awaiting_input = 1 (any turn
+    // that opened a session and ended mid-task), then turn_end. Two kinds means
+    // two ids, so neither the dedupe window nor the browser tag would collapse
+    // them — the user would get two stacked toasts about one death, the second
+    // of them claiming a dead session is waiting on them.
+    const task = parkedTask(projectId, "Died mid-turn");
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => {
+        publish(task.id, { type: "error", content: "⚠ the session ended unexpectedly" });
+        publish(task.id, { type: "turn_end" });
+      });
+      expect(sent.map((n) => n.kind)).toEqual(["turn_failed"]);
+    } finally {
+      stopNotifier();
+    }
+    // …and the stand-down is bounded by the same 10s window, not permanent: a
+    // genuine later question on a task that failed earlier still gets through.
+    resetNotificationDedupe();
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => publish(task.id, { type: "ask", id: "a1", questions: [] }));
+      expect(sent.map((n) => n.kind)).toEqual(["awaiting_input"]);
+    } finally {
+      stopNotifier();
+    }
+  });
+
   it("collapses the card-then-turn_end pair one parked turn produces", () => {
     const task = parkedTask(projectId, "Asked then ended");
     ensureNotifier();
@@ -393,6 +423,10 @@ describe("a failed scheduled run", () => {
     startRun(run.id, task.id);
     const sent = notificationsDuring(() => {
       emitTurnFailed(task.id, "⚠ the session ended unexpectedly");
+      // The turn-end settle sits BETWEEN them in the runner's finally, and the
+      // run context has already been cleared by the time it publishes — so this
+      // is the third toast the same death would produce, not a hypothetical.
+      emitAwaitingInput(task.id);
       settleRun(run.id, "failed", "the session ended unexpectedly");
     });
     expect(sent.map((n) => n.kind)).toEqual(["turn_failed"]);
