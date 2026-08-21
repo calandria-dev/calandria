@@ -30,15 +30,25 @@ const USAGE_PATH = "/api/instance/usage";
 // The boot-time self-ping from server.js that restores persisted services.
 const SERVICES_RESTORE_PATH = "/api/instance/services-restore";
 // The boot-time self-ping from server.js that starts the schedule ticker.
+// GET reads schedulerHealth() only; POST is what actually starts the ticker.
 const SCHEDULER_PATH = "/api/instance/scheduler";
-function isServiceTokenPath(pathname: string): boolean {
-  return (
-    pathname === HEALTH_PATH ||
-    pathname === VERSION_PATH ||
-    pathname === USAGE_PATH ||
-    pathname === SERVICES_RESTORE_PATH ||
-    pathname === SCHEDULER_PATH
-  );
+
+// Read-only: the fleet-wide ORCH_FLEET_TOKEN is honored here (see cf-access.mjs)
+// because nothing reachable this way can mutate instance state.
+function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
+  if (pathname === HEALTH_PATH || pathname === VERSION_PATH || pathname === USAGE_PATH) {
+    return true;
+  }
+  return pathname === SCHEDULER_PATH && method === "GET";
+}
+
+// Mutates instance state despite authenticating with the service-token header
+// rather than an Access JWT: services-restore always, and the scheduler path's
+// own POST (starts the ticker). These demand the strict per-instance token —
+// the fleet-wide read token must be rejected here, same invariant as the
+// agent-tools paths below.
+function isInstanceOnlyServiceTokenPath(pathname: string): boolean {
+  return pathname === SERVICES_RESTORE_PATH || pathname === SCHEDULER_PATH;
 }
 
 // The internal endpoints the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the
@@ -87,7 +97,17 @@ export async function middleware(req: NextRequest) {
     });
   }
 
-  if (isServiceTokenPath(pathname) && serviceTokenOk(req.headers.get("x-service-token"))) {
+  if (
+    isReadOnlyServiceTokenPath(pathname, req.method) &&
+    serviceTokenOk(req.headers.get("x-service-token"))
+  ) {
+    return NextResponse.next();
+  }
+
+  if (
+    isInstanceOnlyServiceTokenPath(pathname) &&
+    instanceServiceTokenOk(req.headers.get("x-service-token"))
+  ) {
     return NextResponse.next();
   }
 
