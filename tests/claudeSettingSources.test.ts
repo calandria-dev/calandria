@@ -4,13 +4,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 //
 // TWO deliberate policies, not one:
 //
-// A TURN inherits everything. The SDK loads all on-disk setting sources when
-// `settingSources` is omitted ("matches CLI defaults" — sdk.d.ts), which is
-// precisely what we want: a task session should see the user's ~/.claude
-// settings, MCP servers, plugins and skills, and the repo's CLAUDE.md. Relying
-// on the default made that a hidden dependency — an SDK bump flipping it to
-// isolation-by-default would strip every session's MCP + CLAUDE.md with no
-// symptom other than the agent quietly getting worse.
+// A TURN inherits most of it, but not all. The SDK loads every on-disk setting
+// source when `settingSources` is omitted ("matches CLI defaults" — sdk.d.ts);
+// we pin the list explicitly instead so an SDK default change can't silently
+// change what a task trusts, and we drop 'local' from it. 'user' and 'project'
+// give a task session the user's ~/.claude settings, MCP servers, plugins,
+// skills, and the repo's CLAUDE.md. 'local' (<worktree>/.claude/settings.local.json)
+// is excluded on purpose: it resolves against the task's own worktree, same as
+// 'project', but by convention it's gitignored — so an agent that writes one
+// (trivial under an auto-accept edit policy) plants a hook, permission-allow
+// rule, or env var that never appears in the diff a human reviews, and it
+// still runs next turn with no canUseTool check in between. 'project' stays
+// because it's tracked and shows up in that same diff.
 //
 // A ONE-SHOT does not. The handoff note, the recap and the context draft are
 // internal transformations with no orchestrator bridge and no UI to answer a
@@ -55,10 +60,11 @@ import { claudeDriver, SETTING_SOURCES } from "@/lib/agents/claude/driver";
 import { listSlashCommands } from "@/lib/schedule/commands";
 import type { Project, Task } from "@/lib/types";
 
-// Every source the SDK knows about — the CLI default, spelled out. 'project' is
-// the load-bearing one: per sdk.d.ts, settingSources "must include 'project' to
-// load CLAUDE.md files".
-const ALL_SOURCES = ["user", "project", "local"];
+// The sources a turn actually loads — not the SDK's full default list, which
+// also includes 'local' (see SETTING_SOURCES in driver.ts for why that one's
+// dropped). 'project' is the load-bearing one of the two: per sdk.d.ts,
+// settingSources "must include 'project' to load CLAUDE.md files".
+const TURN_SOURCES = ["user", "project"];
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null } as unknown as Task;
@@ -95,8 +101,20 @@ describe("claude driver setting sources", () => {
     await runTurn();
     expect(queryMock).toHaveBeenCalledTimes(1);
     // Explicitly present — the whole point. `undefined` here means we're back to
-    // relying on an SDK default nobody in this repo controls.
-    expect(optionsOfCall(0).settingSources).toEqual(ALL_SOURCES);
+    // relying on an SDK default nobody in this repo controls (and that default
+    // includes 'local', which we deliberately don't want).
+    expect(optionsOfCall(0).settingSources).toEqual(TURN_SOURCES);
+  });
+
+  it("never loads 'local', even though the SDK default would", async () => {
+    // The security-relevant assertion: 'local' resolves to
+    // <worktree>/.claude/settings.local.json, which is agent-writable and, by
+    // convention, gitignored — so a hook planted there never appears in the
+    // diff a human reviews before a task's changes land. 'project' is kept
+    // despite also being worktree-writable because it's tracked and visible in
+    // that same diff; 'local' offers no equivalent review gate.
+    await runTurn();
+    expect(optionsOfCall(0).settingSources).not.toContain("local");
   });
 
   it("keeps the user's own configuration in the session", async () => {
@@ -144,7 +162,7 @@ describe("the schedule preflight validates against the same sources a turn gets"
 
     expect(await listSlashCommands(project, "claude")).toEqual(["jira-tasks"]);
     expect(optionsOfCall(0).settingSources).toBe(SETTING_SOURCES);
-    expect(optionsOfCall(0).settingSources).toEqual(ALL_SOURCES);
+    expect(optionsOfCall(0).settingSources).toEqual(TURN_SOURCES);
   });
 });
 
