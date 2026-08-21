@@ -6,7 +6,7 @@
 // so these assertions are what the webhook channel will inherit.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createProject, createTask, setSetting, updateTask } from "@/lib/store";
-import { publish, subscribeGlobal, type BusEvent } from "@/lib/events";
+import { publish, subscribeGlobal, watcherCount, type BusEvent } from "@/lib/events";
 import {
   emitAwaitingInput, emitScheduleFailed, emitTestNotification, emitTurnFailed,
   resetNotificationDedupe,
@@ -195,14 +195,23 @@ describe("the notification dispatcher", () => {
 
   it("subscribes at most once however many callers start it", () => {
     const task = parkedTask(projectId, "Once only");
+    // watcherCount() counts global bus subscribers, and the notifier is one —
+    // measuring it catches a broken idempotency guard directly, unlike a
+    // notification count, which the emitter's own dedupe window would collapse
+    // to 1 even with three live subscribers. It also counts open SSE streams
+    // (GET /api/events), so the assertion is a DELTA off a baseline, not an
+    // absolute count.
+    const baseline = watcherCount();
     ensureNotifier();
     ensureNotifier();
     ensureNotifier();
+    expect(watcherCount() - baseline).toBe(1);
     try {
       const sent = notificationsDuring(() => publish(task.id, { type: "ask", id: "a1", questions: [] }));
       expect(sent).toHaveLength(1); // three subscribers would send three
     } finally {
       stopNotifier();
     }
+    expect(watcherCount()).toBe(baseline);
   });
 });
