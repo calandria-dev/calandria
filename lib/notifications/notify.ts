@@ -120,6 +120,17 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
  * unclassified crash parks the task just as hard and has no recovery button to
  * make itself noticeable, so restricting this would leave the worst failures
  * as the only silent ones.
+ *
+ * Screens `suggested` (an inert tray row nobody committed to) and NOT
+ * taskNeedsYou(), so a snooze does not silence it. That asymmetry with
+ * emitAwaitingInput is deliberate: snoozing a question means "remind me later
+ * about this decision", never "hide it from me if the session then crashes". A
+ * crash is new information, not the thing that was put off. Same for the
+ * archived-project screen inside taskNeedsYou — an archived project shouldn't
+ * be nagging about a pending decision, but if its work is still running and
+ * falls over, that is worth knowing. emitScheduleFailed goes further and
+ * screens nothing at all, because the run it reports may have failed before it
+ * minted any task to be snoozed.
  */
 export function emitTurnFailed(taskId: string, content: string): NotificationPayload | null {
   if (!kindEnabled("turn_failed")) return null;
