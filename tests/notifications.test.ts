@@ -1,0 +1,160 @@
+// The notification emitter is the ONLY place a notification is minted, so it is
+// the only place the policy can be pinned: which events are worth a buzz, which
+// rows must stay quiet (snoozed, suggested, already-settled), and the dedupe
+// window that stops one assistant message opening two cards from sending two.
+// Composed server-side on purpose — the browser is a channel, not the author —
+// so these assertions are what the webhook channel will inherit.
+import { beforeEach, describe, expect, it } from "vitest";
+import { createProject, createTask, setSetting, updateTask } from "@/lib/store";
+import { subscribeGlobal, type BusEvent } from "@/lib/events";
+import {
+  emitAwaitingInput, emitScheduleFailed, emitTestNotification, emitTurnFailed,
+  resetNotificationDedupe,
+} from "@/lib/notifications/notify";
+import type { NotificationPayload } from "@/lib/notifications/types";
+
+// Every notification published while `fn` runs, in order.
+function notificationsDuring(fn: () => void): NotificationPayload[] {
+  const seen: NotificationPayload[] = [];
+  const unsub = subscribeGlobal((_taskId, ev: BusEvent) => {
+    if (ev.type === "notification") seen.push(ev.payload);
+  });
+  try { fn(); } finally { unsub(); }
+  return seen;
+}
+
+// A task parked on a question: in_progress + awaiting_input, not suggested,
+// not snoozed — the same shape the NEEDS_YOU predicate recognizes.
+function parkedTask(projectId: string, title = "Parked") {
+  const t = createTask({ project_id: projectId, title });
+  updateTask(t.id, { status: "in_progress", running: 1, awaiting_input: 1 });
+  return t;
+}
+
+let projectId: string;
+
+beforeEach(() => {
+  resetNotificationDedupe();
+  for (const k of ["notifications", "notify_awaiting_input", "notify_turn_failed", "notify_schedule_failed"])
+    setSetting(k, null);
+  projectId = createProject({ name: `Notify ${Math.random().toString(36).slice(2, 8)}` }).id;
+});
+
+describe("the notification emitter", () => {
+  it("publishes an awaiting_input notification naming the task and its project", () => {
+    const project = createProject({ name: "Inbox Zero" });
+    const task = parkedTask(project.id, "Review the migration");
+
+    const sent = notificationsDuring(() => emitAwaitingInput(task.id));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].kind).toBe("awaiting_input");
+    expect(sent[0].taskId).toBe(task.id);
+    expect(sent[0].projectId).toBe(project.id);
+    expect(sent[0].title).toBe("Waiting for input");
+    expect(sent[0].body).toContain("Review the migration");
+    expect(sent[0].body).toContain("Inbox Zero");
+    // The id doubles as the browser Notification tag, so it must be STABLE per
+    // (kind, task) — a timestamped id would stack toasts instead of replacing.
+    expect(sent[0].id).toBe(`awaiting_input:${task.id}`);
+  });
+
+  it("stays quiet for a row that does not actually need the user", () => {
+    const snoozed = parkedTask(projectId, "Snoozed");
+    updateTask(snoozed.id, { snoozed_until: Date.now() + 60_000 });
+    const suggested = createTask({ project_id: projectId, title: "Suggested", suggested: true });
+    updateTask(suggested.id, { status: "in_progress", awaiting_input: 1 });
+    // Settled between the runner's publish and our read — an ask that
+    // auto-denied on an unattended turn looks exactly like this.
+    const settled = createTask({ project_id: projectId, title: "Settled" });
+    updateTask(settled.id, { status: "in_progress", awaiting_input: 0 });
+
+    const sent = notificationsDuring(() => {
+      emitAwaitingInput(snoozed.id);
+      emitAwaitingInput(suggested.id);
+      emitAwaitingInput(settled.id);
+      emitAwaitingInput("no-such-task");
+    });
+
+    expect(sent).toEqual([]);
+  });
+
+  it("collapses a repeat inside the dedupe window but not a different kind or task", () => {
+    const a = parkedTask(projectId, "A");
+    const b = parkedTask(projectId, "B");
+
+    const sent = notificationsDuring(() => {
+      emitAwaitingInput(a.id);
+      emitAwaitingInput(a.id); // one message opened an ask AND a permission card
+      emitTurnFailed(a.id, "⚠ boom");
+      emitAwaitingInput(b.id);
+    });
+
+    expect(sent.map((n) => `${n.kind}:${n.taskId}`)).toEqual([
+      `awaiting_input:${a.id}`, `turn_failed:${a.id}`, `awaiting_input:${b.id}`,
+    ]);
+  });
+
+  it("honors the master switch and the per-kind switch", () => {
+    const task = parkedTask(projectId, "Quiet please");
+
+    setSetting("notifications", "off");
+    expect(notificationsDuring(() => emitAwaitingInput(task.id))).toEqual([]);
+
+    setSetting("notifications", null);
+    setSetting("notify_awaiting_input", "off");
+    resetNotificationDedupe();
+    expect(notificationsDuring(() => emitAwaitingInput(task.id))).toEqual([]);
+
+    // The other kinds are unaffected by one kind's opt-out.
+    resetNotificationDedupe();
+    expect(notificationsDuring(() => emitTurnFailed(task.id, "⚠ boom"))).toHaveLength(1);
+  });
+
+  it("carries the first line of a turn error, and fires for an unclassified one", () => {
+    const task = parkedTask(projectId, "Crashed");
+
+    const sent = notificationsDuring(() =>
+      emitTurnFailed(task.id, "⚠ ENOSPC: no space left on device\n\nsecond line"));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].kind).toBe("turn_failed");
+    expect(sent[0].title).toBe("Turn failed");
+    expect(sent[0].body).toContain("Crashed");
+    expect(sent[0].body).toContain("ENOSPC: no space left on device");
+    expect(sent[0].body).not.toContain("second line");
+    expect(sent[0].body).not.toContain("⚠");
+  });
+
+  it("emits a schedule failure that names the schedule, with or without a task", () => {
+    const withTask = parkedTask(projectId, "Morning sweep");
+    const sent = notificationsDuring(() => {
+      emitScheduleFailed({ scheduleName: "Morning sweep", projectId, taskId: withTask.id, detail: "Unknown command: /x" });
+      emitScheduleFailed({ scheduleName: "Nightly", projectId, taskId: "", detail: "no agent connected" });
+    });
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0].kind).toBe("schedule_failed");
+    expect(sent[0].taskId).toBe(withTask.id);
+    expect(sent[0].body).toContain("Morning sweep");
+    expect(sent[0].body).toContain("Unknown command: /x");
+    // A run that failed before minting a task still notifies — that is the
+    // silent failure this kind exists for.
+    expect(sent[1].taskId).toBe("");
+    expect(sent[1].body).toContain("Nightly");
+  });
+
+  it("sends a test notification past the per-kind switches and the dedupe window", () => {
+    setSetting("notify_awaiting_input", "off");
+
+    const sent = notificationsDuring(() => { emitTestNotification(); emitTestNotification(); });
+
+    expect(sent).toHaveLength(2); // a diagnostic that silently self-suppresses is a lie
+    expect(sent[0].kind).toBe("test");
+    expect(sent[0].taskId).toBe("");
+
+    // …but the master switch still governs it.
+    setSetting("notifications", "off");
+    expect(notificationsDuring(() => emitTestNotification())).toEqual([]);
+  });
+});

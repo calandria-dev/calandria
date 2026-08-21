@@ -7,6 +7,7 @@
 // lib/abort.ts / lib/asks.ts).
 
 import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
+import type { NotificationPayload } from "./notifications/types";
 
 // Lifecycle facts published by mutation ROUTES rather than the runner — a
 // manual status PATCH or /clear settling the task row (task_updated), a task
@@ -42,13 +43,19 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // not even an arbitrary one to key the bus by, so its publishers pass "" — and
 // the card refetches wholesale, so like tasks_reordered it carries its own
 // project id and says only "go again".
+// notification is the odd one out and knows it: not a fact about a row that
+// listeners should re-read, but a message COMPOSED for a human — the payload is
+// already final by the time it is published (lib/notifications/notify.ts), and
+// its taskId is empty on a test send. Like runbooks_changed it therefore
+// bypasses the relay's re-read-the-task enrichment entirely.
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
   | { type: "tasks_reordered"; projectId: string }
-  | { type: "runbooks_changed"; projectId: string };
+  | { type: "runbooks_changed"; projectId: string }
+  | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -94,12 +101,15 @@ export type RunbooksChangedWireEvent = {
   type: "runbooks_changed";
   projectId: string;
 };
+/** A composed, ready-to-render notification. See lib/notifications/. */
+export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
   | GlobalTaskWireEvent
   | TaskDeletedWireEvent
   | TasksMovedWireEvent
   | TasksReorderedWireEvent
   | RunbooksChangedWireEvent
+  | NotificationWireEvent
   | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
