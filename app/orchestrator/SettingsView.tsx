@@ -304,7 +304,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
 
   const on = appDefaults.notifications !== "off";
   const kinds: [string, string, string][] = [
-    ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question or needs a tool approved, and the task has stopped until you answer."],
+    ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands — either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died — a dead login, a spent quota, a full context window, or a crash."],
     ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
   ];
