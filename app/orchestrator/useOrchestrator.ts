@@ -8,7 +8,6 @@ import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
 import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow } from "./types";
-import { agentLabel } from "./agents";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
@@ -179,6 +178,10 @@ export function useOrchestrator() {
   const { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg } = useTaskStream({
     selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks,
   });
+  // A client-side notifier used to live here, firing its own wording straight
+  // off liveAwaiting. That's retired: the server now composes the message (see
+  // lib/notifications/notify.ts) so a future webhook channel can deliver the
+  // same text — don't reintroduce a second, locally-worded notifier.
   const showNotification = useNotifications({ selTaskRef });
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
@@ -340,30 +343,6 @@ export function useOrchestrator() {
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
-
-  // Browser notification when a task newly needs you — the payoff for the
-  // permission asked for during onboarding. Fires on the awaiting transition
-  // (a turn ending mid-task OR Claude parking on a question), for any task in
-  // the current project. We seed the "already notified" set without firing so a
-  // page load / project switch doesn't alert for tasks that were already
-  // waiting, and skip the task you're actively looking at.
-  const notifiedRef = useRef<Set<string> | null>(null);
-  useEffect(() => { notifiedRef.current = null; }, [selProj]); // re-seed per project; declared before the firing effect so it runs first
-  useEffect(() => {
-    const ids = new Set(liveAwaiting.map((t) => t.id));
-    if (notifiedRef.current === null) { notifiedRef.current = ids; return; }
-    const seen = notifiedRef.current;
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-      for (const t of liveAwaiting) {
-        if (seen.has(t.id)) continue;
-        // You're already staring at it — no need to interrupt.
-        if (t.id === selTask && document.visibilityState === "visible") continue;
-        const n = new Notification(`${agentLabel(agents, t.agent)} needs your input`, { body: t.title, tag: `await-${t.id}` });
-        n.onclick = () => { window.focus(); setSelTask(t.id); n.close(); };
-      }
-    }
-    notifiedRef.current = ids;
-  }, [liveAwaiting, selTask, agents]);
 
   // Persist a server-backed app default and adopt the server's echoed-back state.
   const setAppDefault = async (key: string, value: string | null) => {
