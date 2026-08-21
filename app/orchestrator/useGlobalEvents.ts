@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type MutableRefObject } from "react";
 import type { GlobalWireEvent } from "@/lib/events";
+import type { NotificationPayload } from "@/lib/notifications/types";
 import { jget } from "./api";
 import type { ProjectRow, TaskRow } from "./types";
 
@@ -11,7 +12,7 @@ import type { ProjectRow, TaskRow } from "./types";
 // This is what clears spinners and updates
 // the "needs you" badges for tasks whose transcript stream isn't open — only
 // the selected task has one (useTaskStream) — replacing the old 10s poll.
-export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents }: {
+export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification }: {
   selProjRef: MutableRefObject<string | null>;
   /** Board drops this tab has in flight — see the tasks_reordered branch. */
   reorderRef: MutableRefObject<{ pending: number; missed: boolean }>;
@@ -21,6 +22,8 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
   loadTasks: (projectId: string, selectFirst?: boolean) => Promise<void>;
   reconcileRunning: () => Promise<void>;
   refreshAgents: () => Promise<void>;
+  /** The browser channel — see useNotifications. */
+  onNotification: (payload: NotificationPayload) => void;
 }) {
   // Apply one lifecycle event. The payload is a fresh snapshot of the task
   // row's running/awaiting_input/status (read after the runner persisted it),
@@ -83,6 +86,10 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
       window.dispatchEvent(new CustomEvent("orch:runbooks", { detail: ev.projectId }));
       return;
     }
+    // A notification the server composed for a human. Nothing in this hook's
+    // state changes — the badges and spinners ride the task events below — so
+    // it goes straight to the channel.
+    if (ev.type === "notification") { onNotification(ev.payload); return; }
     if (ev.type !== "task") return;
     setTaskRunning(ev.taskId, ev.running);
     setTasks((prev) => prev.map((t) => {

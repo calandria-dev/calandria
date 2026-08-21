@@ -118,6 +118,25 @@ export function countAwaiting(projectId: string): number {
   return row.n;
 }
 
+// Does this ONE task need the user right now? The same predicate the pill
+// count and the dropdown use, asked of a single row — including the
+// deprecated-project join listNeedsYou applies, since a project the user has
+// archived should not buzz their phone.
+//
+// The notification emitter screens through this rather than trusting the event
+// that woke it: a snoozed task, an unreviewed suggestion, and an ask that
+// auto-denied on an unattended turn all publish the same "your turn" event,
+// and none of them is a reason to interrupt anybody.
+export function taskNeedsYou(id: string): boolean {
+  const row = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM tasks t JOIN projects p ON p.id = t.project_id
+       WHERE t.id = ? AND p.deprecated = 0 AND ${NEEDS_YOU}`
+    )
+    .get(id);
+  return !!row;
+}
+
 // Lightweight rows for the ⌘K command palette's session search: every real task
 // across all active projects, plus just enough of its project to label it. The
 // client only holds the selected project's tasks, so the palette fetches this

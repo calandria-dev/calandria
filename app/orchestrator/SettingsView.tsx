@@ -9,6 +9,7 @@ import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
 import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
+import { notificationPermission } from "./useNotifications";
 import type { AgentInfoT, AgentsResponseT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
@@ -287,6 +288,117 @@ function PermissionRules() {
   );
 }
 
+// Browser notifications. The permission grant is per-DEVICE and owned by the
+// browser, so it is read live from Notification.permission rather than stored;
+// everything else is server-side policy the webhook channel will inherit.
+// Copy here is written to make sense whether or not the user saw the
+// onboarding nudge (Welcome.tsx) that already offers this same grant — it
+// neither assumes this is their first time nor references that earlier step.
+function NotificationSettings({ appDefaults, setAppDefault }: {
+  appDefaults: Record<string, string>;
+  setAppDefault: (key: string, value: string | null) => void;
+}) {
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "failed" | "error">("idle");
+  useEffect(() => { setPerm(notificationPermission()); }, []);
+
+  const on = appDefaults.notifications !== "off";
+  const kinds: [string, string, string][] = [
+    ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands — either way the task has stopped until you pick it up."],
+    ["notify_turn_failed", "A turn failed", "The session died — a dead login, a spent quota, a full context window, or a crash."],
+    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
+  ];
+
+  async function sendTest() {
+    setTestState("sending");
+    try {
+      // `ok: false` has two causes and they need different answers: the master
+      // switch is off (nothing was attempted, and the fix is right above this
+      // button), or the emitter tried and the publish threw. Reporting the
+      // second as "switched off" sends the user to a switch that is already on.
+      const r = await jsend<{ ok: boolean; enabled: boolean }>("/api/notifications/test", "POST");
+      setTestState(r.ok ? "sent" : r.enabled ? "failed" : "off");
+    } catch {
+      setTestState("error");
+    }
+  }
+
+  return (
+    <>
+      <div className="field">
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ flex: 1 }}>
+            <div className="lab">{Icon.bell()} Notify me when a task needs me</div>
+            <div className="hlp" style={{ marginTop: 4 }}>
+              Operator tells you when a session stops and waits. Turn this off to silence every notification at once.
+            </div>
+          </div>
+          <button
+            role="switch"
+            aria-label="Notify me when a task needs me"
+            aria-checked={on}
+            className={`in-switch${on ? " on" : ""}`}
+            onClick={() => setAppDefault("notifications", on ? "off" : null)}
+          ><span /></button>
+        </div>
+      </div>
+
+      <div className="field">
+        <div className="lab">{Icon.bolt()} Browser notifications</div>
+        <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+          {perm === "unsupported"
+            ? "This browser can't show notifications, or the page isn't on a secure origin (https or localhost)."
+            : perm === "granted"
+              ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
+              : perm === "denied"
+                ? "You've blocked notifications for this site. Operator can't ask again — unblock it in your browser's site settings for this address."
+                : "Allow notifications so Operator can reach you when this tab isn't in front of you."}
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {perm === "default" && (
+            <button className="btn btn-line btn-sm" onClick={async () => setPerm(await Notification.requestPermission())}>
+              {Icon.bell()} Enable browser notifications
+            </button>
+          )}
+          <button className="btn btn-line btn-sm" onClick={sendTest} disabled={perm !== "granted" || testState === "sending"}>
+            {Icon.send()} {testState === "sending" ? "Sending…" : "Send test notification"}
+          </button>
+        </div>
+        {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent — it went through the same path a real notification takes.</div>}
+        {testState === "off" && <div className="hlp" style={{ marginTop: 8 }}>Nothing sent: notifications are switched off above.</div>}
+        {testState === "failed" && <div className="hlp" style={{ marginTop: 8 }}>Notifications are on, but the server couldn&apos;t publish it — check the server log.</div>}
+        {testState === "error" && <div className="hlp" style={{ marginTop: 8 }}>Couldn&apos;t reach the server to send it.</div>}
+      </div>
+
+      <div className="field">
+        <div className="lab">{Icon.list()} What to notify me about</div>
+        <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+          Each of these means a task has STOPPED. Finished turns and new suggestions deliberately stay quiet.
+        </div>
+        {kinds.map(([key, label, help]) => {
+          const kindOn = appDefaults[key] !== "off";
+          return (
+            <div key={key} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12, opacity: on ? 1 : 0.5 }}>
+              <div style={{ flex: 1 }}>
+                <div className="lab" style={{ marginBottom: 2 }}>{label}</div>
+                <div className="hlp" style={{ marginTop: 0 }}>{help}</div>
+              </div>
+              <button
+                role="switch"
+                aria-label={label}
+                aria-checked={kindOn}
+                disabled={!on}
+                className={`in-switch${kindOn ? " on" : ""}`}
+                onClick={() => setAppDefault(key, kindOn ? "off" : null)}
+              ><span /></button>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
 // growing settings is adding an entry here + a branch in renderSection — no layout
@@ -294,6 +406,7 @@ function PermissionRules() {
 const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNode }[] = [
   { id: "general", label: "General", icon: Icon.gear },
   { id: "background", label: "Background jobs", icon: Icon.clock },
+  { id: "notifications", label: "Notifications", icon: Icon.bell },
   { id: "run", label: "Run defaults", icon: Icon.spark },
   { id: "agents", label: "Agents", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
@@ -348,10 +461,13 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
   // means we're off the built-in defaults.
   const hasRunDefault = Object.keys(appDefaults).some((k) => k.startsWith("default_") || k === "utility_agent");
   const hasBackgroundDefault = !backgroundJobs || recapMode !== "automatic";
+  const hasNotifyDefault = ["notifications", "notify_awaiting_input", "notify_turn_failed", "notify_schedule_failed"]
+    .some((k) => appDefaults[k] === "off");
   const isDefault = settings.clearThresholdPct === DEFAULT_SETTINGS.clearThresholdPct
     && settings.clearThresholdTokens === DEFAULT_SETTINGS.clearThresholdTokens
     && !hasRunDefault
-    && !hasBackgroundDefault;
+    && !hasBackgroundDefault
+    && !hasNotifyDefault;
   // Clamp on commit so a half-typed value never persists out of range.
   const clampPct = (n: number) => Math.min(100, Math.max(1, Math.round(n)));
   const clampTokens = (n: number) => Math.max(1000, Math.round(n));
@@ -367,7 +483,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
             </button>
           ))}
         </div>
-        <div className="settings-nav-foot">{section === "background" ? "agent utility work · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -467,6 +583,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 </div>
               </>
             )}
+            {section === "notifications" && <NotificationSettings appDefaults={appDefaults} setAppDefault={setAppDefault} />}
             {section === "run" && (
               <>
                 {multiAgent && (

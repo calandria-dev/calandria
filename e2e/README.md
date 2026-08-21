@@ -107,6 +107,7 @@ skips the build when the tag already exists.
 | `07-move-tasks-bulk.spec.ts` | multi-select + Move to project… : one request for a whole selection, refusals reported |
 | `08-move-started-task.spec.ts` | re-filing a task that has RUN: the worktree it must discard is named, confirmed twice, reclaimed — and its next turn lands in the destination repo |
 | `09-permissions.spec.ts` | the tool-permission gate: a turn parks on a card, Allow once resumes it, Decline feeds the reason back, "Always allow" stores a project rule that skips the next prompt and is revocable in Settings |
+| `13-notifications.spec.ts` | browser notifications: a parked task notifies a tab looking elsewhere, stays silent when you're watching that very task, and a failed turn notifies |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named

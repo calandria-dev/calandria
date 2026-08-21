@@ -7,6 +7,7 @@
 // lib/abort.ts / lib/asks.ts).
 
 import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
+import type { NotificationPayload } from "./notifications/types";
 
 // Lifecycle facts published by mutation ROUTES rather than the runner — a
 // manual status PATCH or /clear settling the task row (task_updated), a task
@@ -42,13 +43,19 @@ import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 // not even an arbitrary one to key the bus by, so its publishers pass "" — and
 // the card refetches wholesale, so like tasks_reordered it carries its own
 // project id and says only "go again".
+// notification is the odd one out and knows it: not a fact about a row that
+// listeners should re-read, but a message COMPOSED for a human — the payload is
+// already final by the time it is published (lib/notifications/notify.ts), and
+// its taskId is empty on a test send. Like runbooks_changed it therefore
+// bypasses the relay's re-read-the-task enrichment entirely.
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
   | { type: "tasks_reordered"; projectId: string }
-  | { type: "runbooks_changed"; projectId: string };
+  | { type: "runbooks_changed"; projectId: string }
+  | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
 export type BusEvent = TaskStreamEvent | TaskMutationEvent;
@@ -94,12 +101,15 @@ export type RunbooksChangedWireEvent = {
   type: "runbooks_changed";
   projectId: string;
 };
+/** A composed, ready-to-render notification. See lib/notifications/. */
+export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
   | GlobalTaskWireEvent
   | TaskDeletedWireEvent
   | TasksMovedWireEvent
   | TasksReorderedWireEvent
   | RunbooksChangedWireEvent
+  | NotificationWireEvent
   | AgentAuthEvent;
 
 type Listener = (ev: TaskStreamEvent) => void;
@@ -110,6 +120,8 @@ declare global {
   var __orchEvents: Map<string, Set<Listener>> | undefined;
   // eslint-disable-next-line no-var
   var __orchEventsGlobal: Set<GlobalListener> | undefined;
+  // eslint-disable-next-line no-var
+  var __orchEventsGlobalInternal: Set<GlobalListener> | undefined;
 }
 
 function registry(): Map<string, Set<Listener>> {
@@ -120,6 +132,25 @@ function registry(): Map<string, Set<Listener>> {
 function globalRegistry(): Set<GlobalListener> {
   if (!global.__orchEventsGlobal) global.__orchEventsGlobal = new Set();
   return global.__orchEventsGlobal;
+}
+
+// A MARKER subset of globalRegistry(), not a second delivery list: fan-out still
+// walks one set in one order, and this only records which of those listeners are
+// server-side consumers rather than client streams. See watcherCount().
+function internalRegistry(): Set<GlobalListener> {
+  if (!global.__orchEventsGlobalInternal) global.__orchEventsGlobalInternal = new Set();
+  return global.__orchEventsGlobalInternal;
+}
+
+/** Options for subscribeGlobal. */
+export interface SubscribeGlobalOptions {
+  /**
+   * This subscriber is part of the SERVER, not a connected client — the
+   * notification dispatcher, and whatever else later reads the bus in-process.
+   * It lives for the process's lifetime, so counting it as a watcher would
+   * permanently defeat the presence heuristic below.
+   */
+  internal?: boolean;
 }
 
 /** Subscribe to a task's live events. Returns an unsubscribe function. */
@@ -141,24 +172,41 @@ export function subscribe(taskId: string, fn: Listener): () => void {
  * Subscribe to EVERY task's events (the wildcard channel behind the global
  * GET /api/events lifecycle stream). Listeners get the task id alongside each
  * event, since the per-task keying is lost. Returns an unsubscribe function.
+ *
+ * Pass `{ internal: true }` for a subscriber that is part of the server rather
+ * than a connected client, so it stays out of watcherCount().
  */
-export function subscribeGlobal(fn: GlobalListener): () => void {
+export function subscribeGlobal(fn: GlobalListener, opts?: SubscribeGlobalOptions): () => void {
   const set = globalRegistry();
   set.add(fn);
+  if (opts?.internal) internalRegistry().add(fn);
   return () => {
     set.delete(fn);
+    internalRegistry().delete(fn);
   };
 }
 
 /**
- * How many clients are watching the app right now — one global listener per
+ * How many CLIENTS are watching the app right now — one global listener per
  * open GET /api/events stream, i.e. roughly one per browser tab. Zero means
  * nobody can SEE anything the server surfaces, let alone answer it, which is
  * how the permission gate tells an unattended turn (an auto-started task at
  * 3am) from one a human is sitting in front of. See lib/permissions.ts.
+ *
+ * Subscribers marked `internal` are deliberately EXCLUDED, because that gate is
+ * the whole reason this number exists. A server-side bus consumer (the
+ * notification dispatcher) subscribes once and never unsubscribes, so counting
+ * it would pin this above zero for the life of the process — and an
+ * auto-started task hitting a permission card at 3am with every tab shut would
+ * park for the attended cap (hours) instead of auto-denying in seconds, holding
+ * the task `running` and the container awake with it. Presence means a human,
+ * not a listener.
  */
 export function watcherCount(): number {
-  return globalRegistry().size;
+  // Clamped because the wrong answer here is unsafe in one direction only:
+  // under-counting merely auto-denies an unattended-looking turn, while a
+  // negative read would be indistinguishable from zero anyway.
+  return Math.max(0, globalRegistry().size - internalRegistry().size);
 }
 
 /** Fan an event out to every subscriber of this task. Safe with zero listeners. */

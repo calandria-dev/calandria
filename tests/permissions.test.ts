@@ -21,7 +21,8 @@ import {
   waitForPermission,
 } from "@/lib/permissions";
 import { submitAnswer } from "@/lib/asks";
-import { subscribeGlobal } from "@/lib/events";
+import { subscribeGlobal, watcherCount } from "@/lib/events";
+import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 const bash = (command: string) => ({ command });
@@ -269,6 +270,34 @@ describe("parking on a human", () => {
     await expect(p).resolves.toEqual({ expired: "unattended" });
     // The registry entry is gone, so a late answer resolves nothing.
     expect(submitAnswer("t-perm-2", "perm:2", [["allow_once"]])).toBe(false);
+  });
+
+  // The presence heuristic behind the two tests above is ONE counter shared by
+  // the whole process, and it counts bus subscribers. A server-side subscriber
+  // that forgets to mark itself internal therefore reads as a connected tab —
+  // permanently, since it subscribes once and never leaves — and every
+  // unattended permission card on the instance quietly starts parking for the
+  // attended cap (hours) instead of auto-denying in seconds, holding its task
+  // `running` and the container awake. The notification dispatcher
+  // (lib/notifications/dispatcher.ts) is the first such subscriber; this pins
+  // the rule for the next one.
+  it("does not count a server-side bus subscriber as a watching human", async () => {
+    expect(watcherCount()).toBe(0);
+    ensureNotifier();
+    try {
+      expect(watcherCount()).toBe(0);
+      // Not just the number — the behavior it governs, end to end.
+      await expect(waitForPermission({ taskId: "t-perm-6", id: "perm:6", attendedMs: 0, unattendedMs: 60 }))
+        .resolves.toEqual({ expired: "unattended" });
+      // …while a REAL client still counts, notifier and all.
+      await withWatcher(async () => {
+        expect(watcherCount()).toBe(1);
+        await expect(waitForPermission({ taskId: "t-perm-7", id: "perm:7", attendedMs: 60, unattendedMs: 30 }))
+          .resolves.toEqual({ expired: "timeout" });
+      });
+    } finally {
+      stopNotifier();
+    }
   });
 
   it("expires as 'timeout' — not 'unattended' — when someone IS watching", async () => {
