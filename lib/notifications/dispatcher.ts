@@ -40,7 +40,15 @@ function handle(taskId: string, ev: BusEvent): void {
   }
 }
 
-/** Subscribe the notifier to the bus. Safe to call on every request. */
+/**
+ * Subscribe the notifier to the bus. Safe to call on every request.
+ *
+ * `internal: true` is load-bearing, not tidiness: watcherCount() is how
+ * lib/permissions.ts decides whether a human is around to answer a permission
+ * card, and this subscription never goes away once the process has served one
+ * request. Counted as a watcher it would tell the gate someone is always
+ * watching, and unattended auto-deny would never fire again.
+ */
 export function ensureNotifier(): void {
   if (global.__orchNotifier) return;
   global.__orchNotifier = subscribeGlobal((taskId, ev) => {
@@ -51,7 +59,7 @@ export function ensureNotifier(): void {
       // published the event. A missed notification is not worth a failed turn.
       console.error("[notifications] dispatch failed:", err);
     }
-  });
+  }, { internal: true });
 }
 
 /** Unsubscribe. Test seam, and the symmetry HMR wants. */

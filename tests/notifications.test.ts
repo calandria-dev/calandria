@@ -200,24 +200,31 @@ describe("the notification dispatcher", () => {
 
   it("subscribes at most once however many callers start it", () => {
     const task = parkedTask(projectId, "Once only");
-    // watcherCount() counts global bus subscribers, and the notifier is one —
-    // measuring it catches a broken idempotency guard directly, unlike a
-    // notification count, which the emitter's own dedupe window would collapse
-    // to 1 even with three live subscribers. It also counts open SSE streams
-    // (GET /api/events), so the assertion is a DELTA off a baseline, not an
-    // absolute count.
+    // The obvious instrument is ruled out by design: the notifier subscribes as
+    // INTERNAL, so it is invisible to watcherCount() (the permission gate's
+    // presence heuristic — see tests/permissions.test.ts). A notification count
+    // is no good either, since the emitter's dedupe window would collapse three
+    // live subscribers to one toast.
+    //
+    // What does measure the guard is TEARDOWN. stopNotifier() remembers exactly
+    // ONE unsubscribe function, so a second subscription could never be removed:
+    // if ensureNotifier() ever subscribed twice, the extra listener would
+    // outlive stopNotifier() and keep notifying forever. So publish after
+    // teardown and require silence.
     const baseline = watcherCount();
     ensureNotifier();
     ensureNotifier();
     ensureNotifier();
-    expect(watcherCount() - baseline).toBe(1);
+    expect(watcherCount()).toBe(baseline); // internal: not a watching human
     try {
       const sent = notificationsDuring(() => publish(task.id, { type: "ask", id: "a1", questions: [] }));
-      expect(sent).toHaveLength(1); // three subscribers would send three
+      expect(sent).toHaveLength(1);
     } finally {
       stopNotifier();
     }
-    expect(watcherCount()).toBe(baseline);
+    const orphan = parkedTask(projectId, "After teardown");
+    const after = notificationsDuring(() => publish(orphan.id, { type: "ask", id: "a2", questions: [] }));
+    expect(after).toEqual([]); // a leaked second subscription would still fire
   });
 });
 
