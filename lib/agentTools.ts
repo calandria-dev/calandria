@@ -12,6 +12,7 @@
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
+import { PRIORITIES } from "./types";
 import type { Project, Task, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData } from "./types";
 import {
   createTask,
@@ -358,7 +359,6 @@ export interface UpdateTaskInput {
   blocked_by?: string[];
 }
 
-const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 // "cancelled" is deliberately absent, for a reason that holds whichever row is
 // being written. On the caller's OWN row it's self-destruction: PATCH
 // /api/tasks/[id] calls abortTurn() on cancel, which would tear down the very

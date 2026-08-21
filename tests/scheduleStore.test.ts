@@ -113,8 +113,31 @@ describe("schedule store", () => {
   it("prunes run history beyond the retention cap", () => {
     const s = schedule(pid);
     const base = at("2026-08-12T15:30:00Z");
-    for (let i = 0; i < 55; i++) claimRun(s.id, base + i * 86_400_000, "scheduled");
+    // Settled, like real history — an unsettled ("claimed") row is exactly the
+    // case the next test covers, and pruning must never touch it.
+    for (let i = 0; i < 55; i++) {
+      const run = claimRun(s.id, base + i * 86_400_000, "scheduled")!;
+      settleRun(run.id, "succeeded");
+    }
     expect(listRuns(s.id, 200).length).toBeLessThanOrEqual(50);
+  });
+
+  it("never prunes a claimed/running row, however far retention pushes past it", () => {
+    // Oldest row stays claimed (e.g. a wedged "Run now") while enough newer,
+    // settled rows accumulate to push it out of the top-RUN_RETENTION window.
+    // Before the fix, pruneRuns deleted it purely by rank — activeRun() then
+    // stopped seeing anything busy and a second run could overlap it.
+    const s = schedule(pid);
+    const base = at("2026-08-12T15:30:00Z");
+    const stuck = claimRun(s.id, base, "scheduled")!;
+    for (let i = 1; i <= 55; i++) {
+      const run = claimRun(s.id, base + i * 86_400_000, "scheduled")!;
+      settleRun(run.id, "succeeded");
+    }
+    expect(activeRun(s.id)?.id).toBe(stuck.id);
+    expect(listRuns(s.id, 200).some((r) => r.id === stuck.id)).toBe(true);
+    // Retention still holds for everything that HAS settled.
+    expect(listRuns(s.id, 200).length).toBeLessThanOrEqual(51);
   });
 
   it("settles a run left mid-flight by a crash, so overlap detection recovers", () => {

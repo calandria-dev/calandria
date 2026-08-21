@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { activeRun, createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
+import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const rb = getRunbook(body.runbook_id);
     if (!rb) return NextResponse.json({ error: "no such runbook" }, { status: 400 });
     if (rb.project_id !== id) return NextResponse.json({ error: "that runbook belongs to a different project" }, { status: 400 });
+  }
+  // Every other field here is validated before use; priority wasn't, and the
+  // column has no CHECK constraint to catch a bad value at the DB layer.
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
+    return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
   try {
     // createSchedule computes next_fire_at and throws on an unusable spec — a

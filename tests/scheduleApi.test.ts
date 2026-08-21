@@ -73,6 +73,26 @@ describe("schedules API", () => {
     expect(listSchedules(pid)).toHaveLength(0);
   });
 
+  it("rejects an out-of-range priority at creation, and leaves it out entirely otherwise", async () => {
+    const bad = await createRoute(post("http://x/api", { ...body, priority: "urgent" }), { params: Promise.resolve({ id: pid }) });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatch(/priority/);
+    expect(listSchedules(pid)).toHaveLength(0);
+
+    const ok = await createRoute(post("http://x/api", { ...body, priority: "hi" }), { params: Promise.resolve({ id: pid }) });
+    expect(ok.status).toBe(201);
+    expect((await ok.json()).priority).toBe("hi");
+  });
+
+  it("rejects an out-of-range priority on PATCH, WITHOUT committing it", async () => {
+    const created = await (await createRoute(post("http://x/api", body), { params: Promise.resolve({ id: pid }) })).json();
+    const before = getSchedule(created.id)!;
+    const bad = await patchRoute(patch("http://x/api", { priority: "urgent" }), { params: Promise.resolve({ id: created.id }) });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatch(/priority/);
+    expect(getSchedule(created.id)).toEqual(before);
+  });
+
   it("pauses and resumes", async () => {
     const created = await (await createRoute(post("http://x/api", body), { params: Promise.resolve({ id: pid }) })).json();
     await patchRoute(patch("http://x/api", { enabled: false }), { params: Promise.resolve({ id: created.id }) });

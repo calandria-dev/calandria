@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { publishGlobal } from "@/lib/events";
 import { deleteRunbook, getRunbook, lastRunOf, schedulesUsing, updateRunbook } from "@/lib/runbooks/store";
+import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const before = getRunbook(id);
   if (!before) return NextResponse.json({ error: "no such runbook" }, { status: 404 });
   const body = await req.json();
+  // priority has a fixed legal set and no CHECK constraint behind it; the
+  // other fields copied below are free-form strings the driver resolves.
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
+    return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
+  }
   const fields: Record<string, unknown> = {};
   for (const k of ["name", "description", "prompt", "agent", "permission_mode", "priority", "position"]) {
     if (body[k] !== undefined) fields[k] = body[k];

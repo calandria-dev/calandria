@@ -1,6 +1,8 @@
 // Client-side shapes + UI constants shared across the orchestrator modules.
 // Pure data only (no React / no Icon) so any module can import freely.
+import { PRIORITIES } from "@/lib/types";
 import type { Priority, Status } from "@/lib/types";
+export { PRIORITIES };
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
 export type { InternalUsageEstimate };
 
@@ -256,7 +258,6 @@ export const SNOOZE_LABEL = "Snoozed";
 export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused — pick up later", done: "work complete / merged", cancelled: "abandoned — won't be finished" };
 export const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done", "cancelled"];
 export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo: "Low" };
-export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 // ---------- agent capability descriptors (mirrors lib/agents/types.ts) ----------
 // The run controls are no longer hardcoded per agent: each driver ships a
