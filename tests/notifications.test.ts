@@ -225,28 +225,54 @@ describe("the /api/events relay", () => {
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
 
-    // Drain the ": connected" preamble so the assertion below can't read it.
-    await reader.read();
+    try {
+      // Drain the ": connected" preamble so the assertion below can't read it.
+      await reader.read();
 
-    emitAwaitingInput(task.id);
-    emitTestNotification();
+      emitAwaitingInput(task.id);
+      emitTestNotification();
 
-    let buf = "";
-    const frames: string[] = [];
-    while (frames.length < 2) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      for (const chunk of buf.split("\n\n")) if (chunk.startsWith("data: ")) frames.push(chunk.slice(6));
-      buf = "";
+      let buf = "";
+      const frames: string[] = [];
+      // A short LOCAL timeout per read, well under vitest's global 30s one:
+      // these SSE writes are in-process and synchronous, so 2s is generous.
+      // Without this, a misplaced relay branch fails as a bare "Test timed out
+      // in 30000ms" that names nothing — this instead names which frame never
+      // showed up, so the failure points straight at the missing branch.
+      const readOrTimeout = (): Promise<{ done: boolean; value?: Uint8Array }> =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`expected 2 frames, got ${frames.length} — frame ${frames.length} never arrived`)),
+            2000,
+          );
+          reader.read().then(
+            (r) => { clearTimeout(timer); resolve(r); },
+            (e) => { clearTimeout(timer); reject(e); },
+          );
+        });
+      while (frames.length < 2) {
+        const { value, done } = await readOrTimeout();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        for (const chunk of buf.split("\n\n")) if (chunk.startsWith("data: ")) frames.push(chunk.slice(6));
+        buf = "";
+      }
+
+      const payloads = frames.map((f) => JSON.parse(f));
+      expect(payloads[0].type).toBe("notification");
+      expect(payloads[0].payload.taskId).toBe(task.id);
+      // The task-less test notification must survive the relay: the branch must
+      // sit BEFORE coarse(ev) is even called, not merely before the getTask
+      // re-read further down — coarse() returns null for "notification" and
+      // swallows the event right there, so anywhere after coarse(ev) reproduces
+      // this same failure, not just placement below the re-read.
+      expect(payloads[1].payload.kind).toBe("test");
+    } finally {
+      // ensureNotifier() was started indirectly by eventsRoute() above; undo it
+      // like every sibling test does, and make sure a failing assertion above
+      // still tears down the stream instead of leaving a live reader.
+      ac.abort();
+      stopNotifier();
     }
-    ac.abort();
-
-    const payloads = frames.map((f) => JSON.parse(f));
-    expect(payloads[0].type).toBe("notification");
-    expect(payloads[0].payload.taskId).toBe(task.id);
-    // The task-less test notification must survive the relay: the branch has to
-    // sit BEFORE the getTask re-read, which would drop it.
-    expect(payloads[1].payload.kind).toBe("test");
   });
 });
