@@ -48,6 +48,17 @@ Two facts worth notifying on are additionally missing from the bus altogether:
 > section below adds is genuinely new. `app/orchestrator/Welcome.tsx`'s
 > onboarding prompt for browser-notification permission is unrelated to either
 > notifier and was not touched.
+>
+> **Second correction, added 2026-08-21 during the branch review:** the retired
+> notifier fired on the turn-end settle, and the subscriber as first built did
+> not — see the fix to "Why a bus subscriber instead of call sites in the
+> runner" below. `turn_end` is now mapped to `emitAwaitingInput` in
+> `lib/notifications/dispatcher.ts`, which restores that signal (the most common
+> "your agent finished, your move" case) without turning it into the "turn
+> finished" notification the Decisions table rules out: the emitter re-reads the
+> row through `taskNeedsYou()`, so a scheduled success, a settled task, a snoozed
+> one and an archived project's are all filtered out, and the 10s dedupe window
+> collapses the card-then-end pair a parked turn produces into one.
 
 ## Decisions
 
@@ -94,15 +105,22 @@ per-channel event selection.
 
 ### Why a bus subscriber instead of call sites in the runner
 
-`awaiting_input` is set in several places in `lib/runner.ts` (an ask card, a
-permission card, and the turn-end settle that leaves a card open). Placing an
-`emitNotification()` call at each is three chances to miss a path, and every
-future path added to the runner is a fourth.
+`awaiting_input` is set in several places in `lib/runner.ts`: an ask card, a
+permission card, and the turn-end settle — which parks **any** turn that opened
+a session and ended mid-task, whether or not a card is open. (This sentence
+originally said "the turn-end settle that leaves a card open", which was simply
+wrong about that third site and, being the load-bearing argument for this
+design, is corrected here rather than quietly.) Placing an `emitNotification()`
+call at each is three chances to miss a path, and every future path added to the
+runner is a fourth.
 
 A single subscriber on the wildcard channel maps the events the runner
-*already* publishes — `ask`, `permission`, `error` — and needs no edits to
-`runner.ts` at all. It is also precisely the seam the webhook channel will
-attach to.
+*already* publishes — `ask`, `permission`, `turn_end`, `error` — and needs no
+edits to `runner.ts` at all. It is also precisely the seam the webhook channel
+will attach to. The subscriber does not have to reason about which site fired:
+it hands the task id to `emitAwaitingInput()`, which re-reads the row and lets
+`taskNeedsYou()` decide, so `turn_end` costs nothing when the turn settled
+cleanly.
 
 The one event that cannot come from the bus is a failed schedule run, because
 nothing publishes it. That hooks `settleRun()` in `lib/schedule/store.ts`

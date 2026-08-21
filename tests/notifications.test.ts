@@ -228,6 +228,40 @@ describe("the notification dispatcher", () => {
     expect(after).toEqual([]); // a leaked second subscription would still fire
   });
 
+  it("notifies on the turn-end settle, which is the commonest 'your move'", () => {
+    const parked = parkedTask(projectId, "Handed back");
+    // Same event, but the runner settled this one: awaiting_input is 0, so the
+    // turn ended with nothing owed to the user. turn_end must NOT become a
+    // "turn finished" notification — the row decides, exactly as it does for a
+    // card.
+    const done = createTask({ project_id: projectId, title: "Ran to completion" });
+    updateTask(done.id, { status: "in_progress", awaiting_input: 0 });
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => {
+        publish(parked.id, { type: "turn_end" });
+        publish(done.id, { type: "turn_end" });
+      });
+      expect(sent.map((n) => `${n.kind}:${n.taskId}`)).toEqual([`awaiting_input:${parked.id}`]);
+    } finally {
+      stopNotifier();
+    }
+  });
+
+  it("collapses the card-then-turn_end pair one parked turn produces", () => {
+    const task = parkedTask(projectId, "Asked then ended");
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => {
+        publish(task.id, { type: "ask", id: "a1", questions: [] });
+        publish(task.id, { type: "turn_end" });
+      });
+      expect(sent).toHaveLength(1);
+    } finally {
+      stopNotifier();
+    }
+  });
+
   it("stays quiet for a turn that declared nobody can answer it", () => {
     // A scheduled run: the driver publishes the permission card BEFORE
     // waitForPermission() auto-settles it, so the row genuinely reads
