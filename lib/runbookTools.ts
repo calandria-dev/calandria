@@ -68,6 +68,19 @@ function refuseUnsafePermissionMode(mode: string, verb: "created" | "changed"): 
   return null;
 }
 
+/**
+ * "" (or whitespace) reads as omitted, not as an unrecognized mode. The schema
+ * only types permission_mode `optional()`, so a model meaning "leave the
+ * default" has no way to express that other than omitting the key or sending
+ * an empty string — and `createRunbook`/`updateRunbook` already treat a blank
+ * value as "inherit" (`?? null`). Rejecting "" here would refuse the one
+ * input that's least dangerous, not most.
+ */
+function normalizeMode(mode: string | undefined): string | undefined {
+  const trimmed = mode?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export interface CreateRunbookToolInput {
   name: string;
   description: string;
@@ -97,8 +110,9 @@ export function createRunbookForAgent(
   if (!input.prompt?.trim()) {
     return { runbook: null, text: "A runbook needs a prompt — the message its first turn sends. Nothing was created." };
   }
-  if (input.permission_mode !== undefined) {
-    const refusal = refuseUnsafePermissionMode(input.permission_mode, "created");
+  const permissionMode = normalizeMode(input.permission_mode);
+  if (permissionMode !== undefined) {
+    const refusal = refuseUnsafePermissionMode(permissionMode, "created");
     if (refusal) return { runbook: null, text: refusal };
   }
 
@@ -111,7 +125,7 @@ export function createRunbookForAgent(
     description: input.description ?? "",
     prompt: input.prompt,
     agent: resolveConnectedAgent([target.project.default_agent]) ?? undefined,
-    permission_mode: input.permission_mode ?? null,
+    permission_mode: permissionMode ?? null,
     priority: input.priority,
     // Provenance, not a review gate: a runbook is inert until someone presses
     // Run, so it needs no suggested-tray equivalent — but the user should be
@@ -211,9 +225,12 @@ export function updateRunbookForAgent(
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.priority !== undefined) patch.priority = fields.priority;
   if (fields.permission_mode !== undefined) {
-    const refusal = refuseUnsafePermissionMode(fields.permission_mode, "changed");
-    if (refusal) return { runbook: null, text: refusal };
-    patch.permission_mode = fields.permission_mode;
+    const permissionMode = normalizeMode(fields.permission_mode);
+    if (permissionMode !== undefined) {
+      const refusal = refuseUnsafePermissionMode(permissionMode, "changed");
+      if (refusal) return { runbook: null, text: refusal };
+    }
+    patch.permission_mode = permissionMode ?? null;
   }
 
   const runbook = updateRunbook(cur.id, patch)!;

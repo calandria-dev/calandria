@@ -141,4 +141,29 @@ describe("runbook agent tools", () => {
     const { runbook } = updateRunbookForAgent(here, rb.id, { permission_mode: "acceptEdits" });
     expect(runbook!.permission_mode).toBe("acceptEdits");
   });
+
+  // The schema only types permission_mode optional(), so a model meaning
+  // "leave the default" has no way to say so besides omitting the key or
+  // sending "" — that has to read as inherit, not as a refused unknown mode.
+  it("treats an empty or whitespace permission_mode as omitted (inherit) on create", () => {
+    const empty = createRunbookForAgent(here, { name: "S1", description: "", prompt: "/s", permission_mode: "" }, "claude");
+    expect(empty.runbook).not.toBeNull();
+    expect(empty.runbook!.permission_mode).toBeNull();
+
+    const whitespace = createRunbookForAgent(here, { name: "S2", description: "", prompt: "/s", permission_mode: "   " }, "claude");
+    expect(whitespace.runbook).not.toBeNull();
+    expect(whitespace.runbook!.permission_mode).toBeNull();
+  });
+
+  it("treats an empty or whitespace permission_mode as omitted (inherit) on update", () => {
+    const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a", permission_mode: "plan" });
+    const { runbook } = updateRunbookForAgent(here, rb.id, { permission_mode: "" });
+    expect(runbook).not.toBeNull();
+    expect(runbook!.permission_mode).toBeNull();
+
+    const rb2 = createRunbook({ project_id: here.id, name: "B", prompt: "/b", permission_mode: "plan" });
+    const whitespace = updateRunbookForAgent(here, rb2.id, { permission_mode: "   " });
+    expect(whitespace.runbook).not.toBeNull();
+    expect(whitespace.runbook!.permission_mode).toBeNull();
+  });
 });
