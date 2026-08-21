@@ -84,24 +84,47 @@ import {
 } from "../../claude-auth";
 import { claudeUsage } from "./usage";
 
-// Which on-disk setting sources every Claude query loads. This is EXACTLY the
-// SDK's own default ("when omitted, all sources are loaded (matches CLI
-// defaults)") — pinned explicitly rather than inherited, because the default is
-// what makes a task session feel like the user's own `claude` terminal: their
-// ~/.claude settings, MCP servers, plugins and skills, plus every CLAUDE.md the
-// SDK discovers from `project`. That's a deliberate product decision, and an SDK
-// bump that changed the default would silently strip all of it with no symptom
-// beyond the agent quietly getting worse. Written out here so there is a line to
-// grep for, a test to fail (tests/claudeSettingSources.test.ts), and a comment
-// that says the inheritance is wanted.
+// Which on-disk setting sources every Claude query loads, pinned explicitly
+// rather than left to the SDK default (sdk.d.ts: "when omitted, all sources
+// are loaded, matches CLI defaults") — so an SDK bump can change that default
+// without silently changing what a task trusts. Written out here so there is
+// a line to grep for and a test to fail (tests/claudeSettingSources.test.ts).
 //
-// 'project' is load-bearing twice over: it's what loads CLAUDE.md, and a task
-// runs in its own worktree, so ".claude/" here means the checked-out repo's.
+// Each source is a JSON file the SDK merges in, and none of the keys it can
+// carry are inert: `hooks` runs literal shell commands on tool/session events,
+// entirely outside canUseTool — the permission gate never sees a hook fire.
+// `permissions.allow` is auto-approved without a canUseTool call at all, and
+// `env` reaches every subprocess a tool spawns. Loading a source is handing it
+// that surface, not just its intent.
 //
-// This is settings inheritance only; it grants nothing. What an inherited MCP
-// server may actually DO is decided downstream by permissionMode + canUseTool
-// like any other tool — auto-approved under bypassPermissions, screened by the
-// classifier under the "auto" default, and a permission card otherwise.
+// 'user' (~/.claude/settings.json) is the operator's own machine, outside any
+// task's worktree — a task can't write it, so it carries no more trust than
+// the person running Operator already has.
+//
+// 'project' (<worktree>/.claude/settings.json) is what loads CLAUDE.md, and a
+// task's worktree is exactly where an agent's own writes land — so this file
+// is as writable as anything else the agent touches. It stays in because it's
+// tracked: it shows up in the same diff (TaskChanges) the user reviews before
+// anything merges, so a hook smuggled in here is a hook the review step is
+// supposed to catch.
+//
+// 'local' (<worktree>/.claude/settings.local.json) is dropped. It resolves
+// against the same worktree, so it's just as agent-writable as 'project' —
+// but by convention it's gitignored, meaning it never appears in that diff.
+// An agent running under an auto-accept edit policy (Write pre-approved, no
+// canUseTool round-trip) can create this file with a PreToolUse hook, and the
+// very next turn that hook runs as a shell command with no permission check
+// in between — the classifier, the permission card, all of it bypassed,
+// because settingSources loaded the file before either had a chance to look
+// at it. 'project' is worktree-writable too, but at least a human reviewing
+// the diff has a shot at catching it; 'local' guarantees they never see it.
+//
+// Not addressed here (tracked as follow-up, not this fix): these files are
+// re-read from disk on every turn, so nothing stops a worktree's
+// settings.json from drifting between the turn a human reviewed and the turn
+// that runs next. Hash-pinning the file at worktree creation and re-diffing
+// it before each turn would close that gap; this change only removes the
+// source that review can never see in the first place.
 //
 // EXPORTED because it is load-bearing outside this file too: the schedule
 // preflight (lib/schedule/commands.ts) opens a throwaway session purely to read
@@ -111,7 +134,7 @@ import { claudeUsage } from "./usage";
 // `failed` and mints nothing, every morning. Pinned by
 // tests/claudeSettingSources.test.ts, which drives the real probe through the
 // mocked SDK and reads the sources back.
-export const SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
+export const SETTING_SOURCES: SettingSource[] = ["user", "project"];
 
 // Where a session for this task runs: its isolated worktree, falling back to
 // the shared repo path (non-git projects, or worktree creation skipped).
