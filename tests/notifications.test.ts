@@ -15,6 +15,8 @@ import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
+import { PATCH as patchSettings } from "@/app/api/settings/route";
+import { POST as testNotification } from "@/app/api/notifications/test/route";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -313,5 +315,38 @@ describe("a failed scheduled run", () => {
     resetNotificationDedupe();
     const second = notificationsDuring(() => settleRun(withTask.id, "failed", "Unknown command: /x"));
     expect(second[0].taskId).toBe(task.id);
+  });
+});
+
+describe("notification settings", () => {
+  it("persists the four keys through PATCH /api/settings", async () => {
+    const res = await patchSettings(new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ notifications: "off", notify_turn_failed: "off", bogus_key: "off" }),
+    }));
+    const saved = await res.json();
+    expect(saved.notifications).toBe("off");
+    expect(saved.notify_turn_failed).toBe("off");
+    expect(saved.bogus_key).toBeUndefined();
+  });
+
+  it("sends a test notification through the real bus, and reports the master switch", async () => {
+    // Subscribed by hand rather than through notificationsDuring: the route is
+    // async, and that helper only spans a synchronous callback.
+    const sent: NotificationPayload[] = [];
+    const unsub = subscribeGlobal((_id, ev) => { if (ev.type === "notification") sent.push(ev.payload); });
+    try {
+      const ok = await (await testNotification()).json();
+      expect(ok.ok).toBe(true);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].kind).toBe("test");
+
+      setSetting("notifications", "off");
+      const off = await (await testNotification()).json();
+      expect(off.ok).toBe(false); // the button can say WHY nothing appeared
+      expect(sent).toHaveLength(1);
+    } finally {
+      unsub();
+    }
   });
 });

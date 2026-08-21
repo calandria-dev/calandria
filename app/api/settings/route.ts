@@ -12,7 +12,10 @@ export const dynamic = "force-dynamic";
 // (recaps, context drafts — see lib/agents/oneshots.ts), default "claude".
 // `background_jobs` defaults to "on" and gates unattended agent turns;
 // `recap_mode` defaults to "automatic" (also accepts "on_open" and "off").
-const ALLOWED = /^(background_jobs|recap_mode|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?)$/;
+// The notify_* keys and their master switch (`notifications`) gate
+// lib/notifications — server-side rather than in the browser because the
+// webhook channel planned next must obey the same policy. All default on.
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());
