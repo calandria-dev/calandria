@@ -126,14 +126,21 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
       // worktree mid-rewrite.
       await withTaskLock(created.id, async () => {
         let fresh = { ...created };
-        try {
-          const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
-          if (wt) {
-            fresh = { ...fresh, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha };
-            updateTask(fresh.id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
-          }
-        } catch {
-          // fall back to repo_path, exactly as the route and autoStart do
+        // ensureWorktree returning null (non-git/empty repo) is a legitimate,
+        // silent fallback to repo_path. THROWING is different — a stale
+        // index.lock from a crashed process, a disk-full git op, a detached
+        // HEAD — and swallowing it here would launch straight into the user's
+        // real checkout instead of an isolated worktree. So it isn't caught:
+        // it escapes to this function's own catch below, which already turns
+        // any setup failure into a DispatchResult carrying the minted task.
+        // That's the mechanism both callers already use for every other
+        // dispatch failure — fireSchedule settles the run "failed" with this
+        // same message, the runbook route turns it into a visible 400 — so
+        // nothing new is needed here, just not swallowing it first.
+        const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
+        if (wt) {
+          fresh = { ...fresh, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha };
+          updateTask(fresh.id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
         }
         const userMsg = addMessage(fresh.id, fresh.generation, "user", input.prompt);
         updateTask(fresh.id, { running: 1, awaiting_input: 0 });

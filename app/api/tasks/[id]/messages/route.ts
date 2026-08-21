@@ -113,10 +113,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // whose worktree is missing on disk — e.g. one that was reopened after its
       // merged worktree was pruned to reclaim disk. ensureWorktree reattaches to the
       // surviving branch when it still exists, so the old work is restored. Non-git/
-      // empty repos fall back to running directly in repo_path (worktree_path stays
-      // ""). Best-effort: a git hiccup must not block the run. Mutating `fresh` so the
-      // runner uses the new cwd. Safe to await while holding the claim: that's the
-      // point — a second POST landing in this window queues instead of double-running.
+      // empty repos legitimately return null and fall back to running directly in
+      // repo_path (worktree_path stays ""). Mutating `fresh` so the runner uses the
+      // new cwd. Safe to await while holding the claim: that's the point — a second
+      // POST landing in this window queues instead of double-running.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
           const wt = await ensureWorktree(proj.repo_path, fresh.id, proj.branch);
@@ -126,8 +126,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             fresh.base_sha = wt.baseSha;
             updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
           }
-        } catch {
-          // fall back to repo_path
+        } catch (err) {
+          // ensureWorktree returning null is the legitimate fallback handled
+          // above. THROWING means something is actually wrong (a stale
+          // index.lock, a disk-full git op, a detached HEAD) — falling back
+          // silently would run this turn in the user's real checkout instead
+          // of an isolated worktree, under whatever permission mode the task
+          // already carries. Refuse with the same visible 400 every other
+          // precondition failure in this route uses: the client's runTurn()
+          // already resets `running` and drops the message onto the
+          // transcript as a system line on a non-ok response.
+          return new Response(
+            JSON.stringify({ error: `Could not prepare an isolated worktree: ${err instanceof Error ? err.message : String(err)}` }),
+            { status: 400 }
+          );
         }
       }
 

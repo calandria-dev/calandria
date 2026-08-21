@@ -116,8 +116,10 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
   const controller = claimTurn(taskId);
   if (!controller) return;
   let launched = false;
-  // The generation the row was marked `running` under, once it has been — i.e.
-  // how far a failed launch has to unwind. Null while there's nothing to undo.
+  // Set as soon as we have a generation to report a failure against — which is
+  // BEFORE the row is marked `running`, so a throw from the worktree self-heal
+  // below still has somewhere to unwind to, not just a launch failure after
+  // running=1. Null while there's nothing to undo.
   let claimedGen: number | null = null;
   // See the header note on why this import is dynamic. Resolved outside the
   // per-task lock (loading the runner pulls in both agent SDKs the first time)
@@ -136,29 +138,33 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
       if (!fresh || fresh.started || fresh.suggested || fresh.status !== "not_started" || !fresh.auto_start) return;
       if (getTaskDeps(taskId).some(blocks)) return;
       const userText = INITIAL_TASK_PROMPT;
+      const gen = fresh.generation;
+      claimedGen = gen;
 
-      // Give the task its own worktree + branch (self-heals a pruned one),
-      // falling back to repo_path on any git hiccup — same as the route.
+      // Give the task its own worktree + branch (self-heals a pruned one).
+      // ensureWorktree returning null (non-git/empty repo) is a legitimate,
+      // silent fallback to repo_path. THROWING is different — a stale
+      // index.lock from a crashed process, a disk-full git op, a detached
+      // HEAD — and nobody is watching an auto-start launch: swallowing it here
+      // would run the turn unattended in the user's real checkout instead of
+      // an isolated worktree. So it isn't caught here — it escapes to this
+      // function's own catch below, which already turns a launch failure into
+      // a visible transcript line via publishTurnError and unwinds the row to
+      // retryable, the same path a broken runner import takes.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
-        try {
-          const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
-          if (wt) {
-            fresh.worktree_path = wt.path;
-            fresh.work_branch = wt.branch;
-            fresh.base_sha = wt.baseSha;
-            updateTask(taskId, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
-          }
-        } catch {
-          // fall back to repo_path
+        const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
+        if (wt) {
+          fresh.worktree_path = wt.path;
+          fresh.work_branch = wt.branch;
+          fresh.base_sha = wt.baseSha;
+          updateTask(taskId, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
         }
       }
 
-      const gen = fresh.generation;
       const userMsg = addMessage(taskId, gen, "user", userText);
       // Mark running immediately, but defer `started` until the agent actually
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });
-      claimedGen = gen;
       publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
       // The note rides the runner's syncNote slot: persisted + published at the
       // top of the turn, so the transcript records WHY this session began — and
