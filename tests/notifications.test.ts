@@ -6,11 +6,12 @@
 // so these assertions are what the webhook channel will inherit.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createProject, createTask, setSetting, updateTask } from "@/lib/store";
-import { subscribeGlobal, type BusEvent } from "@/lib/events";
+import { publish, subscribeGlobal, type BusEvent } from "@/lib/events";
 import {
   emitAwaitingInput, emitScheduleFailed, emitTestNotification, emitTurnFailed,
   resetNotificationDedupe,
 } from "@/lib/notifications/notify";
+import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
 import type { NotificationPayload } from "@/lib/notifications/types";
 
 // Every notification published while `fn` runs, in order.
@@ -156,5 +157,52 @@ describe("the notification emitter", () => {
     // …but the master switch still governs it.
     setSetting("notifications", "off");
     expect(notificationsDuring(() => emitTestNotification())).toEqual([]);
+  });
+});
+
+describe("the notification dispatcher", () => {
+  it("translates the runner's own events, and ignores its own", () => {
+    const task = parkedTask(projectId, "Parked by the runner");
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => {
+        publish(task.id, { type: "ask", id: "a1", questions: [] });
+        publish(task.id, { type: "assistant", content: "thinking out loud" });
+        publish(task.id, { type: "notice", content: "caught up to main" });
+      });
+      expect(sent.map((n) => n.kind)).toEqual(["awaiting_input"]);
+    } finally {
+      stopNotifier();
+    }
+  });
+
+  it("maps a permission card and a turn error", () => {
+    const a = parkedTask(projectId, "Permission");
+    const b = parkedTask(projectId, "Boom");
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => {
+        publish(a.id, { type: "permission", request: { id: "p1", tool: "Bash", title: "Run npm run lint", detail: "npm run lint", expiresAt: 0 } });
+        publish(b.id, { type: "error", content: "⚠ the session ended unexpectedly" });
+      });
+      expect(sent.map((n) => `${n.kind}:${n.taskId}`)).toEqual([
+        `awaiting_input:${a.id}`, `turn_failed:${b.id}`,
+      ]);
+    } finally {
+      stopNotifier();
+    }
+  });
+
+  it("subscribes at most once however many callers start it", () => {
+    const task = parkedTask(projectId, "Once only");
+    ensureNotifier();
+    ensureNotifier();
+    ensureNotifier();
+    try {
+      const sent = notificationsDuring(() => publish(task.id, { type: "ask", id: "a1", questions: [] }));
+      expect(sent).toHaveLength(1); // three subscribers would send three
+    } finally {
+      stopNotifier();
+    }
   });
 });

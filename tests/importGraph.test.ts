@@ -41,6 +41,7 @@ const PINNED = [
   "lib/runbookTools.ts", //      runbook agent-tool policy, behind the internal agent-tools routes
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "lib/notifications/notify.ts", //   composes notifications; store + bus only, no driving
+  "lib/notifications/dispatcher.ts", // the bus subscriber behind /api/events
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
