@@ -12,6 +12,7 @@ import {
   resetNotificationDedupe,
 } from "@/lib/notifications/notify";
 import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
+import { clearRunContext, setRunContext, SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
@@ -225,6 +226,24 @@ describe("the notification dispatcher", () => {
     const orphan = parkedTask(projectId, "After teardown");
     const after = notificationsDuring(() => publish(orphan.id, { type: "ask", id: "a2", questions: [] }));
     expect(after).toEqual([]); // a leaked second subscription would still fire
+  });
+
+  it("stays quiet for a turn that declared nobody can answer it", () => {
+    // A scheduled run: the driver publishes the permission card BEFORE
+    // waitForPermission() auto-settles it, so the row genuinely reads
+    // awaiting_input = 1 for an instant. Telling the user a task is waiting on
+    // them that by design never will is the same false "N need you" item the
+    // scheduler works to avoid.
+    const task = parkedTask(projectId, "08:30 sweep");
+    setRunContext(task.id, SCHEDULED_RUN_CONTEXT);
+    try {
+      expect(notificationsDuring(() => emitAwaitingInput(task.id))).toEqual([]);
+      // A turn the user launched on that same row is unaffected.
+      clearRunContext(task.id);
+      expect(notificationsDuring(() => emitAwaitingInput(task.id))).toHaveLength(1);
+    } finally {
+      clearRunContext(task.id);
+    }
   });
 });
 

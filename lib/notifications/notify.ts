@@ -8,6 +8,7 @@
 // only, pinned by tests/importGraph.test.ts.
 
 import { publishGlobal } from "@/lib/events";
+import { interactionDenied } from "@/lib/runContext";
 import { getProject, getSetting, getTask, taskNeedsYou } from "@/lib/store";
 import type { NotificationKind, NotificationPayload } from "./types";
 
@@ -88,9 +89,17 @@ function projectSuffix(projectId: string): string {
   return project ? ` · ${project.name}` : "";
 }
 
-/** A task is parked on a question or a permission card. */
+/** A task is parked on a question, a permission card, or a finished turn. */
 export function emitAwaitingInput(taskId: string): NotificationPayload | null {
   if (!kindEnabled("awaiting_input")) return null;
+  // A declared-unattended turn (a scheduled run) never waits for anyone: the
+  // driver publishes the card BEFORE waitForPermission() runs, and the deny
+  // policy settles it inside that call — so the row really does hold
+  // awaiting_input = 1 for the instant this subscriber reads it. Notifying
+  // would tell the user a task is waiting on them that by design never will,
+  // the same false item the scheduler keeps out of the "N need you" pill by
+  // leaving awaiting_input at 0 on success.
+  if (interactionDenied(taskId)) return null;
   const task = getTask(taskId);
   // The ROW decides, not the event: see taskNeedsYou in lib/store.ts.
   if (!task || !taskNeedsYou(taskId)) return null;
