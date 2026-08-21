@@ -51,6 +51,20 @@ describe("runbook API", () => {
     expect((await createRoute(post({ name: 7, prompt: "/x" }), params(p.id))).status).toBe(400);
   });
 
+  it("rejects an out-of-range priority at creation and on PATCH", async () => {
+    const p = await projectWithRepo();
+    const bad = await createRoute(post({ name: "Sweep", prompt: "/sweep", priority: "urgent" }), params(p.id));
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatch(/priority/);
+    expect(listRunbooks(p.id)).toHaveLength(0);
+
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/sweep" });
+    const badPatch = await patchRoute(new Request("http://localhost/x", { method: "PATCH", body: JSON.stringify({ priority: "urgent" }) }), params(rb.id));
+    expect(badPatch.status).toBe(400);
+    expect((await badPatch.json()).error).toMatch(/priority/);
+    expect(getRunbook(rb.id)!.priority).toBe(rb.priority);
+  });
+
   it("running one mints a task and launches it with the composed prompt", async () => {
     const p = await projectWithRepo();
     const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/sweep", priority: "hi" });

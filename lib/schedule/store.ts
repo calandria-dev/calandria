@@ -211,19 +211,29 @@ export function listRuns(scheduleId: string, limit = 20): ScheduleRun[] {
 
 export const lastRun = (scheduleId: string): ScheduleRun | null => listRuns(scheduleId, 1)[0] ?? null;
 
+/** Statuses that mean "somebody is still watching this row" — never prunable. */
+const ACTIVE_STATUSES = "'claimed','running'";
+
 /** The run still in flight for this schedule, if any (overlap detection). */
 export function activeRun(scheduleId: string): ScheduleRun | null {
   return (
     (getDb()
-      .prepare("SELECT * FROM schedule_runs WHERE schedule_id = ? AND status IN ('claimed','running') ORDER BY scheduled_for DESC LIMIT 1")
+      .prepare(`SELECT * FROM schedule_runs WHERE schedule_id = ? AND status IN (${ACTIVE_STATUSES}) ORDER BY scheduled_for DESC LIMIT 1`)
       .get(scheduleId) as ScheduleRun) ?? null
   );
 }
 
+// Retention is a hard cap by scheduled_for DESC, with no idea what's still
+// live. A burst of manual "Run now" firings while one run is wedged pushes
+// that claimed/running row out of the top RUN_RETENTION and it gets deleted
+// out from under activeRun() — the overlap check then sees nothing busy and
+// lets a second run start on top of it. Active rows are excluded from the
+// candidate set entirely, so they survive no matter how far retention pushes
+// past them; they only go once they've settled into a terminal status.
 function pruneRuns(scheduleId: string): void {
   getDb()
     .prepare(
-      `DELETE FROM schedule_runs WHERE schedule_id = ? AND id NOT IN (
+      `DELETE FROM schedule_runs WHERE schedule_id = ? AND status NOT IN (${ACTIVE_STATUSES}) AND id NOT IN (
          SELECT id FROM schedule_runs WHERE schedule_id = ? ORDER BY scheduled_for DESC LIMIT ?
        )`
     )

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { deleteSchedule, getSchedule, listRuns, updateSchedule } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
+import type { Priority } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,6 +19,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const schedule = getSchedule(id);
   if (!schedule) return NextResponse.json({ error: "no such schedule" }, { status: 404 });
   const body = await req.json();
+  // Unlike the fields copied below, priority has a fixed legal set and no
+  // CHECK constraint behind it, so a bad value needs to be refused here.
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
+    return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
+  }
   const fields: Record<string, unknown> = {};
   for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms"]) {
     if (body[k] !== undefined) fields[k] = body[k];

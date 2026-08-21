@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { createRunbook, lastRunOf, listRunbooks, schedulesUsing } from "@/lib/runbooks/store";
+import type { Priority } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 
 /** Each runbook with the two facts the card needs beyond its own row. */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -32,6 +35,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // turn a 400 into an unhandled 500. Same shape as the schedules POST.
   if (typeof body?.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
   if (typeof body?.prompt !== "string" || !body.prompt.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
+  // Unlike permission_mode above, priority has no "unrecognized degrades to
+  // the default" resolver behind it and no CHECK constraint — refuse it here.
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
+    return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
+  }
   const runbook = createRunbook({
     project_id: id,
     name: body.name.trim(),
