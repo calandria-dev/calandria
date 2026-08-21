@@ -14,6 +14,7 @@ import {
 import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { GET as eventsRoute } from "@/app/api/events/route";
+import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -274,5 +275,43 @@ describe("the /api/events relay", () => {
       ac.abort();
       stopNotifier();
     }
+  });
+});
+
+describe("a failed scheduled run", () => {
+  it("notifies once, only on the transition, and only for failure", () => {
+    const schedule = createSchedule({
+      project_id: projectId,
+      name: "Morning sweep",
+      prompt: "/sweep",
+      days_mask: 127,
+      time_of_day: "08:30",
+      timezone: "America/Los_Angeles",
+      agent: "claude",
+    });
+
+    const failed = claimRun(schedule.id, 1, "scheduled")!;
+    const sent = notificationsDuring(() => {
+      settleRun(failed.id, "failed", "no agent connected");
+      // Idempotent re-settle: the UPDATE matches no row, so no second buzz.
+      settleRun(failed.id, "failed", "no agent connected");
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].kind).toBe("schedule_failed");
+    expect(sent[0].body).toContain("Morning sweep");
+    expect(sent[0].body).toContain("no agent connected");
+    expect(sent[0].projectId).toBe(projectId);
+
+    // A run that succeeded is not news.
+    const ok = claimRun(schedule.id, 2, "scheduled")!;
+    expect(notificationsDuring(() => settleRun(ok.id, "succeeded", ""))).toEqual([]);
+
+    // A run that DID mint a task carries it, so clicking the toast can open it.
+    const task = parkedTask(projectId, "08:30 sweep");
+    const withTask = claimRun(schedule.id, 3, "scheduled")!;
+    startRun(withTask.id, task.id);
+    resetNotificationDedupe();
+    const second = notificationsDuring(() => settleRun(withTask.id, "failed", "Unknown command: /x"));
+    expect(second[0].taskId).toBe(task.id);
   });
 });

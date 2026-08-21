@@ -4,6 +4,7 @@
 
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
+import { emitScheduleFailed } from "@/lib/notifications/notify";
 import { nextFireAt, type ScheduleSpec } from "@/lib/schedule/time";
 import type { Priority, Schedule, ScheduleRun, ScheduleRunStatus, ScheduleTrigger } from "@/lib/types";
 
@@ -186,9 +187,32 @@ export function startRun(runId: string, taskId: string): void {
 
 /** Terminal outcome. Idempotent — a settled run is never re-settled. */
 export function settleRun(runId: string, status: ScheduleRunStatus, detail = ""): void {
-  getDb()
+  const res = getDb()
     .prepare("UPDATE schedule_runs SET status = ?, detail = ?, finished_at = ? WHERE id = ? AND finished_at = 0")
     .run(status, detail, Date.now(), runId);
+  // A failed run is the one failure in this app with no witness: nobody is
+  // watching at 08:30, and a run that fell over in preflight never minted a
+  // task to notice. This is the only notification source that isn't on the bus,
+  // so it is hooked at the single function all four `failed` settle sites go
+  // through rather than at each of them.
+  //
+  // Gated on `changes` so the idempotent re-settle above can't notify twice,
+  // and wrapped because this runs inside the runner's `finally`: a notification
+  // failure must never leave a run unsettled.
+  if (status !== "failed" || res.changes === 0) return;
+  try {
+    const run = getRun(runId);
+    if (!run) return;
+    const schedule = getSchedule(run.schedule_id);
+    emitScheduleFailed({
+      scheduleName: schedule?.name || "Scheduled run",
+      projectId: schedule?.project_id ?? "",
+      taskId: run.task_id ?? "",
+      detail,
+    });
+  } catch (err) {
+    console.error("[schedule] failed-run notification failed:", err);
+  }
 }
 
 /** A slot that elapsed while the app was down or the window had passed. */
