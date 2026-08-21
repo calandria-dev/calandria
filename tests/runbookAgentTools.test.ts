@@ -89,4 +89,81 @@ describe("runbook agent tools", () => {
     expect(updateRunbookForAgent(here, rb.id, { prompt: "  " }).runbook).toBeNull();
     expect(getRunbook(rb.id)!.name).toBe("A");
   });
+
+  // bypassPermissions ("Auto-run") skips every permission card, and the ⌘K
+  // palette dispatches a runbook with no preview — so this is the one field an
+  // agent (steered by injected instructions in anything it read) must never be
+  // able to write. Only a human, from the UI, may set it.
+  it("refuses to create with permission_mode bypassPermissions, and creates nothing", () => {
+    const { runbook, text } = createRunbookForAgent(
+      here, { name: "S", description: "", prompt: "/s", permission_mode: "bypassPermissions" }, "claude"
+    );
+    expect(runbook).toBeNull();
+    expect(text).toContain("bypassPermissions");
+    expect(listRunbooks(here.id).filter((r) => r.name === "S")).toHaveLength(0);
+  });
+
+  it("refuses to create with an unrecognized permission_mode string", () => {
+    const { runbook, text } = createRunbookForAgent(
+      here, { name: "S", description: "", prompt: "/s", permission_mode: "nonsenseMode" }, "claude"
+    );
+    expect(runbook).toBeNull();
+    expect(text).toContain("nonsenseMode");
+    expect(listRunbooks(here.id).filter((r) => r.name === "S")).toHaveLength(0);
+  });
+
+  it("still creates with a valid permission_mode", () => {
+    const { runbook } = createRunbookForAgent(
+      here, { name: "S", description: "", prompt: "/s", permission_mode: "acceptEdits" }, "claude"
+    );
+    expect(runbook).not.toBeNull();
+    expect(runbook!.permission_mode).toBe("acceptEdits");
+  });
+
+  it("refuses to update permission_mode to bypassPermissions, leaving the row unchanged", () => {
+    const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a", permission_mode: "plan" });
+    const { runbook, text } = updateRunbookForAgent(here, rb.id, { permission_mode: "bypassPermissions" });
+    expect(runbook).toBeNull();
+    expect(text).toContain("bypassPermissions");
+    expect(getRunbook(rb.id)!.permission_mode).toBe("plan");
+  });
+
+  it("refuses to update permission_mode to an unrecognized string", () => {
+    const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a", permission_mode: "plan" });
+    const { runbook, text } = updateRunbookForAgent(here, rb.id, { permission_mode: "nonsenseMode" });
+    expect(runbook).toBeNull();
+    expect(text).toContain("nonsenseMode");
+    expect(getRunbook(rb.id)!.permission_mode).toBe("plan");
+  });
+
+  it("still updates to a valid permission_mode", () => {
+    const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a" });
+    const { runbook } = updateRunbookForAgent(here, rb.id, { permission_mode: "acceptEdits" });
+    expect(runbook!.permission_mode).toBe("acceptEdits");
+  });
+
+  // The schema only types permission_mode optional(), so a model meaning
+  // "leave the default" has no way to say so besides omitting the key or
+  // sending "" — that has to read as inherit, not as a refused unknown mode.
+  it("treats an empty or whitespace permission_mode as omitted (inherit) on create", () => {
+    const empty = createRunbookForAgent(here, { name: "S1", description: "", prompt: "/s", permission_mode: "" }, "claude");
+    expect(empty.runbook).not.toBeNull();
+    expect(empty.runbook!.permission_mode).toBeNull();
+
+    const whitespace = createRunbookForAgent(here, { name: "S2", description: "", prompt: "/s", permission_mode: "   " }, "claude");
+    expect(whitespace.runbook).not.toBeNull();
+    expect(whitespace.runbook!.permission_mode).toBeNull();
+  });
+
+  it("treats an empty or whitespace permission_mode as omitted (inherit) on update", () => {
+    const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a", permission_mode: "plan" });
+    const { runbook } = updateRunbookForAgent(here, rb.id, { permission_mode: "" });
+    expect(runbook).not.toBeNull();
+    expect(runbook!.permission_mode).toBeNull();
+
+    const rb2 = createRunbook({ project_id: here.id, name: "B", prompt: "/b", permission_mode: "plan" });
+    const whitespace = updateRunbookForAgent(here, rb2.id, { permission_mode: "   " });
+    expect(whitespace.runbook).not.toBeNull();
+    expect(whitespace.runbook!.permission_mode).toBeNull();
+  });
 });
