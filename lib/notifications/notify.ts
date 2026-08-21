@@ -45,10 +45,15 @@ function seen(): Map<string, number> {
   return global.__orchNotifySeen;
 }
 
+/** Was this exact payload id delivered inside the window? Reads, never records. */
+function recentlyDelivered(id: string, now: number): boolean {
+  const last = seen().get(id);
+  return last !== undefined && now - last < DEDUPE_MS;
+}
+
 function deduped(id: string, now: number): boolean {
   const m = seen();
-  const last = m.get(id);
-  if (last !== undefined && now - last < DEDUPE_MS) return true;
+  if (recentlyDelivered(id, now)) return true;
   m.set(id, now);
   // Keys are per task and tasks are hard-deleted, so without a sweep a
   // long-lived server keeps one entry per task it ever notified about.
@@ -161,6 +166,16 @@ export function emitScheduleFailed(a: {
   detail: string;
 }): NotificationPayload | null {
   if (!kindEnabled("schedule_failed")) return null;
+  // A scheduled turn that ERRORS reports twice: the runner publishes `error`
+  // during the turn ("Turn failed · <task> · <err>") and then settles the run
+  // from its finally with the same error text. Different ids, so the dedupe
+  // window and the browser's tag both let the pair through as two near-identical
+  // toasts. The user has already been told, with the same words, so this one
+  // stands down — but ONLY for that case: a run that failed with no turn error
+  // at all (preflight, unknown command, a turn cut short by an unattended deny)
+  // left no `turn_failed` behind and is exactly the silent failure this kind
+  // exists for.
+  if (a.taskId && recentlyDelivered(`turn_failed:${a.taskId}`, Date.now())) return null;
   const detail = firstLine(a.detail);
   return deliver({
     id: `schedule_failed:${a.taskId || a.scheduleName}`,

@@ -377,6 +377,36 @@ describe("a failed scheduled run", () => {
     const second = notificationsDuring(() => settleRun(withTask.id, "failed", "Unknown command: /x"));
     expect(second[0].taskId).toBe(task.id);
   });
+
+  it("stands down when the turn error already said the same thing", () => {
+    const schedule = createSchedule({
+      project_id: projectId, name: "Nightly", prompt: "/sweep", days_mask: 127,
+      time_of_day: "02:00", timezone: "America/Los_Angeles", agent: "claude",
+    });
+    const task = parkedTask(projectId, "02:00 sweep");
+
+    // The real sequence for a scheduled turn that CRASHES: the runner publishes
+    // `error` during the turn, then settles the run from its finally with the
+    // same text. Two kinds, two ids, so nothing else would collapse them — the
+    // user would get two toasts naming one failure.
+    const run = claimRun(schedule.id, 10, "scheduled")!;
+    startRun(run.id, task.id);
+    const sent = notificationsDuring(() => {
+      emitTurnFailed(task.id, "⚠ the session ended unexpectedly");
+      settleRun(run.id, "failed", "the session ended unexpectedly");
+    });
+    expect(sent.map((n) => n.kind)).toEqual(["turn_failed"]);
+
+    // …but a run that failed with NO turn error still fires: a preflight
+    // failure or an unknown command is the silent case this kind exists for,
+    // and suppressing it would restore the bug the feature was built to fix.
+    resetNotificationDedupe();
+    const other = parkedTask(projectId, "02:00 sweep, take two");
+    const dry = claimRun(schedule.id, 11, "scheduled")!;
+    startRun(dry.id, other.id);
+    const quiet = notificationsDuring(() => settleRun(dry.id, "failed", "Unknown command: /x"));
+    expect(quiet.map((n) => n.kind)).toEqual(["schedule_failed"]);
+  });
 });
 
 describe("notification settings", () => {
