@@ -49,6 +49,7 @@ export const Icon = {
   git: (p?: P) => S(<><circle cx={6} cy={6} r={2} /><circle cx={6} cy={18} r={2} /><circle cx={18} cy={9} r={2} /><path d="M18 11a8 8 0 0 1-8 8" /><line x1={6} y1={8} x2={6} y2={16} /></>, p),
   flag: (p?: P) => S(<path d="M5 21V4h12l-2 4 2 4H5" />, p),
   bolt: (p?: P) => S(<path d="M13 2L4 14h7l-1 8 9-12h-7z" />, p),
+  bell: (p?: P) => S(<><path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16z" /><path d="M10 21a2 2 0 0 0 4 0" /></>, p),
   moon: (p?: P) => S(<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />, p),
   sun: (p?: P) => S(<><circle cx={12} cy={12} r={4} /><line x1={12} y1={2} x2={12} y2={5} /><line x1={12} y1={19} x2={12} y2={22} /><line x1={2} y1={12} x2={5} y2={12} /><line x1={19} y1={12} x2={22} y2={12} /><line x1={4.9} y1={4.9} x2={6.8} y2={6.8} /><line x1={17.2} y1={17.2} x2={19.1} y2={19.1} /><line x1={4.9} y1={19.1} x2={6.8} y2={17.2} /><line x1={17.2} y1={6.8} x2={19.1} y2={4.9} /></>, p),
   external: (p?: P) => S(<><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M19 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" /></>, p),
