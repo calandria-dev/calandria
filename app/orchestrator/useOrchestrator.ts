@@ -12,6 +12,7 @@ import { agentLabel } from "./agents";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
+import { useNotifications } from "./useNotifications";
 import { usePrefs } from "./usePrefs";
 import { useRecaps } from "./useRecaps";
 
@@ -104,6 +105,12 @@ export function useOrchestrator() {
   const selProjRef = useRef(selProj);
   useEffect(() => { selProjRef.current = selProj; }, [selProj]);
 
+  // selTaskRef mirrors selProjRef: the browser notification channel needs the
+  // CURRENT selection at delivery time, and it is wired before most callbacks
+  // exist.
+  const selTaskRef = useRef(selTask);
+  useEffect(() => { selTaskRef.current = selTask; }, [selTask]);
+
   // Board drops in flight, shared with the live stream handler: a reorder
   // echoes back as tasks_reordered, and applying that echo on top of a newer
   // optimistic drop would snap the card back. `missed` records that an echo was
@@ -172,10 +179,11 @@ export function useOrchestrator() {
   const { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg } = useTaskStream({
     selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks,
   });
+  const showNotification = useNotifications({ selTaskRef });
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
   // stream ISN'T open — only the selected task has one.
-  useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents });
+  useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification: showNotification });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
   // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
   // session view shows a transcript skeleton instead of an empty chat flash.
@@ -506,6 +514,20 @@ export function useOrchestrator() {
     setSelProj(projectId);
     setSelTask(taskId);
   };
+
+  // Clicking a browser notification. A window event rather than a prop because
+  // the channel hook runs above this definition — same pattern as orch:runbooks.
+  useEffect(() => {
+    const onGoto = (e: Event) => {
+      const { projectId, taskId } = (e as CustomEvent<{ projectId: string; taskId: string }>).detail;
+      if (taskId) goToTask(projectId, taskId);
+    };
+    window.addEventListener("orch:goto-task", onGoto);
+    return () => window.removeEventListener("orch:goto-task", onGoto);
+    // goToTask is re-created each render but only calls setState, so binding
+    // the first instance is safe and keeps the listener stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const clearSession = useCallback(async (taskId: string) => {
     const t = tasks.find((x) => x.id === taskId);

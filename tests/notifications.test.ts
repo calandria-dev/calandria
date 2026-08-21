@@ -17,6 +17,7 @@ import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 import { POST as testNotification } from "@/app/api/notifications/test/route";
+import { shouldDisplay } from "@/app/orchestrator/useNotifications";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -348,5 +349,25 @@ describe("notification settings", () => {
     } finally {
       unsub();
     }
+  });
+});
+
+describe("the browser channel's display rule", () => {
+  const payload = (taskId: string): NotificationPayload => ({
+    id: `awaiting_input:${taskId}`, kind: "awaiting_input", taskId,
+    projectId: "p1", title: "Waiting for input", body: "x", ts: 1,
+  });
+
+  it("stays silent only when you are demonstrably looking at that very task", () => {
+    expect(shouldDisplay(payload("t1"), { visible: true, selectedTaskId: "t1" })).toBe(false);
+    // Tab open but on another task, or hidden behind twelve other tabs: notify.
+    expect(shouldDisplay(payload("t1"), { visible: true, selectedTaskId: "t2" })).toBe(true);
+    expect(shouldDisplay(payload("t1"), { visible: false, selectedTaskId: "t1" })).toBe(true);
+    expect(shouldDisplay(payload("t1"), { visible: true, selectedTaskId: null })).toBe(true);
+  });
+
+  it("always shows a test notification, which belongs to no task", () => {
+    const test: NotificationPayload = { id: "test", kind: "test", taskId: "", projectId: "", title: "t", body: "b", ts: 1 };
+    expect(shouldDisplay(test, { visible: true, selectedTaskId: null })).toBe(true);
   });
 });
