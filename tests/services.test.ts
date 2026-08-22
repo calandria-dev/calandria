@@ -28,7 +28,7 @@ import {
 } from "../lib/service-router.mjs";
 import { resolveFeatures } from "../lib/features";
 
-const APP_HOST = "ishan.getoperator.dev";
+const APP_HOST = "ishan.calandria.example.com";
 
 // The registry lives on globalThis (survives HMR by design); tests reset it to
 // simulate a server restart without recycling the process.
@@ -72,7 +72,7 @@ describe("service hostname parsing", () => {
     expect(parseServiceHost("localhost:3000", APP_HOST)).toEqual({ type: "other" });
     expect(parseServiceHost("evil.example.com", APP_HOST)).toEqual({ type: "other" });
     // Another tenant's service host is not ours.
-    expect(parseServiceHost("calc--maya.getoperator.dev", APP_HOST)).toEqual({ type: "other" });
+    expect(parseServiceHost("calc--maya.calandria.example.com", APP_HOST)).toEqual({ type: "other" });
     expect(parseServiceHost("", APP_HOST)).toEqual({ type: "other" });
     expect(parseServiceHost(undefined, APP_HOST)).toEqual({ type: "other" });
     // No app host configured (local dev) -> routing never claims anything.

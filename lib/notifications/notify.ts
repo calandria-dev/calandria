@@ -220,7 +220,7 @@ export function emitTestNotification(): NotificationPayload | null {
     kind: "test",
     taskId: "",
     projectId: "",
-    title: "Operator notifications are working",
+    title: "Calandria notifications are working",
     body: "You'll get one of these when a task needs you.",
     ts: Date.now(),
   }, false);

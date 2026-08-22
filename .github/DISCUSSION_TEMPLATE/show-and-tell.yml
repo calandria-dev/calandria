@@ -3,14 +3,14 @@ body:
   - type: textarea
     id: project
     attributes:
-      label: What did you build with Operator?
+      label: What did you build with Calandria?
       description: Tell the community what you shipped or what workflow you developed.
     validations:
       required: true
   - type: textarea
-    id: operator
+    id: calandria
     attributes:
-      label: How did Operator help?
+      label: How did Calandria help?
       description: Share the agents, task structure, or features that were most useful.
     validations:
       required: true

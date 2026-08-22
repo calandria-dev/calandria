@@ -16,7 +16,7 @@ You don't have to build it yourself: the same image is published on every push t
 ### The published image
 
 ```bash
-docker pull ghcr.io/jgsephora/operator-oss:latest
+docker pull ghcr.io/calandria-dev/calandria:latest
 ```
 
 The package is public — no `docker login`, no token.
@@ -48,7 +48,7 @@ keyless) — the "this digest was built by this workflow, from this commit" clai
 before you run it:
 
 ```bash
-gh attestation verify oci://ghcr.io/jgsephora/operator-oss:latest --owner jgSephora
+gh attestation verify oci://ghcr.io/calandria-dev/calandria:latest --owner calandria-dev
 ```
 
 Success is the **exit status** — `gh` prints nothing when its output isn't a terminal.
@@ -56,8 +56,8 @@ Add `--format json` for the parsed statement and signing certificate. Useful var
 
 | Flag | Why |
 |-|-|
-| `--repo jgSephora/operator-oss` | Instead of `--owner`; scopes the claim to this one repo rather than anything the account publishes |
-| `--signer-workflow jgSephora/operator-oss/.github/workflows/publish-image.yml` | Pins *which* workflow was allowed to sign, the check actually worth making |
+| `--repo calandria-dev/calandria` | Instead of `--owner`; scopes the claim to this one repo rather than anything the account publishes |
+| `--signer-workflow calandria-dev/calandria/.github/workflows/publish-image.yml` | Pins *which* workflow was allowed to sign, the check actually worth making |
 | `--bundle-from-oci` | Reads the signature from the registry (the `attest` job pushes it there) instead of the GitHub API |
 
 The subject is the **multi-arch index** digest, not a per-arch one: the index is the thing
@@ -75,11 +75,11 @@ this checkout by default; set `ORCH_IMAGE` to run the published image instead.
 export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
 
 # A) build from this checkout (the default)
-docker build -t agent-orchestrator .
+docker build -t calandria .
 docker compose -p orch-alice up -d
 
 # B) or run the published image, nothing to build
-export ORCH_IMAGE=ghcr.io/jgsephora/operator-oss:latest
+export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest
 docker compose -p orch-alice pull
 docker compose -p orch-alice up -d --no-build
 
@@ -228,9 +228,9 @@ npm start
   unattended task doesn't have to trip a card you'll never see. A prompt nobody answers denies
   itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
   `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
-  wedge a turn overnight. Operator is a control layer, not a sandbox — the
+  wedge a turn overnight. Calandria is a control layer, not a sandbox — the
   isolated worktree is still the real boundary.
-- **One process per database:** Operator is single-process by design — turns run detached
+- **One process per database:** Calandria is single-process by design — turns run detached
   and owned by the server, and boot opens by clearing what a crash left behind (running
   flags, queued follow-ups, unanswered permission cards, in-flight schedule runs). Point a
   second process at the same `orchestrator.db` and that recovery pass runs against a *live*

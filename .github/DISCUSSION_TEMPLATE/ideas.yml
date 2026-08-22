@@ -10,7 +10,7 @@ body:
     id: problem
     attributes:
       label: What problem are you encountering?
-      description: Tell us where your current Operator workflow breaks down or becomes costly.
+      description: Tell us where your current Calandria workflow breaks down or becomes costly.
     validations:
       required: true
   - type: textarea

@@ -10,12 +10,12 @@ export const dynamic = "force-dynamic";
 // TTL — see lib/agents/claude/commands.ts). Read-only and cheap enough to hang
 // off a keystroke; the client fetches it the first time the user types "/".
 //
-// Operator's own /clear is NOT in here. It's a client-side action, not a prompt
+// Calandria's own /clear is NOT in here. It's a client-side action, not a prompt
 // the agent expands, so the composer prepends it — and lib/agentCommands.ts
 // drops the CLI's same-named command so one name can't mean two things.
 //
 // Best-effort: a driver without a command surface (Codex) or a CLI that won't
-// answer yields [], and the menu degrades to Operator's own commands rather
+// answer yields [], and the menu degrades to Calandria's own commands rather
 // than erroring in the user's face mid-typing.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

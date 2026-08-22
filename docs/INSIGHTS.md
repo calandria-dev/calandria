@@ -1,6 +1,6 @@
 # Insights and usage
 
-Operator shows what your agents process and what they ship without sending repository data
+Calandria shows what your agents process and what they ship without sending repository data
 elsewhere. Open **Insights** from the top bar for daily usage, tasks shipped, and lines
 merged to base, filterable by project and agent across 7-, 30-, and 90-day ranges.
 
@@ -27,9 +27,9 @@ With an API key, the amount represents billed API usage. Claude can report its S
 figure directly. Codex currently reports tokens only, so its amount is estimated from token
 counts and published prices and carries a `~`.
 
-## Operator overhead
+## Calandria overhead
 
-Insights separates task activity from Operator's own convenience jobs, including:
+Insights separates task activity from Calandria's own convenience jobs, including:
 
 - `/clear` handoff summaries;
 - project recaps;

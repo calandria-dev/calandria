@@ -55,9 +55,9 @@ describe("resolveTargetProject", () => {
 
   it("matches a project name case-insensitively", () => {
     const here = createProject({ name: "RTP-Caller" });
-    const there = createProject({ name: "Operator-OSS" });
-    expect(resolveTargetProject(here, "operator-oss")).toEqual({ project: getProject(there.id) });
-    expect(resolveTargetProject(here, "  OPERATOR-OSS  ")).toEqual({ project: getProject(there.id) });
+    const there = createProject({ name: "Calandria" });
+    expect(resolveTargetProject(here, "calandria")).toEqual({ project: getProject(there.id) });
+    expect(resolveTargetProject(here, "  CALANDRIA  ")).toEqual({ project: getProject(there.id) });
   });
 
   it("prefers an id over a name that collides with it", () => {

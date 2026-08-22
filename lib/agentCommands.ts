@@ -24,7 +24,7 @@ const INTERNAL = new Set(["workflow-launch-exec"]);
 /**
  * Commands that would fight the app rather than run in it. Two kinds:
  *
- *  - `clear` — Operator owns /clear. Ours is not the CLI's: it summarizes the
+ *  - `clear` — Calandria owns /clear. Ours is not the CLI's: it summarizes the
  *    transcript into a handoff note and starts generation N+1 of the task's
  *    session lineage (lib/runner.ts, docs/ARCHITECTURE.md). Offering the CLI's
  *    would put two different behaviors behind one name.

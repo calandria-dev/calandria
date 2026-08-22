@@ -130,7 +130,7 @@ export interface OneShotResult {
  * user/project command in `.claude/commands`, or one of the CLI's built-ins.
  * `name` carries no leading slash and may be namespaced (`plugin:command`).
  *
- * These are the agent's OWN commands, discovered from its config; Operator adds
+ * These are the agent's OWN commands, discovered from its config; Calandria adds
  * its own (`/clear`) on top in the composer. Which of them the menu actually
  * offers is decided by lib/agentCommands.ts.
  */
@@ -201,7 +201,7 @@ export interface AgentDriver {
    * counts, and two tasks on different projects get different lists.
    *
    * OPTIONAL. A driver whose agent has no command surface (Codex) omits it and
-   * the menu falls back to Operator's own commands alone — the same
+   * the menu falls back to Calandria's own commands alone — the same
    * implement-what-you-support rule as the one-shot helpers above. Must be
    * cheap and non-mutating: it runs on a keystroke, not a turn.
    */

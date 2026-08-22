@@ -4,7 +4,7 @@ import { getInsightsData } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 // The Insights dashboard's single data fetch: per-day facts grouped by
-// (day, project, agent), plus Operator jobs grouped by job, covering the widest range (90d) plus the same width
+// (day, project, agent), plus Calandria jobs grouped by job, covering the widest range (90d) plus the same width
 // again, so the client can compute prior-period deltas and switch every
 // filter locally without refetching. See InsightsData in lib/store.ts.
 const WINDOW_DAYS = 180;

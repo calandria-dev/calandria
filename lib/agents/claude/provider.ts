@@ -3,7 +3,7 @@
 // lib/agents/capabilities.ts can import it without dragging the Agent SDK into
 // the graph — see the poisoning note in that file.
 //
-// Operator never invents provider config of its own: it reads what the CLI will
+// Calandria never invents provider config of its own: it reads what the CLI will
 // use, so the app and the agent can't disagree about which backend a turn runs
 // on or which model an alias resolves to.
 
@@ -50,7 +50,7 @@ const effective = (name: string, env: Env): string | null => {
 
 export type ClaudeProvider = "anthropic" | "vertex" | "bedrock";
 
-/** Which backend this Operator process is configured to route Claude through.
+/** Which backend this Calandria process is configured to route Claude through.
  *  "anthropic" is the plain subscription/API-key path and the default. */
 export function configuredProvider(env: Env = process.env): ClaudeProvider {
   const settings = claudeSettingsEnv(env);

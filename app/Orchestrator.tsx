@@ -399,9 +399,9 @@ export default function Orchestrator() {
     <div className={`app${isMobile ? " mobile" : ""}`}>
       <div className="titlebar">
         <div className="tb-left">
-          <div className="tb-logo" title="Operator">
+          <div className="tb-logo" title="Calandria">
             <span className="tb-ring"><span className="tb-core" /><span className="tb-arc" /></span>
-            <span className="tb-word">OPERATOR</span>
+            <span className="tb-word">CALANDRIA</span>
           </div>
           {!isMobile && (
             <>

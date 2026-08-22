@@ -1,7 +1,7 @@
 // Detection + recovery constants for the "Codex's approval policy blocked the
 // turn" failure mode.
 //
-// Operator runs Codex through `codex exec` (via @openai/codex-sdk), which is
+// Calandria runs Codex through `codex exec` (via @openai/codex-sdk), which is
 // non-interactive: nobody can answer a command-approval prompt mid-turn. So the
 // driver asks for `approval_policy=never` (the auto-run analog of Claude's
 // bypassPermissions). Two configurations defeat that and produce the same
@@ -15,7 +15,7 @@
 //      request failed"), and the agent flails through its tools with no
 //      explanation.
 //   2. The user's own ~/.codex/config.toml sets an approval-requiring policy
-//      and Operator runs with CODEX_APPROVAL_POLICY=inherit.
+//      and Calandria runs with CODEX_APPROVAL_POLICY=inherit.
 //
 // The downgrade warning arrives as an error item on the very first affected
 // turn (lib/agents/codex/events.ts maps it to a StreamEvent error), so the
@@ -27,7 +27,7 @@
 // Kept dependency-free so both server and client bundles can import it.
 
 /** The CLI's managed-requirements downgrade warning — the signal that the
- *  approval policy Operator asked for was rejected and a stricter one applies.
+ *  approval policy Calandria asked for was rejected and a stricter one applies.
  *  Matched by the Codex driver to trigger auto-negotiation. */
 const APPROVAL_DOWNGRADE_RES = [
   /approval_policy[^\n]{0,80}disallowed by requirements/i,
@@ -71,7 +71,7 @@ export function isApprovalBlocked(msg: string | null | undefined): boolean {
  *  from SQLite. */
 export const APPROVAL_BLOCKED_NOTICE =
   "The agent's approval policy blocked this turn: it requires interactive command approval, which " +
-  "Operator's unattended sessions can't provide. Operator now requests the compatible 'on-request' " +
+  "Calandria's unattended sessions can't provide. Calandria now requests the compatible 'on-request' " +
   "policy for its Codex sessions, so retrying the message should go through. (Running with " +
   "CODEX_APPROVAL_POLICY=inherit? Set an exec-compatible approval_policy, e.g. \"on-request\", in " +
   "~/.codex/config.toml instead.)";

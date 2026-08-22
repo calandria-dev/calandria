@@ -17,4 +17,4 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Operator version, installation method, OS, browser, and agent when relevant.
+      description: Calandria version, installation method, OS, browser, and agent when relevant.

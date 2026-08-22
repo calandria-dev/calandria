@@ -82,13 +82,13 @@ let currentLogin: AgentLoginSession | null = null;
 // composer's "/" menu has something deterministic to render. Deliberately
 // covers the shapes the menu has to handle: a plain command, one that takes
 // arguments, a namespaced plugin command with an alias, and two entries the
-// server is expected to filter out (the agent's own /clear, which Operator
+// server is expected to filter out (the agent's own /clear, which Calandria
 // overrides, and an internal sentinel).
 const MOCK_COMMANDS = [
   { name: "mock-echo", description: "echo the arguments back", argumentHint: "<text>" },
   { name: "mock-status", description: "report mock agent status" },
   { name: "mock-plugin:mock-deploy", description: "deploy from the mock plugin", aliases: ["mock-deploy"] },
-  { name: "clear", description: "the agent's own clear — Operator's must win" },
+  { name: "clear", description: "the agent's own clear — Calandria's must win" },
   { name: "__mock-internal", description: "internal, never offered" },
 ];
 

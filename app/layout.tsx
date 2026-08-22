@@ -5,7 +5,7 @@ import { resolveFeatures } from "@/lib/features";
 import { posthogSnippet } from "@/lib/analytics";
 
 export const metadata: Metadata = {
-  title: "Operator — build, verify & host every app with agents",
+  title: "Calandria — build, verify & host every app with agents",
   description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
 };
 

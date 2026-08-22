@@ -89,7 +89,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/jgsephora/operator-oss
+  IMAGE: ghcr.io/calandria-dev/calandria
 
 jobs:
   # Computes everything that must be IDENTICAL across the matrix legs — most
@@ -407,10 +407,9 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ needs.merge.outputs.digest }}
           push-to-registry: true
-          # Linked-artifact storage records are an organization-only API and
-          # jgSephora is a personal account, so asking for one buys a warning
-          # and nothing else. This is also why `artifact-metadata: write` is
-          # absent from the permissions above — it would have no effect here.
+          # Linked-artifact storage records were skipped while this repo lived
+          # on a personal account; calandria-dev is an org, so this could be
+          # revisited (`artifact-metadata: write` in permissions) if wanted.
           create-storage-record: false
 
   # Proves the published artifact runs, on each architecture in the manifest.

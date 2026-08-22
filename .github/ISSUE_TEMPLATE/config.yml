@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Feature request
-    url: https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas
+    url: https://github.com/calandria-dev/calandria/discussions/categories/ideas
     about: Propose a feature, describe the problem, and gather feedback.
   - name: Question or support
-    url: https://github.com/iishyfishyy/operator-oss/discussions/categories/q-a
-    about: Ask the community how to use or configure Operator.
+    url: https://github.com/calandria-dev/calandria/discussions/categories/q-a
+    about: Ask the community how to use or configure Calandria.
   - name: Security vulnerability
-    url: https://github.com/iishyfishyy/operator-oss/security/advisories/new
+    url: https://github.com/calandria-dev/calandria/security/advisories/new
     about: Report vulnerabilities privately rather than opening a public issue.

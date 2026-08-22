@@ -1,31 +1,31 @@
 <div align="center">
 
-# Operator
+# Calandria
 
 ### Run Claude Code and Codex in parallel across every project, from any browser.
 
-Operator is a web-based control room for your coding agents. 
+Calandria is a web-based control room for your coding agents. 
 
-Run it locally on your machine, self-host it on a server, or use our hosted version. A
-deployed Operator workspace is available from your computer, tablet, or phone.
+Run it locally on your machine or self-host it on a server. A
+deployed Calandria workspace is available from your computer, tablet, or phone.
 
 Every task gets a persistent agent session in an isolated git worktree. 
 
-Operator uses your existing Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
+Calandria uses your existing Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
 
-[**Try Operator hosted**](https://getoperator.dev) · [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
+[**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Node ≥20.9](https://img.shields.io/badge/node-%E2%89%A520.9-brightgreen.svg)](package.json)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-8A2BE2.svg)](CONTRIBUTING.md)
 
-![Operator workspace showing projects and parallel agent tasks](docs/images/workspace.png)
+![Calandria workspace showing projects and parallel agent tasks](docs/images/workspace.png)
 
 </div>
 
-## Why Operator
+## Why Calandria
 
-- **Your workspace is wherever you are.** Deploy Operator once and manage agents from any
+- **Your workspace is wherever you are.** Deploy Calandria once and manage agents from any
   device with a browser.
 - **Run many tasks without juggling terminals.** Every task has its own worktree, branch,
   transcript, and agent session.
@@ -33,13 +33,13 @@ Operator uses your existing Max, Pro, or ChatGPT subscription, with no API key o
   while the rest keep working.
 - **Stay in control of every change.** Review the diff beside the conversation, then merge,
   resolve conflicts, or open a pull request.
-- **Start from the real tip.** Operator fetches the base branch before cutting a task's
+- **Start from the real tip.** Calandria fetches the base branch before cutting a task's
   worktree, so a pull request merged on GitHub doesn't leave every new task branching off a
   stale `main` — and it tells you when your own checkout has fallen behind.
 
 ## How it works
 
-**Create tasks → connect them into a pipeline → Operator gives each one an isolated worktree
+**Create tasks → connect them into a pipeline → Calandria gives each one an isolated worktree
 and runs it when its dependencies finish → it alerts you when needed → you review and merge.**
 
 Project context is written once and carried into each task. Server-owned turns and persisted
@@ -50,7 +50,7 @@ window while preserving the task's lineage.
 
 - **Parallel, isolated tasks:** work across multiple repositories without agents mixing
   files or branches.
-- **Web-based and self-hostable:** run Operator on your own machine or server, then securely
+- **Web-based and self-hostable:** run Calandria on your own machine or server, then securely
   access the same workspace from desktop or mobile.
 - **One “Needs you” inbox:** jump directly to any session waiting for an answer.
 - **Snooze a task:** park anything until an hour from now, tomorrow morning, or an exact
@@ -75,13 +75,13 @@ window while preserving the task's lineage.
 - **A complete workspace:** chat, terminal, managed services, live logs, and transparent
   token and usage insights stay together.
 
-![Operator diff review beside an agent session](docs/images/changes.png)
+![Calandria diff review beside an agent session](docs/images/changes.png)
 
 [Explore all features](docs/FEATURES.md)
 
 ## Supported agents
 
-Operator supports **Claude Code** and **OpenAI Codex** end to end. Choose an agent per task,
+Calandria supports **Claude Code** and **OpenAI Codex** end to end. Choose an agent per task,
 or connect only the one you use. Both work with subscription login; API keys remain an
 optional explicit choice.
 
@@ -104,30 +104,23 @@ Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is publis
 publicly on every push to `main` — no login needed to pull it:
 
 ```bash
-docker pull ghcr.io/jgsephora/operator-oss:latest
+docker pull ghcr.io/calandria-dev/calandria:latest
 ```
 
-Use `npm run dev` only when developing Operator itself. For Docker tags and provenance,
+Use `npm run dev` only when developing Calandria itself. For Docker tags and provenance,
 authentication, networking, and secure access from anywhere, see the
 [self-hosting guide](docs/SELF_HOSTING.md).
 
-One instance per database: Operator locks `orchestrator.db` at boot and refuses to start
+One instance per database: Calandria locks `orchestrator.db` at boot and refuses to start
 if another process already owns it, naming the holder — two servers sharing one database
 overwrite each other's running tasks. Want a second instance? Give it its own
 `ORCH_DB_DIR`.
 
-## Hosted
-
-[**getoperator.dev**](https://getoperator.dev) gives you an always-on Operator instance
-with no server setup. Open it from any browser, including your phone, and return to the same
-projects, tasks, and running agent sessions. It uses this open-source app with a hosted
-control plane.
-
 ## Community
 
-- [Request a feature or share an idea](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas)
-- [Ask a question](https://github.com/iishyfishyy/operator-oss/discussions/categories/q-a)
-- [Report a bug](https://github.com/iishyfishyy/operator-oss/issues/new?template=bug_report.yml)
+- [Request a feature or share an idea](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
+- [Ask a question](https://github.com/calandria-dev/calandria/discussions/categories/q-a)
+- [Report a bug](https://github.com/calandria-dev/calandria/issues/new?template=bug_report.yml)
 - [Contribute](CONTRIBUTING.md)
 
 See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation belongs.
@@ -146,3 +139,7 @@ See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation belong
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Lineage
+
+Calandria began as a fork of [Operator](https://github.com/iishyfishyy/operator-oss) by [@iishyfishyy](https://github.com/iishyfishyy) and diverged permanently in 2026. It keeps Operator's Apache-2.0 license; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Calandria is not affiliated with the upstream project or its hosted service; bugs and ideas for Calandria belong in [this repo's issues](https://github.com/calandria-dev/calandria/issues).

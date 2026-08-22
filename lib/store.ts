@@ -1247,7 +1247,7 @@ export function getInstanceUsage(): InstanceUsage {
 
 /**
  * Everything the Insights dashboard charts, as per-day facts grouped by
- * (day, project, agent), with Operator jobs additionally grouped by job — the client slices/filters/aggregates locally so
+ * (day, project, agent), with Calandria jobs additionally grouped by job — the client slices/filters/aggregates locally so
  * switching range/project/agent filters never refetches. Days are local-time
  * `YYYY-MM-DD` strings (this is a single-user, local-first surface; the server's
  * clock IS the user's clock). One fetch covers the widest range plus the same
@@ -1257,7 +1257,7 @@ export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   /** Per-day token/cost usage. */
   usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
-  /** Operator's own one-shot work, kept separate from task usage. */
+  /** Calandria's own one-shot work, kept separate from task usage. */
   internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
   shipped: { d: string; p: string; a: string; n: number }[];

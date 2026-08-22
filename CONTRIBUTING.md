@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for your interest in Operator!
+Thanks for your interest in Calandria!
 
 Questions and feature ideas belong in
-[GitHub Discussions](https://github.com/iishyfishyy/operator-oss/discussions). Reproducible
-bugs belong in [Issues](https://github.com/iishyfishyy/operator-oss/issues). For the full
+[GitHub Discussions](https://github.com/calandria-dev/calandria/discussions). Reproducible
+bugs belong in [Issues](https://github.com/calandria-dev/calandria/issues). For the full
 map, see the [community guide](docs/COMMUNITY.md).
 
 ## Getting started

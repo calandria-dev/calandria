@@ -1,6 +1,6 @@
 # Architecture
 
-How Operator is put together. This is the public companion to [`CLAUDE.md`](../CLAUDE.md)
+How Calandria is put together. This is the public companion to [`CLAUDE.md`](../CLAUDE.md)
 (the in-repo codebase map agents read); if the two ever disagree, trust the code.
 
 ## Three processes, one origin
@@ -62,7 +62,7 @@ The app talks to coding agents only through the `AgentDriver` interface.
 - **`listCommands?(task, project)`** (optional) reports the slash commands a turn on that
   task would expand, so the composer's `/` menu is discovered from the agent rather than
   hardcoded. `GET /api/tasks/[id]/commands` serves it, filtered by `lib/agentCommands.ts`;
-  a driver that omits it leaves the menu with Operator's own commands. The Claude
+  a driver that omits it leaves the menu with Calandria's own commands. The Claude
   implementation reads the SDK's initialization response without sending a model request,
   under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`). It is the
   app's only command enumeration: the schedule editor's prompt validation asks the same
@@ -382,7 +382,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 | The single-instance boot lock | `orchestrator.lock.db` beside it — a pure mutex holding no data (see below) |
 | Per-task git worktrees | `ORCH_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
 | Cloned project repos | `ORCH_PROJECTS_DIR`, default `~/projects` |
-| Your apps' actual code | each project's working directory — never inside Operator's own tree |
+| Your apps' actual code | each project's working directory — never inside Calandria's own tree |
 | Claude Code's raw session logs | `~/.claude/projects/...` (managed by Claude Code) |
 
 ### One process per database

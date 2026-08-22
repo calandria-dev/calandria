@@ -96,7 +96,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // reachable in every mode, which is what makes this differ from Codex, where
   // an inherited tool call can never succeed. CLAUDE.md has the comparison.
   inheritsUserMcpServers: true,
-  userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Operator's own.",
+  userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   reportsCostUsd: true,
   costIsEstimated: false,
   supportsResume: true,

@@ -5,7 +5,7 @@
 // grouped by (day, project, agent) for the widest range plus the same width
 // again (GET /api/insights), so every filter change — range, project, agent,
 // cache toggle — recomputes locally without touching the server. Ported from
-// the "Operator Insights" Claude Design mock; chart styling conventions:
+// the "Calandria Insights" Claude Design mock; chart styling conventions:
 // thin stacked columns with 2px gaps, a crosshair+tooltip hover layer, fixed
 // per-entity hues that never repaint when filters change series count.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -89,7 +89,7 @@ function agentHues(ids: string[]): Record<string, string> {
   return out;
 }
 const TOKEN_HUES = { inp: "var(--blue)", out: "var(--green)", cw: "var(--amber)", cr: "var(--coral)" } as const;
-const OPERATOR_HUE = "var(--operator)";
+const CALANDRIA_HUE = "var(--calandria)";
 
 const JOBS: Record<string, { label: string; settings: string }> = {
   summarizeProjectRecap: { label: "Project recaps", settings: "run" },
@@ -420,7 +420,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       .map(([id, e]) => ({ id, name: projMeta.get(id)?.name ?? "(deleted project)", color: projMeta.get(id)?.color ?? "var(--ink-4)", ...e }))
       .sort((a, b) => b.spend - a.spend);
 
-    // ---- Operator convenience work, grouped into actionable job rows ----
+    // ---- Calandria convenience work, grouped into actionable job rows ----
     const jobs = new Map<string, { job: string; n: number; tokens: number; cost: number; estimated: boolean; projects: Set<string> }>();
     for (const u of data.internal) {
       if (!matchP(u.p) || !matchA(u.a) || dayIndex.get(u.d) === undefined) continue;
@@ -471,7 +471,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
 
   const kpis: { label: string; value: ReactNode; sub: string; spark: ReactNode; d: { text: string; arrow: string; color: string } }[] = [
     { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--blue)" />, d: delta(cur.spend, prev.spend) },
-    { label: "Operator overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={OPERATOR_HUE} />, d: delta(overheadPct, prevOverheadPct) },
+    { label: "Calandria overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={CALANDRIA_HUE} />, d: delta(overheadPct, prevOverheadPct) },
     { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--green)" />, d: delta(cur.tokens, prev.tokens) },
     { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--blue)" />, d: delta(cur.tasks, prev.tasks) },
     {
@@ -607,20 +607,20 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                 title="Daily spend" sub="API-equivalent, per day"
                 right={<div className="in-legend">
                   {chartAgents.map((a) => <LegendSwatch key={a} color={hues[a]} label={label(a)} />)}
-                  <LegendSwatch color={OPERATOR_HUE} label="Operator" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
                 </div>}
               >
                 <DailyChart
                   id="spend" rows={rows} max={spendMax} hover={hover} onHover={setHover}
                   segsFor={(r) => [
                     ...chartAgents.map((a) => ({ v: r.byAgent[a]?.spend ?? 0, color: hues[a] })),
-                    ...(showOperator ? [{ v: r.overheadSpend, color: OPERATOR_HUE }] : []),
+                    ...(showOperator ? [{ v: r.overheadSpend, color: CALANDRIA_HUE }] : []),
                   ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...chartAgents.map((a) => ({ label: label(a), val: `${estIds.has(a) ? "~" : ""}${fmtMoney(r.byAgent[a]?.spend ?? 0)}`, color: hues[a] })),
-                      ...(showOperator ? [{ label: "Operator", val: `${overheadMark}${fmtMoney(r.overheadSpend)}`, color: OPERATOR_HUE }] : []),
+                      ...(showOperator ? [{ label: "Calandria", val: `${overheadMark}${fmtMoney(r.overheadSpend)}`, color: CALANDRIA_HUE }] : []),
                       { label: "Total", val: `${totalMark}${fmtMoney(r.spend + (showOperator ? r.overheadSpend : 0))}`, strong: true },
                     ],
                   })}
@@ -644,19 +644,19 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   {([{ k: "inp", label: "Input" }, { k: "out", label: "Output" }, { k: "cr", label: "Cache read" }, { k: "cw", label: "Cache write" }] as const).map((c) => (
                     <LegendSwatch key={c.k} color={TOKEN_HUES[c.k]} label={c.label} dim={!includeCache && c.k !== "inp" && c.k !== "out"} />
                   ))}
-                  <LegendSwatch color={OPERATOR_HUE} label="Operator" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
                 </div>
                 <DailyChart
                   id="tokens" rows={rows} max={tokenMax} hover={hover} onHover={setHover}
                   segsFor={(r) => [
                     ...tokenCats.map((c) => ({ v: r[c.k], color: TOKEN_HUES[c.k] })),
-                    ...(showOperator ? [{ v: includeCache ? r.overheadTokens : r.overheadFresh, color: OPERATOR_HUE }] : []),
+                    ...(showOperator ? [{ v: includeCache ? r.overheadTokens : r.overheadFresh, color: CALANDRIA_HUE }] : []),
                   ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...tokenCats.map((c) => ({ label: c.label, val: fmtCompact(r[c.k]), color: TOKEN_HUES[c.k] })),
-                      ...(showOperator ? [{ label: "Operator", val: fmtCompact(includeCache ? r.overheadTokens : r.overheadFresh), color: OPERATOR_HUE }] : []),
+                      ...(showOperator ? [{ label: "Calandria", val: fmtCompact(includeCache ? r.overheadTokens : r.overheadFresh), color: CALANDRIA_HUE }] : []),
                       { label: includeCache ? "Total" : "Fresh total", val: fmtCompact((includeCache ? r.tokens : r.inp + r.out) + (showOperator ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), strong: true },
                     ],
                   })}
@@ -699,11 +699,11 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
               </ChartCard>
             </div>
 
-            {/* Operator convenience work */}
+            {/* Calandria convenience work */}
             <section className="in-card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
               <div className="in-card-h" style={{ padding: "17px 20px 14px" }}>
                 <div>
-                  <div className="in-card-t">Operator&apos;s own usage</div>
+                  <div className="in-card-t">Calandria&apos;s own usage</div>
                   <div className="in-card-s">Convenience features that run agents outside your task chats · {rangeText}</div>
                 </div>
                 <span className="mono in-card-n">{overheadMark}{fmtMoney(cur.overheadSpend)} total</span>
@@ -730,7 +730,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   );
                 })}
                 {jobRows.length === 0 && (
-                  <div className="in-oempty">No Operator convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here—not your task chats.</div>
+                  <div className="in-oempty">No Calandria convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here—not your task chats.</div>
                 )}
               </div>
             </section>

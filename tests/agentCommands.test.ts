@@ -29,14 +29,14 @@ describe("visibleAgentCommands", () => {
   });
 
   it("drops the agent's own /clear so one name can't mean two things", () => {
-    // Operator's /clear summarizes + starts the next session generation; the
+    // Calandria's /clear summarizes + starts the next session generation; the
     // CLI's does not. The composer supplies ours.
     expect(visibleAgentCommands([cmd("clear")])).toEqual([]);
   });
 
   it("drops run-control commands the task UI owns", () => {
     const out = visibleAgentCommands([cmd("model"), cmd("effort"), cmd("fast"), cmd("compact")]);
-    // /compact stays: it does something real and Operator has no equivalent.
+    // /compact stays: it does something real and Calandria has no equivalent.
     expect(out.map((c) => c.name)).toEqual(["compact"]);
   });
 

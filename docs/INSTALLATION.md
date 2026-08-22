@@ -16,7 +16,7 @@ npm install -g @openai/codex
 The first-run wizard handles subscription login in the browser. Connecting either agent is
 enough to complete setup.
 
-## Run Operator locally
+## Run Calandria locally
 
 ```bash
 npm install
@@ -24,7 +24,7 @@ npm run build
 npm start
 ```
 
-Open <http://localhost:3000>. This production build is the recommended way to use Operator
+Open <http://localhost:3000>. This production build is the recommended way to use Calandria
 day to day.
 
 Local mode has no login and binds to loopback by default. It rejects cross-site HTTP and
@@ -35,7 +35,7 @@ internet-facing; see [Self-hosting](SELF_HOSTING.md).
 Every setting is an environment variable with a documented default in
 [`.env.example`](../.env.example).
 
-## Develop Operator
+## Develop Calandria
 
 ```bash
 npm install

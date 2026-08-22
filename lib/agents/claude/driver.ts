@@ -99,7 +99,7 @@ import { claudeUsage } from "./usage";
 //
 // 'user' (~/.claude/settings.json) is the operator's own machine, outside any
 // task's worktree — a task can't write it, so it carries no more trust than
-// the person running Operator already has.
+// the person running Calandria already has.
 //
 // 'project' (<worktree>/.claude/settings.json) is what loads CLAUDE.md, and a
 // task's worktree is exactly where an agent's own writes land — so this file

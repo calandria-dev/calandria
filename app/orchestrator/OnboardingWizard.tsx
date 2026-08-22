@@ -71,7 +71,7 @@ export function OnboardingWizard({
     <div className="wiz-scrim">
       <div className="wiz">
         <div className="wiz-rail">
-          <div className="wiz-brand"><span className="glyph">{Icon.bolt()}</span> Operator</div>
+          <div className="wiz-brand"><span className="glyph">{Icon.bolt()}</span> Calandria</div>
           <div className="wiz-rail-sub">Let&apos;s get you set up</div>
           <div className="wiz-steps">
             {STEPS.map((s, i) => (
@@ -145,11 +145,11 @@ function ConnectStep({
       <StepHead
         n={1}
         title="Connect a coding agent"
-        sub="Operator runs coding agents as you. Sign in with the account you already have — connect one now, add others any time from Settings."
+        sub="Calandria runs coding agents as you. Sign in with the account you already have — connect one now, add others any time from Settings."
       />
       <div className="wiz-body">
         <div className="hlp" style={{ margin: "0 0 18px", maxWidth: 620 }}>
-          Operator uses the connected agent for small utility jobs, including automatic project recaps and session summaries you request. Control these any time in Settings → Background jobs.
+          Calandria uses the connected agent for small utility jobs, including automatic project recaps and session summaries you request. Control these any time in Settings → Background jobs.
         </div>
         {!bundle && <div className="wiz-verify"><span className="wiz-spin" /> <span>Loading agents…</span></div>}
         {agents.length > 1 && (

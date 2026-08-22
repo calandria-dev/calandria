@@ -744,18 +744,18 @@ function seedIfEmpty(db: Database.Database) {
 
 // Claude-facing project context for the Welcome tutorial. Describes the actual
 // scaffolded repo (so the session behaves), with one line of framing. The
-// heavier "how Operator works" teaching lives in the UI coach marks, not here.
+// heavier "how Calandria works" teaching lives in the UI coach marks, not here.
 const WELCOME_CONTEXT =
   "Aurora is a tiny one-page website — a placeholder landing page. The repo has just three files: " +
   "index.html (the page), styles.css (its styling), and README.md. It's intentionally minimal so " +
   "every change is small and easy to review.\n\n" +
-  "This \"Welcome\" project is a guided tour of Operator. Starting the task on the right runs a real " +
+  "This \"Welcome\" project is a guided tour of Calandria. Starting the task on the right runs a real " +
   "Claude session end to end — it streams its tool calls, asks you a question, makes a small change, " +
   "and hands you a diff to review and merge, all in your own workspace. When you're comfortable, " +
   "delete this project and add one for your real codebase.";
 
 const TUTORIAL_TASK_DESC =
-  "This is a 2-minute hands-on tour of Operator — it walks the whole loop in one session.\n\n" +
+  "This is a 2-minute hands-on tour of Calandria — it walks the whole loop in one session.\n\n" +
   "Please do exactly this:\n" +
   "1. First, ask me which tagline style I'd like using a question with a few options — for example " +
   "Playful, Professional, and Minimal. Wait for my answer before editing.\n" +
@@ -853,7 +853,7 @@ body {
 `,
   "README.md": `# Aurora
 
-A tiny one-page site used for the Operator welcome tour. Three files, no build step:
+A tiny one-page site used for the Calandria welcome tour. Three files, no build step:
 
 - \`index.html\` — the page
 - \`styles.css\` — the styling
@@ -889,7 +889,7 @@ function warnIfUnowned() {
   if (process.env.NODE_ENV !== "production") return;
   if (dbLockMode(DB_DIR) !== "unowned") return;
   console.warn(
-    `[db] WARN: opened ${DB_PATH} without holding the boot lock. If another Operator ` +
+    `[db] WARN: opened ${DB_PATH} without holding the boot lock. If another Calandria ` +
       `process is running against this database, the two will corrupt each other's task ` +
       `state. Start the app via server.js, which claims the lock before serving.`
   );

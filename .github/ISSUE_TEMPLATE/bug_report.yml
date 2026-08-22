@@ -7,11 +7,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Operator. Please search existing issues first and do not include secrets or private repository content.
+        Thanks for helping improve Calandria. Please search existing issues first and do not include secrets or private repository content.
   - type: input
     id: version
     attributes:
-      label: Operator version or commit
+      label: Calandria version or commit
       description: Use a release number or commit SHA when possible.
       placeholder: v0.1.0 or abc1234
     validations:
@@ -23,7 +23,7 @@ body:
       options:
         - Local npm install
         - Self-hosted Docker
-        - Hosted Operator
+        - Hosted Calandria
         - Other
     validations:
       required: true

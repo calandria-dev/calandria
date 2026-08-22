@@ -11,7 +11,7 @@ import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
 
 // The kanban alternative to the grouped task list (layout from the Claude
-// Design "Operator — Board View" study, rendered with the app's own tokens).
+// Design "Calandria — Board View" study, rendered with the app's own tokens).
 // Columns are live views over the same task rows the list renders — cards
 // update as sessions stream — and dragging a card re-statuses it and/or
 // persists a new manual order.

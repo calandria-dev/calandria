@@ -129,7 +129,7 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
 // its own CLI — the one capability difference between the agents that changes
 // what a task can DO, rather than how its controls look. A Claude task reaches
 // the tools in ~/.claude; an otherwise-identical Codex task reaches only
-// Operator's, so it's worth knowing before choosing an agent for a task. Both
+// Calandria's, so it's worth knowing before choosing an agent for a task. Both
 // the verdict and the explanation come from the driver's descriptor
 // (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
 // agent states its own position here with no edit to this file.
@@ -138,7 +138,7 @@ function McpInheritance({ agent }: { agent: AgentInfoT }) {
   return (
     <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
       <strong style={{ color: "var(--ink-2)" }}>
-        {inherits ? "Uses your own MCP servers." : "Operator's tools only."}
+        {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
       </strong>
       {note ? ` ${note}` : ""}
     </div>
@@ -330,7 +330,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
           <div style={{ flex: 1 }}>
             <div className="lab">{Icon.bell()} Notify me when a task needs me</div>
             <div className="hlp" style={{ marginTop: 4 }}>
-              Operator tells you when a session stops and waits. Turn this off to silence every notification at once.
+              Calandria tells you when a session stops and waits. Turn this off to silence every notification at once.
             </div>
           </div>
           <button
@@ -351,8 +351,8 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
             : perm === "granted"
               ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
               : perm === "denied"
-                ? "You've blocked notifications for this site. Operator can't ask again — unblock it in your browser's site settings for this address."
-                : "Allow notifications so Operator can reach you when this tab isn't in front of you."}
+                ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
+                : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
@@ -528,14 +528,14 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 <div className="field">
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                     <div style={{ flex: 1 }}>
-                      <div className="lab">{Icon.bolt()} Let Operator use your agent for background work</div>
+                      <div className="lab">{Icon.bolt()} Let Calandria use your agent for background work</div>
                       <div className="hlp" style={{ marginTop: 4 }}>
                         Turn this off to stop unattended agent work. Things you explicitly ask for—such as <code>/clear</code>, Refresh with AI, or manually refreshing a recap—still run.
                       </div>
                     </div>
                     <button
                       role="switch"
-                      aria-label="Let Operator use your agent for background work"
+                      aria-label="Let Calandria use your agent for background work"
                       aria-checked={backgroundJobs}
                       className={`in-switch${backgroundJobs ? " on" : ""}`}
                       onClick={() => setAppDefault("background_jobs", backgroundJobs ? "off" : null)}
@@ -547,7 +547,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 <div className="field">
                   <div className="lab">{Icon.clock()} Project recaps</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Choose when Operator writes a fresh “where you left off” recap. Manual refreshes remain available in every mode.
+                    Choose when Calandria writes a fresh “where you left off” recap. Manual refreshes remain available in every mode.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 620 }}>
                     {([
@@ -564,7 +564,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 <div className="field">
                   <div className="lab">{Icon.spark()} Utility agent</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Put Operator&apos;s utility work on a cheaper or second login—for example, run recaps on Codex while keeping Claude quota for your main tasks.
+                    Put Calandria&apos;s utility work on a cheaper or second login—for example, run recaps on Codex while keeping Claude quota for your main tasks.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
                     {agents.agents.map((a) => (

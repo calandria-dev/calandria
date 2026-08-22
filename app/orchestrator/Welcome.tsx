@@ -5,7 +5,7 @@ import { Icon } from "../icons";
 import { Modal } from "./Modal";
 
 // Coach marks + the post-merge nudge for the built-in "Welcome" tutorial project
-// (projects.seeded = 1). These carry the "how Operator works" teaching that we
+// (projects.seeded = 1). These carry the "how Calandria works" teaching that we
 // deliberately keep OUT of the Claude-facing project context — so the concepts
 // live where the user reads them, not where the agent does.
 
@@ -81,7 +81,7 @@ export function WelcomeNudge({ onCreateProject, onClose }: { onCreateProject: ()
       </>}
     >
       <p style={{ margin: "0 0 14px", color: "var(--ink-2)", lineHeight: 1.55 }}>
-        That’s the core of Operator: every task is its own agent session in its own git worktree, so
+        That’s the core of Calandria: every task is its own agent session in its own git worktree, so
         you review and merge on your terms. Ready to point it at your own code? You can delete this
         Welcome project any time.
       </p>

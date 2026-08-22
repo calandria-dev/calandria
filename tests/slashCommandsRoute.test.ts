@@ -44,7 +44,7 @@ describe("GET /api/tasks/[id]/commands", () => {
   it("returns the driver's commands, filtered", async () => {
     listCommandsMock.mockResolvedValue([
       { name: "simplify", description: "tidy up", argumentHint: "<path>" },
-      { name: "clear", description: "the CLI's own clear" }, // Operator owns /clear
+      { name: "clear", description: "the CLI's own clear" }, // Calandria owns /clear
       { name: "__internal", description: "hidden" },
       { name: "superpowers:writing-plans", description: "plan", aliases: ["writing-plans"] },
     ]);

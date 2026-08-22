@@ -50,7 +50,7 @@ test("typing / lists the agent's own commands, not just /clear", async ({ page }
 
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Operator's own command AND the driver's — the whole point.
+  // Calandria's own command AND the driver's — the whole point.
   await expect(menu.getByText("/clear", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-echo", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-status", { exact: true })).toBeVisible();
@@ -64,7 +64,7 @@ test("the agent's own /clear and internal commands are filtered out", async ({ p
   await box.fill("/");
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Exactly one /clear row — Operator's, not the agent's duplicate.
+  // Exactly one /clear row — Calandria's, not the agent's duplicate.
   await expect(menu.getByText("/clear", { exact: true })).toHaveCount(1);
   await expect(menu.getByText("/__mock-internal", { exact: true })).toHaveCount(0);
 });

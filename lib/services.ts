@@ -19,7 +19,7 @@
 // pattern as lib/events.ts / lib/abort.ts). Each project also gets a stable PORT
 // (projects.port), injected into every service's env so the dev server binds a
 // predictable address the host-header router (lib/service-router.mjs) proxies
-// public hostnames to: <slug>--<appHost>, e.g. calc--ishan.getoperator.dev.
+// public hostnames to: <slug>--<appHost>, e.g. calc--ishan.calandria.example.com.
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";

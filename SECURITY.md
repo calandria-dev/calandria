@@ -1,6 +1,6 @@
 # Security policy
 
-Operator hands its user a full shell (the integrated terminal) and runs
+Calandria hands its user a full shell (the integrated terminal) and runs
 coding agents with `bypassPermissions` in the projects you point it at. That
 is the intended, documented trust model for a **single-user instance on your
 own machine** — the app itself is not a sandbox.

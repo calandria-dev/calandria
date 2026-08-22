@@ -93,7 +93,7 @@ describe("getInsightsData", () => {
     expect(later.shipped.filter((r) => r.p === project.id)).toHaveLength(0);
   });
 
-  it("groups Operator usage by job and keeps project-less runs separate from task usage", () => {
+  it("groups Calandria usage by job and keeps project-less runs separate from task usage", () => {
     const { project, task } = makeProjectTask("codex");
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage() });
     addInternalUsage({
@@ -126,7 +126,7 @@ describe("getInsightsData", () => {
     expect(verify.p).toBe("");
     expect(verify.n).toBe(1);
 
-    // Operator convenience work must never change the existing task-turn cube.
+    // Calandria convenience work must never change the existing task-turn cube.
     const taskRows = data.usage.filter((r) => r.p === project.id);
     expect(taskRows).toHaveLength(1);
     expect(taskRows[0].cost).toBeCloseTo(1.5);

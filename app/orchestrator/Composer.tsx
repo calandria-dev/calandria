@@ -40,7 +40,7 @@ type Attachment = {
   error?: string;
 };
 
-// One row in the "/" menu. Operator's own commands carry a `run` (they're
+// One row in the "/" menu. Calandria's own commands carry a `run` (they're
 // actions this component performs, not text the agent expands); the agent's own
 // commands don't — picking one completes it into the box and the ordinary send
 // path hands it to the CLI, which is what already made typing them in full work.
@@ -136,7 +136,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
 
   const ready = atts.filter((a) => a.status === "ready");
   const uploading = atts.some((a) => a.status === "uploading");
-  // Operator's own commands, then the agent's. /clear is ours and only ours:
+  // Calandria's own commands, then the agent's. /clear is ours and only ours:
   // it summarizes the transcript and starts the next generation of the task's
   // session lineage, which the CLI's same-named command does not do — so the
   // server drops the CLI's (lib/agentCommands.ts) and this one stands alone.
@@ -176,7 +176,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // arrowing away from an exact match correctly commits what's highlighted.
   const enterActs = !!highlighted && highlighted.name.toLowerCase() === q && !highlighted.hint;
 
-  // Pick a row: an Operator action runs; an agent command completes into the
+  // Pick a row: an Calandria action runs; an agent command completes into the
   // box with a trailing space, ready for arguments, and is sent by the user.
   const choose = (c: MenuCommand) => {
     if (c.run) { c.run(); return; }
@@ -189,7 +189,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // /clear can't run mid-turn — it would collide with the live session. It also
   // must not be QUEUED as an ordinary follow-up: the agent's CLI has a /clear of
   // its own, so the queued text would reach it and wipe the session's context
-  // behind Operator's back, with no handoff summary and no new generation to
+  // behind Calandria's back, with no handoff summary and no new generation to
   // show for it. So mid-turn it's refused outright (canSend goes false and the
   // footer says why) rather than sent.
   const blockedClear = running && val.trim() === "/clear" && ready.length === 0;

@@ -1,6 +1,6 @@
 # Features
 
-Operator is a control room for running coding-agent work across repositories. This page
+Calandria is a control room for running coding-agent work across repositories. This page
 contains the longer feature inventory kept out of the project README.
 
 ## Parallel work without collisions
@@ -25,16 +25,16 @@ without turning into one unbounded prompt.
 
 Typing `/` in the composer opens the command menu. It lists the commands the task's own
 agent would actually expand — your skills, plugin commands, and the `.claude/commands` in
-the checked-out repo — discovered from the agent itself rather than from a list Operator
-maintains, so a command you install shows up without an Operator release. Arrow keys move
+the checked-out repo — discovered from the agent itself rather than from a list Calandria
+maintains, so a command you install shows up without an Calandria release. Arrow keys move
 the highlight, Enter or Tab completes it, and a command typed in full sends as usual.
-Operator's own `/clear` heads the list; the agent's same-named command is hidden so one
+Calandria's own `/clear` heads the list; the agent's same-named command is hidden so one
 name can't mean two things, as are the run-control commands (`/model`, `/effort`, `/fast`)
 that the task's own pickers own.
 
 ## Review and delivery
 
-Operator puts the task conversation and git diff side by side. From there you can:
+Calandria puts the task conversation and git diff side by side. From there you can:
 
 - review every changed file before it reaches the base branch;
 - sync a stale task branch;
@@ -48,7 +48,7 @@ work requires an explicit permanent-discard confirmation.
 ### Staying level with the remote
 
 Work does not only arrive through the merge button — a pull request merged on GitHub, a
-teammate's push, or a pull in another checkout all land on the remote instead. Operator
+teammate's push, or a pull in another checkout all land on the remote instead. Calandria
 fetches the base branch (best-effort) when you open a project and again before it cuts a
 new task worktree, so a new task starts from the real tip rather than a local `main` that
 went stale hours ago.
@@ -233,7 +233,7 @@ runbook — sits inert until you dispatch it, so there's no review tray to clear
 
 Two things an agent deliberately cannot do:
 
-- **Delete a runbook.** Delete is hard delete with no undo throughout Operator, and retiring
+- **Delete a runbook.** Delete is hard delete with no undo throughout Calandria, and retiring
   a recipe is your call.
 - **Edit a runbook that a schedule fires.** That would silently change work which runs
   unattended. The refusal names the schedules involved, so the agent can tell you what it
@@ -244,7 +244,7 @@ Two things an agent deliberately cannot do:
 A schedule is a saved prompt plus a recurring day/time, owned by the project it lives in —
 found on the project landing pane, under **Schedules**. Click the project's name at the top
 of the task list to get there from anywhere.
-Unlike everything else in Operator, a schedule's firing needs no browser tab open: it's the
+Unlike everything else in Calandria, a schedule's firing needs no browser tab open: it's the
 app's only server-owned periodic work, driven by a ticker in the server process itself, not a
 timer in your browser.
 
@@ -307,7 +307,7 @@ unknown. If it *is* right, the run fails loudly rather than reporting a success 
 
 ## Notifications
 
-Operator tells you when a task has STOPPED — that's the shared rule behind
+Calandria tells you when a task has STOPPED — that's the shared rule behind
 every notification it sends:
 
 | Notification | When it fires |
@@ -325,7 +325,7 @@ one stay quiet.
 Today the only channel is a **browser notification**, which needs the app open
 in a tab (any tab, in any window — it doesn't have to be in front of you) and
 one grant of the browser's notification permission, from Settings →
-Notifications. The only time Operator stays quiet is when the tab is visible AND
+Notifications. The only time Calandria stays quiet is when the tab is visible AND
 you already have that exact task selected.
 
 A snoozed task never says it's waiting for input, and neither does an archived
@@ -351,14 +351,14 @@ See [Managed services](SERVICES.md) for setup and security details.
 ## Transparent usage
 
 Every task reports tokens and usage. The Insights dashboard breaks activity down by day,
-project, and agent, while keeping Operator's background work separate from task usage.
+project, and agent, while keeping Calandria's background work separate from task usage.
 Subscription users see an API-price equivalent for context—not a bill.
 
 See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-Claude Code and Codex are first-class agent drivers. Operator detects expired connections,
+Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
 preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
 connected agent automatically, so a Claude-only or Codex-only installation works without
 special configuration.

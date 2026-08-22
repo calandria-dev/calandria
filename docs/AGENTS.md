@@ -1,6 +1,6 @@
 # Supported agents
 
-Operator supports Claude Code and OpenAI Codex as first-class task agents. You can connect
+Calandria supports Claude Code and OpenAI Codex as first-class task agents. You can connect
 either one or both, choose a default, and override the agent for an individual task.
 
 ## Support matrix
@@ -8,7 +8,7 @@ either one or both, choose a default, and override the agent for an individual t
 | Agent | Authentication | Task support | Notes |
 |-|-|-|-|
 | Claude Code | Max/Pro login or optional API key | Full | Reference driver; supports interactive questions and reported cost data |
-| OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Operator's bridge; estimated cost data |
+| OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Calandria's bridge; estimated cost data |
 
 Connecting either agent completes first-run setup and makes it the initial default. The
 app never requires Claude when only Codex is connected, or vice versa. Project recaps,
@@ -18,7 +18,7 @@ context drafts, and other utility jobs prefer a connected agent automatically.
 
 The recommended path is the subscription login offered by the first-run wizard or
 **Settings → Agents**. Subscription turns consume plan quota and have no marginal API
-charge. Operator removes stray `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values from its
+charge. Calandria removes stray `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values from its
 launch environment by default so an inherited shell variable cannot silently switch a
 session to API billing.
 
@@ -55,29 +55,29 @@ auto-started task can't sit wedged waiting for someone who isn't there — which
 trade-off of the default: unattended work that trips the classifier stops and says so
 rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
 
-Claude Code can also refuse a call by itself, without asking Operator first — the Guarded
+Claude Code can also refuse a call by itself, without asking Calandria first — the Guarded
 auto classifier vetoing something, or a deny rule in your own `~/.claude` settings. That
 shows up in the transcript as a permission card that arrives already decided, sitting on
 the call it stopped: what the agent was about to run, who refused it, and why. There are no
 buttons, because the decision is already made; if it should have been allowed, change the
 task's permission mode.
 
-The SDK also has a `dontAsk` mode ("deny anything not pre-approved, don't prompt"); Operator
-doesn't offer it. Under `dontAsk` the CLI decides everything itself and never asks Operator
+The SDK also has a `dontAsk` mode ("deny anything not pre-approved, don't prompt"); Calandria
+doesn't offer it. Under `dontAsk` the CLI decides everything itself and never asks Calandria
 at all, so none of the above applies: not the read-only allowlist, not your remembered
 approvals, not the cards. "Pre-approved" would mean allow rules in your own Claude Code
 settings file. "Ask when needed" plus **Always allow** already gives you deny-unless-allowed,
 with a prompt when you want one and a revocable record of everything you granted.
 
-Operator is a control layer, not an additional security sandbox; review
+Calandria is a control layer, not an additional security sandbox; review
 [the security model](../SECURITY.md) before exposing an instance.
 
 A task session also loads your own Claude Code configuration — `~/.claude` settings, MCP
 servers, plugins and skills, plus the repository's `CLAUDE.md` — so it behaves like the
-`claude` CLI you already use, with Operator's own tools added on top. Your MCP servers'
+`claude` CLI you already use, with Calandria's own tools added on top. Your MCP servers'
 tools go through the permission modes above like everything else.
 
-Operator's own background jobs deliberately do not. A `/clear` handoff note, a project
+Calandria's own background jobs deliberately do not. A `/clear` handoff note, a project
 recap and a "Refresh with AI" context draft are internal transformations, not sessions you
 are sitting in, so they run with your MCP servers, plugins, skills and hooks switched off —
 otherwise every four-bullet recap would start your entire MCP fleet to offer tools it can
@@ -90,27 +90,27 @@ files, but not run commands or write anything.
 ## OpenAI Codex
 
 Codex supports parallel tasks, diff review and merge, `/clear` lineage, project context,
-interactive questions, and usage tracking. Operator supplies interactive questions through
+interactive questions, and usage tracking. Calandria supplies interactive questions through
 its MCP bridge because the upstream non-interactive CLI does not provide that hook itself.
 
 Three upstream differences are visible:
 
-- ChatGPT-plan authentication reports tokens but not dollar cost, so Operator estimates
+- ChatGPT-plan authentication reports tokens but not dollar cost, so Calandria estimates
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
-  Operator therefore offers Auto-run and read-only Plan modes for Codex rather than a
+  Calandria therefore offers Auto-run and read-only Plan modes for Codex rather than a
   mid-turn approval mode, and asks Codex not to require approvals
   (`approval_policy=never`). If an enterprise-managed Codex configuration disallows
-  that, Operator detects the CLI's downgrade warning on the first affected turn and
+  that, Calandria detects the CLI's downgrade warning on the first affected turn and
   switches itself to the compatible `on-request` policy automatically — the failed
   turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` remains the manual override.
   Claude's permission cards have no Codex equivalent yet: the
   MCP bridge that carries `ask_user` could carry approvals the same way, but the CLI would
   first have to route an approval request to a tool call instead of a terminal prompt.
-- Codex tasks get Operator's own tools but **not** the MCP servers from your
+- Codex tasks get Calandria's own tools but **not** the MCP servers from your
   `~/.codex/config.toml`, where a Claude task does get yours. Same missing approver as
   the point above: an inherited server's tools are offered to the model and every call
-  returns `user cancelled MCP tool call`. Operator unmounts them rather than dangle tools
+  returns `user cancelled MCP tool call`. Calandria unmounts them rather than dangle tools
   that cannot work. Set `CODEX_INHERIT_MCP=1` to mount them anyway — worthwhile if you
   have set `default_tools_approval_mode = "approve"` on your own servers. Each agent's
   card in **Settings → Agents** says which side of this it is on, so you can see it
@@ -124,4 +124,4 @@ controls consume that contract.
 
 See [Architecture: the agent-driver seam](ARCHITECTURE.md#the-agent-driver-seam-libagents)
 for the implementation guide. Proposals for another agent are welcome in
-[GitHub Discussions](https://github.com/iishyfishyy/operator-oss/discussions/categories/ideas).
+[GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/ideas).

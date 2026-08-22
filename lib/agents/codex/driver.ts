@@ -141,7 +141,7 @@ export function noteApprovalDowngrade(errText: string): void {
 }
 
 // The approval-policy override sent to the CLI, or nothing when the instance
-// opts to inherit ~/.codex/config.toml — "inherit" is an explicit "Operator,
+// opts to inherit ~/.codex/config.toml — "inherit" is an explicit "Calandria,
 // don't override", so the downgrade flag does not apply there either.
 // See CODEX_APPROVAL_POLICY in lib/config.ts. Exported for tests.
 export function approvalOverride(): { approvalPolicy?: ApprovalMode } {

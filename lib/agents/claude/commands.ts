@@ -188,7 +188,7 @@ function startEnumeration(
  *
  * That distinction is the contract. An empty list and a failed spawn are the
  * same shape and opposite facts, and the two callers need opposite things from
- * them: the composer's menu degrades to Operator's own commands either way
+ * them: the composer's menu degrades to Calandria's own commands either way
  * (`?? []` at the driver), while the schedule validator must say "couldn't
  * check" rather than "that command doesn't exist" — reading a dead login as an
  * empty registry there settles a scheduled run `failed` and mints nothing,
