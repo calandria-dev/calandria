@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../icons";
+import { Logo } from "../Logo";
 import { jget, jsend } from "./api";
 import { AgentConnect } from "./AgentConnect";
 import type { AgentInfoT, AgentsResponseT, ClaudeVerifyT, OnboardingT, OnbStep } from "./types";
@@ -71,7 +72,8 @@ export function OnboardingWizard({
     <div className="wiz-scrim">
       <div className="wiz">
         <div className="wiz-rail">
-          <div className="wiz-brand"><span className="glyph">{Icon.bolt()}</span> Calandria</div>
+          <div className="wiz-brand"><Logo size={20} /> Calandria</div>
+          <div className="wiz-tagline">One vessel, many channels — your agent fleet, from any browser.</div>
           <div className="wiz-rail-sub">Let&apos;s get you set up</div>
           <div className="wiz-steps">
             {STEPS.map((s, i) => (

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Icon } from "./icons";
+import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
 import { PROJ_W, TASK_W, DEFAULT_LAYOUT } from "./orchestrator/types";
 import { useOrchestrator } from "./orchestrator/useOrchestrator";
@@ -95,7 +96,17 @@ export default function Orchestrator() {
   const { project, task, selProj, selTask, layout } = o;
   const isMobile = useIsMobile();
   const features = clientFeatures();
-  const isDark = o.appearance.theme !== "light";
+  // Resolves "system" against the OS preference for this quick toggle's icon/
+  // label; clicking always pins an explicit mode (bypassing "system"), same as
+  // the old binary theme field did. The full palette/mode picker lives in the
+  // Appearance popover (AppearancePanel.tsx).
+  const resolvedMode =
+    o.appearance.mode === "system"
+      ? typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : o.appearance.mode;
+  const isDark = resolvedMode !== "light";
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
   // Which Settings section to land on when opened programmatically (e.g. the
   // "connect another agent" nudge deep-links to Agents). undefined = default.
@@ -400,8 +411,8 @@ export default function Orchestrator() {
       <div className="titlebar">
         <div className="tb-left">
           <div className="tb-logo" title="Calandria">
-            <span className="tb-ring"><span className="tb-core" /><span className="tb-arc" /></span>
-            <span className="tb-word">CALANDRIA</span>
+            <Logo size={17.5} />
+            <span className="tb-word">Calandria</span>
           </div>
           {!isMobile && (
             <>
@@ -480,7 +491,7 @@ export default function Orchestrator() {
           >
             {Icon.chart()}
           </button>
-          <button className="tb-icon" title={isDark ? "Switch to light theme" : "Switch to dark theme"} aria-label="Toggle theme" onClick={() => o.setAppearance("theme", isDark ? "light" : "dark")}>
+          <button className="tb-icon" title={isDark ? "Switch to light theme" : "Switch to dark theme"} aria-label="Toggle theme" onClick={() => o.setAppearance("mode", isDark ? "light" : "dark")}>
             {isDark ? Icon.sun() : Icon.moon()}
           </button>
           <div className="tb-avatar" title={o.accessEmail ? `Signed in: ${o.accessEmail}` : "Your workspace"}>
@@ -616,7 +627,7 @@ export default function Orchestrator() {
               run: () => void o.runRunbook(r.id),
             })) : []),
             project && { id: "toggle-task-view", label: o.taskView === "board" ? "Show tasks as list" : "Show tasks as board", hint: "⌘⇧B", keywords: "kanban board list columns view", icon: o.taskView === "board" ? Icon.list() : Icon.board(), run: () => setTaskView(o.taskView === "board" ? "list" : "board") },
-            { id: "toggle-theme", label: "Toggle theme", hint: isDark ? "switch to light" : "switch to dark", keywords: "dark light mode appearance", icon: isDark ? Icon.sun() : Icon.moon(), run: () => o.setAppearance("theme", isDark ? "light" : "dark") },
+            { id: "toggle-theme", label: "Toggle theme", hint: isDark ? "switch to light" : "switch to dark", keywords: "dark light mode appearance", icon: isDark ? Icon.sun() : Icon.moon(), run: () => o.setAppearance("mode", isDark ? "light" : "dark") },
             { id: "toggle-text-width", label: o.appearance.wide === "1" ? "Use reading-width text" : "Use full-width text", hint: o.appearance.wide === "1" ? "760px measure" : "fill the pane", keywords: "wide full width narrow measure transcript column appearance", icon: Icon.sliders(), run: () => o.setAppearance("wide", o.appearance.wide === "1" ? "0" : "1") },
             { id: "open-settings", label: "Open Settings", keywords: "preferences defaults setup", icon: Icon.gear(), run: () => openSettings() },
             { id: "open-insights", label: "Open Insights", keywords: "usage spend cost tokens analytics dashboard metrics stats", icon: Icon.chart(), run: () => o.setView("insights") },

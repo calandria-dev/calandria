@@ -71,3 +71,4 @@ orchestrator.db-wal
 # ...except README/docs images, which must be committed
 !docs/images/
 !docs/images/*.png
+!app/apple-icon.png

@@ -3,6 +3,7 @@ import "./globals.css";
 import { PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
 import { posthogSnippet } from "@/lib/analytics";
+import { fontVariables } from "./fonts";
 
 export const metadata: Metadata = {
   title: "Calandria — build, verify & host every app with agents",
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en" data-theme="cherenkov-dark" data-mode="dark" className={fontVariables}>
       <head>
         {/* Critical CSS, inlined so it applies on first parse — before the external
             stylesheets finish loading. The app is a fixed-shell UI (and the landing
@@ -45,12 +46,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           const snippet = posthogSnippet();
           return snippet ? <script dangerouslySetInnerHTML={{ __html: snippet }} /> : null;
         })()}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=JetBrains+Mono:wght@400;500;700&display=swap"
-          rel="stylesheet"
-        />
+        {/* Fonts are self-hosted via next/font (app/fonts.ts) — no Google Fonts
+            CDN request at runtime. Their CSS variables land on <html> via the
+            fontVariables class above; globals.css tokens point at them. */}
       </head>
       <body>{children}</body>
     </html>

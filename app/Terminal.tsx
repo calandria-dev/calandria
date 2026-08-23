@@ -2,42 +2,80 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
-import type { Terminal as XTerm } from "@xterm/xterm";
+import type { Terminal as XTerm, ITheme } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
-const darkTheme = {
-  background: "#15140f", foreground: "#E8E2D4", cursor: "#E0A07F",
-  selectionBackground: "#3A2B22", black: "#15140f", brightBlack: "#5E594E",
-  red: "#E0685D", green: "#8FBE82", yellow: "#DCB458", blue: "#6FA8CF",
-  magenta: "#C58FC4", cyan: "#79B8B0", white: "#E8E2D4", brightWhite: "#FBFAF6",
-};
-const lightTheme = {
-  background: "#FBFAF6", foreground: "#26241F", cursor: "#C2603C",
-  selectionBackground: "#F0D9CE", black: "#26241F", brightBlack: "#928D80",
-  red: "#C0503C", green: "#5C8C5A", yellow: "#9A6E14", blue: "#3E7CA8",
-  magenta: "#9E5BA0", cyan: "#3E7CA8", white: "#605C52", brightWhite: "#26241F",
-};
+// Reads a CSS custom property's resolved value off <html>.
+function cssVar(name: string, fallback = ""): string {
+  if (typeof window === "undefined") return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+// Resolves a color-mix()/var() expression to a literal computed color — xterm's
+// theme fields need concrete values, not CSS custom properties. Browsers resolve
+// color-mix() at computed-style time, so a throwaway probe element gets us the
+// literal color for whatever palette/mode is active without hand-maintaining a
+// theme object per [data-theme] combination.
+function resolveColor(expr: string, fallback = ""): string {
+  if (typeof document === "undefined") return fallback;
+  const probe = document.createElement("span");
+  probe.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;color:${expr}`;
+  document.body.appendChild(probe);
+  const resolved = getComputedStyle(probe).color;
+  document.body.removeChild(probe);
+  return resolved || fallback;
+}
+
+// Builds an xterm theme from the current design-system tokens (globals.css) —
+// read fresh whenever the palette or mode changes, since xterm themes are
+// literal-color objects, not CSS that re-resolves on its own.
+function buildXtermTheme(): ITheme {
+  return {
+    background: cssVar("--term", "#15140f"),
+    foreground: cssVar("--ink", "#d5e4ea"),
+    cursor: cssVar("--accent", "#45cabb"),
+    selectionBackground: resolveColor("color-mix(in oklab, var(--accent) 30%, var(--term))", "#2b4a47"),
+    black: cssVar("--term", "#15140f"),
+    brightBlack: resolveColor("color-mix(in oklab, var(--dim) 65%, var(--term))", "#5e594e"),
+    red: cssVar("--err", "#e0687a"),
+    green: cssVar("--run", "#4ecfb2"),
+    yellow: cssVar("--warn", "#d3b054"),
+    blue: cssVar("--s1", "#5f8dff"),
+    magenta: cssVar("--s4", "#9d7bff"),
+    cyan: resolveColor("color-mix(in oklab, var(--s1) 50%, var(--run))", "#5fb0c9"),
+    white: cssVar("--ink", "#d5e4ea"),
+    brightWhite: resolveColor("color-mix(in oklab, var(--ink) 55%, white)", "#fbfaf6"),
+  };
+}
 
 // Imperative handle the mobile terminal sheet uses to feed input (paste, Enter,
 // Ctrl-C buttons) without owning the websocket itself.
 export interface TermApi { send: (data: string) => void; }
 
-export function TerminalView({ cwd, port, fontSize = 12.5, onReady }: { cwd: string; port?: number; fontSize?: number; onReady?: (api: TermApi) => void }) {
+export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onReady }: { cwd: string; port?: number; fontSize?: number; monoFontFamily?: string; onReady?: (api: TermApi) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddonType | null>(null);
   // Bumping this tears down the dead xterm/socket and spawns a fresh shell.
   const [session, setSession] = useState(0);
-  // Read the latest font size at shell-creation time without making it an effect
-  // dep (which would respawn the shell on every zoom); live changes apply below.
+  // Read the latest font size / mono font at shell-creation time without making
+  // them effect deps (which would respawn the shell); live changes apply below.
   const fontRef = useRef(fontSize);
   fontRef.current = fontSize;
+  // No monoFontFamily prop wired from a caller yet (Terminal.tsx has two call
+  // sites — Orchestrator.tsx's drawer and orchestrator/Layout.tsx's — neither
+  // currently threads prefs through); fall back to the --mono custom property
+  // usePrefs.ts sets on <html>, which already tracks the selected mono font.
+  const monoRef = useRef(monoFontFamily);
+  monoRef.current = monoFontFamily;
 
   useEffect(() => {
     let term: XTerm | null = null;
     let fit: FitAddonType | null = null;
     let ws: WebSocket | null = null;
     let ro: ResizeObserver | null = null;
+    let mo: MutationObserver | null = null;
     let disposed = false;
     let dead = false; // shell gone (exit or sidecar drop) — awaiting Enter to respawn
 
@@ -49,17 +87,26 @@ export function TerminalView({ cwd, port, fontSize = 12.5, onReady }: { cwd: str
       ]);
       if (disposed || !hostRef.current) return;
 
-      const dark = document.documentElement.getAttribute("data-theme") === "dark";
       term = new Terminal({
-        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontFamily: monoRef.current || cssVar("--mono", "'JetBrains Mono', ui-monospace, monospace"),
         fontSize: fontRef.current,
         lineHeight: 1.25,
         cursorBlink: true,
         scrollback: 8000,
-        theme: dark ? darkTheme : lightTheme,
+        theme: buildXtermTheme(),
       });
       fit = new FitAddon();
       term.loadAddon(fit);
+      // Retheme (and, absent an explicit monoFontFamily prop, refont) live
+      // whenever the palette or resolved mode flips — usePrefs.ts writes
+      // data-theme/data-mode on <html>, and the --mono custom property when the
+      // mono font selection changes.
+      mo = new MutationObserver(() => {
+        if (!term) return;
+        term.options.theme = buildXtermTheme();
+        if (!monoRef.current) term.options.fontFamily = cssVar("--mono", term.options.fontFamily as string);
+      });
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-mode", "style"] });
       // Tappable links — the whole point of the mobile terminal's login flow is
       // opening the OAuth URL Claude prints, so route clicks/taps to a new tab.
       term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
@@ -125,6 +172,7 @@ export function TerminalView({ cwd, port, fontSize = 12.5, onReady }: { cwd: str
       termRef.current = null;
       fitRef.current = null;
       try { ro?.disconnect(); } catch {}
+      try { mo?.disconnect(); } catch {}
       try { ws?.close(); } catch {}
       try { term?.dispose(); } catch {}
     };
@@ -138,6 +186,13 @@ export function TerminalView({ cwd, port, fontSize = 12.5, onReady }: { cwd: str
     t.options.fontSize = fontSize;
     try { fitRef.current?.fit(); } catch {}
   }, [fontSize]);
+
+  // Live mono-font changes via an explicit prop (no respawn needed).
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t || !monoFontFamily) return;
+    t.options.fontFamily = monoFontFamily;
+  }, [monoFontFamily]);
 
   return <div className="term-host" ref={hostRef} />;
 }

@@ -19,8 +19,9 @@ export function AppearancePanel({ appearance, setAppearance, onClose }: { appear
       <div className="modal-b" style={{ padding: 16 }}>
         <Row label="Mode">
           <div className="seg">
-            <button className={appearance.theme === "light" ? "on" : ""} onClick={() => setAppearance("theme", "light")}>{Icon.sun()} Light</button>
-            <button className={appearance.theme === "dark" ? "on" : ""} onClick={() => setAppearance("theme", "dark")}>{Icon.moon()} Dark</button>
+            <button className={appearance.mode === "system" ? "on" : ""} onClick={() => setAppearance("mode", "system")}>Auto</button>
+            <button className={appearance.mode === "light" ? "on" : ""} onClick={() => setAppearance("mode", "light")}>{Icon.sun()} Light</button>
+            <button className={appearance.mode === "dark" ? "on" : ""} onClick={() => setAppearance("mode", "dark")}>{Icon.moon()} Dark</button>
           </div>
         </Row>
         <Row label={`Density · ${appearance.density === "1" ? "comfortable" : "compact"}`}>

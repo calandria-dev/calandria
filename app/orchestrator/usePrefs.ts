@@ -4,9 +4,31 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { LS, loadPersist } from "./persist";
 import { reconcileHistory, closeOneLevel, type NavSel } from "./navHistory";
 import {
-  DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH,
+  DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH, MONO_FONTS, PROMPT_FONTS,
   type Appearance, type Settings, type Layout, type View, type TaskView,
 } from "./types";
+
+// Legacy (pre-rebrand) persisted shape: a binary theme instead of palette+mode.
+type LegacyAppearance = { theme?: "light" | "dark" };
+
+// Migrates a persisted `appearance` blob — of any vintage — onto the current
+// Appearance shape. Missing fields fall back to DEFAULT_APPEARANCE; the old
+// `theme: "light"|"dark"` field (no palette concept existed yet) becomes
+// palette "cherenkov" (the only palette that used to exist) + that mode.
+function migrateAppearance(persisted: Partial<Appearance> & LegacyAppearance): Appearance {
+  const { theme, ...rest } = persisted;
+  const migrated: Appearance = { ...DEFAULT_APPEARANCE, ...rest };
+  if (theme && !persisted.mode) migrated.mode = theme;
+  return migrated;
+}
+
+// Resolves "system" against the OS preference; defaults to dark before the
+// media query can be read (SSR / first paint).
+function resolveMode(mode: Appearance["mode"]): "light" | "dark" {
+  if (mode !== "system") return mode;
+  if (typeof window === "undefined" || !window.matchMedia) return "dark";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 // Mirror of Orchestrator's mobile breakpoint — the Back-button trap only arms on
 // mobile (single-pane), since on desktop every column is visible and Back should
@@ -41,7 +63,7 @@ export function usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask }
   // hydrate persisted prefs once
   useEffect(() => {
     const p = loadPersist();
-    if (p.appearance) setAppearance({ ...DEFAULT_APPEARANCE, ...p.appearance });
+    if (p.appearance) setAppearance(migrateAppearance(p.appearance));
     if (p.settings) setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
     if (p.layout) setLayout({ ...DEFAULT_LAYOUT, ...p.layout });
     if (p.taskView === "board") setTaskView("board");
@@ -53,9 +75,21 @@ export function usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask }
   // persist + apply appearance
   useEffect(() => {
     if (!hydrated) return;
-    document.documentElement.setAttribute("data-theme", appearance.theme);
-    document.documentElement.style.setProperty("--density", appearance.density);
-    document.documentElement.style.setProperty("--text-width", appearance.wide === "1" ? TEXT_WIDTH.full : TEXT_WIDTH.reading);
+
+    const applyTheme = () => {
+      const resolved = resolveMode(appearance.mode);
+      document.documentElement.setAttribute("data-theme", `${appearance.palette}-${resolved}`);
+      document.documentElement.setAttribute("data-mode", resolved);
+      document.documentElement.style.setProperty("--density", appearance.density);
+      document.documentElement.style.setProperty("--text-width", appearance.wide === "1" ? TEXT_WIDTH.full : TEXT_WIDTH.reading);
+      const mono = MONO_FONTS[appearance.monoFont] ?? MONO_FONTS["jetbrains-mono"];
+      document.documentElement.style.setProperty("--mono", mono.cssFamily);
+      document.documentElement.style.setProperty("--font-mono", mono.cssFamily);
+      const prompt = PROMPT_FONTS[appearance.promptFont] ?? PROMPT_FONTS["source-sans"];
+      document.documentElement.style.setProperty("--font-prompt", prompt.cssFamily);
+    };
+    applyTheme();
+
     localStorage.setItem(LS, JSON.stringify({ selProj, selTask, appearance, settings, layout, taskView }));
 
     // Mirror the open project/task + active view into the URL (refresh-restore)
@@ -63,6 +97,13 @@ export function usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask }
     // so the device Back button steps session → tasks → projects. (See navHistory.)
     const armTrap = window.matchMedia(MOBILE_QUERY).matches;
     reconcileHistory(window.history, window.location.pathname, { proj: selProj, task: selTask, view }, armTrap);
+
+    // "system" mode tracks the OS live — re-resolve dark/light on every flip
+    // without waiting for the user to touch a setting.
+    if (appearance.mode !== "system" || typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", applyTheme);
+    return () => mq.removeEventListener("change", applyTheme);
   }, [appearance, settings, layout, taskView, selProj, selTask, view, hydrated]);
 
   // Back button: consume the trap and close exactly one pane level. The setState

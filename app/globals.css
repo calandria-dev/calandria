@@ -4,77 +4,117 @@
    (ported from the Claude Design hi-fi prototype)
    ========================================================================== */
 
+/* ==========================================================================
+   Theme primitives — Calandria design system (docs/design/handoff/styles.css,
+   copied verbatim). Four selectable palettes, each dark + light, switched via
+   [data-theme]="<palette>-<mode>" on <html> (app/orchestrator/usePrefs.ts).
+   cherenkov-dark is the :root default (SSR-safe before hydration picks a
+   palette/mode). [data-mode]="dark"|"light" is set alongside data-theme so
+   component CSS can key off resolved mode without knowing the palette name. */
+[data-theme="cherenkov-dark"],:root{--bg:#081217;--panel:#0d1b22;--line:#1a2f39;--ink:#d5e4ea;--dim:#7e9aa6;--accent:#45cabb;--calandria:#45cabb;--term:#060e12;--run-bg:#0e2e2b;--run:#4ecfb2;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="cherenkov-light"]{--bg:#f2f7f7;--panel:#ffffff;--line:#d7e4e4;--ink:#1a3038;--dim:#5d7d87;--accent:#0e8a7d;--calandria:#0e8a7d;--term:#e8f1f0;--run-bg:#dcf2ec;--run:#0b6e5f;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="heavywater-dark"]{--bg:#0d1414;--panel:#121d1c;--line:#223230;--ink:#dce7e4;--dim:#87a29b;--accent:#dd7f68;--calandria:#dd7f68;--term:#091010;--run-bg:#123123;--run:#54c98a;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="heavywater-light"]{--bg:#f3f6f4;--panel:#ffffff;--line:#dbe4e0;--ink:#22332f;--dim:#63807a;--accent:#b2502f;--calandria:#b2502f;--term:#eaf0ed;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="denoche-dark"]{--bg:#100e18;--panel:#181524;--line:#2b2542;--ink:#e5e0ee;--dim:#9a8fb0;--accent:#f0a94e;--calandria:#e86a95;--term:#0b0a12;--run-bg:#123123;--run:#54c98a;--rev-bg:#3a1526;--rev:#e86a95;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="denoche-light"]{--bg:#f5f3f7;--panel:#ffffff;--line:#e2dce8;--ink:#2c2438;--dim:#6f6383;--accent:#a3520e;--calandria:#c73a6d;--term:#ece8f0;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f8dfe8;--rev:#a12855;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="basic-dark"]{--bg:#101114;--panel:#17181d;--line:#282a32;--ink:#dde0e6;--dim:#8d93a0;--accent:#6c9bd8;--calandria:#6c9bd8;--term:#0c0d10;--run-bg:#14301f;--run:#4fc286;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="basic-light"]{--bg:#f5f6f7;--panel:#ffffff;--line:#e0e2e6;--ink:#26292f;--dim:#697080;--accent:#3468a8;--calandria:#3468a8;--term:#eceef0;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+
+/* ==========================================================================
+   Derivation layer — every legacy component token, expressed in terms of the
+   theme primitives above via color-mix() so it resolves per-theme dynamically.
+   One block (not per-theme) because var()/color-mix() re-resolve against
+   whichever [data-theme] block is active on <html> — no duplication needed.
+   Also: type system tokens (self-hosted via next/font — see app/fonts.ts). */
 :root{
-  /* ---- cool near-black "mission control" palette (dark = default) ---- */
-  --bg:#080a0e;
-  --bg-2:#0a0d12;
-  --chrome:#0a0d12;          /* top bar / sidebar base */
-  --panel:#0c1119;
-  --panel-2:#0b0f16;
-  --surface:#0c1119;
-  --surface-2:#0a0e14;
-  --raise:#0e141d;
-  --code-bg:#0a0e14;
+  /* ---- type ---- */
+  --font-display:var(--nf-spectral),Georgia,serif;             /* page titles + section headers only */
+  --font-body:var(--nf-source-sans),system-ui,sans-serif;      /* everything else: rows, chips, labels, controls */
+  --font-mono:var(--nf-jetbrains-mono),ui-monospace,monospace; /* code blocks, terminal, metadata (user-selectable — Settings → Appearance) */
+  --font-prompt:var(--font-body);                              /* composer / prompt-input (user-selectable) */
+  --display-weight:500;
+  --display-tracking:-0.005em;
+  --sans:var(--font-body);   /* legacy alias — most of the component CSS below still reads --sans */
+  --mono:var(--font-mono);   /* legacy alias */
 
-  --ink:#f3f6fa;
-  --ink-2:#c4ccd6;
-  --ink-3:#99a4b3;
-  --ink-4:#5c6776;
+  /* ---- surfaces ----
+     --surface-2/--raise step away from --panel toward --ink (not --bg): in the
+     original palette --surface-2/--raise were LIGHTER than --panel in dark mode
+     (a "lifted" surface) and only slightly different in light mode, which is
+     what mixing toward the high-contrast ink primitive reproduces in both
+     modes; mixing toward --bg would have gone the wrong direction in dark. */
+  --bg-2:color-mix(in oklab, var(--panel) 45%, var(--bg));
+  --chrome:var(--bg);
+  --panel-2:color-mix(in oklab, var(--panel) 60%, var(--bg));
+  --surface:var(--panel);
+  --surface-2:color-mix(in oklab, var(--ink) 4%, var(--panel));
+  --raise:color-mix(in oklab, var(--ink) 7%, var(--panel));
+  --code-bg:var(--term);
+  /* Titlebar backdrop specifically (not --chrome, which backs solid bars like
+     the terminal drawer): kept translucent so its backdrop-filter:blur still
+     shows the workspace through it, matching the original rgba(--bg,.82/.85). */
+  --topbar:color-mix(in oklab, var(--bg) 85%, transparent);
 
-  --line:rgba(150,170,200,.10);
-  --line-2:rgba(150,170,200,.055);
-  --line-strong:rgba(150,170,200,.18);
+  /* ---- ink ---- */
+  --ink-2:color-mix(in oklab, var(--ink) 72%, var(--dim));
+  --ink-3:var(--dim);
+  --ink-4:color-mix(in oklab, var(--dim) 65%, transparent);
 
-  --accent:#4d8cff;          /* primary / live (electric blue) */
-  --accent-soft:rgba(77,140,255,.14);
-  --accent-ink:#9cc0ff;
+  /* ---- lines ---- */
+  --line-2:color-mix(in oklab, var(--line) 55%, transparent);
+  --line-strong:color-mix(in oklab, var(--ink) 22%, var(--line));
 
-  --red:#ff6a45;             /* alias of coral */
-  --red-soft:rgba(255,106,69,.12);
-  --coral:#ff6a45;           /* needs you (alert) */
-  --coral-soft:rgba(255,106,69,.12);
-  --amber:#f5a623;           /* blocked */
-  --amber-soft:rgba(245,166,35,.12);
-  --green:#38d39f;           /* done / merged */
-  --green-soft:rgba(56,211,159,.12);
-  --blue:#4d8cff;            /* live / working */
-  --blue-soft:rgba(77,140,255,.14);
-  --calandria:#a978ff;        /* Calandria's own agent work */
+  /* ---- accent ----
+     --accent-ink deviates from the naive var(--bg) mapping: it's read as TEXT
+     on softly-tinted surfaces (e.g. .nav-item.active), not as ink drawn on a
+     solid accent fill (that's --on-accent, below). --bg is the palette's most
+     extreme value — near-black in dark, near-white in light — which is
+     illegible as text on a panel-toned background. Mixing toward --ink (the
+     primary, always-legible-on-panel text color) reproduces the original
+     relationship: a lighter accent tint in dark mode, a darker one in light. */
+  --accent-soft:color-mix(in oklab, var(--accent) 15%, transparent);
+  --accent-ink:color-mix(in oklab, var(--accent) 55%, var(--ink));
+  /* Ink drawn ON a solid accent/green/etc. fill (buttons, avatars): --bg sits
+     at the extreme opposite end of lightness from --accent in every theme, so
+     it reliably contrasts against a mid-saturation accent fill in both modes. */
+  --on-accent:var(--bg);
 
-  --grid:rgba(150,170,200,.05);
-  --row-sel:rgba(150,170,200,.07);
-  --on-accent:#06070a;       /* ink on a filled accent/blue/green button */
-  --topbar:rgba(8,10,14,.82);
+  /* ---- status colors (legacy names → new semantic primitives) ---- */
+  --red:var(--err);
+  --red-soft:color-mix(in oklab, var(--err) 16%, transparent);
+  --coral:var(--err);
+  --coral-soft:color-mix(in oklab, var(--err) 16%, transparent);
+  --amber:var(--warn);
+  --amber-soft:color-mix(in oklab, var(--warn) 16%, transparent);
+  --green:var(--run);
+  --green-soft:var(--run-bg);
+  --blue:var(--accent);
+  --blue-soft:var(--accent-soft);
+  /* --calandria stays a theme primitive (set per-[data-theme] block above) —
+     it must stay distinguishable from --s1..--s5 in the chart series. */
 
-  --glow-blue:0 0 10px #4d8cff;
-  --glow-coral:0 0 10px #ff6a45;
-  --glow-green:0 0 10px #38d39f;
+  --grid:color-mix(in oklab, var(--line) 45%, transparent);
+  --row-sel:color-mix(in oklab, var(--accent) 9%, transparent);
 
-  --diff-add-bg:rgba(56,211,159,.10);
-  --diff-del-bg:rgba(255,106,69,.10);
+  /* One glow shape for every theme/mode (the old dark/light split used two
+     different shapes — a blurred glow vs. a solid ring — which no longer
+     applies now that every theme shares one derivation block). */
+  --glow-blue:0 0 10px color-mix(in oklab, var(--accent) 40%, transparent);
+  --glow-coral:0 0 10px color-mix(in oklab, var(--err) 40%, transparent);
+  --glow-green:0 0 10px color-mix(in oklab, var(--run) 40%, transparent);
 
-  /* Geist, not Space Grotesk. Space Grotesk has no upright quote: its U+0027
-     and U+0022 are composite glyphs built from the SAME component, at the same
-     identity transform, as U+2019/U+201D — the CLOSING curly marks (the opening
-     forms are that component rotated 180°). So a typed 'foo' rendered as a pair
-     of closing curly quotes in the composer, which reads as the prompt being
-     corrupted on its way to the agent. It never was: the characters are plain
-     ASCII, confirmed against the whole message store. But the composer is where
-     shell commands, paths and regexes get typed, so a quote that looks like a
-     different character than it is costs real debugging time — it cost a full
-     investigation once already. Geist draws both marks upright, is built for
-     developer tooling, and unlike Hanken Grotesk (which this app was loading in
-     five weights and using nowhere) it ships `tnum`, which .tnum below needs.
-     Requested as a variable font so the 550/650 weights used in this file
-     render as authored instead of being rounded to a static instance. */
-  --sans:'Geist', system-ui, sans-serif;
-  --mono:'JetBrains Mono', ui-monospace, monospace;
+  --diff-add-bg:color-mix(in oklab, var(--run) 12%, transparent);
+  --diff-del-bg:color-mix(in oklab, var(--err) 12%, transparent);
 
+  /* ---- geometry — unchanged from the old :root, just relocated here ---- */
   --r-sm:7px;
   --r:10px;
   --r-lg:14px;
   --r-xl:18px;
 
+  /* One shadow ramp for every theme (the old dark/light split used black vs.
+     a navy-tinted shadow at different opacities; a plain black shadow at low
+     opacity reads fine on light surfaces too, so this simplifies to one set). */
   --sh-1:0 1px 2px rgba(0,0,0,.34);
   --sh-2:0 10px 28px rgba(0,0,0,.4);
   --sh-3:0 24px 60px rgba(0,0,0,.55);
@@ -86,59 +126,10 @@
   --text-width:760px;        /* transcript + composer measure; "none" = full pane (Appearance → Text width) */
 }
 
-[data-theme="light"]{
-  /* ---- warm paper variant ---- */
-  --bg:#f4f1ea;
-  --bg-2:#efeae0;
-  --chrome:#efeae0;
-  --panel:#fffdf8;
-  --panel-2:#f6f2ea;
-  --surface:#fffdf8;
-  --surface-2:#f6f2ea;
-  --raise:#ffffff;
-  --code-bg:#f6f2ea;
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
-  --ink:#14171c;
-  --ink-2:#46505c;
-  --ink-3:#5b6470;
-  --ink-4:#8a8678;
-
-  --line:rgba(20,23,28,.10);
-  --line-2:rgba(20,23,28,.055);
-  --line-strong:rgba(20,23,28,.16);
-
-  --accent:#1f5fd6;
-  --accent-soft:rgba(31,95,214,.10);
-  --accent-ink:#1a4fb0;
-
-  --red:#e0512f;
-  --red-soft:rgba(224,81,47,.10);
-  --coral:#e0512f;
-  --coral-soft:rgba(224,81,47,.10);
-  --amber:#b07d18;
-  --amber-soft:rgba(176,125,24,.12);
-  --green:#178a5f;
-  --green-soft:rgba(23,138,95,.12);
-  --blue:#1f5fd6;
-  --blue-soft:rgba(31,95,214,.10);
-  --calandria:#7c3fc4;
-
-  --grid:rgba(20,30,50,.045);
-  --row-sel:rgba(20,23,28,.045);
-  --on-accent:#ffffff;
-  --topbar:rgba(244,241,234,.85);
-
-  --glow-blue:0 0 0 4px rgba(31,95,214,.14);
-  --glow-coral:0 0 0 4px rgba(224,81,47,.14);
-  --glow-green:0 0 0 4px rgba(23,138,95,.14);
-
-  --diff-add-bg:rgba(23,138,95,.10);
-  --diff-del-bg:rgba(224,81,47,.10);
-
-  --sh-1:0 1px 2px rgba(20,30,50,.05), 0 1px 1px rgba(20,30,50,.04);
-  --sh-2:0 10px 28px rgba(20,30,50,.08);
-  --sh-3:0 18px 44px rgba(20,30,50,.12);
-}
+a{color:var(--accent);text-decoration:none;}
+a:hover{text-decoration:underline;text-underline-offset:2px;}
 
 *{box-sizing:border-box;}
 html,body{margin:0;height:100%;}
@@ -171,13 +162,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
   padding:0 16px;background:var(--topbar);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-bottom:1px solid var(--line);z-index:30;
 }
-@keyframes tb-spin{to{transform:rotate(360deg);}}
 .tb-left{grid-column:1;justify-self:start;display:flex;align-items:center;gap:14px;min-width:0;}
-.tb-logo{display:flex;align-items:center;gap:10px;}
-.tb-ring{position:relative;width:22px;height:22px;border-radius:50%;border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
-.tb-core{width:4px;height:4px;border-radius:50%;background:var(--accent);box-shadow:var(--glow-blue);}
-.tb-arc{position:absolute;inset:-1px;border-radius:50%;background:conic-gradient(from 0deg,var(--accent),transparent 90deg);animation:tb-spin 3.4s linear infinite;opacity:.55;}
-.tb-word{font-weight:700;letter-spacing:.04em;color:var(--ink);font-size:15px;}
+/* Logomark + wordmark — see app/Logo.tsx. Lockup gap ≈ 0.3× the 14px wordmark
+   size; the glyph is colored via currentColor through this wrapper. */
+.tb-logo{display:flex;align-items:center;gap:4px;color:var(--accent);}
+.tb-word{font-family:var(--font-display);font-weight:500;font-size:14px;letter-spacing:.005em;color:var(--ink);}
 .tb-div{width:1px;height:18px;background:var(--line-strong);}
 .tb-crumb{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;min-width:0;}
 .tb-crumb .cz{color:var(--ink-4);}
@@ -534,7 +523,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    same dashed accent shell, wash, and spark header */
 .bcol.k-suggested{border:1px dashed var(--accent);background:var(--accent-soft);padding:0 4px;}
 .bcol.k-suggested .bcol-h .cn{color:var(--accent-ink);display:flex;align-items:center;gap:6px;}
-[data-theme="dark"] .bcol.k-suggested .bcol-h .cn{color:#D98C6A;}
 .bcol.k-suggested .bcol-h .cn svg{width:11px;height:11px;}
 .bcol.k-suggested .bcol-rule{background:transparent;}
 .bcol-h{flex:0 0 auto;height:30px;display:flex;align-items:center;gap:8px;padding:0 6px;}
@@ -654,16 +642,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 
 /* priority pill */
 .pri{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px;flex:0 0 auto;line-height:1.35;}
-.pri.hi{background:var(--red-soft);color:#A23E2A;}
-.pri.med{background:var(--amber-soft);color:#9A6E14;}
+.pri.hi{background:var(--red-soft);color:var(--err);}
+.pri.med{background:var(--amber-soft);color:var(--warn);}
 .pri.lo{background:var(--surface-2);color:var(--ink-3);border:1px solid var(--line-2);}
-[data-theme="dark"] .pri.hi{color:#E08F78;}
-[data-theme="dark"] .pri.med{color:#DCB458;}
 
 /* suggested tray */
 .suggest{margin:6px 10px 12px;border-radius:var(--r-lg);border:1px dashed var(--accent);background:var(--accent-soft);overflow:hidden;}
 .suggest-h{display:flex;align-items:center;gap:7px;padding:10px 13px 8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);}
-[data-theme="dark"] .suggest-h{color:#D98C6A;}
 .suggest-h .sp{margin-left:auto;font-weight:600;}
 .sug{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
 .sug-acts{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
@@ -884,7 +869,6 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .btn-line{border:1px solid var(--line-strong);color:var(--ink-2);background:var(--surface);}
 .btn-line:hover{background:var(--surface-2);color:var(--ink);}
 .btn-line.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
-[data-theme="dark"] .btn-line.on{color:#E0A07F;}
 .btn-accent{background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-1);}
 .btn-accent:hover{filter:brightness(1.06);}
 .btn-accent:disabled{filter:none;}
@@ -914,7 +898,6 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .msg-body p{margin:0 0 10px;}
 .msg-body p:last-child{margin-bottom:0;}
 .msg-body code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);padding:1px 5px;border-radius:5px;color:var(--accent-ink);}
-[data-theme="dark"] .msg-body code{color:#E0A07F;}
 .msg-body strong{font-weight:700;}
 
 .msg.user .msg-body{background:var(--accent-soft);border:1px solid rgba(194,96,60,.2);border-radius:var(--r-lg);padding:13px 15px;}
@@ -945,8 +928,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 /* Expanded Edit/Write diff: colored full-width rows, no wrap (scroll instead). */
 .tool-pre.diff{padding:8px 0;white-space:pre;word-break:normal;}
 .tool-pre.diff .dl{padding:0 13px;}
-.tool-pre.err{color:#A23E2A;}
-[data-theme="dark"] .tool-pre.err{color:#E08F78;}
+.tool-pre.err{color:var(--err);}
 .tool-divider{padding:6px 13px 4px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);border-top:1px dashed var(--line-strong);}
 
 /* ---- peek: the always-visible "⎿" tier (mimics Claude Code) ---- */
@@ -1036,7 +1018,6 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md p{margin:0 0 10px;}
 .md strong{font-weight:700;}
 .md a{color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px;}
-[data-theme="dark"] .md a{color:#E0A07F;}
 .md ul,.md ol{margin:8px 0;padding-left:22px;}
 .md li{margin-bottom:4px;}
 .md li::marker{color:var(--ink-3);}
@@ -1046,7 +1027,6 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md h3{font-size:14.5px;}
 .md h4{font-size:13px;}
 .md code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);padding:1px 5px;border-radius:5px;color:var(--accent-ink);}
-[data-theme="dark"] .md code{color:#E0A07F;}
 .md pre{margin:0 0 12px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--r);padding:12px 14px;overflow-x:auto;}
 .md pre code{display:block;background:none;border:none;padding:0;color:var(--ink);font-size:12.5px;line-height:1.55;}
 .md blockquote{margin:8px 0;padding:2px 0 2px 14px;border-left:3px solid var(--line-strong);color:var(--ink-2);}
@@ -1069,21 +1049,19 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .hljs-addition{color:var(--green);}
 .hljs-emphasis{font-style:italic;}
 .hljs-strong{font-weight:700;}
-[data-theme="dark"] .hljs-keyword,[data-theme="dark"] .hljs-literal,[data-theme="dark"] .hljs-type{color:#C58FC4;}
-[data-theme="dark"] .hljs-string{color:#8FBE82;}
-[data-theme="dark"] .hljs-number{color:#DCB458;}
-[data-theme="dark"] .hljs-built_in,[data-theme="dark"] .hljs-tag,[data-theme="dark"] .hljs-name{color:#6FA8CF;}
-[data-theme="dark"] .hljs-function .hljs-title,[data-theme="dark"] .hljs-title.function_{color:#E08F78;}
-[data-theme="dark"] .hljs-attr,[data-theme="dark"] .hljs-variable{color:#E0A07F;}
+[data-mode="dark"] .hljs-keyword,[data-mode="dark"] .hljs-literal,[data-mode="dark"] .hljs-type{color:#C58FC4;}
+[data-mode="dark"] .hljs-string{color:#8FBE82;}
+[data-mode="dark"] .hljs-number{color:#DCB458;}
+[data-mode="dark"] .hljs-built_in,[data-mode="dark"] .hljs-tag,[data-mode="dark"] .hljs-name{color:#6FA8CF;}
+[data-mode="dark"] .hljs-function .hljs-title,[data-mode="dark"] .hljs-title.function_{color:#E08F78;}
+[data-mode="dark"] .hljs-attr,[data-mode="dark"] .hljs-variable{color:#E0A07F;}
 
 /* system / error notice */
 /* pre-line: provider error text carries its own line breaks (and the recovery
    notices are appended after a blank line) — collapsing them ran the raw error
    and the explanation together as one paragraph. */
-.msg.system .msg-body{font-family:var(--mono);font-size:12px;color:#A23E2A;background:var(--red-soft);border:1px solid rgba(192,80,60,.3);border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
-[data-theme="dark"] .msg.system .msg-body{color:#E08F78;}
+.msg.system .msg-body{font-family:var(--mono);font-size:12px;color:var(--err);background:var(--red-soft);border:1px solid rgba(192,80,60,.3);border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
 .msg.system.info .msg-body{color:var(--green);background:var(--green-soft);border-color:rgba(110,150,90,.3);}
-[data-theme="dark"] .msg.system.info .msg-body{color:var(--green);}
 /* context-overflow recovery — warning line + one-click /clear */
 .msg.system.overflow .overflow-actions{margin-top:9px;}
 .msg.system.overflow .overflow-actions .btn{font-family:var(--sans);}
@@ -1099,7 +1077,6 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sbreak .ln{flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--line-strong) 0 5px,transparent 5px 10px);}
 .sbreak .card{flex:0 0 auto;max-width:66%;text-align:center;border:1px solid var(--accent);border-radius:var(--r-lg);background:var(--accent-soft);padding:11px 17px;box-shadow:var(--sh-1);}
 .sbreak .card .cl{display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--mono);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--accent-ink);}
-[data-theme="dark"] .sbreak .card .cl{color:#D98C6A;}
 .sbreak .card .ct{font-size:12.5px;color:var(--ink-2);margin-top:5px;line-height:1.45;text-align:left;white-space:pre-wrap;max-height:160px;overflow-y:auto;}
 .sbreak .card .ct b{color:var(--ink);}
 
@@ -1124,8 +1101,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .skel-lrow{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--line);}
 .skel-lrow:last-child{border-bottom:none;}
 /* recoverable inline error: message + optional retry, same voice as .msg.system */
-.err-note{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;line-height:1.45;color:#A23E2A;background:var(--red-soft);border:1px solid rgba(192,80,60,.3);}
-[data-theme="dark"] .err-note{color:#E08F78;}
+.err-note{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;line-height:1.45;color:var(--err);background:var(--red-soft);border:1px solid rgba(192,80,60,.3);}
 .err-note .err-msg{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;}
 .err-note .btn{flex:0 0 auto;}
 
@@ -1138,7 +1114,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
-.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--sans);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;}
+.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;}
 .comp-area textarea::placeholder{color:var(--ink-4);}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
@@ -1187,7 +1163,6 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .slash-item{display:flex;align-items:baseline;gap:9px;padding:8px 13px;cursor:pointer;}
 .slash-item:hover,.slash-item.act{background:var(--surface-2);}
 .slash-item .cmd{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--accent-ink);white-space:nowrap;}
-[data-theme="dark"] .slash-item .cmd{color:#D98C6A;}
 .slash-item .arg{font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
 /* Descriptions are the agent's own prose and run long — let one truncate
    rather than wrap a row to four lines and push the rest off the list. */
@@ -1249,7 +1224,6 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .seg button:hover{border-color:var(--line-strong);background:var(--surface-2);}
 .seg button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
 .seg button svg{width:14px;height:14px;}
-[data-theme="dark"] .seg button.on{color:#E0A07F;}
 .seg button .pdot{width:9px;height:9px;border-radius:50%;}
 
 .modal-close{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-3);}
@@ -1269,11 +1243,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .tb-btn svg{width:14px;height:14px;}
 
 .term-drawer{
-  --term-bg:#FBFAF6;
+  --term-bg:var(--term);
   flex:0 0 auto;display:flex;flex-direction:column;min-height:0;
   border-top:1px solid var(--line-strong);background:var(--term-bg);
 }
-[data-theme="dark"] .term-drawer{--term-bg:#15140f;}
 .term-drawer.collapsed{height:0 !important;border-top:0;overflow:hidden;}
 .term-resize{height:6px;flex:0 0 auto;cursor:row-resize;background:var(--chrome);border-bottom:1px solid var(--line);}
 .term-resize:hover{background:var(--accent-soft);}
@@ -1298,11 +1271,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    the button-bar; everything here just lays out bar / output / keys and respects
    the notch + home-indicator insets. */
 .mterm{
-  --term-bg:#FBFAF6;
+  --term-bg:var(--term);
   position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;
   background:var(--term-bg);overflow:hidden;
 }
-[data-theme="dark"] .mterm{--term-bg:#15140f;}
 .mterm.hidden{display:none;}
 .mterm-bar{
   display:flex;align-items:center;gap:8px;flex:0 0 auto;
@@ -1387,7 +1359,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* ⌘K command palette */
 .palette-scrim{position:fixed;inset:0;background:rgba(0,0,0,.38);backdrop-filter:blur(3px);z-index:240;display:flex;align-items:flex-start;justify-content:center;padding-top:13vh;animation:fadein .12s ease;}
 .palette{width:580px;max-width:92vw;display:flex;flex-direction:column;background:var(--raise);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--sh-3);overflow:hidden;animation:pop .14s ease;}
-.palette-input{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);}
+.palette-input{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);transition:border-color .12s;}
+.palette-input:focus-within{border-color:var(--accent);}
 .palette-input .p-ic{display:flex;width:15px;height:15px;color:var(--ink-3);flex:0 0 auto;}
 .palette-input .p-ic svg{width:15px;height:15px;}
 .palette-input input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--ink);font-size:14px;font-family:inherit;}
@@ -1562,10 +1535,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .wiz-scrim{position:fixed;inset:0;background:rgba(38,36,31,.55);backdrop-filter:blur(4px);display:grid;place-items:center;z-index:300;animation:fadein .18s ease;padding:24px;}
 .wiz{display:flex;width:min(940px,100%);height:min(640px,calc(100vh - 48px));background:var(--panel);border:1px solid var(--line-strong);border-radius:var(--r-xl,16px);box-shadow:var(--sh-3);overflow:hidden;animation:pop .22s cubic-bezier(.2,.9,.3,1.2);}
 .wiz-rail{flex:0 0 230px;display:flex;flex-direction:column;gap:4px;padding:22px 18px;background:var(--panel-2);border-right:1px solid var(--line);}
-.wiz-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;letter-spacing:-.01em;}
-.wiz-brand .glyph{width:20px;height:20px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:#fff;}
-.wiz-brand .glyph svg{width:13px;height:13px;}
-.wiz-rail-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin:3px 0 18px 1px;}
+.wiz-brand{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:500;font-size:15px;letter-spacing:.005em;color:var(--ink);}
+.wiz-brand svg{color:var(--accent);}
+.wiz-tagline{font-size:11.5px;line-height:1.4;color:var(--ink-3);margin:4px 0 14px 1px;max-width:190px;}
+.wiz-rail-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin:0 0 18px 1px;}
 .wiz-steps{display:flex;flex-direction:column;gap:2px;}
 .wiz-stepitem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r);color:var(--ink-3);font-size:13px;font-weight:600;transition:background .12s,color .12s;}
 .wiz-stepitem.active{background:var(--accent-soft);color:var(--accent-ink);}
@@ -1607,7 +1580,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .wiz-scrim{padding:0;}
   .wiz{flex-direction:column;width:100%;height:100%;border-radius:0;border:none;}
   .wiz-rail{flex:0 0 auto;flex-direction:row;align-items:center;gap:10px;padding:12px 14px;overflow-x:auto;border-right:none;border-bottom:1px solid var(--line);}
-  .wiz-rail-sub,.wiz-steplabel{display:none;}
+  .wiz-rail-sub,.wiz-steplabel,.wiz-tagline{display:none;}
   .wiz-brand{flex:0 0 auto;}
   .wiz-steps{flex-direction:row;flex:1;}
   .wiz-skip{flex:0 0 auto;}

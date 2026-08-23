@@ -319,9 +319,57 @@ export type SaveAction = "add" | "start";
 export type View = "workspace" | "settings" | "insights";
 // Purely cosmetic, client-only look-and-feel prefs (the "Appearance" panel).
 // `wide` is a string ("0"/"1") rather than a boolean so every field goes through
-// the same `setAppearance(key, value: string)` setter that theme and density use.
-export interface Appearance { theme: "light" | "dark"; density: string; wide: string; }
-export const DEFAULT_APPEARANCE: Appearance = { theme: "dark", density: "1", wide: "0" };
+// the same `setAppearance(key, value: string)` setter that palette/mode/density use.
+//
+// `palette` picks one of the four design-system themes (docs/design/handoff/styles.css);
+// `mode` is "system" (follow the OS) or a pinned light/dark. usePrefs.ts resolves
+// the pair to a `data-theme="<palette>-<mode>"` attribute on <html>, plus a bare
+// `data-mode="<mode>"` for the handful of component rules that key off resolved
+// mode regardless of palette.
+export type Palette = "cherenkov" | "heavywater" | "denoche" | "basic";
+export type ThemeMode = "system" | "light" | "dark";
+
+// User-selectable code/terminal font (Settings → Appearance, full picker lands in
+// a later wave — see AppearancePanel.tsx). Default: JetBrains Mono.
+export type MonoFontId = "jetbrains-mono" | "fira-code" | "cascadia-code" | "red-hat-mono" | "atkinson-mono";
+// User-selectable prompt-input font. Default: Source Sans 3.
+export type PromptFontId = "source-sans" | "literata" | "spectral" | "atkinson-next";
+
+export interface Appearance {
+  palette: Palette;
+  mode: ThemeMode;
+  monoFont: MonoFontId;
+  promptFont: PromptFontId;
+  density: string;
+  wide: string;
+}
+export const DEFAULT_APPEARANCE: Appearance = {
+  palette: "cherenkov",
+  mode: "system",
+  monoFont: "jetbrains-mono",
+  promptFont: "source-sans",
+  density: "1",
+  wide: "0",
+};
+
+// Font metadata: id → display label + a full CSS font-family stack. `cssFamily`
+// points at the next/font CSS variable (app/fonts.ts) plus a generic fallback,
+// so it's usable directly in globals.css tokens; xterm needs a literal family
+// name instead of a var(), so Terminal.tsx resolves these via getComputedStyle
+// at mount rather than reading cssFamily verbatim.
+export const MONO_FONTS: Record<MonoFontId, { label: string; cssFamily: string }> = {
+  "jetbrains-mono": { label: "JetBrains Mono", cssFamily: "var(--nf-jetbrains-mono), ui-monospace, monospace" },
+  "fira-code": { label: "Fira Code", cssFamily: "var(--nf-fira-code), ui-monospace, monospace" },
+  "cascadia-code": { label: "Cascadia Code", cssFamily: "var(--nf-cascadia-code), ui-monospace, monospace" },
+  "red-hat-mono": { label: "Red Hat Mono", cssFamily: "var(--nf-red-hat-mono), ui-monospace, monospace" },
+  "atkinson-mono": { label: "Atkinson Hyperlegible Mono", cssFamily: "var(--nf-atkinson-mono), ui-monospace, monospace" },
+};
+export const PROMPT_FONTS: Record<PromptFontId, { label: string; cssFamily: string }> = {
+  "source-sans": { label: "Source Sans 3", cssFamily: "var(--nf-source-sans), system-ui, sans-serif" },
+  literata: { label: "Literata", cssFamily: "var(--nf-literata), Georgia, serif" },
+  spectral: { label: "Spectral", cssFamily: "var(--nf-spectral), Georgia, serif" },
+  "atkinson-next": { label: "Atkinson Hyperlegible Next", cssFamily: "var(--nf-atkinson-next), system-ui, sans-serif" },
+};
 // What `.tw` / `.composer-inner` cap their column at, applied as --text-width on
 // <html>. "Reading" is the 760px measure the design was drawn at; "full" lets the
 // transcript and composer use the whole session pane (the 28px gutter stays).
