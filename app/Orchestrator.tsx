@@ -206,10 +206,19 @@ export default function Orchestrator() {
   // o.view toggle so the URL and the desktop chart icon stay in sync with it.
   const [mobileTab, setMobileTab] = useState<MobileTabId>("board");
   useEffect(() => { if (isMobile && o.view === "insights") setMobileTab("insights"); }, [isMobile, o.view]);
+  // Programmatic navigation to a different task (NEED-YOU pill, notification
+  // click, ⌘K) changes selTask without going through the tab bar, so a tab
+  // left on insights/diffs/terminals swallowed the drill-down silently — the
+  // screen never moved. Snap back to the board, where the task is visible.
+  const prevSelTaskRef = useRef(selTask);
+  useEffect(() => {
+    if (isMobile && selTask && selTask !== prevSelTaskRef.current) setMobileTab("board");
+    prevSelTaskRef.current = selTask;
+  }, [isMobile, selTask]);
   const selectMobileTab = (t: MobileTabId) => {
     setMobileTab(t);
     if (t === "insights") o.setView("insights");
-    else if (o.view === "insights") o.setView("workspace");
+    else if (o.view === "insights" || o.view === "settings") o.setView("workspace");
     if (t === "terminals") o.setTermMounted(true);
   };
 

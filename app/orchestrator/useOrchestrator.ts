@@ -47,11 +47,19 @@ export function useOrchestrator() {
   useEffect(() => {
     setSparklines((prev) => {
       let changed = false;
-      const next: Record<string, number[]> = { ...prev };
+      // Rebuild from the live task list rather than spreading `prev` — drops
+      // rings for tasks that moved project or were deleted, so the map doesn't
+      // grow forever across a long-lived tab.
+      const liveIds = new Set(tasks.map((t) => t.id));
+      const next: Record<string, number[]> = {};
+      for (const id of Object.keys(prev)) {
+        if (liveIds.has(id)) next[id] = prev[id];
+        else changed = true;
+      }
       for (const t of tasks) {
         if (typeof t.diff_add !== "number" || typeof t.diff_del !== "number") continue;
         const v = t.diff_add + t.diff_del;
-        const ring = prev[t.id] ?? [];
+        const ring = next[t.id] ?? [];
         if (ring[ring.length - 1] === v) continue;
         changed = true;
         next[t.id] = [...ring, v].slice(-SPARK_LEN);

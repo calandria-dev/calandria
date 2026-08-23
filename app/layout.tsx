@@ -6,7 +6,10 @@ import { posthogSnippet } from "@/lib/analytics";
 import { fontVariables } from "./fonts";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://calandria.dev"),
+  // Empty PUBLIC_BASE_URL (the default — same-origin deployments) can't build a
+  // URL; leave metadataBase unset rather than hardcoding a domain this instance
+  // may not own. Only set for instances that configured a public origin.
+  metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
   title: "Calandria — build, verify & host every app with agents",
   description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
 };

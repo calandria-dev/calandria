@@ -846,6 +846,13 @@ export async function taskDiffStat(
   worktreePath: string,
   baseSha: string
 ): Promise<{ additions: number; deletions: number; files: number }> {
+  // resolveBase's unresolvable-baseSha fallback walks all the way back to the
+  // repo's first commit (rev-list --max-parents=0) — exactly wrong for this
+  // cheap polling path, which would then diff the entire history and cache a
+  // huge bogus stat. Verify baseSha resolves in the worktree first; if it
+  // doesn't (pruned after a squash-merge or gc), fail closed — the caller
+  // already catches and just omits diff_add/diff_del for that task.
+  await git(worktreePath, ["cat-file", "-e", `${baseSha}^{commit}`]);
   const base = await resolveBase(worktreePath, baseSha, "");
   const numstat = await git(worktreePath, ["diff", "--numstat", base, "--"]).catch(() => "");
   let additions = 0, deletions = 0, files = 0;

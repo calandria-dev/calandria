@@ -19,6 +19,15 @@ const diffStatCache = new Map<string, { at: number; additions: number; deletions
 // footer's input. A git failure (worktree torn down mid-request, etc.) must
 // never break the task list, so it just omits the fields for that task.
 async function withDiffStats(project: Project, tasks: TaskWithUsage[]) {
+  // The cache only grows via the `set` below — nothing else evicts entries for
+  // tasks that finish, get deleted from other projects' requests, etc. Sweep
+  // expired ones once the map gets large rather than checking on every call.
+  if (diffStatCache.size > 500) {
+    const now = Date.now();
+    for (const [id, e] of diffStatCache) {
+      if (now - e.at >= DIFF_STAT_TTL_MS) diffStatCache.delete(id);
+    }
+  }
   return Promise.all(
     tasks.map(async (t) => {
       // "Needs review" isn't a separate status — it's in_progress plus the
@@ -71,6 +80,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   for (const t of tasks) {
     if (project.repo_path && t.worktree_path) await removeWorktree(project.repo_path, t.worktree_path, t.work_branch);
     removeTaskUploads(t.id);
+    diffStatCache.delete(t.id);
   }
   // Kill this project's managed dev-server processes and drop their live registry
   // entries BEFORE the cascade drops the services rows — otherwise the detached

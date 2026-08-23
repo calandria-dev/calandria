@@ -477,10 +477,10 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const totalMark = overheadEstimated || estIds.size > 0 ? "~" : "";
 
   const kpis: { label: string; value: ReactNode; sub: string; spark: ReactNode; d: { text: string; arrow: string; color: string } }[] = [
-    { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--blue)" />, d: delta(cur.spend, prev.spend) },
+    { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--s5)" />, d: delta(cur.spend, prev.spend) },
     { label: "Calandria overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={CALANDRIA_HUE} />, d: delta(overheadPct, prevOverheadPct) },
     { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--run)" />, d: delta(cur.tokens, prev.tokens) },
-    { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--blue)" />, d: delta(cur.tasks, prev.tasks) },
+    { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--s5)" />, d: delta(cur.tasks, prev.tasks) },
     {
       label: "Lines merged",
       value: (
@@ -677,8 +677,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
               >
                 <DailyChart
                   id="tasks" rows={rows} max={taskMax} hover={hover} onHover={setHover}
-                  segsFor={(r) => [{ v: r.tasks, color: "var(--blue)" }]}
-                  tip={(r) => ({ title: fmtDateLong(r.date), rows: [{ label: "Tasks shipped", val: String(Math.round(r.tasks)), color: "var(--blue)" }] })}
+                  segsFor={(r) => [{ v: r.tasks, color: "var(--s5)" }]}
+                  tip={(r) => ({ title: fmtDateLong(r.date), rows: [{ label: "Tasks shipped", val: String(Math.round(r.tasks)), color: "var(--s5)" }] })}
                 />
                 <XAxis rows={rows} />
               </ChartCard>
