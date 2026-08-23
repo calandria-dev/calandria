@@ -61,6 +61,9 @@ export interface TaskRow {
   context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
+  work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
+  diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
+  diff_del?: number; // same, deletions
 }
 // A single row in the titlebar "need you" dropdown: an awaiting task plus enough
 // of its project to label and color it. Mirrors lib/store.ts listNeedsYou().

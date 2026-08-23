@@ -834,6 +834,33 @@ async function resolveBase(worktreePath: string, baseSha: string, baseBranch: st
 }
 
 /**
+ * Just the totals — for the board card footer, polled every few seconds
+ * alongside the task list. One subprocess (plus resolveBase's own cat-file
+ * check), versus taskDiff's whole-tree patch + untracked reads + ahead-count.
+ * No baseBranch: the polling caller doesn't have it handy, and the
+ * live-rebase-drift correction resolveBase does with one is a refinement this
+ * cheap path doesn't need.
+ */
+export async function taskDiffStat(
+  repoPath: string,
+  worktreePath: string,
+  baseSha: string
+): Promise<{ additions: number; deletions: number; files: number }> {
+  const base = await resolveBase(worktreePath, baseSha, "");
+  const numstat = await git(worktreePath, ["diff", "--numstat", base, "--"]).catch(() => "");
+  let additions = 0, deletions = 0, files = 0;
+  for (const line of numstat.split("\n")) {
+    if (!line) continue;
+    const [add, del] = line.split("\t");
+    files++;
+    if (add === "-" || del === "-") continue; // binary — numstat has no counts
+    additions += parseInt(add, 10) || 0;
+    deletions += parseInt(del, 10) || 0;
+  }
+  return { additions, deletions, files };
+}
+
+/**
  * Everything a task changed versus its base: committed + uncommitted tracked
  * changes (`git diff <base>`) plus untracked files (shown as additions).
  */

@@ -36,6 +36,29 @@ export function useOrchestrator() {
   // the previous project's (stale) list.
   const [tasksFor, setTasksFor] = useState<string | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
+  // Board-card sparkline history: last ~30 samples of diff_add+diff_del per
+  // task, sampled off every `tasks` update (loadTasks, SSE-driven patches —
+  // whatever landed the current diff_add/diff_del). Consecutive identical
+  // samples are deduped so a quiet task doesn't draw a flat line's worth of
+  // redundant points; recomputed here rather than at each write site because
+  // `tasks` is patched from a dozen different callbacks and events.
+  const SPARK_LEN = 30;
+  const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
+  useEffect(() => {
+    setSparklines((prev) => {
+      let changed = false;
+      const next: Record<string, number[]> = { ...prev };
+      for (const t of tasks) {
+        if (typeof t.diff_add !== "number" || typeof t.diff_del !== "number") continue;
+        const v = t.diff_add + t.diff_del;
+        const ring = prev[t.id] ?? [];
+        if (ring[ring.length - 1] === v) continue;
+        changed = true;
+        next[t.id] = [...ring, v].slice(-SPARK_LEN);
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks]);
   const [modal, setModal] = useState<Modal>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -897,7 +920,7 @@ export function useOrchestrator() {
     // state + derived
     booted, bootError, retryBoot: boot, tasksLoading, transcriptLoading,
     projects, activeProjects, deprecatedProjects, selProj, setSelProj, project,
-    tasks, realTasks, suggested, selTask, task, messages, running, runbooks,
+    tasks, realTasks, suggested, selTask, task, messages, running, runbooks, sparklines,
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,

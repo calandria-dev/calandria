@@ -9,6 +9,7 @@ import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
+import { DiffFooter } from "./DiffFooter";
 
 // The kanban alternative to the grouped task list (layout from the Claude
 // Design "Calandria — Board View" study, rendered with the app's own tokens).
@@ -132,12 +133,12 @@ function dayBucket(ts: number): string {
   return "Earlier";
 }
 
-function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, actions }: {
+function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, actions, sparkline }: {
   task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[];
   mini?: boolean; dragging: boolean; canDrag: boolean;
   onSelect: () => void; onDragStart: () => void; onDragOverCard: (e: React.DragEvent) => void;
   onDropOnCard: (e: React.DragEvent) => void; onDragEnd: () => void;
-  onSnooze: (until: number) => void; onUnsnooze: () => void; actions?: ReactNode;
+  onSnooze: (until: number) => void; onUnsnooze: () => void; actions?: ReactNode; sparkline?: number[];
 }) {
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting, the way it does in the list: a parked task must
@@ -205,6 +206,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           )}
         </div>
       )}
+      {!mini && <DiffFooter task={task} points={sparkline} />}
       {(blocked || sessionCount > 0) && !mini && (
         <div className="bc-foot">
           {blocked && (task.auto_start ? (
@@ -224,9 +226,9 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, canDrag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, canDrag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
-  running: Set<string>; blockedBy: Map<string, string[]>;
+  running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   // Dragging is disabled while a search filter is active: hidden cards would be
   // silently dropped from the persisted order.
   canDrag: boolean;
@@ -343,6 +345,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       onDragEnd={reset}
                       onSnooze={(until) => onSnooze(t.id, until)}
                       onUnsnooze={() => onUnsnooze(t.id)}
+                      sparkline={sparklines[t.id]}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
                           <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
@@ -381,9 +384,9 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
 // Full-workspace board shell (desktop): owns everything right of the projects
 // sidebar — header with the List/Board toggle, the board, and (via `children`)
 // the slide-over session panel + drawers the composition root mounts on top.
-export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, running, blockedBy, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, children }: {
+export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, children }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; selTaskId: string | null;
-  running: Set<string>; blockedBy: Map<string, string[]>; loading?: boolean;
+  running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;
   onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void;
@@ -430,7 +433,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, r
       ) : (
         <TaskBoard
           tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
-          running={running} blockedBy={blockedBy} canDrag={!q}
+          running={running} blockedBy={blockedBy} sparklines={sparklines} canDrag={!q}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
           onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}

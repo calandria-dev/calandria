@@ -218,6 +218,7 @@ export default function Orchestrator() {
       width={layout.taskW}
       onCollapse={() => o.setLayout((l) => ({ ...l, taskCollapsed: true }))}
       project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
+      sparklines={o.sparklines}
       loading={o.tasksLoading}
       view={o.taskView} onSetView={setTaskView} onMoveTask={o.moveTask}
       onSelectTask={o.setSelTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
@@ -312,7 +313,7 @@ export default function Orchestrator() {
   const boardWorkspace = project && (
     <BoardWorkspace
       project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested}
-      selTaskId={selTask} running={o.running} blockedBy={o.blockedBy} loading={o.tasksLoading}
+      selTaskId={selTask} running={o.running} blockedBy={o.blockedBy} sparklines={o.sparklines} loading={o.tasksLoading}
       onSetView={setTaskView} onMoveTask={o.moveTask}
       onSelectTask={openBoardTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onEditTask={o.setEditId}

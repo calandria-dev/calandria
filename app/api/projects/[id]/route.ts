@@ -1,18 +1,49 @@
 import { NextResponse } from "next/server";
-import { getProject, updateProject, deleteProject } from "@/lib/store";
-import { listTasks } from "@/lib/store";
-import { removeWorktree } from "@/lib/git";
+import { getProject, updateProject, deleteProject, listTasks, type TaskWithUsage } from "@/lib/store";
+import { removeWorktree, taskDiffStat } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
 import { removeProjectServices } from "@/lib/services";
+import type { Project } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+// Board-card diff stats (branch + additions/deletions) are polled with the
+// rest of the task list, so a bare TTL cache keeps `git diff --numstat` off
+// the hot path without going stale for more than a beat. Module-level, so it
+// survives across requests for the life of the server process.
+const DIFF_STAT_TTL_MS = 15_000;
+const diffStatCache = new Map<string, { at: number; additions: number; deletions: number }>();
+
+// Attach diff_add/diff_del to running tasks with a worktree — the board
+// footer's input. A git failure (worktree torn down mid-request, etc.) must
+// never break the task list, so it just omits the fields for that task.
+async function withDiffStats(project: Project, tasks: TaskWithUsage[]) {
+  return Promise.all(
+    tasks.map(async (t) => {
+      // "Needs review" isn't a separate status — it's in_progress plus the
+      // awaiting flag — so this one check covers both board columns.
+      if (t.status !== "in_progress" || !t.worktree_path) return t;
+      const cached = diffStatCache.get(t.id);
+      if (cached && Date.now() - cached.at < DIFF_STAT_TTL_MS) {
+        return { ...t, diff_add: cached.additions, diff_del: cached.deletions };
+      }
+      try {
+        const { additions, deletions } = await taskDiffStat(project.repo_path, t.worktree_path, t.base_sha);
+        diffStatCache.set(t.id, { at: Date.now(), additions, deletions });
+        return { ...t, diff_add: additions, diff_del: deletions };
+      } catch {
+        return t;
+      }
+    })
+  );
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const project = getProject(id);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ ...project, tasks: listTasks(id) });
+  return NextResponse.json({ ...project, tasks: await withDiffStats(project, listTasks(id)) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
