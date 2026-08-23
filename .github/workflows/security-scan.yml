@@ -48,7 +48,10 @@ jobs:
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/calandria-dev/calandria:latest
+          # `edge` is what main builds move (issue #12 flipped `latest` to track
+          # releases only) — scanning `latest` here would freeze the scan on the
+          # last release instead of guarding what CI currently produces.
+          image-ref: ghcr.io/calandria-dev/calandria:edge
           format: table
           exit-code: "1"
           ignore-unfixed: true
