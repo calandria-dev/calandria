@@ -67,11 +67,19 @@
 # timestamp and `npm ci`/apt fetch live upstreams, so two builds of one commit
 # already differ. Pinning BuildKit would freeze one input to a build that has
 # several other unfrozen ones.
+#
+# CADENCE (early-stage): pushes to main do NOT build the image. The pipeline
+# runs from a nightly schedule — skipped up-front in `prepare` when main's
+# HEAD is already published under its sha- tag — plus v* tags and manual
+# workflow_dispatch. test.yml still runs on every push, so code correctness
+# stays gated per-push; only the image build is batched nightly.
 name: Publish image
 
 on:
+  schedule:
+    # 09:23 UTC ≈ 02:23 PT — off-peak, and off the top of the hour.
+    - cron: "23 9 * * *"
   push:
-    branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -96,8 +104,15 @@ jobs:
   # importantly BUILT_AT, which would otherwise differ per runner.
   prepare:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # The nightly freshness check reads the registry.
+      packages: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
+      # False only when a scheduled run finds HEAD already published; every
+      # other event always proceeds.
+      proceed: ${{ github.event_name != 'schedule' || steps.fresh.outputs.run == 'true' }}
       tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
       annotations: ${{ steps.meta.outputs.annotations }}
@@ -109,10 +124,36 @@ jobs:
       # workflow_dispatch stays on the list so a branch can be test-published
       # under its sha- tag; it can never move `latest`, which is pinned to the
       # default branch by the metadata rules below.
+      # `schedule` publishes too: it only ever runs on the default branch.
       - name: Decide whether this event may publish
         id: gate
         run: |
-          echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}" >> "$GITHUB_OUTPUT"
+          echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}" >> "$GITHUB_OUTPUT"
+
+      # The nightly wins nothing when main hasn't moved: if HEAD's sha- tag is
+      # already in the registry, `proceed` goes false and every downstream job
+      # (test included) skips through the needs chain. Only the schedule path
+      # does this check — tag pushes, PRs and dispatches always run.
+      - name: Log in to ghcr.io
+        if: github.event_name == 'schedule'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip the nightly when HEAD is already published
+        id: fresh
+        if: github.event_name == 'schedule'
+        run: |
+          set -euo pipefail
+          tag="${IMAGE}:sha-${GITHUB_SHA::7}"
+          if docker manifest inspect "$tag" >/dev/null 2>&1; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly skipped: ${tag} is already published" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compute build provenance values
         id: vars
@@ -157,6 +198,10 @@ jobs:
   # published image on both arches). Paying for a second full build + browser
   # run here would add ~10 minutes to every release for no new signal.
   test:
+    # needs+if exist only for the nightly no-change skip; when test skips,
+    # build and everything after it skip through the needs chain.
+    needs: prepare
+    if: needs.prepare.outputs.proceed == 'true'
     uses: ./.github/workflows/test.yml
     with:
       e2e: "off"
