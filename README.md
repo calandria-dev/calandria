@@ -4,14 +4,11 @@
 
 ### Run Claude Code and Codex in parallel across every project, from any browser.
 
-Calandria is a web-based control room for your coding agents. 
-
-Run it locally on your machine or self-host it on a server. A
-deployed Calandria workspace is available from your computer, tablet, or phone.
-
-Every task gets a persistent agent session in an isolated git worktree. 
-
-Calandria uses your existing Max, Pro, or ChatGPT subscription, with no API key or per-token billing required.
+Calandria is a web-based control room for your coding agents. Run it locally
+or self-host it on a server; a deployed workspace is reachable from your
+computer, tablet, or phone. Every task gets a persistent agent session in an
+isolated git worktree, and your existing Max, Pro, or ChatGPT subscription
+covers it.
 
 [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
 
@@ -25,55 +22,61 @@ Calandria uses your existing Max, Pro, or ChatGPT subscription, with no API key 
 
 ## Why Calandria
 
-- **Your workspace is wherever you are.** Deploy Calandria once and manage agents from any
+- **Your workspace is wherever you are.** Deploy once, manage agents from any
   device with a browser.
-- **Run many tasks without juggling terminals.** Every task has its own worktree, branch,
-  transcript, and agent session.
-- **Know where you are needed.** A cross-project inbox surfaces sessions waiting for input
-  while the rest keep working.
-- **Stay in control of every change.** Review the diff beside the conversation, then merge,
-  resolve conflicts, or open a pull request.
-- **Start from the real tip.** Calandria fetches the base branch before cutting a task's
-  worktree, so a pull request merged on GitHub doesn't leave every new task branching off a
-  stale `main` — and it tells you when your own checkout has fallen behind.
+- **Run many tasks without juggling terminals.** Every task has its own
+  worktree, branch, transcript, and agent session.
+- **Know where you are needed.** A cross-project inbox surfaces sessions
+  waiting for input while the rest keep working.
+- **Stay in control of every change.** Review the diff beside the
+  conversation, then merge, resolve conflicts, or open a pull request.
+- **Branch from the latest base.** Calandria fetches the base branch before
+  cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
+  building on stale code, and it tells you when your own checkout has fallen
+  behind.
 
 ## How it works
 
-**Create tasks → connect them into a pipeline → Calandria gives each one an isolated worktree
-and runs it when its dependencies finish → it alerts you when needed → you review and merge.**
+**Create tasks → connect them into a pipeline → Calandria gives each one an
+isolated worktree and runs it when its dependencies finish → it alerts you
+when needed → you review and merge.**
 
-Project context is written once and carried into each task. Server-owned turns and persisted
-transcripts survive browser reloads and laptop sleep, and `/clear` starts a fresh context
-window while preserving the task's lineage.
+Project context is written once and carried into each task. Server-owned
+turns and persisted transcripts survive browser reloads and laptop sleep,
+and `/clear` starts a fresh context window while preserving the task's
+lineage.
 
 ## What makes it different
 
-- **Parallel, isolated tasks:** work across multiple repositories without agents mixing
-  files or branches.
-- **Web-based and self-hostable:** run Calandria on your own machine or server, then securely
-  access the same workspace from desktop or mobile.
-- **One “Needs you” inbox:** jump directly to any session waiting for an answer.
-- **Snooze a task:** park anything until an hour from now, tomorrow morning, or an exact
-  date — it moves to Snoozed and stops counting toward the inbox, then comes back to the
+- **Parallel, isolated tasks:** work across multiple repositories without
+  agents mixing files or branches.
+- **Web-based and self-hostable:** run Calandria on your own machine or
+  server, then securely access the same workspace from desktop or mobile.
+- **One "Needs you" inbox:** jump directly to any session waiting for an
+  answer.
+- **Snooze a task:** park anything until an hour from now, tomorrow morning,
+  or an exact date. It stops counting toward the inbox, then returns to the
   category it left, marked as having been snoozed.
-- **Persistent context:** reuse project knowledge and continue long-running work across
-  fresh context windows.
-- **Review-to-merge workflow:** inspect diffs, sync branches, resolve conflicts, merge, or
-  create a GitHub PR from the same screen.
-- **Branching task pipelines:** make tasks depend on one or several earlier tasks, branch
-  work into parallel paths, and launch each task automatically when its blockers finish.
-- **Runbooks:** save a task you run often — "push everything unpushed and babysit CI",
-  "sweep my Jiras and report" — as a named recipe, then dispatch it in one click. Each run
-  mints a fresh task, and a box for this-run-only instructions covers the bits that change.
-- **Scheduled tasks:** run a saved prompt on a recurring day/time in its own timezone —
-  a weekday morning triage, a nightly sweep — with nobody logged in. Each firing mints a
-  fresh task you can review like any other, and can fire a runbook so one recipe serves
-  both the clock and the button.
-- **Notifications:** a browser notification when a task stops and waits for you, when a
-  turn fails, or when a scheduled run fails. Off-tab by design: it stays quiet only when
-  you're already looking at the task in question. Settings → Notifications.
-- **A complete workspace:** chat, terminal, managed services, live logs, and transparent
-  token and usage insights stay together.
+- **Persistent context:** reuse project knowledge and continue long-running
+  work across fresh context windows.
+- **Review-to-merge workflow:** inspect diffs, sync branches, resolve
+  conflicts, merge, or create a GitHub PR from the same screen.
+- **Branching task pipelines:** make tasks depend on one or several earlier
+  tasks, branch work into parallel paths, and launch each task automatically
+  when its blockers finish.
+- **Runbooks:** save a task you run often ("push everything unpushed and
+  babysit CI", "sweep my Jiras and report") as a named recipe, then dispatch
+  it in one click. Each run mints a fresh task, and a box for this-run-only
+  instructions covers the bits that change.
+- **Scheduled tasks:** run a saved prompt on a recurring day and time in its
+  own timezone, with nobody logged in. Each firing mints a fresh task you
+  review like any other, and can fire a runbook so one recipe serves both
+  the clock and the button.
+- **Notifications:** a browser notification when a task stops and waits for
+  you, when a turn fails, or when a scheduled run fails. Off-tab by design:
+  quiet only when you're already looking at the task in question.
+- **A complete workspace:** chat, terminal, managed services, live logs, and
+  transparent token and usage insights stay together.
 
 ![Calandria diff review beside an agent session](docs/images/changes.png)
 
@@ -81,9 +84,9 @@ window while preserving the task's lineage.
 
 ## Supported agents
 
-Calandria supports **Claude Code** and **OpenAI Codex** end to end. Choose an agent per task,
-or connect only the one you use. Both work with subscription login; API keys remain an
-optional explicit choice.
+Calandria supports **Claude Code** and **OpenAI Codex** end to end. Choose an
+agent per task, or connect only the one you use. Both work with subscription
+login; API keys remain an optional explicit choice.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
@@ -97,25 +100,32 @@ npm run build
 npm start
 ```
 
-Open <http://localhost:3000>. The first-run wizard connects Claude Code or Codex and takes
-you through a short hands-on tutorial.
+Open <http://localhost:3000>. The first-run wizard connects Claude Code or
+Codex and takes you through a short hands-on tutorial.
 
-Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is published
-publicly on every push to `main` — no login needed to pull it:
+Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is
+published publicly on every push to `main`:
 
 ```bash
 docker pull ghcr.io/calandria-dev/calandria:latest
 ```
 
-Use `npm run dev` only when developing Calandria itself. For Docker tags and provenance,
-authentication, networking, and secure access from anywhere, see the
-[self-hosting guide](docs/SELF_HOSTING.md). Layering site-specific CLIs and config on top
-of the published image? See [`examples/overlay/`](examples/overlay/) for a starting point.
+Use `npm run dev` only when developing Calandria itself. For Docker tags and
+provenance, authentication, networking, and secure access from anywhere, see
+the [self-hosting guide](docs/SELF_HOSTING.md). Layering site-specific CLIs
+and config on top of the published image? Start from
+[`examples/overlay/`](examples/overlay/).
 
-One instance per database: Calandria locks `orchestrator.db` at boot and refuses to start
-if another process already owns it, naming the holder — two servers sharing one database
-overwrite each other's running tasks. Want a second instance? Give it its own
-`ORCH_DB_DIR`.
+One instance per database: Calandria locks `orchestrator.db` at boot and
+refuses to start if another process already owns it, naming the holder. Two
+servers sharing one database overwrite each other's running tasks; give a
+second instance its own `ORCH_DB_DIR`.
+
+## Privacy
+
+Calandria contains no telemetry and no analytics. It makes no outbound
+requests you didn't configure: network traffic is what your agents, your git
+remotes, and your own integrations generate.
 
 ## Community
 
@@ -124,7 +134,8 @@ overwrite each other's running tasks. Want a second instance? Give it its own
 - [Report a bug](https://github.com/calandria-dev/calandria/issues/new?template=bug_report.yml)
 - [Contribute](CONTRIBUTING.md)
 
-See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation belongs.
+See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation
+belongs.
 
 ## Documentation
 
@@ -141,6 +152,17 @@ See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation belong
 
 [Apache-2.0](LICENSE)
 
-## Lineage
+## Name and lineage
 
-Calandria began as a fork of [Operator](https://github.com/iishyfishyy/operator-oss) by [@iishyfishyy](https://github.com/iishyfishyy) and diverged permanently in 2026. It keeps Operator's Apache-2.0 license; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Calandria is not affiliated with the upstream project or its hosted service; bugs and ideas for Calandria belong in [this repo's issues](https://github.com/calandria-dev/calandria/issues).
+In a CANDU reactor, the calandria is the vessel through which hundreds of
+parallel fuel channels run: one vessel, many channels, each doing its work
+in isolation, all of it one coordinated machine. That is what this software
+does.
+
+Calandria began as a fork of
+[Operator](https://github.com/iishyfishyy/operator-oss) by
+[@iishyfishyy](https://github.com/iishyfishyy). It keeps Operator's
+Apache-2.0 license; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Calandria
+is not affiliated with the upstream project or its hosted service; bugs and
+ideas for Calandria belong in
+[this repo's issues](https://github.com/calandria-dev/calandria/issues).
