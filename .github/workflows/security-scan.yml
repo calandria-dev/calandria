@@ -1,0 +1,53 @@
+# Weekly, unattended dependency and image CVE scanning (issue #17). Neither
+# job is gated on a code push — both exist to catch an advisory that lands
+# against code that hasn't changed, which push-triggered CI by definition
+# can't see.
+#
+#   npm-audit   — same command as the `audit` job in test.yml, repeated on a
+#                 schedule so a fresh advisory is caught between pushes.
+#   image-scan  — trivy scan of the published :latest image, failing on
+#                 fixable HIGH/CRITICAL findings. Nothing else in the
+#                 pipeline scans the built artifact.
+#
+# Failure notification is email-to-actor (GitHub's default for a scheduled
+# workflow) for now; wiring a red run into #11's failure-monitoring
+# automation is deferred, not forgotten.
+name: Security scan
+
+on:
+  schedule:
+    # Monday 06:00 UTC — quiet, and clear of the weekly Dependabot runs.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: Audit (npm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --omit=dev
+      - run: npm audit --omit=dev --audit-level=high
+
+  image-scan:
+    name: Image scan (trivy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/calandria-dev/calandria:latest
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL

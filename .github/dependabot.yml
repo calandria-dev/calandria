@@ -13,7 +13,9 @@
 # DELIBERATELY NOT COVERED:
 #
 # - npm. The lockfile pins ~1k transitive packages and a personal fork does not
-#   want that PR volume; `npm audit` covers the security case.
+#   want that PR volume; `npm audit` covers the security case — and actually
+#   runs now (the `audit` job in test.yml, on every push/PR, plus a weekly
+#   unattended run in security-scan.yml), not just claimed here. See issue #17.
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
 # - The build engine (buildx + BuildKit) in publish-image.yml. Dependabot's

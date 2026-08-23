@@ -1,8 +1,12 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Three jobs, deliberately on different schedules:
+# Four jobs, deliberately on different schedules:
 #
+#   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
+#           everything, always — the same coverage repeats weekly, unattended,
+#           in security-scan.yml, so a newly-disclosed advisory against
+#           unchanged code is still caught between pushes.
 #   typecheck — `npm run typecheck` (next typegen + tsc --noEmit). Seconds.
 #           Runs on everything, always. This repo has no lint script, so tsc IS
 #           the static gate — and it otherwise only runs as a side effect of
@@ -67,6 +71,26 @@ permissions:
   contents: read
 
 jobs:
+  audit:
+    name: Audit (npm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # dependabot.yml excludes npm on the claim that `npm audit` covers it —
+      # this job is what makes that claim true. --omit=dev matches what
+      # actually ships; --audit-level=high fails on HIGH/CRITICAL only, so a
+      # moderate advisory in a transitive dep doesn't red-flag every PR.
+      - run: npm audit --omit=dev --audit-level=high
+
   typecheck:
     name: Types (tsc)
     runs-on: ubuntu-24.04
