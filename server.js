@@ -203,9 +203,11 @@ function proxyPtyUpgrade(req, socket, head) {
 // Claim the database, THEN prepare Next — sequenced, not raced: preparing Next
 // warms route modules that can reach getDb(), and a process about to be told it
 // may not run must not have touched the database first.
+let dbDir; // resolved by acquireDbLock() below; reused for the boot summary line
 const prepared = dbLockImport
   .then(async (dbLock) => {
     const held = await dbLock.acquireDbLock();
+    dbDir = held.dir;
     if (held.mode === "bypass") {
       console.warn(
         "[server] WARN: ORCH_DB_LOCK=off — the single-instance check is DISABLED. " +
@@ -315,6 +317,15 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     console.log(
       `[server] orchestrator ready on http://${hostname}:${port} ` +
         `(${dev ? "dev" : "production"}); /pty -> ws://${ptyHost}:${ptyPort}; ${auth}`,
+    );
+    // One-line boot summary (issue #18 item 4): "is it configured the way I
+    // think" as a log-grep instead of a source read, alongside the warnings below.
+    const schedulerOn = !["0", "off", "false", "no"].includes(String(process.env.ORCH_SCHEDULER || "").toLowerCase());
+    console.log(
+      `[server] config: bind=${hostname}:${port} pty=${ptyHost}:${ptyPort} ` +
+        `cfAccess=${cfAccess.originAuthEnabled() ? "on" : "off"} ` +
+        `serviceToken=${(process.env.SERVICE_TOKEN || "").trim() ? "set" : "unset"} ` +
+        `scheduler=${schedulerOn ? "on" : "off"} db=${dbDir}`,
     );
     // An older deployment that set HOSTNAME deliberately just became
     // loopback-only; say so rather than letting remote access vanish silently.
