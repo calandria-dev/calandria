@@ -1,8 +1,29 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { taskDiff, worktreeMergeStatus } from "@/lib/git";
 
 export const dynamic = "force-dynamic";
+
+const run = promisify(execFile);
+
+// The worktree's current HEAD, stamped onto the diff response so a posted
+// comment can record which diff it was written against (see TaskComment's
+// anchor_sha). Best-effort and cheap — one subprocess, short timeout, never
+// throws — because a comment anchor is worth having even when this fails.
+// Known gap: a dirty worktree can change the diff's content without moving
+// HEAD, so this alone can't catch every drift; it's the versioning bug 3
+// exists to fix, not the whole of "the diff changed."
+async function currentHead(worktreePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await run("git", ["-C", worktreePath, "rev-parse", "HEAD"], { timeout: 5000 });
+    const sha = stdout.trim();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,9 +50,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // really "already merged" yet — report its state so the UI can show the
     // accept/discard review instead of a done badge. Both are read-only, so
     // they run concurrently.
-    const [diff, mergeState] = await Promise.all([
+    const [diff, mergeState, head] = await Promise.all([
       taskDiff(project.repo_path, task.worktree_path, task.base_sha, project.branch),
       worktreeMergeStatus(task.worktree_path),
+      currentHead(task.worktree_path),
     ]);
     // Self-heal: taskDiff advances the diff base past the recorded snapshot
     // when the worktree was caught up to the base branch outside the app
@@ -61,6 +83,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       isolated: true,
       branch: task.work_branch,
       merged_at,
+      head,
       ...diff,
       mergeInProgress: mergeState.mergeInProgress,
       unresolved: mergeState.unresolved,

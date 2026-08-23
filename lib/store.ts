@@ -985,20 +985,25 @@ export function listTaskComments(taskId: string): TaskComment[] {
 export function addTaskComment(
   taskId: string,
   file: string,
+  side: "old" | "new",
   lineStart: number,
   lineEnd: number,
   body: string,
-  sentToAgent: boolean
+  sentToAgent: boolean,
+  anchorSha: string | null
 ): TaskComment {
   const id = nanoid();
   const now = Date.now();
   getDb()
     .prepare(
-      `INSERT INTO task_comments (id, task_id, file, line_start, line_end, body, sent_to_agent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO task_comments (id, task_id, file, side, line_start, line_end, body, sent_to_agent, anchor_sha, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, taskId, file, lineStart, lineEnd, body, sentToAgent ? 1 : 0, now);
-  return { id, task_id: taskId, file, line_start: lineStart, line_end: lineEnd, body, sent_to_agent: sentToAgent ? 1 : 0, created_at: now };
+    .run(id, taskId, file, side, lineStart, lineEnd, body, sentToAgent ? 1 : 0, anchorSha, now);
+  return {
+    id, task_id: taskId, file, side, line_start: lineStart, line_end: lineEnd, body,
+    sent_to_agent: sentToAgent ? 1 : 0, anchor_sha: anchorSha, created_at: now,
+  };
 }
 
 // ---------- summaries ----------

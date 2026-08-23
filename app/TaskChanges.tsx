@@ -26,6 +26,7 @@ interface DiffResp {
   error?: string;
   mergeInProgress?: boolean; // a conflict resolution is staged, awaiting accept/discard
   unresolved?: string[]; // files still flagged unmerged
+  head?: string | null; // worktree HEAD when this diff was computed — stamped onto new comments as anchor_sha
 }
 interface MergeResp {
   ok: boolean;
@@ -74,16 +75,26 @@ function hunkLines(patch: string): string[] {
 interface NumberedLine { cls: string; oldNo: number | null; newNo: number | null; text: string }
 function numberedLines(patch: string): NumberedLine[] {
   let oldNo = 0, newNo = 0;
-  return hunkLines(patch).map((text) => {
+  const out: NumberedLine[] = [];
+  for (const text of hunkLines(patch)) {
     if (text.startsWith("@@")) {
       const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
       if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
-      return { cls: "hunk", oldNo: null, newNo: null, text };
+      out.push({ cls: "hunk", oldNo: null, newNo: null, text });
+    } else if (text.startsWith("\\")) {
+      // "\ No newline at end of file" — a patch marker, not a content line.
+      // Drop it entirely: no row, no counter bump (it can sit between a
+      // del-run and its paired add-run, so bumping either would misnumber
+      // every line after it).
+    } else if (text.startsWith("+") && !text.startsWith("+++")) {
+      out.push({ cls: "add", oldNo: null, newNo: newNo++, text });
+    } else if (text.startsWith("-") && !text.startsWith("---")) {
+      out.push({ cls: "del", oldNo: oldNo++, newNo: null, text });
+    } else {
+      out.push({ cls: "ctx", oldNo: oldNo++, newNo: newNo++, text });
     }
-    if (text.startsWith("+") && !text.startsWith("+++")) return { cls: "add", oldNo: null, newNo: newNo++, text };
-    if (text.startsWith("-") && !text.startsWith("---")) return { cls: "del", oldNo: oldNo++, newNo: null, text };
-    return { cls: "ctx", oldNo: oldNo++, newNo: newNo++, text };
-  });
+  }
+  return out;
 }
 
 // A single split-view row: a hunk-header divider (spans both columns), or a
@@ -108,6 +119,10 @@ function splitLines(patch: string): SplitRow[] {
       const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
       if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
       rows.push({ hunkText: text });
+    } else if (text.startsWith("\\")) {
+      // Same marker as in numberedLines: skip without flushing — it can land
+      // between a del-run and its paired add-run, and flushing early would
+      // pair each side against a blank spacer instead of each other.
     } else if (text.startsWith("+") && !text.startsWith("+++")) {
       addBuf.push({ no: newNo++, text, cls: "add" });
     } else if (text.startsWith("-") && !text.startsWith("---")) {
@@ -130,7 +145,8 @@ const VIEW_MODE_KEY = "orch:diffViewMode";
 const COLLAPSE_LINES = 400;
 
 // The line range currently being commented on (textarea open, not yet sent).
-interface CommentSel { file: string; start: number; end: number }
+// `side` disambiguates old-file vs new-file line numbers — see TaskComment.
+interface CommentSel { file: string; side: "old" | "new"; start: number; end: number }
 
 // The review-comment box: label + textarea + Send to agent / Comment only,
 // anchored right under the row it targets. Shared by the composer (draft,
@@ -178,20 +194,25 @@ function CommentThread({ c }: { c: TaskComment }) {
 }
 
 // Comment affordances shared by both view modes: existing threads anchored to
-// this row (by its ending line) plus the open composer, if this row is where
-// it's anchored. Returns null (renders nothing) when there's nothing to show.
+// this row's (side, ending line) plus the open composer, if this exact anchor
+// is where it's composing. `side` + `no` together are the anchor — old/new are
+// independent line-number namespaces, so a comment on deleted line 3 and one
+// on context line 3 must not both render here. Returns null when there's
+// nothing to show, and — because (file, side, no) is unique across a diff —
+// renders the composer under at most one row, never two.
 function RowComments({
-  no, comments, sel, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
+  side, no, comments, sel, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
 }: {
+  side: "old" | "new";
   no: number | null;
-  comments: TaskComment[]; // pre-filtered to this file
+  comments: TaskComment[]; // pre-filtered to this file + current diff anchor
   sel: CommentSel | null; // pre-filtered to this file (null if not composing here)
   draft: string; busy: boolean;
   onDraftChange: (v: string) => void; onSend: () => void; onCommentOnly: () => void; onCancel: () => void;
 }) {
   if (no == null) return null;
-  const posted = comments.filter((c) => c.line_end === no);
-  const composing = sel && sel.end === no;
+  const posted = comments.filter((c) => c.side === side && c.line_end === no);
+  const composing = sel && sel.side === side && sel.end === no;
   if (!posted.length && !composing) return null;
   return (
     <>
@@ -203,6 +224,33 @@ function RowComments({
         />
       )}
     </>
+  );
+}
+
+// Comments whose anchor_sha doesn't match the currently loaded diff (or has
+// none — pre-fix rows) — collapsed rather than guess-matched to a line, since
+// the diff that numbered them is gone.
+function OutdatedComments({ comments }: { comments: TaskComment[] }) {
+  const [open, setOpen] = useState(false);
+  if (!comments.length) return null;
+  return (
+    <div className="tc-outdated">
+      <button className="tc-btn" onClick={() => setOpen((v) => !v)}>
+        {open ? "Hide" : "Show"} {comments.length} outdated comment{comments.length === 1 ? "" : "s"}
+      </button>
+      {open && comments.map((c) => {
+        const label = c.line_start === c.line_end ? `L${c.line_start}` : `L${c.line_start}–${c.line_end}`;
+        return (
+          <div key={c.id} className="cmt cmt-posted">
+            <div className="cmt-who">
+              {c.file} · {label}
+              {c.sent_to_agent ? <span className="cmt-sent">✓ sent to agent</span> : null}
+            </div>
+            <div className="cmt-body">{c.body}</div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -218,6 +266,7 @@ const FileDiff = memo(function FileDiff({
   refs,
   viewMode,
   comments,
+  diffHead,
   sel,
   draft,
   busy,
@@ -233,10 +282,11 @@ const FileDiff = memo(function FileDiff({
   refs: { current: Record<string, HTMLDivElement | null> };
   viewMode: "unified" | "split";
   comments: TaskComment[]; // full task list; filtered to this file below
+  diffHead: string | null; // the loaded diff's HEAD — decides current vs outdated
   sel: CommentSel | null;
   draft: string;
   busy: boolean;
-  onLineClick: (file: string, no: number, shiftKey: boolean) => void;
+  onLineClick: (file: string, side: "old" | "new", no: number, shiftKey: boolean) => void;
   onDraftChange: (v: string) => void;
   onSend: () => void;
   onCommentOnly: () => void;
@@ -247,24 +297,54 @@ const FileDiff = memo(function FileDiff({
   const big = lines.length > COLLAPSE_LINES;
   const isCollapsed = userToggled ? !big : big;
   const fileComments = useMemo(() => comments.filter((c) => c.file === f.path), [comments, f.path]);
+  // Only a comment stamped with THIS diff's head anchors inline — anything
+  // else (including null anchor_sha, pre-fix rows) is outdated. Note this
+  // catches a rewritten diff, not a dirty worktree that changed content
+  // without moving HEAD — see the comment on currentHead in the diff route.
+  const currentComments = useMemo(
+    () => fileComments.filter((c) => diffHead != null && c.anchor_sha === diffHead),
+    [fileComments, diffHead]
+  );
+  const outdatedComments = useMemo(
+    () => fileComments.filter((c) => !(diffHead != null && c.anchor_sha === diffHead)),
+    [fileComments, diffHead]
+  );
   const fileSel = sel && sel.file === f.path ? sel : null;
   // Accurate placeholder height for content-visibility while the section is
   // offscreen-unrendered (header ≈34px, hunk lines 12px × 1.55 line-height),
   // so offsetTop-based jump/scroll-spy stay truthful. `auto` pins the real
   // size once rendered.
   const est = Math.round(34 + (isCollapsed ? 38 : Math.max(1, lines.length) * 18.6));
-  const rowComments = (no: number | null) => (
+  const rowComments = (side: "old" | "new", no: number | null) => (
     <RowComments
-      no={no} comments={fileComments} sel={fileSel} draft={draft} busy={busy}
+      side={side} no={no} comments={currentComments} sel={fileSel} draft={draft} busy={busy}
       onDraftChange={onDraftChange} onSend={onSend} onCommentOnly={onCommentOnly} onCancel={onCancel}
     />
   );
-  const gutter = (no: number | null) =>
+  // Unified: one gutter cell per side, but only the row's OWN side is
+  // clickable (del → old, add/ctx → new) — the other cell just displays its
+  // number, so a ctx row's old-side number can't open a second, colliding
+  // composer for the same content.
+  const gutter = (no: number | null, cellSide: "old" | "new", rowSide: "old" | "new") =>
     no == null ? (
       <span className="dl-no" />
+    ) : cellSide === rowSide ? (
+      <span className="dl-no click" onClick={(e) => onLineClick(f.path, rowSide, no, e.shiftKey)}>{no}</span>
     ) : (
-      <span className="dl-no click" onClick={(e) => onLineClick(f.path, no, e.shiftKey)}>{no}</span>
+      <span className="dl-no">{no}</span>
     );
+  // Split: each column is its own line, so del (left) and add (right) anchor
+  // independently even when paired on the same visual row. ctx only anchors
+  // on the new (right) side, matching the unified rule above.
+  const splitGutter = (cell: SplitCell | undefined, pos: "old" | "new") => {
+    if (!cell) return <span className="dl-no" />;
+    const clickable = pos === "old" ? cell.cls === "del" : cell.cls === "add" || cell.cls === "ctx";
+    return clickable ? (
+      <span className="dl-no click" onClick={(e) => onLineClick(f.path, pos, cell.no, e.shiftKey)}>{cell.no}</span>
+    ) : (
+      <span className="dl-no">{cell.no}</span>
+    );
+  };
   return (
     <div
       className="tc-file"
@@ -294,17 +374,18 @@ const FileDiff = memo(function FileDiff({
             <div className="tc-empty">No textual changes (mode or rename).</div>
           ) : viewMode === "unified" ? (
             lines.map((ln, i) => {
-              const anchor = ln.newNo ?? ln.oldNo;
+              const side: "old" | "new" = ln.cls === "del" ? "old" : "new";
+              const anchor = side === "old" ? ln.oldNo : ln.newNo;
               return ln.cls === "hunk" ? (
                 <div key={i} className="dl hunk">{ln.text}</div>
               ) : (
                 <div key={i}>
                   <div className={`dl ${ln.cls}`}>
-                    {gutter(ln.oldNo)}
-                    {gutter(ln.newNo)}
+                    {gutter(ln.oldNo, "old", side)}
+                    {gutter(ln.newNo, "new", side)}
                     <span className="dl-c">{ln.text || " "}</span>
                   </div>
-                  {rowComments(anchor)}
+                  {rowComments(side, anchor)}
                 </div>
               );
             })
@@ -312,20 +393,22 @@ const FileDiff = memo(function FileDiff({
             <div className="tc-split">
               {rows.map((row, i) => {
                 if (row.hunkText !== undefined) return <div key={i} className="dl hunk tc-split-full">{row.hunkText}</div>;
-                const anchor = row.right?.no ?? row.left?.no ?? null;
+                const oldAnchor = row.left?.cls === "del" ? row.left.no : null;
+                const newAnchor = row.right && (row.right.cls === "add" || row.right.cls === "ctx") ? row.right.no : null;
                 return (
                   <div key={i} className="tc-split-full">
                     <div className="tc-split-pair">
                       <div className={`dl ${row.left ? row.left.cls : "spacer"}`}>
-                        {gutter(row.left?.no ?? null)}
+                        {splitGutter(row.left, "old")}
                         <span className="dl-c">{(row.left?.text || " ")}</span>
                       </div>
                       <div className={`dl ${row.right ? row.right.cls : "spacer"}`}>
-                        {gutter(row.right?.no ?? null)}
+                        {splitGutter(row.right, "new")}
                         <span className="dl-c">{(row.right?.text || " ")}</span>
                       </div>
                     </div>
-                    {rowComments(anchor)}
+                    {rowComments("old", oldAnchor)}
+                    {rowComments("new", newAnchor)}
                   </div>
                 );
               })}
@@ -334,6 +417,7 @@ const FileDiff = memo(function FileDiff({
           {f.truncated && <div className="tc-empty">… file diff truncated</div>}
         </div>
       )}
+      <OutdatedComments comments={outdatedComments} />
     </div>
   );
 });
@@ -549,10 +633,11 @@ export default function TaskChanges({
   // Start or extend the comment selection. Plain click opens a fresh
   // single-line box; shift-click on another line in the same file extends the
   // range instead of starting over.
-  const onLineClick = useCallback((file: string, no: number, shiftKey: boolean) => {
+  const onLineClick = useCallback((file: string, side: "old" | "new", no: number, shiftKey: boolean) => {
     setSel((prev) => {
-      if (shiftKey && prev && prev.file === file) return { file, start: Math.min(prev.start, no), end: Math.max(prev.end, no) };
-      return { file, start: no, end: no };
+      if (shiftKey && prev && prev.file === file && prev.side === side)
+        return { file, side, start: Math.min(prev.start, no), end: Math.max(prev.end, no) };
+      return { file, side, start: no, end: no };
     });
     setDraft("");
   }, []);
@@ -565,7 +650,10 @@ export default function TaskChanges({
       const r = await fetch(`/api/tasks/${taskId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: sel.file, lineStart: sel.start, lineEnd: sel.end, body: draft.trim(), sentToAgent }),
+        body: JSON.stringify({
+          file: sel.file, side: sel.side, lineStart: sel.start, lineEnd: sel.end, body: draft.trim(), sentToAgent,
+          anchorSha: data?.head ?? null,
+        }),
       });
       const j: { ok?: boolean; comment?: TaskComment } = await r.json();
       if (j.ok && j.comment) {
@@ -848,7 +936,7 @@ export default function TaskChanges({
           {data.files.map((f) => (
             <FileDiff
               key={f.path} file={f} userToggled={toggled.has(f.path)} onToggle={toggle} refs={secRefs}
-              viewMode={viewMode} comments={comments} sel={sel} draft={draft} busy={commentBusy}
+              viewMode={viewMode} comments={comments} diffHead={data.head ?? null} sel={sel} draft={draft} busy={commentBusy}
               onLineClick={onLineClick} onDraftChange={setDraft}
               onSend={() => submitComment(true)} onCommentOnly={() => submitComment(false)} onCancel={cancelComment}
             />

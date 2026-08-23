@@ -104,16 +104,26 @@ export interface PendingMessage {
 }
 
 // A review comment left on a task's diff (Changes tab), anchored to a file +
-// line range from the patch at comment time. sent_to_agent (0/1) marks a
-// comment that also kicked off a turn, vs. one filed purely for the record.
+// side + line range from the patch at comment time. `side` disambiguates old-
+// file vs new-file line numbers, which are independent counters that otherwise
+// collide (a comment on deleted line 3 and one on context line 3 would render
+// under the same row). `anchor_sha` is the diff's HEAD when the comment was
+// written — TaskChanges only inlines a comment at its line when this matches
+// the currently loaded diff's head; otherwise it renders in a collapsed
+// "Outdated comments" section rather than guess-matching to a moved line.
+// null anchor_sha (pre-fix rows) is always treated as outdated.
+// sent_to_agent (0/1) marks a comment that also kicked off a turn, vs. one
+// filed purely for the record.
 export interface TaskComment {
   id: string;
   task_id: string;
   file: string;
+  side: "old" | "new";
   line_start: number;
   line_end: number;
   body: string;
   sent_to_agent: number;
+  anchor_sha: string | null;
   created_at: number;
 }
 

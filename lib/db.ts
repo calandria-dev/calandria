@@ -350,10 +350,16 @@ export function init(db: Database.Database) {
       id            TEXT PRIMARY KEY,
       task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       file          TEXT NOT NULL,
+      -- 'old' or 'new' — which diff column's line numbering this anchors to
+      -- (old/new are independent counters, so a bare line number collides).
+      side          TEXT NOT NULL DEFAULT 'new',
       line_start    INTEGER NOT NULL,
       line_end      INTEGER NOT NULL,
       body          TEXT NOT NULL,
       sent_to_agent INTEGER NOT NULL DEFAULT 0,
+      -- The diff's HEAD when this was written (NULL for pre-migration rows).
+      -- TaskChanges only inlines a comment when this matches the live diff.
+      anchor_sha    TEXT,
       created_at    INTEGER NOT NULL
     );
 
@@ -637,6 +643,14 @@ export function migrate(db: Database.Database) {
   // table shipped; see lib/services.ts restoreServices).
   const svcCols = (db.prepare("PRAGMA table_info(services)").all() as { name: string }[]).map((c) => c.name);
   if (!svcCols.includes("pid")) db.exec("ALTER TABLE services ADD COLUMN pid INTEGER NOT NULL DEFAULT 0");
+
+  // Side-qualified, diff-versioned comment anchors (added after task_comments
+  // shipped). Existing rows get side='new' (the old single-namespace behavior
+  // treated every anchor as one bucket, which is closest to 'new') and a NULL
+  // anchor_sha, which TaskChanges renders as outdated rather than guessing.
+  const commentCols = (db.prepare("PRAGMA table_info(task_comments)").all() as { name: string }[]).map((c) => c.name);
+  if (!commentCols.includes("side")) db.exec("ALTER TABLE task_comments ADD COLUMN side TEXT NOT NULL DEFAULT 'new'");
+  if (!commentCols.includes("anchor_sha")) db.exec("ALTER TABLE task_comments ADD COLUMN anchor_sha TEXT");
 
   // Which driver produced each usage row, stamped at write time (Insights breaks
   // spend down by provider). Backfilled from the task's current agent — exact
