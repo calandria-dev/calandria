@@ -83,6 +83,7 @@ This is the **open-source repo** — the whole local app lives here and all core
 - **Delete is hard delete** throughout — no soft-delete/undo.
 - **Auth is layered on purpose**: Next middleware for HTTP, `server.js` for WebSocket upgrades, per-service visibility for public service hostnames. Both Cloudflare Access mode and no-login local mode have an origin boundary; keep `lib/auth/local-origin.mjs` shared rather than letting the HTTP and WebSocket policies drift. When adding a route or upgrade path, decide which gate covers it.
 - **Commits are detailed** (explain the why); **keep README.md current** with app state when behavior changes. Markdown tables use minimal separators (`|-|-|`).
+- **A push isn't done until its CI runs conclude.** Watch to terminal state, diagnose red before rerunning, file an issue for anything CI-broken — full policy in `.github/CLAUDE.md`.
 
 ## More detail
 
