@@ -104,6 +104,7 @@ jobs:
   # importantly BUILT_AT, which would otherwise differ per runner.
   prepare:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       # The nightly freshness check reads the registry.
@@ -219,6 +220,7 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -245,31 +247,53 @@ jobs:
         env:
           BUILDER: ${{ steps.buildx.outputs.name }}
           ARCH: ${{ matrix.arch }}
+        # Retried 3x with a short backoff: observed failure mode is a bare
+        # `exit 255` within ~0.13s of step start, zero script output, right
+        # after a successful `buildx inspect --bootstrap` — a transient
+        # runner/daemon hiccup (~5% of runs, both arches), not the
+        # version-floor logic below. A bash loop, not an action dependency
+        # (e.g. nick-fields/retry), so the retried unit stays exactly this
+        # script. A genuine floor failure fails identically on every attempt
+        # and still exits non-zero after the 3rd.
         run: |
-          set -euo pipefail
-          buildx=$(docker buildx version | awk '{print $2}')
-          # buildx >= 0.12 prints "BuildKit version: vX.Y.Z"; older builds used
-          # "Buildkit: vX.Y.Z". Match either and take the last field, so a label
-          # rename upstream degrades to the explicit error below rather than to
-          # an empty string that silently fails the floor check.
-          buildkit=$(docker buildx inspect --builder "$BUILDER" \
-            | awk '/^[[:space:]]*(BuildKit version|Buildkit):/ {print $NF; exit}')
-          [ -n "$buildx" ] && [ -n "$buildkit" ] \
-            || { echo "could not read engine versions (buildx='$buildx' BuildKit='$buildkit')"; exit 1; }
-          # Best-effort: the digest is provenance, not a gate, so never fail on it.
-          digest=$(docker image inspect moby/buildkit:buildx-stable-1 \
-            --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' 2>/dev/null || true)
+          set -uo pipefail
 
-          # `sort -V` orders these correctly with the leading v; if the smaller
-          # of the pair is the floor itself, the installed version is >= floor.
-          at_least() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
-          at_least "$buildx" v0.21.0 \
-            || { echo "buildx $buildx is below v0.21.0, the floor for type=gha cache"; exit 1; }
-          at_least "$buildkit" v0.20.0 \
-            || { echo "BuildKit $buildkit is below v0.20.0, the floor for type=gha cache"; exit 1; }
+          check_engine() (
+            set -euo pipefail
+            buildx=$(docker buildx version | awk '{print $2}')
+            # buildx >= 0.12 prints "BuildKit version: vX.Y.Z"; older builds used
+            # "Buildkit: vX.Y.Z". Match either and take the last field, so a label
+            # rename upstream degrades to the explicit error below rather than to
+            # an empty string that silently fails the floor check.
+            buildkit=$(docker buildx inspect --builder "$BUILDER" \
+              | awk '/^[[:space:]]*(BuildKit version|Buildkit):/ {print $NF; exit}')
+            [ -n "$buildx" ] && [ -n "$buildkit" ] \
+              || { echo "could not read engine versions (buildx='$buildx' BuildKit='$buildkit')"; exit 1; }
+            # Best-effort: the digest is provenance, not a gate, so never fail on it.
+            digest=$(docker image inspect moby/buildkit:buildx-stable-1 \
+              --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' 2>/dev/null || true)
 
-          echo "${ARCH} engine: buildx ${buildx}, BuildKit ${buildkit} ${digest:-(digest unavailable)}" \
-            >> "$GITHUB_STEP_SUMMARY"
+            # `sort -V` orders these correctly with the leading v; if the smaller
+            # of the pair is the floor itself, the installed version is >= floor.
+            at_least() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
+            at_least "$buildx" v0.21.0 \
+              || { echo "buildx $buildx is below v0.21.0, the floor for type=gha cache"; exit 1; }
+            at_least "$buildkit" v0.20.0 \
+              || { echo "BuildKit $buildkit is below v0.20.0, the floor for type=gha cache"; exit 1; }
+
+            echo "${ARCH} engine: buildx ${buildx}, BuildKit ${buildkit} ${digest:-(digest unavailable)}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          )
+
+          for attempt in 1 2 3; do
+            if check_engine; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::engine floor-check attempt ${attempt}/3 failed, retrying..."
+              sleep "$attempt"
+            fi
+          done
+          echo "engine floor-check failed after 3 attempts" >&2
+          exit 1
 
       - name: Log in to ghcr.io
         if: needs.prepare.outputs.publish == 'true'
@@ -335,6 +359,7 @@ jobs:
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       packages: write
@@ -424,6 +449,7 @@ jobs:
   attest:
     needs: [prepare, merge]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       # Mint the OIDC token Sigstore exchanges for a short-lived signing cert.
@@ -472,6 +498,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: read
@@ -579,3 +606,27 @@ jobs:
         run: |
           docker logs orch 2>&1 | tail -100 || true
           docker logs orch-access 2>&1 | tail -50 || true
+
+  # Self-announcing failure: comments on the open `build failed`-labeled issue
+  # (creating one if none is open) so a red pipeline surfaces without anyone
+  # having to notice a missed email. Excluded from `pull_request`: a failing
+  # PR build is already visible on the PR itself, a fork's GITHUB_TOKEN can't
+  # hold `issues: write` here anyway, and filing an issue per failing PR push
+  # would just be noise on top of the check that's already red.
+  #
+  # `needs` lists every other job so `if: failure()` (which, unlike the
+  # default, does not implicitly require success — and unlike `always()`,
+  # skips when nothing failed) fires on a failure anywhere in the pipeline,
+  # not just in the job listed last. The existing nightly `schedule` trigger
+  # doubles as the weekly canary for silent drift on no-push days, so no
+  # second schedule is added here.
+  notify:
+    needs: [prepare, test, build, merge, attest, verify]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b # v1.2.0

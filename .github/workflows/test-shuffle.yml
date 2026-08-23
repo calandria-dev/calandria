@@ -1,0 +1,42 @@
+# Runs the unit suite in shuffled file/test order, weekly. test.yml's `unit`
+# job always runs files and tests in the same order, so an order dependency
+# (a test that only passes because an earlier one left behind state) can sit
+# hidden indefinitely. `--sequence.shuffle` randomizes both file and
+# within-file test order per run without touching fileParallelism — the
+# suite still runs serially (see vitest.config.ts), just not in the same
+# sequence twice — so a failure here means order dependence, not the
+# concurrency issue that setting exists to avoid.
+#
+# Weekly and separate from test.yml on purpose: a shuffled run is expected to
+# occasionally fail for reasons unrelated to the code (e.g. a test that is
+# order-dependent by design, not by bug), so it must never gate a push or PR.
+# It reports on its own schedule instead, same spirit as the audit job's
+# weekly repeat in security-scan.yml.
+name: Test (shuffled order)
+
+on:
+  schedule:
+    # 47 minutes past, off the top of the hour and offset from
+    # publish-image.yml's nightly cron so the two don't contend for runners.
+    - cron: "47 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-shuffled:
+    name: Unit (vitest, shuffled)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx vitest run --sequence.shuffle
