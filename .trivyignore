@@ -1,0 +1,51 @@
+# Trivy ignore list for the weekly Security scan (issue #21). Every entry
+# below is verified upstream-blocked as of 2026-08-23 — not fixable by a
+# change in this repo. Do not add a CVE here without the same verification:
+# confirm which artifact it lives in and that no newer upstream release
+# carries the fix.
+#
+# Revisit policy: re-check this list whenever gh or npm ship a new release.
+# Re-run `trivy image --severity HIGH,CRITICAL ghcr.io/calandria-dev/calandria:latest`
+# WITHOUT --ignorefile and prune any entry that no longer appears. A CVE that
+# isn't in this file will still fail the weekly scan — that's intentional;
+# keeping this list to exactly what's confirmed unfixable is what makes a red
+# run meaningful again.
+#
+# NOT listed here on purpose (verified fixed upstream, just not rebuilt yet):
+# the golang stdlib + x/net-vendored-in-stdlib CVEs baked into the currently
+# published image's gh 2.97.0 (CVE-2026-33818, CVE-2026-56853, CVE-2026-56858,
+# CVE-2026-56859, CVE-2026-56860, CVE-2026-56862, CVE-2026-39821,
+# CVE-2026-46600). gh 2.98.0 (cli.github.com apt repo, published 2026-08-20)
+# is already built with go1.26.7 (>= the 1.26.6 fix for all eight). The
+# Dockerfile installs gh unpinned (`apt-get install -y gh`), so the next
+# image rebuild picks this up with zero code change — no ignore entry needed,
+# just a republish. Confirmed by downloading gh_2.98.0_amd64.deb from
+# cli.github.com and checking `strings usr/bin/gh` for the embedded
+# go1.26.7 buildinfo string. 2026-08-23.
+
+# --- golang.org/x/mod, compiled into /usr/bin/gh ---
+# cli/cli's own go.mod pins x/mod v0.38.0; the fix ships in v0.40.0. This is
+# a real dependency bump in cli/cli's code, independent of the Go toolchain
+# version above — confirmed still v0.38.0 in gh's latest release (v2.98.0,
+# 2026-08-20) by downloading the .deb and grepping the binary for the
+# embedded module path/version string.
+# Watch: https://github.com/cli/cli/releases — look for a release whose
+# go.mod reaches golang.org/x/mod v0.40.0 or later.
+# Verified 2026-08-23.
+CVE-2026-56864
+CVE-2026-56865
+
+# --- npm's own vendored node_modules, bundled inside npm 12.0.2 ---
+# npm 12.0.2 is npm's newest release (`npm view npm dist-tags` — no dist-tag,
+# including `next-12`, points past 12.0.2), and it vendors brace-expansion
+# 5.0.7, tar 7.5.19, and ip-address 10.2.0 in its own bundled node_modules.
+# None of this is Calandria's dependency tree: package-lock.json already
+# resolves the app's own ip-address to 10.4.0 (above the 10.3.1 fix for
+# CVE-2026-69192, confirmed via `npm ls ip-address --all`), so the
+# ip-address hit below is npm's bundled copy, not ours.
+# Watch: https://www.npmjs.com/package/npm — a release past 12.0.2.
+# Verified 2026-08-23.
+CVE-2026-14257
+CVE-2026-69152
+CVE-2026-73566
+CVE-2026-69192

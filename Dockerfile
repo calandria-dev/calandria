@@ -75,6 +75,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # package-lock.json, since this is npm's own dependency tree, not the app's.
 # Reinstalling npm replaces its vendored copies. Pinned, not @latest, for the
 # same reason CLAUDE_CODE_VERSION/CODEX_VERSION below are pinned.
+#
+# npm 12.0.2 in turn vendors its own newer (but still-vulnerable) copies of
+# tar, brace-expansion, and ip-address — npm's newest release as of
+# 2026-08-23, so unfixable here. Tracked in .trivyignore, not re-documented
+# per bump; see that file for the current CVE list and revisit policy.
 RUN npm install -g npm@12.0.2 && npm --version
 
 # The agent CLIs, pinned. Floating `@latest` installs would make two supply-chain
