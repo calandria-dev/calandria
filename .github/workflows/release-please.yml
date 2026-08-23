@@ -41,5 +41,9 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          release-type: node
+          # No release-type here: passing it runs the action in simple mode,
+          # which ignores release-please-config.json — and with it the
+          # bump-minor-pre-major 0.x settings and the 0.1.0 manifest seed
+          # (observed: PR #23 proposed 1.0.0). Omitting it selects manifest
+          # mode, which reads both files from their default paths.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
