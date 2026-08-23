@@ -32,6 +32,9 @@ const SERVICES_RESTORE_PATH = "/api/instance/services-restore";
 // The boot-time self-ping from server.js that starts the schedule ticker.
 // GET reads schedulerHealth() only; POST is what actually starts the ticker.
 const SCHEDULER_PATH = "/api/instance/scheduler";
+// The shutdown-time self-ping from server.js's SIGTERM/SIGINT handler that
+// drains in-flight turns before the process exits.
+const DRAIN_PATH = "/api/instance/drain";
 
 // Read-only: the fleet-wide ORCH_FLEET_TOKEN is honored here (see cf-access.mjs)
 // because nothing reachable this way can mutate instance state.
@@ -43,12 +46,12 @@ function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
 }
 
 // Mutates instance state despite authenticating with the service-token header
-// rather than an Access JWT: services-restore always, and the scheduler path's
-// own POST (starts the ticker). These demand the strict per-instance token —
-// the fleet-wide read token must be rejected here, same invariant as the
-// agent-tools paths below.
+// rather than an Access JWT: services-restore always, the scheduler path's own
+// POST (starts the ticker), and drain (aborts every live turn). These demand
+// the strict per-instance token — the fleet-wide read token must be rejected
+// here, same invariant as the agent-tools paths below.
 function isInstanceOnlyServiceTokenPath(pathname: string): boolean {
-  return pathname === SERVICES_RESTORE_PATH || pathname === SCHEDULER_PATH;
+  return pathname === SERVICES_RESTORE_PATH || pathname === SCHEDULER_PATH || pathname === DRAIN_PATH;
 }
 
 // The internal endpoints the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the

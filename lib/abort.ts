@@ -82,6 +82,15 @@ export function activeTurnCount(): number {
   return registry().size;
 }
 
+// Every task id with a live turn right now. Used by the graceful-shutdown
+// drain (lib/runner.ts's drainActiveTurns) to know what to abort before the
+// process exits — activeTurnCount() only gives a size, not something to
+// iterate. A snapshot: safe to abort-while-iterating since callers copy this
+// array rather than walking the live registry.
+export function activeTurnIds(): string[] {
+  return [...registry().keys()];
+}
+
 // Signal abort for a task's active turn. Returns true if one was running.
 export function abortTurn(taskId: string): boolean {
   const reg = registry();

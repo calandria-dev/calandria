@@ -94,6 +94,10 @@ const port = numEnv("PORT", process.env.PORT, 3000);
 const hostname = resolveHostname();
 const ptyHost = process.env.PTY_HOST || "127.0.0.1";
 const ptyPort = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
+// Mirrors lib/config.ts's SHUTDOWN_GRACE_MS — kept in sync per this file's own
+// env-var convention (see numEnv above). Used below by the SIGTERM/SIGINT
+// graceful-shutdown handler.
+const shutdownGraceMs = numEnv("ORCH_SHUTDOWN_GRACE_MS", process.env.ORCH_SHUTDOWN_GRACE_MS, 5000);
 
 const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });
@@ -273,16 +277,47 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     cfAccess.verifyOriginNodeRequest(req).then(route).catch(deny);
   });
 
-  // Managed services are detached process-group children; they are cleaned up
-  // by lib/services.ts's process-'exit' hook, which only runs if the process
-  // exits via process.exit(). Next's dev server installs SIGINT/SIGTERM
-  // handlers that do; in production nothing does, so a docker stop / Ctrl-C
-  // would bypass 'exit' and orphan dev servers until the next boot's reaper.
-  // Register a fallback only when nothing else handles the signal, to avoid
-  // preempting Next's own shutdown in dev.
+  // Graceful shutdown (issue #14 item 1). docker/entrypoint.sh's trap forwards
+  // SIGTERM/SIGINT straight to THIS process's pid, not to its descendants —
+  // the claude/codex CLI children the Agent SDKs spawn per turn are not
+  // detached, so a plain `docker stop` never reaches them directly either.
+  // A bare process.exit(0) here used to cut every in-flight turn off mid-write
+  // with nothing durable recorded. Instead, ping POST /api/instance/drain
+  // (loopback, same pattern as the boot pings above) so lib/runner.ts's
+  // drainActiveTurns() can abort every live turn — the same abortTurn() a
+  // Stop-button press calls — and give each one's finally a bounded window to
+  // persist its interrupted state (DENIED_INTERRUPTED permission cards,
+  // running/awaiting_input settled, turn_end published) before we exit.
+  //
+  // The route's own wait is bounded by ORCH_SHUTDOWN_GRACE_MS
+  // (lib/config.ts's SHUTDOWN_GRACE_MS); the hardTimeout here is that plus
+  // headroom for the HTTP round trip, so a hung fetch — or a drain route that
+  // never becomes reachable — still exits instead of hanging until the
+  // container runtime's own SIGKILL deadline. Managed services (killed by
+  // lib/services.ts's 'exit' hook) and the db lock (released by lib/db-lock.mjs's
+  // 'exit' hook) are untouched by any of this: both fire from process.exit(0)
+  // exactly as before, just AFTER the drain instead of immediately. Register a
+  // fallback only when nothing else handles the signal, to avoid preempting
+  // Next's own shutdown in dev.
+  let shuttingDown = false;
+  function gracefulShutdown() {
+    if (shuttingDown) return; // second signal mid-drain: let the first attempt finish
+    shuttingDown = true;
+    const exit = () => process.exit(0);
+    const hardTimeout = setTimeout(exit, shutdownGraceMs + 3000);
+    hardTimeout.unref?.();
+    const url = `http://127.0.0.1:${port}/api/instance/drain`;
+    const headers = process.env.SERVICE_TOKEN ? { "x-service-token": process.env.SERVICE_TOKEN } : {};
+    fetch(url, { method: "POST", headers })
+      .catch((err) => console.warn(`[server] shutdown drain request failed (exiting anyway): ${err?.message || err}`))
+      .finally(() => {
+        clearTimeout(hardTimeout);
+        exit();
+      });
+  }
   for (const sig of ["SIGTERM", "SIGINT"]) {
     if (process.listenerCount(sig) === 0) {
-      process.on(sig, () => process.exit(0));
+      process.on(sig, gracefulShutdown);
     }
   }
 

@@ -10,9 +10,10 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { getDriver } from "@/lib/agents/registry";
-import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn } from "@/lib/abort";
+import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
-import { publish } from "@/lib/events";
+import { publish, subscribeGlobal } from "@/lib/events";
+import { SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
@@ -227,6 +228,64 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
 }
 
 /**
+ * Graceful-shutdown drain: abort every turn this process is currently
+ * running — the same `abortTurn` a Stop-button press calls — and wait (up to
+ * `timeoutMs`) for each one's `run()` finally to actually settle (persisting
+ * DENIED_INTERRUPTED on any open permission card, flipping running/
+ * awaiting_input, publishing turn_end), rather than a bare process.exit(0)
+ * cutting a mid-write turn off with nothing durable recorded. Called by
+ * POST /api/instance/drain, which server.js's SIGTERM/SIGINT handler pings
+ * before it exits — see that route for why this can't be reached by a direct
+ * import from the plain-Node entrypoint.
+ *
+ * abortTurn() deletes a task's registry entry synchronously, so hasTurn()
+ * alone can't tell us when the unwind is DONE — only that it's no longer
+ * abortable. turn_end is the actual completion signal (run()'s finally
+ * publishes it in every code path that doesn't hand off to a successor turn,
+ * and nothing should be claiming a fresh turn while the process is shutting
+ * down), so this subscribes to it globally before issuing any abort — a
+ * turn whose driver iterator is already at an await-free point could
+ * otherwise unwind and publish inside the same synchronous abort() call,
+ * before a subscription registered afterward existed to see it.
+ *
+ * Bounded because a driver stuck on an uninterruptible syscall must never
+ * turn a `docker stop` into a hang for the container runtime to SIGKILL
+ * anyway; a turn still unwinding at the deadline is left to finish on its
+ * own (its finally still runs — this just stops waiting for it) or to be cut
+ * off by the process exit that follows.
+ */
+export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): Promise<{ total: number; settled: number }> {
+  const ids = activeTurnIds();
+  if (ids.length === 0) return { total: 0, settled: 0 };
+  const pending = new Set(ids);
+  let resolveDone: () => void;
+  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+  const unsubscribe = subscribeGlobal(
+    (taskId, ev) => {
+      if (ev.type !== "turn_end" || !pending.has(taskId)) return;
+      pending.delete(taskId);
+      if (pending.size === 0) resolveDone();
+    },
+    { internal: true }
+  );
+  for (const id of ids) abortTurn(id);
+  const timedOut = await Promise.race([
+    done.then(() => false),
+    new Promise<boolean>((resolve) => {
+      const t = setTimeout(() => resolve(true), timeoutMs);
+      t.unref?.();
+    }),
+  ]);
+  unsubscribe();
+  if (timedOut && pending.size > 0) {
+    console.warn(
+      `[runner] shutdown drain timed out with ${pending.size}/${ids.length} turn(s) still unwinding: ${[...pending].join(", ")}`
+    );
+  }
+  return { total: ids.length, settled: ids.length - pending.size };
+}
+
+/**
  * Persist + publish a failed-turn line, appending a recovery hint when the
  * failure is one we know how to fix:
  *   - the API's context-overflow rejection ("prompt is too long") →
@@ -336,6 +395,27 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       const m = addMessage(id, gen, "system", syncNote);
       publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen, ts: m.created_at });
     }
+    // Orphan-on-crash investigation (issue #14 item 2): both agent SDKs spawn
+    // the claude/codex CLI as a plain (non-detached) child tied to THIS
+    // abortController, not to server lifecycle. Verified against the
+    // installed SDKs: @openai/codex-sdk passes `signal: <this controller's
+    // signal>` straight to node's `child_process.spawn`, which Node kills on
+    // abort natively; @anthropic-ai/claude-agent-sdk's transport schedules its
+    // own SIGTERM-then-SIGKILL escalation off the same abortController, AND
+    // separately registers a process-wide `exit` hook that SIGTERMs every
+    // live session's child on ANY clean process exit (so even a bare
+    // process.exit(0) already reaped Claude children before this file added
+    // draining). So `drainActiveTurns()` aborting every live turn on
+    // SIGTERM/SIGINT — the fix for item 1 above — already kills every live
+    // agent child for a graceful shutdown; no separate pid-tracking/reap
+    // machinery was added for that path. The one case nothing here covers is
+    // a HARD kill of the server (SIGKILL/OOM/power loss): no code runs, so a
+    // live child can outlive it. A lib/services.ts-style pid-column-plus-
+    // boot-reap fix isn't available for that gap — unlike the services
+    // supervisor, which spawns its own children and holds their `pid`,
+    // neither agent SDK exposes the underlying child process (or its pid)
+    // through any public/documented API, so persisting one would mean reading
+    // private, minified SDK internals liable to break on every version bump.
     for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController)) {
       // Persist first, then publish enriched with the DB message id — so a
       // snapshot taken at any instant plus the live tail never loses an event,

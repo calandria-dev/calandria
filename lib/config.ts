@@ -82,6 +82,21 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMP
 export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDED_MS, 45_000);
 
 /**
+ * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by
+ * server.js's SIGTERM/SIGINT handler before it exits) waits for in-flight
+ * turns to abort and unwind before giving up and letting the process exit
+ * anyway. This is what turns a `docker stop`/Ctrl-C into the same settlement a
+ * Stop-button press gets (DENIED_INTERRUPTED permission cards, running/
+ * awaiting_input flipped, turn_end published) instead of a bare exit cutting
+ * every live turn off mid-write. Bounded on purpose: the unwind is local
+ * SQLite writes and in-memory pub/sub with no network round trip, so a few
+ * seconds is generous — and the container runtime SIGKILLs after its own grace
+ * period regardless, so waiting longer only risks losing the drain's own work.
+ * 0 waits indefinitely (not recommended — see this file's `ms()` contract).
+ */
+export const SHUTDOWN_GRACE_MS = ms(process.env.ORCH_SHUTDOWN_GRACE_MS, 5000);
+
+/**
  * The `approval_policy` the Codex driver passes to the CLI for turns and
  * one-shot helpers. Default "never" is the auto-run analog of Claude's
  * bypassPermissions — turns run unattended in isolated worktrees, with nobody
