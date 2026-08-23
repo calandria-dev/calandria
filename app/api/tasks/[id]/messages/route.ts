@@ -4,7 +4,6 @@ import { startTurn, startResumeTurn } from "@/lib/runner";
 import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
-import { sseOpened, sseClosed } from "@/lib/idle";
 import { ensureWorktree } from "@/lib/git";
 import { MAX_MESSAGE_CHARS } from "@/lib/promptLimits";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
@@ -209,12 +208,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           cleanup();
         }
       }, 25_000);
-      sseOpened();
       let done = false;
       cleanup = () => {
         if (done) return;
         done = true;
-        sseClosed();
         unsub();
         clearInterval(ping);
         try {

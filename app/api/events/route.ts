@@ -1,6 +1,5 @@
 import { getTask, countAwaiting } from "@/lib/store";
 import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
-import { sseOpened, sseClosed } from "@/lib/idle";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
 
 export const dynamic = "force-dynamic";
@@ -163,12 +162,10 @@ export async function GET(req: Request) {
           cleanup();
         }
       }, 25_000);
-      sseOpened();
       let done = false;
       cleanup = () => {
         if (done) return;
         done = true;
-        sseClosed();
         unsub();
         clearInterval(ping);
         try {

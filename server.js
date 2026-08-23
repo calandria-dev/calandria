@@ -99,17 +99,12 @@ const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// Activity registry. Next's route handlers run in this same process, so a
-// shared globalThis object is enough — lib/idle.ts owns the shape and the SSE
-// counter; this file stamps requests and counts live /pty sockets. Keep the
-// field names in sync with lib/idle.ts.
+// Last-request timestamp. Not read by anything today (the /api/instance/idle
+// consumer was removed in issue #20) — kept solely because tests/schedulerBoot
+// pins countsAsActivity's exclusion list; see issue #22 discussion before
+// deleting further.
 const bootAt = Date.now();
-const activity = (globalThis.__orchActivity ??= {
-  startedAt: bootAt,
-  lastRequestAt: bootAt,
-  openPty: 0,
-  openSse: 0,
-});
+const activity = (globalThis.__orchActivity ??= { lastRequestAt: bootAt });
 // Health/metadata probes (version, usage) never count as user activity —
 // otherwise a monitor's own loopback polling would keep lastRequestAt pinned
 // to "just now" forever. Mirrors the service-token path list in middleware.ts.
@@ -167,18 +162,6 @@ function proxyPtyUpgrade(req, socket, head) {
   });
 
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
-    // Count the live terminal connection (idleness signal); both sockets close
-    // together, so guard against double-decrement.
-    activity.openPty++;
-    let counted = true;
-    const dropCount = () => {
-      if (!counted) return;
-      counted = false;
-      activity.openPty = Math.max(0, activity.openPty - 1);
-    };
-    socket.on("close", dropCount);
-    proxySocket.on("close", dropCount);
-
     const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}`];
     for (const [k, v] of Object.entries(proxyRes.headers)) {
       if (Array.isArray(v)) v.forEach((vv) => lines.push(`${k}: ${vv}`));
