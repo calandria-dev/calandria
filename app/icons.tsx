@@ -61,6 +61,8 @@ export const Icon = {
   terminal: (p?: P) => S(<><rect x={3} y={4} width={18} height={16} rx={2} /><path d="M7 9l3 3-3 3" /><line x1={13} y1={15} x2={17} y2={15} /></>, p),
   archive: (p?: P) => S(<><rect x={3} y={4} width={18} height={4} rx={1} /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><line x1={10} y1={12} x2={14} y2={12} /></>, p),
   restore: (p?: P) => S(<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></>, p),
+  // Mobile tab bar's "Diffs" tab — a branch peeling off with a change-marker dot.
+  diff: (p?: P) => S(<><path d="M7 3v9a4 4 0 0 0 4 4h4" /><circle cx={18} cy={17.5} r={2.3} /></>, p),
 };
 
 // ---- agent brand marks ----

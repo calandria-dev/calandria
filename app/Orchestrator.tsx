@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
+import TaskChanges from "./TaskChanges";
 import { PROJ_W, TASK_W, DEFAULT_LAYOUT } from "./orchestrator/types";
 import { useOrchestrator } from "./orchestrator/useOrchestrator";
 import { ProjectsColumn } from "./orchestrator/ProjectsColumn";
@@ -23,6 +24,7 @@ import { AgentNudge, AgentAuthBanner } from "./orchestrator/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./orchestrator/Welcome";
 import { NeedsYouMenu } from "./orchestrator/NeedsYouMenu";
 import { CommandPalette, type PaletteCommand } from "./orchestrator/CommandPalette";
+import { MobileTabBar, type MobileTabId } from "./orchestrator/MobileTabBar";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
 // one pane at a time (projects → tasks → session) with back affordances. matchMedia
@@ -197,8 +199,19 @@ export default function Orchestrator() {
   // elements sit side by side. Which pane shows is derived purely from the
   // selection state, so the titlebar "needs you" pill (which drives selection)
   // navigates correctly from any level.
-  const mobilePane: "projects" | "tasks" | "session" | "settings" | "insights" =
-    o.view === "settings" ? "settings" : o.view === "insights" ? "insights" : !project ? "projects" : !task ? "tasks" : "session";
+  const mobilePane: "projects" | "tasks" | "session" = !project ? "projects" : !task ? "tasks" : "session";
+
+  // Bottom tab bar (mobile only). Board reuses the drill-down above unchanged;
+  // Diffs/Terminals are new full-pane surfaces; Insights mirrors the existing
+  // o.view toggle so the URL and the desktop chart icon stay in sync with it.
+  const [mobileTab, setMobileTab] = useState<MobileTabId>("board");
+  useEffect(() => { if (isMobile && o.view === "insights") setMobileTab("insights"); }, [isMobile, o.view]);
+  const selectMobileTab = (t: MobileTabId) => {
+    setMobileTab(t);
+    if (t === "insights") o.setView("insights");
+    else if (o.view === "insights") o.setView("workspace");
+    if (t === "terminals") o.setTermMounted(true);
+  };
 
   const projectsColumn = (
     <ProjectsColumn
@@ -387,6 +400,27 @@ export default function Orchestrator() {
     </BoardWorkspace>
   );
 
+  // Mobile Diffs tab: the same TaskChanges the desktop rail mounts, full-pane
+  // and task-scoped, wired to onSend the same way SessionView does.
+  const diffsColumn = (
+    <div className="col col-diffs">
+      {task && project ? (
+        <TaskChanges
+          taskId={task.id} projectId={project.id} running={o.running.has(task.id)} prUrl={task.pr_url}
+          onMerged={o.onMerged} onPrCreated={o.onPrCreated}
+          onSend={(text) => o.runTurn(task.id, text, false)}
+          onResolveWithAI={o.resolveConflictsWithAI}
+        />
+      ) : (
+        <div className="empty void" style={{ margin: "auto" }}>
+          <div className="e-ic"><Logo size={40} /></div>
+          <div className="e-t">No task selected</div>
+          <div className="e-s">Select a task to see its changes.</div>
+        </div>
+      )}
+    </div>
+  );
+
   const insightsColumn = (
     <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} onOpenSettings={openSettings} />
   );
@@ -521,9 +555,11 @@ export default function Orchestrator() {
         ) : !o.booted ? (
           <BootSkeleton mobile={isMobile} />
         ) : isMobile ? (
-          mobilePane === "projects" ? projectsColumn
-            : mobilePane === "settings" ? settingsColumn
-            : mobilePane === "insights" ? insightsColumn
+          o.view === "settings" ? settingsColumn
+            : mobileTab === "insights" ? insightsColumn
+            : mobileTab === "diffs" ? diffsColumn
+            : mobileTab === "terminals" ? null /* the full-screen terminal sheet below covers this pane */
+            : mobilePane === "projects" ? projectsColumn
             : mobilePane === "tasks" ? tasksColumn
             : sessionColumn
         ) : (
@@ -582,6 +618,10 @@ export default function Orchestrator() {
           </>
         )}
       </div>
+
+      {isMobile && o.booted && !o.bootError && (
+        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
+      )}
 
       {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} onClose={() => o.setModal(null)} onCreate={o.createTask} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
@@ -650,8 +690,16 @@ export default function Orchestrator() {
 
       {/* Phone terminal lives as a full-screen sheet over everything. Kept mounted
           (hidden) while a project is selected so a dev server survives pane hops. */}
+      {/* Also doubles as the Terminals tab's full pane: it's already a fixed,
+          full-screen sheet (z-index above the tab bar), so opening it here is
+          the same "mount it open as a pane" the tab needs — no second instance
+          of the terminal (and its live shell) gets created. */}
       {isMobile && project && o.termMounted && (
-        <MobileTerminalSheet key={project.id} cwd={project.repo_path} port={project.port} visible={o.termOpen} onClose={() => o.setTermOpen(false)} />
+        <MobileTerminalSheet
+          key={project.id} cwd={project.repo_path} port={project.port}
+          visible={o.termOpen || mobileTab === "terminals"}
+          onClose={() => { o.setTermOpen(false); setMobileTab((t) => (t === "terminals" ? "board" : t)); }}
+        />
       )}
 
       {/* First-run onboarding — a full-screen wizard over the (empty) workspace
