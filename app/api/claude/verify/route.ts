@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDriver } from "@/lib/agents/registry";
-import { setOnboardingAccount, getOnboarding } from "@/lib/onboarding";
+import { setOnboardingAccount } from "@/lib/onboarding";
 import { getAgentConnection, setAgentConnection } from "@/lib/agents/connections";
-import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -23,18 +22,6 @@ export async function POST() {
     // gating (GET /api/agents) sees Claude as connected without a re-verify.
     const method = getAgentConnection("claude")?.method ?? (status.plan === "API" ? "api_key" : "subscription");
     setAgentConnection("claude", { method, email: status.email, plan: status.plan });
-  }
-
-  // Critical onboarding-funnel step. Emitted server-side so it's reliable and
-  // carries the failure reason when the connection can't produce a real turn.
-  if (connected) {
-    track("claude_connected", { plan: status.plan, method: status.method }, { setPerson: { claude_plan: status.plan } });
-    // Funnel step (first run only): the wizard's Verify test turn passed.
-    // Later re-verifies from Settings still emit claude_connected above.
-    if (!getOnboarding().complete)
-      track("onboarding_step_completed", { step: "verify_turn", method: status.method });
-  } else {
-    track("claude_connect_failed", { error: (turn.error || status.error || "could not reach Claude").slice(0, 500) });
   }
 
   return NextResponse.json({

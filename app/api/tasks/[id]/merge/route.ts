@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { mergeTask } from "@/lib/git";
-import { track } from "@/lib/analytics";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -37,10 +36,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     });
 
     if (result.ok) {
-      // Funnel: the first merge in the seeded Welcome project is the tutorial's
-      // aha moment — the last onboarding step. Re-merges don't re-count.
-      if (project.seeded && !task.merged_at)
-        track("onboarding_step_completed", { step: "tutorial_project", task_id: task.id });
       // Record the merge and advance the diff base to the merged tip so a later
       // round in the same task shows only changes made after this merge. Status
       // is deliberately NOT changed — merging is a git action, not a declaration

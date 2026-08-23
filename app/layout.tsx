@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
-import { posthogSnippet } from "@/lib/analytics";
 import { fontVariables } from "./fonts";
 
 export const metadata: Metadata = {
@@ -43,13 +42,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script
           dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};` }}
         />
-        {/* PostHog product analytics — loads posthog-js, auto-identifies the
-            instance to its control-plane account (if provisioned), and no-ops
-            when POSTHOG_KEY isn't set. Fed from server env so no build-time key. */}
-        {(() => {
-          const snippet = posthogSnippet();
-          return snippet ? <script dangerouslySetInnerHTML={{ __html: snippet }} /> : null;
-        })()}
         {/* Fonts are self-hosted via next/font (app/fonts.ts) — no Google Fonts
             CDN request at runtime. Their CSS variables land on <html> via the
             fontVariables class above; globals.css tokens point at them. */}

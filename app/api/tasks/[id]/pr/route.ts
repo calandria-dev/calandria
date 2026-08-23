@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, listSummaries } from "@/lib/store";
 import { commitWorktree } from "@/lib/git";
 import { createTaskPr, buildPrBody } from "@/lib/github";
-import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -42,7 +41,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   if (result.ok && result.url) {
     updateTask(id, { pr_url: result.url });
-    track("task_pr_created", { task_id: id, project_id: project.id, existing: !!result.existing });
   }
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });
 }

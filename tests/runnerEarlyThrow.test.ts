@@ -1,23 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Regression: run() used to execute setup (settings funnel, analytics, syncNote
+// Regression: run() used to execute setup (settings funnel, syncNote
 // persistence) BEFORE its try block. A throw there — SQLite I/O error, disk
 // full — skipped the finally entirely: the turn never unregistered, running
 // never settled, and the detached promise rejected unhandled (Node's default
 // policy: exit). The fix moves all of run()'s body inside the try, and gives
 // the startTurn launch a .catch that settles the task as a last resort.
 //
-// track() is called in run()'s setup on every turn, so a throwing track() is a
-// deterministic stand-in for any early failure. The mock throws only for event
-// names listed in state.failEvents, so the finally's own track() calls can be
-// made to succeed (exercising the finally path) or throw (exercising the
-// .catch last-resort path).
-const state = vi.hoisted(() => ({ failEvents: [] as string[] }));
-vi.mock("../lib/analytics", () => ({
-  track: (event: string) => {
-    if (state.failEvents.includes(event)) throw new Error(`simulated setup failure (${event})`);
-  },
-}));
+// getSetting("first_task_started") runs on every turn in run()'s setup, so a
+// throwing getSetting is a deterministic stand-in for any early failure. The
+// finally's own throw vector is getTask(id) (lib/runner.ts:531) — the first
+// call it makes, before it flips running off — made to throw exactly once so
+// the finally itself dies without settling the task, forcing the last-resort
+// .catch on startTurn's detached run() promise (whose own getTask call comes
+// after the throw-once counter is spent) to be the one that settles it.
+const state = vi.hoisted(() => ({ failGetSetting: false, getTaskThrows: 0 }));
+vi.mock("../lib/store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/store")>();
+  return {
+    ...actual,
+    getSetting: (key: string) => {
+      if (state.failGetSetting && key === "first_task_started")
+        throw new Error("simulated setup failure (getSetting)");
+      return actual.getSetting(key);
+    },
+    getTask: (id: string) => {
+      if (state.getTaskThrows > 0) {
+        state.getTaskThrows--;
+        throw new Error("simulated finally failure (getTask)");
+      }
+      return actual.getTask(id);
+    },
+  };
+});
 
 import { createProject, createTask, deleteProject, getTask, updateTask, listMessages } from "../lib/store";
 import { startTurn } from "../lib/runner";
@@ -25,7 +40,8 @@ import { hasTurn } from "../lib/abort";
 import { subscribe } from "../lib/events";
 
 afterEach(() => {
-  state.failEvents = [];
+  state.failGetSetting = false;
+  state.getTaskThrows = 0;
 });
 
 describe("runner early-throw hardening", () => {
@@ -37,9 +53,7 @@ describe("runner early-throw hardening", () => {
     const seen: { type?: string }[] = [];
     const unsub = subscribe(task.id, (e) => seen.push(e as { type?: string }));
 
-    // Both names so the throw fires regardless of whether the first-ever-turn
-    // funnel event has already been consumed by another test in this file.
-    state.failEvents = ["first_task_started", "turn_started"];
+    state.failGetSetting = true;
     startTurn(task, project, "hi", "");
 
     await vi.waitFor(() => {
@@ -83,9 +97,11 @@ describe("runner early-throw hardening", () => {
     const unsub = subscribe(task.id, (e) => seen.push(e as { type?: string }));
 
     // Early throw aborts the turn before the driver runs; then the finally's
-    // own terminal track() throws too, before it can flip running off — so the
-    // rejection escapes run() and only the .catch on the launch can settle.
-    state.failEvents = ["first_task_started", "turn_started", "turn_failed", "turn_completed"];
+    // own first getTask() throws too (once), before it can flip running off —
+    // so the rejection escapes run() and only the .catch on the launch, whose
+    // getTask call comes after the throw-once counter is spent, can settle it.
+    state.failGetSetting = true;
+    state.getTaskThrows = 1;
     startTurn(task, project, "hi", "");
 
     await vi.waitFor(() => {

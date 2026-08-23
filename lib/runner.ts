@@ -14,7 +14,6 @@ import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn } from "@/lib
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
-import { track } from "@/lib/analytics";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
@@ -23,7 +22,7 @@ import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connecti
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { settleRun } from "@/lib/schedule/store";
-import type { Task, Project, PermissionOutcome, ToolData, TurnUsage } from "@/lib/types";
+import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
 
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something. Named, because the docs promise the user that a
@@ -290,9 +289,6 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // permission prompts alike. One assistant message can park several at once,
   // and awaiting_input must stay up until the last one is settled.
   const openAsks = new Set<string>();
-  // Analytics: this turn's spend (from the usage event) + failure state, both
-  // attached to the terminal turn_completed / turn_failed event below.
-  let turnUsage: TurnUsage | null = null;
   let turnError: string | null = null;
   // Set when this turn died on authentication rather than on the work: the
   // agent's login is dead instance-wide, so the queue must be parked (every
@@ -334,15 +330,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // tells them apart). The settings flag makes it exactly-once across restarts.
     if (!getSetting("first_task_started")) {
       setSetting("first_task_started", String(startedAt));
-      track("first_task_started", { task_id: id, project_id: project.id, seeded: !!project.seeded });
     }
-    track("turn_started", {
-      task_id: id,
-      project_id: project.id,
-      generation: gen,
-      resume: !!task.session_id,
-      model: task.model || null,
-    });
 
     if (syncNote) {
       const m = addMessage(id, gen, "system", syncNote);
@@ -472,11 +460,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         }
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
-        turnUsage = ev.usage;
         publish(id, ev);
       } else if (ev.type === "error") {
         // A soft error emitted mid-stream (e.g. "Run ended: …"). Marks the turn
-        // failed for analytics and publishes the persisted form, so live viewers
+        // failed and publishes the persisted form, so live viewers
         // and snapshot replays render the identical line (with a recovery hint
         // on context overflow / a dead login).
         turnError = ev.content;
@@ -527,28 +514,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         console.error(`[runner] could not settle open permission card for task ${id}:`, err);
       }
     }
-    // Terminal analytics for the funnel + per-task cost. A Stop isn't a failure
-    // (Claude swallows the abort), so it reports as a completed-but-stopped turn.
+    // A Stop isn't a failure (Claude swallows the abort), so it reports as a
+    // completed-but-stopped turn.
     const stopped = abortController.signal.aborted;
-    const base = {
-      task_id: id,
-      project_id: project.id,
-      generation: gen,
-      duration_ms: Date.now() - startedAt,
-    };
-    if (turnError && !stopped) {
-      track("turn_failed", { ...base, error: turnError.slice(0, 500) });
-    } else {
-      track("turn_completed", {
-        ...base,
-        stopped,
-        cost_usd: turnUsage?.cost_usd ?? 0,
-        input_tokens: turnUsage?.input_tokens ?? 0,
-        output_tokens: turnUsage?.output_tokens ?? 0,
-        cache_read_tokens: turnUsage?.cache_read_tokens ?? 0,
-        cache_creation_tokens: turnUsage?.cache_creation_tokens ?? 0,
-      });
-    }
     // Guard against a generation boundary crossed mid-turn (a /clear while this
     // turn was live). /clear ends this generation and resets the task row —
     // session_id=null, started=0, running=0 — for a fresh context. If we then

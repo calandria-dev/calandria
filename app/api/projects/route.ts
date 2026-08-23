@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { listProjects, createProject } from "@/lib/store";
-import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +19,5 @@ export async function POST(req: Request) {
     repo_path: body.repo_path,
     branch: body.branch,
   });
-  track("project_created", { project_id: project.id, has_repo: !!project.repo_path });
   return NextResponse.json(project, { status: 201 });
 }

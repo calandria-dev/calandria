@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDriverStrict } from "@/lib/agents/registry";
 import { getAgentConnection, setAgentConnection } from "@/lib/agents/connections";
-import { getSetting } from "@/lib/store";
-import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -28,15 +26,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // default to subscription for a first-time verify with no prior record.
     const method = getAgentConnection(id)?.method ?? (status.plan === "API" ? "api_key" : "subscription");
     setAgentConnection(id, { method, email: status.email, plan: status.plan });
-    track("agent_connected", { agent: id, plan: status.plan, method: status.method });
-    // Funnel: the first-run wizard's Connect step now goes through this route
-    // for every agent (successor to setOnboardingMethod's connect_claude event).
-    // Guarded to the first run so reconnects later don't re-count the step.
-    if (getSetting("onboarding_complete") !== "1") {
-      track("onboarding_step_completed", { step: "connect_agent", agent: id, method });
-    }
-  } else {
-    track("agent_connect_failed", { agent: id, error: (turn.error || status.error || "could not reach agent").slice(0, 500) });
   }
 
   return NextResponse.json({

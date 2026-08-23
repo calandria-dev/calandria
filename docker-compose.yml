@@ -67,11 +67,7 @@ services:
       # only — so a dashboard can poll many instances without learning each
       # one's private SERVICE_TOKEN. Never accepted on the mutating routes.
       ORCH_FLEET_TOKEN: ${ORCH_FLEET_TOKEN:-}
-      # PostHog product analytics. All empty = analytics no-ops (the default).
-      # See lib/analytics.ts.
       ORCH_ACCOUNT_ID: ${ORCH_ACCOUNT_ID:-}
-      POSTHOG_KEY: ${POSTHOG_KEY:-}
-      POSTHOG_HOST: ${POSTHOG_HOST:-}
       # Feature flags (lib/features.ts). Managed Services + public service
       # hostnames; empty = off (self-host/local default).
       ORCH_FEATURE_SERVICES: ${ORCH_FEATURE_SERVICES:-}

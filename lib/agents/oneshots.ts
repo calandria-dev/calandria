@@ -19,9 +19,8 @@
 import { getDriver, listDrivers, DEFAULT_AGENT } from "./registry";
 import { resolveConnectedAgent } from "./connections";
 import { addInternalUsage, getSetting } from "../store";
-import { track } from "../analytics";
 import type { AgentDriver, OneShotResult } from "./types";
-import type { Project, Task, TurnUsage } from "../types";
+import type { Project, Task } from "../types";
 import { backgroundJobsEnabled } from "../backgroundJobs";
 
 // The one-shot helper names on AgentDriver, all optional.
@@ -80,8 +79,8 @@ function resolveFor<K extends OneShotKey>(preferred: AgentDriver, key: K): Agent
   return util;
 }
 
-// Every one-shot funnels through here so analytics records WHICH agent actually
-// ran each internal job. Both fallback paths (a Codex-only instance running
+// Every one-shot funnels through here so addInternalUsage records WHICH agent
+// actually ran each internal job. Both fallback paths (a Codex-only instance running
 // recaps the settings still point at Claude for, and a driver leaning on the
 // utility agent for a helper it doesn't implement) are invisible otherwise —
 // `fallback: true` is how we see them in the wild.
@@ -114,7 +113,6 @@ async function run<K extends OneShotKey>(
       job, agent, requested_agent: requested, fallback: agent !== requested,
       ...scope, ok: true, ms, usage,
     });
-    trackUsage(job, agent, requested, true, ms, usage);
     return result.text;
   } catch (e) {
     // agent stays null when resolution itself failed (nothing connected) — that
@@ -125,29 +123,8 @@ async function run<K extends OneShotKey>(
       job, agent: recordedAgent, requested_agent: requested,
       fallback: agent !== null && agent !== requested, ...scope, ok: false, ms,
     });
-    trackUsage(job, agent, requested, false, ms, undefined, e);
     throw e;
   }
-}
-
-function trackUsage(
-  job: OneShotKey,
-  agent: string | null,
-  requested: string,
-  ok: boolean,
-  ms: number,
-  usage?: TurnUsage,
-  error?: unknown,
-) {
-  track("internal_job_ran", {
-    job, agent, requested, fallback: agent !== null && agent !== requested, ok, ms,
-    cost_usd: usage?.cost_usd ?? 0,
-    input_tokens: usage?.input_tokens ?? 0,
-    output_tokens: usage?.output_tokens ?? 0,
-    cache_read_tokens: usage?.cache_read_tokens ?? 0,
-    cache_creation_tokens: usage?.cache_creation_tokens ?? 0,
-    ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }),
-  });
 }
 
 // The wrappers are async so utilityDriver()'s no-agent-connected throw always

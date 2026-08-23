@@ -73,7 +73,7 @@ skips the build when the tag already exists.
 - **Fresh instance per run** — `e2e/env.ts` creates a temp root (DB, worktrees,
   projects, fixture repos, pinned gitconfig) and points every `ORCH_*` dir at it.
   Nothing touches `~/.zen-orchestrator` or your real projects; the app listens on
-  port 4711 (`ORCH_E2E_PORT` to move it). Analytics are disabled.
+  port 4711 (`ORCH_E2E_PORT` to move it).
 - **No real agent needed** — the suite sets `ORCH_E2E_MOCK_AGENT=1`, which
   registers the deterministic mock driver (`lib/agents/mock/driver.ts`) in the
   agent registry. It implements the full `AgentDriver` contract — instant login,

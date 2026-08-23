@@ -185,16 +185,6 @@ export default function Orchestrator() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Server-side time-in-app + retention pulse: ping on load, then every 2 min
-  // while the tab is open. The route turns the first ping (or one after a long
-  // gap) into app_opened and the rest into heartbeat (see app/api/heartbeat).
-  useEffect(() => {
-    const beat = () => { void fetch("/api/heartbeat", { method: "POST", keepalive: true }).catch(() => {}); };
-    beat();
-    const iv = setInterval(() => { if (!document.hidden) beat(); }, 120_000);
-    return () => clearInterval(iv);
-  }, []);
-
   // On a phone only one of these is mounted at a time; on desktop the same
   // elements sit side by side. Which pane shows is derived purely from the
   // selection state, so the titlebar "needs you" pill (which drives selection)

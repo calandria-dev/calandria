@@ -202,9 +202,7 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_CONTROL_PLANE` | *(off)* | Marks the box as a fleet's **control plane** rather than one of the user instances it manages. Two effects: service-hostname routing is force-disabled — a veto that **overrides** `ORCH_SERVICE_HOSTS=1` rather than adding to it, since the control plane runs the same image off the same env and must not serve a user's service off its own hostname — and `/api/version` reports `controlPlane: true` so one dashboard can tell the two kinds of box apart. Only useful if you run a fleet; a single instance leaves it unset. Check it first if service hostnames quietly fall back to `http://localhost:<port>` |
 | `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
-| `POSTHOG_KEY` | *(empty)* | PostHog project API key. Set = product analytics on (browser snippet + server events). Empty = fully no-op, nothing is ever sent |
-| `POSTHOG_HOST` | `https://us.i.posthog.com` | PostHog ingest host |
-| `ORCH_ACCOUNT_ID` | *(empty)* | The `distinct_id` analytics events are keyed by. Empty = `self-hosted` |
+| `ORCH_ACCOUNT_ID` | *(empty)* | This instance's account identifier. Empty = `self-hosted` |
 
 Example — relocate an instance entirely via env:
 

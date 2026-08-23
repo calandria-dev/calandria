@@ -1,7 +1,6 @@
 import { getSetting, setSetting, retargetSeededAgent } from "./store";
 import { isAgentConnected, firstConnectedAgent } from "./agents/connections";
 import { DEFAULT_AGENT } from "./agents/registry";
-import { track } from "@/lib/analytics";
 
 // First-run wizard state, persisted in the settings table so an abandoned setup
 // resumes at the right step after a reload or restart. Distinct from the
@@ -43,10 +42,6 @@ export function setOnboardingStep(step: OnbStep): void {
 
 export function setOnboardingMethod(method: "subscription" | "api_key"): void {
   setSetting("onboarding_method", method);
-  // Funnel: the wizard's Connect step succeeded. Guarded to the first run so
-  // reconnecting a different account later doesn't re-count the step.
-  if (getSetting("onboarding_complete") !== "1")
-    track("onboarding_step_completed", { step: "connect_claude", method });
 }
 
 export function setOnboardingAccount(email: string | null, plan: string | null): void {
@@ -66,7 +61,6 @@ export function completeOnboarding(): void {
   if (!alt) return;
   setSetting("default_agent", alt);
   retargetSeededAgent(alt);
-  track("onboarding_default_agent_adopted", { agent: alt });
 }
 
 /** Re-run setup from Settings: clear completion + progress, keep the connection. */

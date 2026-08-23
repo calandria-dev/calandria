@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createTask, getProject, listAllTasksLite } from "@/lib/store";
-import { track } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +32,5 @@ export async function POST(req: Request) {
     // stale or cross-agent value degrades to the default instead of 400ing.
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
   });
-  // `suggested` tasks are agent proposals in the tray; a real user-created task
-  // is the funnel's "first task" step. Flag which so the funnel can filter.
-  track("task_created", { task_id: task.id, project_id: task.project_id, suggested: !!body.suggested });
   return NextResponse.json(task, { status: 201 });
 }
