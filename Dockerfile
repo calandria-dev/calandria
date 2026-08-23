@@ -69,6 +69,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
+# The base image's bundled npm (10.9.8) vendors its own tar (7.5.11) and
+# brace-expansion (2.0.2), both with HIGH CVEs the image scan flags
+# (CVE-2026-59873, CVE-2026-59874, CVE-2026-13149) — unrelated to anything in
+# package-lock.json, since this is npm's own dependency tree, not the app's.
+# Reinstalling npm replaces its vendored copies. Pinned, not @latest, for the
+# same reason CLAUDE_CODE_VERSION/CODEX_VERSION below are pinned.
+RUN npm install -g npm@12.0.2 && npm --version
+
 # The agent CLIs, pinned. Floating `@latest` installs would make two supply-chain
 # decisions per build and leave no two images alike; bump these deliberately
 # (`npm view <pkg> version`, then rebuild and exercise the agent) rather than
@@ -80,8 +88,11 @@ ARG CODEX_VERSION=0.146.0
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
 # volume). Pinned location via CLAUDE_CLI_PATH; updates ship as image rebuilds,
-# so the in-place autoupdater is disabled.
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && claude --version
+# so the in-place autoupdater is disabled. npm 12 (above) blocks postinstall
+# scripts by default; claude-code's postinstall fetches its native binary, so
+# it needs an explicit allow-scripts grant or the install succeeds but the
+# binary is missing.
+RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && claude --version
 
 # The `codex` CLI (the Codex agent driver drives it via @openai/codex-sdk; login
 # state lives in ~/.codex on the volume). Installed globally so CODEX_CLI_PATH /
