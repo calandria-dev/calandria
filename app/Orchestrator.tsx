@@ -272,8 +272,8 @@ export default function Orchestrator() {
             onOpenTask={o.setSelTask}
           />
         ) : (
-          <div className="empty" style={{ margin: "auto" }}>
-            <div className="e-ic">{Icon.bolt()}</div>
+          <div className="empty void" style={{ margin: "auto" }}>
+            <div className="e-ic"><Logo size={40} /></div>
             <div className="e-t">No task selected</div>
             <div className="e-s">Create a task to start an agent session.</div>
           </div>
@@ -558,8 +558,8 @@ export default function Orchestrator() {
                   // doorway, not a dead end — explain what a project is and offer
                   // the create action right here.
                   <div className="col col-tasks">
-                    <div className="empty" style={{ margin: "auto", maxWidth: 300 }}>
-                      <div className="e-ic">{Icon.folder()}</div>
+                    <div className="empty void" style={{ margin: "auto", maxWidth: 340 }}>
+                      <div className="e-ic"><Logo size={48} /></div>
                       <div className="e-t">{o.projects.length > 0 ? "No active projects" : "No projects yet"}</div>
                       <div className="e-s">
                         {o.projects.length > 0

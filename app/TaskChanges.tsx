@@ -66,11 +66,23 @@ function hunkLines(patch: string): string[] {
   const i = lines.findIndex((l) => l.startsWith("@@"));
   return i >= 0 ? lines.slice(i) : [];
 }
-function lineClass(line: string): string {
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+") && !line.startsWith("+++")) return "add";
-  if (line.startsWith("-") && !line.startsWith("---")) return "del";
-  return "";
+// One rendered diff line plus its old/new line numbers, for the dual gutter
+// (GitHub-style). Tracked by walking the hunk headers (`@@ -a,b +c,d @@`
+// seed the counters) rather than trusting the patch's own numbers past the
+// first hunk, since a file with multiple hunks resets per @@.
+interface NumberedLine { cls: string; oldNo: number | null; newNo: number | null; text: string }
+function numberedLines(patch: string): NumberedLine[] {
+  let oldNo = 0, newNo = 0;
+  return hunkLines(patch).map((text) => {
+    if (text.startsWith("@@")) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+      if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
+      return { cls: "hunk", oldNo: null, newNo: null, text };
+    }
+    if (text.startsWith("+") && !text.startsWith("+++")) return { cls: "add", oldNo: null, newNo: newNo++, text };
+    if (text.startsWith("-") && !text.startsWith("---")) return { cls: "del", oldNo: oldNo++, newNo: null, text };
+    return { cls: "ctx", oldNo: oldNo++, newNo: newNo++, text };
+  });
 }
 
 // Files past this many hunk lines start collapsed: a diff with many files near
@@ -92,7 +104,7 @@ const FileDiff = memo(function FileDiff({
   onToggle: (path: string) => void;
   refs: { current: Record<string, HTMLDivElement | null> };
 }) {
-  const lines = useMemo(() => (f.binary ? [] : hunkLines(f.patch)), [f]);
+  const lines = useMemo(() => (f.binary ? [] : numberedLines(f.patch)), [f]);
   const big = lines.length > COLLAPSE_LINES;
   const isCollapsed = userToggled ? !big : big;
   // Accurate placeholder height for content-visibility while the section is
@@ -128,11 +140,17 @@ const FileDiff = memo(function FileDiff({
           ) : lines.length === 0 ? (
             <div className="tc-empty">No textual changes (mode or rename).</div>
           ) : (
-            lines.map((ln, i) => (
-              <div key={i} className={`dl ${lineClass(ln)}`}>
-                {ln || " "}
-              </div>
-            ))
+            lines.map((ln, i) =>
+              ln.cls === "hunk" ? (
+                <div key={i} className="dl hunk">{ln.text}</div>
+              ) : (
+                <div key={i} className={`dl ${ln.cls}`}>
+                  <span className="dl-no">{ln.oldNo ?? ""}</span>
+                  <span className="dl-no">{ln.newNo ?? ""}</span>
+                  <span className="dl-c">{ln.text || " "}</span>
+                </div>
+              )
+            )
           )}
           {f.truncated && <div className="tc-empty">… file diff truncated</div>}
         </div>

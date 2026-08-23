@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
+import { Logo } from "../Logo";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
@@ -349,7 +350,13 @@ export function TasksColumn({ project, agents, tasks, suggested, selTaskId, runn
       ) : (
       <div className="scroll">
         <div className="task-scroll">
-          {tasks.length === 0 && <div className="empty" style={{ padding: "30px 16px" }}><div className="e-t">No tasks yet</div><div className="e-s">Create one to start an agent session.</div></div>}
+          {tasks.length === 0 && (
+            <div className="empty void" style={{ margin: "16px" }}>
+              <div className="e-ic"><Logo size={32} /></div>
+              <div className="e-t">No tasks yet</div>
+              <div className="e-s">Create one to start an agent session.</div>
+            </div>
+          )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} accent />
           <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} />

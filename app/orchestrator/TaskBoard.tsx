@@ -305,7 +305,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
             onDrop={(e) => { e.preventDefault(); drop(key, colTasks.length); }}
           >
             <div className="bcol-h">
-              <span className={`cn ${def.accent ? "needs-you" : ""}`}>{key === "suggested" && Icon.spark()}{def.label}</span>
+              <span className={`cn ${def.accent ? "needs-you" : ""}`}><span className="bcol-dot" />{key === "suggested" && Icon.spark()}{def.label}</span>
               <span className={`ct ${def.accent ? "needs-you" : ""}`}>{colTasks.length}</span>
               <span className="sp" />
               {def.derived && <span className="derived" title="Reflects agent/session state — drag cards out, not in">derived</span>}

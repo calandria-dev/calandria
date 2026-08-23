@@ -78,8 +78,13 @@ function relDay(key: string): string {
 // Fixed per-entity hues: an agent keeps its color across every chart and filter
 // state (color follows the entity, never its rank). Known drivers are pinned;
 // any future driver takes the next unused hue in bundle order.
-const HUE_POOL = ["var(--blue)", "var(--green)", "var(--amber)", "var(--coral)"];
-const HUE_PINS: Record<string, string> = { claude: "var(--blue)", codex: "var(--green)" };
+// Chart series colors MUST come from the --s1..--s5 chart-series primitives
+// (not the status semantics like --blue/--green/--amber/--coral) — those are
+// reserved for running/success/warn/error signal color, a different meaning
+// than "which agent produced this bar". --calandria (below) stays the one
+// exception: it's the dedicated hue for Calandria's own maintenance sessions.
+const HUE_POOL = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+const HUE_PINS: Record<string, string> = { claude: "var(--s1)", codex: "var(--s2)" };
 function agentHues(ids: string[]): Record<string, string> {
   const used = new Set(ids.map((id) => HUE_PINS[id]).filter(Boolean));
   const pool = HUE_POOL.filter((h) => !used.has(h));
@@ -88,7 +93,7 @@ function agentHues(ids: string[]): Record<string, string> {
   for (const id of ids) out[id] = HUE_PINS[id] ?? pool[i++ % pool.length];
   return out;
 }
-const TOKEN_HUES = { inp: "var(--blue)", out: "var(--green)", cw: "var(--amber)", cr: "var(--coral)" } as const;
+const TOKEN_HUES = { inp: "var(--s1)", out: "var(--s2)", cw: "var(--s3)", cr: "var(--s4)" } as const;
 const CALANDRIA_HUE = "var(--calandria)";
 
 const JOBS: Record<string, { label: string; settings: string }> = {
@@ -207,8 +212,8 @@ function DivergingChart({ id, rows, max, tip, hover, onHover, height = 152 }: Om
           const dim = active != null && active !== i;
           return (
             <div key={r.key} style={{ flex: 1, height: "100%", position: "relative", opacity: dim ? 0.4 : 1, transition: "opacity .1s" }}>
-              <div style={{ position: "absolute", left: "12%", right: "12%", bottom: "50%", height: `${Math.max(0, (r.add / max) * 49)}%`, minHeight: r.add > 0 ? 1 : 0, background: "var(--green)", borderRadius: "2px 2px 0 0" }} />
-              <div style={{ position: "absolute", left: "12%", right: "12%", top: "50%", height: `${Math.max(0, (r.del / max) * 49)}%`, minHeight: r.del > 0 ? 1 : 0, background: "var(--coral)", borderRadius: "0 0 2px 2px" }} />
+              <div style={{ position: "absolute", left: "12%", right: "12%", bottom: "50%", height: `${Math.max(0, (r.add / max) * 49)}%`, minHeight: r.add > 0 ? 1 : 0, background: "var(--run)", borderRadius: "2px 2px 0 0" }} />
+              <div style={{ position: "absolute", left: "12%", right: "12%", top: "50%", height: `${Math.max(0, (r.del / max) * 49)}%`, minHeight: r.del > 0 ? 1 : 0, background: "var(--err)", borderRadius: "0 0 2px 2px" }} />
             </div>
           );
         })}
@@ -260,8 +265,10 @@ function ChartCard({ title, sub, right, children }: { title: string; sub: string
   );
 }
 
-const LegendSwatch = ({ color, label, dim, onClick }: { color: string; label: string; dim?: boolean; onClick?: () => void }) => (
-  <span className="in-leg" style={dim ? { color: "var(--ink-4)" } : undefined}>
+// `strong` marks Calandria's own series: bold + full-ink label, so its legend
+// entry reads distinctly from the agent series it's plotted alongside.
+const LegendSwatch = ({ color, label, dim, strong, onClick }: { color: string; label: string; dim?: boolean; strong?: boolean; onClick?: () => void }) => (
+  <span className={`in-leg${strong ? " strong" : ""}`} style={dim ? { color: "var(--ink-4)" } : undefined}>
     {onClick ? (
       <button className="in-leg-btn" onClick={onClick} aria-pressed={!dim}>
         <span className="in-leg-dot" style={{ background: color, opacity: dim ? 0.3 : 1 }} />{label}
@@ -459,7 +466,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     if (!p || p <= 0) return { text: c > 0 ? "new" : "—", arrow: "", color: "var(--ink-4)" };
     const pct = Math.round(((c - p) / p) * 100);
     if (pct === 0) return { text: "0%", arrow: "", color: "var(--ink-4)" };
-    return { text: `${Math.abs(pct)}%`, arrow: pct > 0 ? "▲ " : "▼ ", color: pct > 0 ? "var(--green)" : "var(--coral)" };
+    return { text: `${Math.abs(pct)}%`, arrow: pct > 0 ? "▲ " : "▼ ", color: pct > 0 ? "var(--run)" : "var(--err)" };
   };
 
   const totalSpend = cur.spend + cur.overheadSpend;
@@ -472,17 +479,17 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const kpis: { label: string; value: ReactNode; sub: string; spark: ReactNode; d: { text: string; arrow: string; color: string } }[] = [
     { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--blue)" />, d: delta(cur.spend, prev.spend) },
     { label: "Calandria overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={CALANDRIA_HUE} />, d: delta(overheadPct, prevOverheadPct) },
-    { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--green)" />, d: delta(cur.tokens, prev.tokens) },
+    { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--run)" />, d: delta(cur.tokens, prev.tokens) },
     { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--blue)" />, d: delta(cur.tasks, prev.tasks) },
     {
       label: "Lines merged",
       value: (
         <span className="kpi-lines">
-          <span style={{ color: "var(--green)" }}>+{fmtCompact(cur.add)}</span>
-          <span style={{ color: "var(--coral)", fontSize: 18 }}>−{fmtCompact(cur.del)}</span>
+          <span style={{ color: "var(--run)" }}>+{fmtCompact(cur.add)}</span>
+          <span style={{ color: "var(--err)", fontSize: 18 }}>−{fmtCompact(cur.del)}</span>
         </span>
       ),
-      sub: "added / removed on base", spark: <Sparkline vals={rows.map((r) => r.add)} color="var(--green)" />, d: delta(cur.add, prev.add),
+      sub: "added / removed on base", spark: <Sparkline vals={rows.map((r) => r.add)} color="var(--run)" />, d: delta(cur.add, prev.add),
     },
     { label: "Active projects", value: <span className="kpi-big">{String(projectRows.length)}</span>, sub: "worked on this period", spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--ink-3)" />, d: { text: "", arrow: "", color: "var(--ink-4)" } },
   ];
@@ -607,7 +614,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                 title="Daily spend" sub="API-equivalent, per day"
                 right={<div className="in-legend">
                   {chartAgents.map((a) => <LegendSwatch key={a} color={hues[a]} label={label(a)} />)}
-                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
                 </div>}
               >
                 <DailyChart
@@ -644,7 +651,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   {([{ k: "inp", label: "Input" }, { k: "out", label: "Output" }, { k: "cr", label: "Cache read" }, { k: "cw", label: "Cache write" }] as const).map((c) => (
                     <LegendSwatch key={c.k} color={TOKEN_HUES[c.k]} label={c.label} dim={!includeCache && c.k !== "inp" && c.k !== "out"} />
                   ))}
-                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
                 </div>
                 <DailyChart
                   id="tokens" rows={rows} max={tokenMax} hover={hover} onHover={setHover}
@@ -680,8 +687,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                 title="Code merged per day" sub="Lines added / removed"
                 right={
                   <div className="in-legend">
-                    <LegendSwatch color="var(--green)" label="Added" />
-                    <LegendSwatch color="var(--coral)" label="Removed" />
+                    <LegendSwatch color="var(--run)" label="Added" />
+                    <LegendSwatch color="var(--err)" label="Removed" />
                   </div>
                 }
               >
@@ -690,8 +697,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
-                      { label: "Added", val: `+${fmtCompact(r.add)}`, color: "var(--green)" },
-                      { label: "Removed", val: `−${fmtCompact(r.del)}`, color: "var(--coral)" },
+                      { label: "Added", val: `+${fmtCompact(r.add)}`, color: "var(--run)" },
+                      { label: "Removed", val: `−${fmtCompact(r.del)}`, color: "var(--err)" },
                     ],
                   })}
                 />
@@ -799,8 +806,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                     <span className="mono dim">{fmtCompact(p.tokens)}</span>
                     <span className="mono dim">{String(Math.round(p.tasks))}</span>
                     <span className="mono" style={{ fontSize: 12 }}>
-                      <span style={{ color: "var(--green)" }}>+{fmtCompact(p.add)}</span>{" "}
-                      <span style={{ color: "var(--coral)" }}>−{fmtCompact(p.del)}</span>
+                      <span style={{ color: "var(--run)" }}>+{fmtCompact(p.add)}</span>{" "}
+                      <span style={{ color: "var(--err)" }}>−{fmtCompact(p.del)}</span>
                     </span>
                     <span className="mono dim" style={{ fontSize: 11.5 }}>{p.lastKey ? relDay(p.lastKey) : "—"}</span>
                     <span style={{ display: "flex", justifyContent: "flex-end" }}>

@@ -66,6 +66,7 @@ function ToolView({ data }: { data: ToolData }) {
     <div className="tool">
       <button className="tool-h" style={{ cursor: expandable ? "pointer" : "default" }} onClick={() => expandable && setOpen((o) => !o)}>
         {expandable && <span className={`tchev ${showBody ? "open" : ""}`}>{Icon.chevRight()}</span>}
+        <span className="tbullet">●</span>
         <span className="tg">{data.title}</span>
         {data.result !== undefined && <span className={data.isError ? "tx" : "tcheck"}>{data.isError ? Icon.x() : Icon.check()}</span>}
       </button>

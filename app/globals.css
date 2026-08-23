@@ -178,7 +178,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tb-omni:hover{border-color:var(--line-strong);color:var(--ink-3);}
 .tb-omni .omni-ic{display:flex;width:13px;height:13px;}
 .tb-omni .omni-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tb-omni .omni-k{margin-left:auto;font-family:var(--mono);font-size:10px;border:1px solid var(--line);border-radius:3px;padding:1px 5px;flex:0 0 auto;}
+.tb-omni .omni-k{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--accent);border:1px solid var(--line);border-radius:3px;padding:1px 5px;flex:0 0 auto;}
 
 .tb-right{grid-column:3;justify-self:end;display:flex;align-items:center;gap:12px;min-width:0;}
 .tb-actions{display:flex;align-items:center;gap:4px;}
@@ -284,8 +284,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .proj:hover{background:var(--panel);}
 .proj.dragging{opacity:.4;}
 .proj.drag-over{box-shadow:inset 0 2px 0 var(--accent);}
-.proj.sel{background:var(--surface);box-shadow:var(--sh-1);}
-.proj.sel::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:3px;height:20px;border-radius:3px;background:var(--accent);}
+/* active-row treatment (file-rail pattern from ui/Diffs.html): panel bg + an
+   inset accent rule on the leading edge, rather than a floating pill. */
+.proj.sel{background:var(--panel);box-shadow:inset 2px 0 0 var(--accent);}
 .proj .pic{
   width:30px;height:30px;flex:0 0 auto;border-radius:9px;display:grid;place-items:center;position:relative;
   font-family:var(--mono);font-weight:700;font-size:13px;color:#fff;letter-spacing:-.02em;
@@ -375,7 +376,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
   box-shadow:var(--sh-1);margin-bottom:8px;cursor:pointer;transition:transform .1s, box-shadow .12s, border-color .12s;
 }
 .task:hover{box-shadow:var(--sh-2);border-color:var(--line-strong);}
-.task.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent), var(--sh-2);}
+/* active-row treatment (file-rail pattern from ui/Diffs.html): panel bg + an
+   inset accent rule, layered under the elevation shadow the row already has. */
+.task.sel{background:var(--panel);border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent), var(--sh-2);}
 .task-top{display:flex;align-items:center;gap:9px;}
 .task .ttitle{flex:1;min-width:0;font-weight:650;font-size:13.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .task .tdesc{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.42;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
@@ -471,22 +474,24 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sdot.r{background:var(--ink-4);}                 /* not started — idle/neutral */
 .sdot.a{background:var(--amber);box-shadow:0 0 7px var(--amber);}  /* in progress (paused) */
 .sdot.g{background:var(--green);box-shadow:var(--glow-green);}     /* done / merged */
-.sdot.h{background:#8b7fd6;box-shadow:0 0 7px rgba(139,127,214,.55);}  /* on hold — paused */
+.sdot.h{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 55%,transparent);}  /* on hold — paused */
 .sdot.x{background:transparent;border:1.5px solid var(--ink-4);box-sizing:border-box;}  /* cancelled — hollow */
-.sdot.b{background:var(--blue);box-shadow:var(--glow-blue);}       /* live / working */
-.sdot.c{background:var(--coral);box-shadow:var(--glow-coral);}     /* needs you */
+.sdot.b{background:var(--accent);box-shadow:var(--glow-blue);}       /* live / working */
+.sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you — waiting/review, not error */
 .sdot.lg{width:12px;height:12px;}
 .sdot.pulse::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;box-shadow:none;animation:ping 1.6s cubic-bezier(0,0,.2,1) infinite;}
 @keyframes ping{0%{transform:scale(1);opacity:.55;}80%,100%{transform:scale(2.4);opacity:0;}}
 
 /* "needs your input" surfacing ---------------------------------------- */
-/* per-task: blue label + a soft left rail so awaiting cards stand out */
-.slabel.await{color:var(--blue);font-weight:600;}
-.task.awaiting{box-shadow:inset 2px 0 0 var(--blue);background:linear-gradient(90deg,var(--blue-soft),transparent 40%);}
-.status-ctl.awaiting .cv{color:var(--blue);font-weight:600;}
+/* per-task: --rev label + a soft left rail so awaiting cards stand out —
+   --rev (not --accent/--blue) so "waiting on you" reads distinctly from a
+   session that's actively running, and not the error/--err red either. */
+.slabel.await{color:var(--rev);font-weight:600;}
+.task.awaiting{box-shadow:inset 2px 0 0 var(--rev);background:linear-gradient(90deg,var(--rev-bg),transparent 40%);}
+.status-ctl.awaiting .cv{color:var(--rev);font-weight:600;}
 /* tasks-column group header */
-.task-group-h.needs-you{color:var(--blue);}
-.task-group-h.needs-you .gcount{background:var(--blue-soft);color:var(--blue);}
+.task-group-h.needs-you{color:var(--rev);}
+.task-group-h.needs-you .gcount{background:var(--rev-bg);color:var(--rev);}
 
 /* board (kanban) view -------------------------------------------------- */
 /* Layout ported from the Claude Design "Calandria — Board View" study,
@@ -525,20 +530,27 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bcol.k-suggested .bcol-h .cn{color:var(--accent-ink);display:flex;align-items:center;gap:6px;}
 .bcol.k-suggested .bcol-h .cn svg{width:11px;height:11px;}
 .bcol.k-suggested .bcol-rule{background:transparent;}
-.bcol-h{flex:0 0 auto;height:30px;display:flex;align-items:center;gap:8px;padding:0 6px;}
-.bcol-h .cn{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap;}
+.bcol-h{flex:0 0 auto;height:30px;display:flex;align-items:center;gap:7px;padding:0 6px;}
+.bcol-h .cn{font-family:var(--font-body);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);white-space:nowrap;display:flex;align-items:center;gap:6px;}
 .bcol-h .ct{font-family:var(--mono);font-size:9.5px;font-weight:700;color:var(--ink-4);background:var(--raise);border:1px solid var(--line-2);border-radius:999px;min-width:20px;text-align:center;padding:2px 5px;}
-.bcol-h .cn.needs-you{color:var(--blue);}
-.bcol-h .ct.needs-you{color:var(--blue);border-color:var(--blue-soft);}
+.bcol-h .cn.needs-you{color:var(--rev);}
+.bcol-h .ct.needs-you{color:var(--rev);border-color:var(--rev);}
 .bcol-h .sp{flex:1;}
 .bcol-h .derived{font-family:var(--mono);font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);border:1px solid var(--line);border-radius:4px;padding:2px 4px;}
+/* 7px colored status dot in the column header, one per column identity —
+   suggested/idle columns read dim, the rest match the card-level status map. */
+.bcol-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--ink-4);}
+.bcol.k-awaiting .bcol-dot{background:var(--rev);}
+.bcol.k-in_progress .bcol-dot{background:var(--accent);}
+.bcol.k-on_hold .bcol-dot{background:var(--warn);}
+.bcol.k-done .bcol-dot{background:var(--run);}
 /* per-column status rule under the header — solid, in the same colors the
    status dots use, so columns read as the list's groups turned sideways */
 .bcol-rule{flex:0 0 auto;height:2px;border-radius:2px;background:var(--line);margin:0 4px 9px;}
-.bcol.k-awaiting .bcol-rule{background:linear-gradient(90deg,var(--blue),var(--blue-soft));}
-.bcol.k-in_progress .bcol-rule{background:linear-gradient(90deg,var(--amber),var(--amber-soft));}
-.bcol.k-on_hold .bcol-rule{background:linear-gradient(90deg,#8b7fd6,transparent);}
-.bcol.k-done .bcol-rule{background:linear-gradient(90deg,var(--green),var(--green-soft));}
+.bcol.k-awaiting .bcol-rule{background:linear-gradient(90deg,var(--rev),color-mix(in oklab,var(--rev) 20%,transparent));}
+.bcol.k-in_progress .bcol-rule{background:linear-gradient(90deg,var(--accent),color-mix(in oklab,var(--accent) 20%,transparent));}
+.bcol.k-on_hold .bcol-rule{background:linear-gradient(90deg,var(--warn),transparent);}
+.bcol.k-done .bcol-rule{background:linear-gradient(90deg,var(--run),var(--run-bg));}
 .bcol-body{flex:1;min-height:60px;overflow-y:auto;padding:0 4px 18px;display:flex;flex-direction:column;gap:8px;}
 .b-slot{display:flex;flex-direction:column;gap:8px;flex:0 0 auto;}
 .bcol-empty{padding:16px 6px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;}
@@ -564,14 +576,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bcard.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--sh-1);}
 .bc-top{display:flex;align-items:flex-start;gap:8px;}
 .bc-top .sdot{margin-top:4px;}
-.bc-title{flex:1;min-width:0;margin:0;font-size:12.5px;font-weight:550;line-height:1.35;letter-spacing:-.005em;color:var(--ink);}
+.bc-title{flex:1;min-width:0;margin:0;font-size:14px;font-weight:600;line-height:1.35;letter-spacing:-.005em;color:var(--ink);}
 .bc-meta{display:flex;align-items:center;gap:7px;margin-top:8px;flex-wrap:wrap;}
 .bc-act{font-family:var(--mono);font-size:9.5px;color:var(--ink-4);letter-spacing:.02em;display:flex;align-items:center;gap:5px;}
-.bc-act.on{color:var(--amber);}
-.bc-act.need{color:var(--blue);}
+.bc-act.on{color:var(--accent);}
+.bc-act.need{color:var(--rev);}
 /* indeterminate "working" scanner under a live card's meta row */
 .bc-bar{height:2px;border-radius:2px;background:var(--line-2);margin-top:9px;overflow:hidden;}
-.bc-bar i{display:block;height:100%;width:40%;border-radius:2px;background:linear-gradient(90deg,var(--amber),var(--blue));animation:bscan 2.2s ease-in-out infinite;}
+.bc-bar i{display:block;height:100%;width:40%;border-radius:2px;background:var(--accent);animation:bscan 2.2s ease-in-out infinite;}
 @keyframes bscan{0%{margin-left:-40%;}100%{margin-left:100%;}}
 .bc-foot{display:flex;align-items:center;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2);}
 .bc-foot .sp{flex:1;}
@@ -581,12 +593,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-chip svg{width:10px;height:10px;flex:0 0 auto;}
 .bc-sess{font-family:var(--mono);font-size:9px;color:var(--ink-4);display:flex;align-items:center;gap:4px;}
 .bc-sess svg{width:10px;height:10px;}
-/* signal language: waiting card = blue rail + wash; working card = amber rail */
-.bcard.needs{background:linear-gradient(90deg,var(--blue-soft),transparent 55%),var(--surface);border-color:var(--blue);}
-.bcard.needs::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:2.5px;border-radius:3px;background:var(--blue);box-shadow:var(--glow-blue);animation:brail 1.8s ease-in-out infinite;}
-@keyframes brail{0%,100%{opacity:1;}50%{opacity:.35;}}
-.bcard.working{border-color:var(--amber);}
-.bcard.working::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:2.5px;border-radius:3px;background:linear-gradient(180deg,var(--amber),var(--blue));opacity:.9;}
+/* signal language: waiting-on-you = --rev inset border (review/waiting color,
+   not error red); actively-running = --accent inset border. Both use the
+   mockup's ".live" inner-border-at-35%-opacity pattern rather than a rail, so
+   the two "hot" card states read consistently with the terminal/diff focus
+   treatments elsewhere in the app. */
+.bcard.needs{border-color:var(--rev);background:linear-gradient(90deg,var(--rev-bg),transparent 55%),var(--surface);}
+.bcard.needs::before{content:"";position:absolute;inset:-1px;border-radius:var(--r-lg);border:1px solid var(--rev);opacity:.35;pointer-events:none;}
+.bcard.working{border-color:var(--accent);}
+.bcard.working::before{content:"";position:absolute;inset:-1px;border-radius:var(--r-lg);border:1px solid var(--accent);opacity:.35;pointer-events:none;}
 /* suggested cards look like every other card (the column header carries the
    "proposed by an agent" framing); they just add the quick-action row */
 .bsug-acts{display:flex;gap:6px;margin-top:9px;}
@@ -624,10 +639,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bpanel .session-body{flex:1;min-height:0;display:flex;}
 .app.mobile .bcol{flex:0 0 min(78vw,260px);}
 /* toolbar pill — the cross-project count */
-.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--coral);background:var(--coral-soft);border:1px solid var(--coral-soft);cursor:pointer;transition:filter .12s;}
+.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;}
 .needs-you-pill:hover{filter:brightness(1.12);}
-.needs-you-pill .ny-dot{width:7px;height:7px;border-radius:50%;background:var(--coral);box-shadow:var(--glow-coral);position:relative;}
-.needs-you-pill .ny-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--coral);animation:ping 2s ease-out infinite;}
+.needs-you-pill .ny-dot{width:7px;height:7px;border-radius:50%;background:var(--rev);box-shadow:0 0 10px color-mix(in oklab,var(--rev) 40%,transparent);position:relative;}
+.needs-you-pill .ny-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--rev);animation:ping 2s ease-out infinite;}
 /* "need you" dropdown — list of awaiting tasks across all projects */
 .ny-menu{max-width:340px;max-height:min(60vh,420px);overflow-y:auto;}
 .ny-empty{padding:14px 14px 16px;font-size:12.5px;color:var(--ink-3);}
@@ -638,7 +653,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .ny-row .ny-title{font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ny-row .ny-sub{font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* sidebar per-project badge, pinned to the project glyph */
-.proj-await{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--blue);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);}
+.proj-await{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--rev);color:var(--bg);font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);}
 
 /* priority pill */
 .pri{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px;flex:0 0 auto;line-height:1.35;}
@@ -690,8 +705,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* empty state */
 .empty{padding:40px 24px;text-align:center;color:var(--ink-3);}
 .empty .e-ic{width:42px;height:42px;margin:0 auto 12px;border-radius:12px;background:var(--surface-2);display:grid;place-items:center;color:var(--ink-4);}
-.empty .e-t{font-weight:650;color:var(--ink-2);font-size:14px;}
-.empty .e-s{font-size:12px;margin-top:5px;line-height:1.5;}
+.empty .e-t{font-family:var(--font-display);font-weight:var(--display-weight);letter-spacing:var(--display-tracking);color:var(--ink);font-size:18px;}
+.empty .e-s{font-size:13px;color:var(--dim);margin-top:5px;line-height:1.5;}
+/* "nothing here yet" — the true empty/first-run states (no projects, no tasks,
+   no task selected), as opposed to a loading or error `.empty` block: dashed
+   shell + a bare dim Logo instead of the icon badge, per ui/States.html. */
+.empty.void{border:1px dashed var(--line);border-radius:var(--r-lg);padding:52px 20px;}
+.empty.void .e-ic{width:auto;height:auto;margin:0 auto 14px;background:none;border-radius:0;color:var(--dim);opacity:.6;}
+.empty.void .e-t{font-size:20px;}
 
 /* ============================== session ============================== */
 .session-body{flex:1;min-height:0;display:flex;}
@@ -828,7 +849,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-frow{display:flex;align-items:center;gap:9px;width:100%;padding:6px 12px;border:none;border-bottom:1px solid var(--line);background:transparent;cursor:pointer;font-family:var(--mono);font-size:12px;text-align:left;color:var(--ink);}
 .tc-frow:last-child{border-bottom:none;}
 .tc-frow:hover{background:var(--surface-2);}
-.tc-frow.on{background:var(--accent-soft);}
+.tc-frow.on{background:var(--panel);color:var(--ink);box-shadow:inset 2px 0 0 var(--accent);}
 .tc-fpath{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tc-cnt{font-family:var(--mono);font-size:11.5px;flex:0 0 auto;}
 .tc-bin{font-size:11px;color:var(--ink-3);}
@@ -841,16 +862,21 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
    outside the viewport; contain-intrinsic-size `auto` keeps the last rendered
    height as the placeholder so the scrollbar stays stable. */
 .tc-file{margin:0 16px 12px;border:1px solid var(--line);border-radius:var(--r);content-visibility:auto;contain-intrinsic-size:auto 480px;}
-.tc-fhead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:9px;width:100%;padding:8px 12px;border:none;border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;background:var(--panel);cursor:pointer;font-family:var(--mono);font-size:12px;text-align:left;color:var(--ink);}
+.tc-fhead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:9px;width:100%;padding:8px 12px;border:none;border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;background:var(--panel);cursor:pointer;font-family:var(--mono);font-size:11.5px;text-align:left;color:var(--ink);}
 .tc-fhead:hover{background:var(--surface-2);}
 .tc-chev{transition:transform .12s;color:var(--ink-3);display:inline-block;font-size:10px;}
 .tc-chev.open{transform:rotate(90deg);}
-.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);}
+.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);}
 .dl{padding:0 12px;white-space:pre;color:var(--ink);}
-.dl.add{background:var(--green-soft);}
-.dl.del{background:var(--red-soft);}
-.dl.ctx{color:var(--ink-3);}
-.dl.hunk{background:var(--accent-soft);color:var(--accent-ink);}
+.dl.add{background:var(--diff-add-bg);color:var(--run);}
+.dl.del{background:var(--diff-del-bg);color:var(--err);}
+.dl.ctx{color:var(--dim);}
+/* dual line-number gutters — the full-file diff viewer only (tc-hunks). Tool-
+   call/peek diffs elsewhere reuse .dl as a single text row and stay untouched. */
+.tc-hunks .dl{display:grid;grid-template-columns:42px 42px 1fr;padding:0;}
+.dl-no{color:var(--dim);opacity:.5;text-align:right;padding-right:8px;font-size:10.5px;user-select:none;}
+.dl-c{padding:0 12px;overflow-x:auto;}
+.tc-hunks .dl.hunk{display:block;padding:2px 14px;background:var(--panel);color:var(--dim);font-size:11px;}
 .tc-empty{padding:10px 12px;color:var(--ink-3);font-size:12px;font-family:var(--sans);}
 .tc-bigdiff{display:block;width:100%;padding:10px 12px;border:none;border-radius:0 0 var(--r) var(--r);background:var(--surface);color:var(--ink-3);font-size:12px;font-family:var(--sans);text-align:left;cursor:pointer;}
 .tc-bigdiff:hover{background:var(--surface-2);color:var(--ink);}
@@ -859,7 +885,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 /* Live "which model actually ran" badge inside the model picker control. */
 .model-badge{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1;padding:2px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent-ink);}
 /* Which agent (Claude Code / Codex …) a task runs under — task cards + header. */
-.agent-badge{font-family:var(--mono);font-size:9px;font-weight:700;line-height:1;letter-spacing:.04em;padding:2px 6px;border-radius:99px;background:var(--surface-2);color:var(--ink-3);white-space:nowrap;flex:0 0 auto;}
+.agent-badge{font-family:var(--mono);font-size:10.5px;font-weight:500;line-height:1;letter-spacing:.02em;padding:2px 8px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--dim);white-space:nowrap;flex:0 0 auto;}
 
 .btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;transition:background .12s,filter .12s;}
 .btn svg{width:15px;height:15px;}
@@ -919,9 +945,10 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tool-h .tchev{flex:0 0 auto;color:var(--ink-4);display:inline-flex;transition:transform .14s;}
 .tool-h .tchev svg{width:13px;height:13px;}
 .tool-h .tchev.open{transform:rotate(90deg);}
+.tool-h .tbullet{color:var(--accent);font-size:9px;flex:0 0 auto;}
 .tool-h .tg{color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
-.tool-h .tcheck{margin-left:auto;color:var(--green);flex:0 0 auto;display:inline-flex;}
-.tool-h .tx{margin-left:auto;color:var(--red);flex:0 0 auto;display:inline-flex;}
+.tool-h .tcheck{margin-left:auto;color:var(--run);flex:0 0 auto;display:inline-flex;}
+.tool-h .tx{margin-left:auto;color:var(--err);flex:0 0 auto;display:inline-flex;}
 .tool-h .tcheck svg,.tool-h .tx svg{width:14px;height:14px;}
 .tool-body{border-top:1px solid var(--line-2);background:var(--panel-2);}
 .tool-pre{margin:0;padding:11px 13px;font-family:var(--mono);font-size:11.5px;line-height:1.55;color:var(--ink-2);white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;}
@@ -944,11 +971,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .tpeek-pre{margin:3px 0 0 19px;padding:7px 10px;font-family:var(--mono);font-size:11px;line-height:1.5;background:var(--surface);border:1px solid var(--line-2);border-radius:6px;white-space:pre;overflow-x:auto;color:var(--ink-2);max-height:170px;overflow-y:auto;}
 .tpeek-pre.diff{padding:6px 0;white-space:pre;}
 .tpeek-pre .dl{padding:0 10px;}
-.tpeek-pre .dl.add{background:var(--green-soft);}
-.tpeek-pre .dl.del{background:var(--red-soft);}
+.tpeek-pre .dl.add{background:var(--diff-add-bg);color:var(--run);}
+.tpeek-pre .dl.del{background:var(--diff-del-bg);color:var(--err);}
 .dstat{font-weight:700;}
-.dstat.add{color:var(--green);}
-.dstat.del{color:var(--red);}
+.dstat.add{color:var(--run);}
+.dstat.del{color:var(--err);}
 .tpeek-todos{padding:2px 12px 9px 12px;display:flex;flex-direction:column;gap:3px;}
 .tdo{display:flex;align-items:baseline;gap:8px;color:var(--ink-2);}
 .tdo-box{flex:0 0 auto;width:12px;text-align:center;color:var(--ink-4);}
@@ -1060,15 +1087,21 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* pre-line: provider error text carries its own line breaks (and the recovery
    notices are appended after a blank line) — collapsing them ran the raw error
    and the explanation together as one paragraph. */
-.msg.system .msg-body{font-family:var(--mono);font-size:12px;color:var(--err);background:var(--red-soft);border:1px solid rgba(192,80,60,.3);border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
-.msg.system.info .msg-body{color:var(--green);background:var(--green-soft);border-color:rgba(110,150,90,.3);}
+/* mono log-excerpt treatment (ui/States.html .elog): dark term bg + an
+   err-mixed border, rather than a flat red-tinted panel — reads as captured
+   output, not just an alert banner. */
+.msg.system .msg-body{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--err);background:var(--term);border:1px solid color-mix(in oklab,var(--err) 30%,var(--line));border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
+.msg.system.info .msg-body{color:var(--run);border-color:color-mix(in oklab,var(--run) 30%,var(--line));}
 /* context-overflow recovery — warning line + one-click /clear */
 .msg.system.overflow .overflow-actions{margin-top:9px;}
 .msg.system.overflow .overflow-actions .btn{font-family:var(--sans);}
 
-/* Reopened-task sync banner (behind base branch). */
-.sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);flex:0 0 auto;}
-.sync-banner.conflict{color:var(--red);background:var(--red-soft);border-color:var(--red);}
+/* Reopened-task sync banner (behind base branch). Plain "needs a sync" is
+   informational (--accent); an actual merge conflict is --warn, matching the
+   Board/States "conflict" chip — not --err, which is reserved for a hard
+   failure (agent exited, etc.), not "a rebase away from clean". */
+.sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
+.sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
 
@@ -1173,7 +1206,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .hero .h-ic{width:60px;height:60px;border-radius:18px;background:var(--surface-2);border:1px solid var(--line-2);display:grid;place-items:center;color:var(--accent);margin-bottom:20px;}
 .hero .h-ic svg{width:26px;height:26px;}
 .hero .h-status{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:14px;}
-.hero h2{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0 0 10px;max-width:520px;}
+.hero h2{font-family:var(--font-display);font-size:24px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);margin:0 0 10px;max-width:520px;}
 .hero .h-desc{font-size:14px;color:var(--ink-2);line-height:1.6;max-width:480px;margin:0 0 8px;}
 .hero .h-prompt{margin:20px 0 24px;max-width:520px;text-align:left;border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--surface);overflow:hidden;box-shadow:var(--sh-1);}
 .hero .h-prompt .hp-h{font-family:var(--mono);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);padding:9px 14px;border-bottom:1px solid var(--line-2);background:var(--surface-2);}
@@ -1183,7 +1216,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* ============================== modal ============================== */
 .scrim{position:fixed;inset:0;background:rgba(38,36,31,.42);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:200;animation:fadein .15s ease;}
 @keyframes fadein{from{opacity:0;}to{opacity:1;}}
-.modal{width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow-y:auto;background:var(--panel);border:1px solid var(--line-strong);border-radius:var(--r-xl);box-shadow:var(--sh-3);animation:pop .18s cubic-bezier(.2,.9,.3,1.2);}
+.modal{width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-3);animation:pop .18s cubic-bezier(.2,.9,.3,1.2);}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
 .modal-h{display:flex;align-items:center;gap:10px;padding:18px 22px 14px;border-bottom:1px solid var(--line);}
 .modal-h .m-title{font-size:17px;font-weight:700;letter-spacing:-.02em;flex:1;}
@@ -1198,7 +1231,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field .lab svg{width:13px;height:13px;}
 .field .lab .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--ink-4);}
 .field input[type=text],.field input[type=number],.field textarea{
-  width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);
+  width:100%;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--term);
   padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;
 }
 .field textarea{resize:vertical;min-height:88px;line-height:1.55;}
@@ -1210,7 +1243,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ctx-lab .ctx-actions .btn{flex-shrink:0;white-space:nowrap;}
 .job-cost-hint{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-4);white-space:nowrap;}
 /* Rendered-markdown preview that stands in for a .field textarea (same box). */
-.field .md-preview{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;overflow-y:auto;font-size:14px;}
+.field .md-preview{width:100%;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--term);padding:11px 13px;overflow-y:auto;font-size:14px;}
 .field .md-preview.empty{color:var(--ink-3);font-style:italic;}
 /* No native spinners — the rest of the app has none, so they read as out of place. */
 .field input[type=number]{-moz-appearance:textfield;appearance:textfield;}
@@ -1230,9 +1263,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .modal-close:hover{background:var(--surface-2);color:var(--ink);}
 
 /* destructive action */
-.btn-danger{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;border:1px solid var(--red);color:var(--red);background:var(--surface);transition:background .12s;}
+.btn-danger{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;border:1px solid color-mix(in oklab,var(--err) 27%,transparent);color:var(--err);background:var(--surface);transition:background .12s;}
 .btn-danger:hover{background:var(--red-soft);}
-.btn-danger.on{background:var(--red);color:#fff;border-color:var(--red);}
+.btn-danger.on{background:var(--err);color:var(--bg);border-color:var(--err);}
 .btn-danger.on:hover{filter:brightness(1.06);}
 .btn-danger svg{width:14px;height:14px;}
 
@@ -1245,9 +1278,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .term-drawer{
   --term-bg:var(--term);
   flex:0 0 auto;display:flex;flex-direction:column;min-height:0;
-  border-top:1px solid var(--line-strong);background:var(--term-bg);
+  border-top:1px solid var(--accent);background:var(--term-bg);
+  box-shadow:0 0 22px -8px var(--accent);
 }
-.term-drawer.collapsed{height:0 !important;border-top:0;overflow:hidden;}
+.term-drawer.collapsed{height:0 !important;border-top:0;box-shadow:none;overflow:hidden;}
 .term-resize{height:6px;flex:0 0 auto;cursor:row-resize;background:var(--chrome);border-bottom:1px solid var(--line);}
 .term-resize:hover{background:var(--accent-soft);}
 .term-bar{display:flex;align-items:center;gap:8px;height:30px;flex:0 0 auto;padding:0 8px 0 12px;background:var(--chrome);border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--ink-3);}
@@ -1596,7 +1630,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .in-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:22px;}
 .in-back{display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.08em;color:var(--ink-3);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 12px;cursor:pointer;flex:0 0 auto;}
 .in-back:hover{border-color:var(--line-strong);color:var(--ink);}
-.in-title{font-size:24px;font-weight:700;color:var(--ink);letter-spacing:-.01em;line-height:1.1;}
+.in-title{font-family:var(--font-display);font-size:24px;font-weight:var(--display-weight);color:var(--ink);letter-spacing:var(--display-tracking);line-height:1.1;}
 .in-sub{font-size:13px;color:var(--ink-3);margin-top:3px;}
 .in-sparse{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:.06em;color:var(--amber);border:1px solid var(--amber-soft);background:var(--amber-soft);border-radius:5px;padding:6px 10px;}
 
@@ -1629,11 +1663,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .in-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(440px,100%),1fr));gap:16px;margin-bottom:16px;}
 .in-card{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:17px 18px 14px;display:flex;flex-direction:column;gap:14px;}
 .in-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
-.in-card-t{font-size:14.5px;font-weight:600;color:var(--ink);}
-.in-card-s{font-size:11px;color:var(--ink-4);margin-top:2px;}
+.in-card-t{font-size:13px;font-weight:600;color:var(--ink);}
+.in-card-s{font-size:11.5px;color:var(--dim);margin-top:2px;}
 .in-card-n{font-size:11px;color:var(--ink-2);}
 .in-legend{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;}
 .in-leg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-3);}
+/* Calandria's own series: bold + full ink, so it doesn't read as just another
+   agent in the legend. */
+.in-leg.strong{color:var(--ink);font-weight:700;}
 .in-leg-dot{width:9px;height:9px;flex:none;border-radius:2px;}
 .in-leg-btn{display:flex;align-items:center;gap:6px;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;}
 .in-leg-btn:hover{color:var(--ink);}
@@ -1657,10 +1694,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 .in-provbar{display:flex;gap:2px;height:14px;width:100%;margin-bottom:18px;border-radius:4px;overflow:hidden;}
 .in-provtable{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
-.in-provhead{display:grid;grid-template-columns:1.6fr 1fr .8fr .8fr;gap:12px;padding:9px 14px;background:var(--bg-2);font-size:9.5px;letter-spacing:.1em;color:var(--ink-4);}
+.in-provhead{display:grid;grid-template-columns:1.6fr 1fr .8fr .8fr;gap:12px;padding:9px 14px;background:var(--bg-2);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);}
 .in-provhead span:not(:first-child){text-align:right;}
 .in-provrow{display:grid;grid-template-columns:1.6fr 1fr .8fr .8fr;gap:12px;align-items:center;padding:13px 14px;background:var(--panel);border-top:1px solid var(--line-2);font-size:13px;}
-.in-provrow > .mono{text-align:right;}
+.in-provrow > .mono{text-align:right;font-size:11.5px;}
 .in-provname{display:block;font-size:13.5px;font-weight:600;color:var(--ink);}
 .in-provmodels{display:block;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 

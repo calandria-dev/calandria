@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "../icons";
+import { Logo } from "../Logo";
 import { Markdown } from "../Markdown";
 import { relTime } from "./format";
 import { Runbooks } from "./Runbooks";
@@ -97,8 +98,8 @@ export function ProjectLanding({ project, projects, agents, recap, onNewTask, on
   return (
     <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
       <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
-        <div className="empty" style={{ margin: "auto" }}>
-          <div className="e-ic">{Icon.bolt()}</div>
+        <div className="empty void" style={{ margin: "auto" }}>
+          <div className="e-ic"><Logo size={40} /></div>
           <div className="e-t">No task selected</div>
           <div className="e-s">Create a task to start an agent session.</div>
           <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
