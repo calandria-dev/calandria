@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Message, PendingMessage, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
+import type { Project, Task, Message, PendingMessage, TaskComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -972,6 +972,33 @@ export function clearPendingMessages(taskId: string): PendingMessage[] {
     if (rows.length) db.prepare("DELETE FROM pending_messages WHERE task_id = ?").run(taskId);
     return rows;
   })();
+}
+
+// ---------- task comments (Changes tab review comments) ----------
+
+export function listTaskComments(taskId: string): TaskComment[] {
+  return getDb()
+    .prepare("SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC, rowid ASC")
+    .all(taskId) as TaskComment[];
+}
+
+export function addTaskComment(
+  taskId: string,
+  file: string,
+  lineStart: number,
+  lineEnd: number,
+  body: string,
+  sentToAgent: boolean
+): TaskComment {
+  const id = nanoid();
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO task_comments (id, task_id, file, line_start, line_end, body, sent_to_agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(id, taskId, file, lineStart, lineEnd, body, sentToAgent ? 1 : 0, now);
+  return { id, task_id: taskId, file, line_start: lineStart, line_end: lineEnd, body, sent_to_agent: sentToAgent ? 1 : 0, created_at: now };
 }
 
 // ---------- summaries ----------

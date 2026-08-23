@@ -344,6 +344,20 @@ export function init(db: Database.Database) {
       UNIQUE(project_id, name)
     );
 
+    -- Review comments on a task's diff (Changes tab). CREATE IF NOT EXISTS means
+    -- older DBs pick this up automatically — no migrate() entry needed.
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file          TEXT NOT NULL,
+      line_start    INTEGER NOT NULL,
+      line_end      INTEGER NOT NULL,
+      body          TEXT NOT NULL,
+      sent_to_agent INTEGER NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);

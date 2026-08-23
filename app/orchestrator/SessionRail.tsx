@@ -103,12 +103,13 @@ function ContextPane({ task, sessions, running, onClear }: { task: TaskRow; sess
   );
 }
 
-export function SessionRail({ project, task, sessions, running, onResolveWithAI, onMerged, onPrCreated, onClear, onCollapse, onSwitchToChat }: {
+export function SessionRail({ project, task, sessions, running, onResolveWithAI, onMerged, onPrCreated, onClear, onCollapse, onSwitchToChat, onSend }: {
   project: ProjectRow; task: TaskRow; sessions: Session[]; running: boolean;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onClear: () => void; onCollapse: () => void; onSwitchToChat: () => void;
+  onSend: (t: string) => void; // review comments' "Send to agent" — same path chat uses
 }) {
   // PREVIEW (project live-URL view) rides on the remote-execution backend, which
   // isn't real yet — keep it behind a flag (default off) so it ships only once
@@ -129,7 +130,7 @@ export function SessionRail({ project, task, sessions, running, onResolveWithAI,
       </div>
       <div className="rail-scroll">
         {tab === "diff" && (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             if (res.ok && !res.merged) onSwitchToChat();
             return res;

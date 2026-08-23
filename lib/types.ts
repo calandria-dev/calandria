@@ -103,6 +103,20 @@ export interface PendingMessage {
   created_at: number;
 }
 
+// A review comment left on a task's diff (Changes tab), anchored to a file +
+// line range from the patch at comment time. sent_to_agent (0/1) marks a
+// comment that also kicked off a turn, vs. one filed purely for the record.
+export interface TaskComment {
+  id: string;
+  task_id: string;
+  file: string;
+  line_start: number;
+  line_end: number;
+  body: string;
+  sent_to_agent: number;
+  created_at: number;
+}
+
 export interface Session {
   id: string;
   project_id: string;

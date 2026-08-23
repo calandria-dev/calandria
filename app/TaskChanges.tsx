@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote } from "./orchestrator/shared";
+import type { TaskComment } from "@/lib/types";
 
 interface DiffFile {
   path: string;
@@ -85,33 +86,185 @@ function numberedLines(patch: string): NumberedLine[] {
   });
 }
 
+// A single split-view row: a hunk-header divider (spans both columns), or a
+// left(base)/right(worktree) pair. Consecutive del/add runs within a hunk are
+// paired index-for-index (standard split-diff alignment) — the shorter run's
+// unpaired rows come back as `undefined`, rendered as blank spacer cells so
+// the two columns stay row-aligned. Ctx lines pair with themselves.
+interface SplitCell { no: number; text: string; cls: "ctx" | "add" | "del" }
+interface SplitRow { hunkText?: string; left?: SplitCell; right?: SplitCell }
+function splitLines(patch: string): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let oldNo = 0, newNo = 0;
+  let delBuf: SplitCell[] = [], addBuf: SplitCell[] = [];
+  const flush = () => {
+    const n = Math.max(delBuf.length, addBuf.length);
+    for (let i = 0; i < n; i++) rows.push({ left: delBuf[i], right: addBuf[i] });
+    delBuf = []; addBuf = [];
+  };
+  for (const text of hunkLines(patch)) {
+    if (text.startsWith("@@")) {
+      flush();
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+      if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
+      rows.push({ hunkText: text });
+    } else if (text.startsWith("+") && !text.startsWith("+++")) {
+      addBuf.push({ no: newNo++, text, cls: "add" });
+    } else if (text.startsWith("-") && !text.startsWith("---")) {
+      delBuf.push({ no: oldNo++, text, cls: "del" });
+    } else {
+      flush();
+      rows.push({ left: { no: oldNo++, text, cls: "ctx" }, right: { no: newNo++, text, cls: "ctx" } });
+    }
+  }
+  flush();
+  return rows;
+}
+
+// Persisted across sessions — flipping to Split shouldn't need re-doing per task.
+const VIEW_MODE_KEY = "orch:diffViewMode";
+
 // Files past this many hunk lines start collapsed: a diff with many files near
 // the per-file patch cap would otherwise mount tens of thousands of line divs
 // in one commit and jank the main thread when the rail opens.
 const COLLAPSE_LINES = 400;
 
+// The line range currently being commented on (textarea open, not yet sent).
+interface CommentSel { file: string; start: number; end: number }
+
+// The review-comment box: label + textarea + Send to agent / Comment only,
+// anchored right under the row it targets. Shared by the composer (draft,
+// editable) and nothing else — posted comments render via CommentThread.
+function CommentBox({
+  file, start, end, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
+}: {
+  file: string; start: number; end: number; draft: string; busy: boolean;
+  onDraftChange: (v: string) => void; onSend: () => void; onCommentOnly: () => void; onCancel: () => void;
+}) {
+  const label = start === end ? `L${start}` : `L${start}–${end}`;
+  return (
+    <div className="cmt">
+      <div className="cmt-who">
+        Comment on {file} · {label}
+        <button className="cmt-cancel" onClick={onCancel} disabled={busy}>Cancel</button>
+      </div>
+      <textarea
+        className="cmt-ta"
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        placeholder="Leave a review comment…"
+        autoFocus
+      />
+      <div className="cmt-row">
+        <button className="tc-btn primary" onClick={onSend} disabled={busy || !draft.trim()}>Send to agent</button>
+        <button className="tc-btn" onClick={onCommentOnly} disabled={busy || !draft.trim()}>Comment only</button>
+      </div>
+    </div>
+  );
+}
+
+// A posted comment, rendered read-only under the row it was anchored to.
+function CommentThread({ c }: { c: TaskComment }) {
+  const label = c.line_start === c.line_end ? `L${c.line_start}` : `L${c.line_start}–${c.line_end}`;
+  return (
+    <div className="cmt cmt-posted">
+      <div className="cmt-who">
+        {c.file} · {label}
+        {c.sent_to_agent ? <span className="cmt-sent">✓ sent to agent</span> : null}
+      </div>
+      <div className="cmt-body">{c.body}</div>
+    </div>
+  );
+}
+
+// Comment affordances shared by both view modes: existing threads anchored to
+// this row (by its ending line) plus the open composer, if this row is where
+// it's anchored. Returns null (renders nothing) when there's nothing to show.
+function RowComments({
+  no, comments, sel, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
+}: {
+  no: number | null;
+  comments: TaskComment[]; // pre-filtered to this file
+  sel: CommentSel | null; // pre-filtered to this file (null if not composing here)
+  draft: string; busy: boolean;
+  onDraftChange: (v: string) => void; onSend: () => void; onCommentOnly: () => void; onCancel: () => void;
+}) {
+  if (no == null) return null;
+  const posted = comments.filter((c) => c.line_end === no);
+  const composing = sel && sel.end === no;
+  if (!posted.length && !composing) return null;
+  return (
+    <>
+      {posted.map((c) => <CommentThread key={c.id} c={c} />)}
+      {composing && sel && (
+        <CommentBox
+          file={sel.file} start={sel.start} end={sel.end} draft={draft} busy={busy}
+          onDraftChange={onDraftChange} onSend={onSend} onCommentOnly={onCommentOnly} onCancel={onCancel}
+        />
+      )}
+    </>
+  );
+}
+
 // One file section. Memoized so the scroll tracker's setActive (which fires on
 // every scroll frame) re-renders only the overview list, not every hunk line
-// of every file.
+// of every file (comment composing does re-render every section on keystroke,
+// since the draft lives in the parent — acceptable at the file counts/sizes
+// this view already caps large diffs to).
 const FileDiff = memo(function FileDiff({
   file: f,
   userToggled,
   onToggle,
   refs,
+  viewMode,
+  comments,
+  sel,
+  draft,
+  busy,
+  onLineClick,
+  onDraftChange,
+  onSend,
+  onCommentOnly,
+  onCancel,
 }: {
   file: DiffFile;
   userToggled: boolean; // user flipped this file away from its default state
   onToggle: (path: string) => void;
   refs: { current: Record<string, HTMLDivElement | null> };
+  viewMode: "unified" | "split";
+  comments: TaskComment[]; // full task list; filtered to this file below
+  sel: CommentSel | null;
+  draft: string;
+  busy: boolean;
+  onLineClick: (file: string, no: number, shiftKey: boolean) => void;
+  onDraftChange: (v: string) => void;
+  onSend: () => void;
+  onCommentOnly: () => void;
+  onCancel: () => void;
 }) {
   const lines = useMemo(() => (f.binary ? [] : numberedLines(f.patch)), [f]);
+  const rows = useMemo(() => (f.binary || viewMode === "unified" ? [] : splitLines(f.patch)), [f, viewMode]);
   const big = lines.length > COLLAPSE_LINES;
   const isCollapsed = userToggled ? !big : big;
+  const fileComments = useMemo(() => comments.filter((c) => c.file === f.path), [comments, f.path]);
+  const fileSel = sel && sel.file === f.path ? sel : null;
   // Accurate placeholder height for content-visibility while the section is
   // offscreen-unrendered (header ≈34px, hunk lines 12px × 1.55 line-height),
   // so offsetTop-based jump/scroll-spy stay truthful. `auto` pins the real
   // size once rendered.
   const est = Math.round(34 + (isCollapsed ? 38 : Math.max(1, lines.length) * 18.6));
+  const rowComments = (no: number | null) => (
+    <RowComments
+      no={no} comments={fileComments} sel={fileSel} draft={draft} busy={busy}
+      onDraftChange={onDraftChange} onSend={onSend} onCommentOnly={onCommentOnly} onCancel={onCancel}
+    />
+  );
+  const gutter = (no: number | null) =>
+    no == null ? (
+      <span className="dl-no" />
+    ) : (
+      <span className="dl-no click" onClick={(e) => onLineClick(f.path, no, e.shiftKey)}>{no}</span>
+    );
   return (
     <div
       className="tc-file"
@@ -139,18 +292,44 @@ const FileDiff = memo(function FileDiff({
             <div className="tc-empty">Binary file — not shown</div>
           ) : lines.length === 0 ? (
             <div className="tc-empty">No textual changes (mode or rename).</div>
-          ) : (
-            lines.map((ln, i) =>
-              ln.cls === "hunk" ? (
+          ) : viewMode === "unified" ? (
+            lines.map((ln, i) => {
+              const anchor = ln.newNo ?? ln.oldNo;
+              return ln.cls === "hunk" ? (
                 <div key={i} className="dl hunk">{ln.text}</div>
               ) : (
-                <div key={i} className={`dl ${ln.cls}`}>
-                  <span className="dl-no">{ln.oldNo ?? ""}</span>
-                  <span className="dl-no">{ln.newNo ?? ""}</span>
-                  <span className="dl-c">{ln.text || " "}</span>
+                <div key={i}>
+                  <div className={`dl ${ln.cls}`}>
+                    {gutter(ln.oldNo)}
+                    {gutter(ln.newNo)}
+                    <span className="dl-c">{ln.text || " "}</span>
+                  </div>
+                  {rowComments(anchor)}
                 </div>
-              )
-            )
+              );
+            })
+          ) : (
+            <div className="tc-split">
+              {rows.map((row, i) => {
+                if (row.hunkText !== undefined) return <div key={i} className="dl hunk tc-split-full">{row.hunkText}</div>;
+                const anchor = row.right?.no ?? row.left?.no ?? null;
+                return (
+                  <div key={i} className="tc-split-full">
+                    <div className="tc-split-pair">
+                      <div className={`dl ${row.left ? row.left.cls : "spacer"}`}>
+                        {gutter(row.left?.no ?? null)}
+                        <span className="dl-c">{(row.left?.text || " ")}</span>
+                      </div>
+                      <div className={`dl ${row.right ? row.right.cls : "spacer"}`}>
+                        {gutter(row.right?.no ?? null)}
+                        <span className="dl-c">{(row.right?.text || " ")}</span>
+                      </div>
+                    </div>
+                    {rowComments(anchor)}
+                  </div>
+                );
+              })}
+            </div>
           )}
           {f.truncated && <div className="tc-empty">… file diff truncated</div>}
         </div>
@@ -224,6 +403,7 @@ export default function TaskChanges({
   onMerged,
   onPrCreated,
   onResolveWithAI,
+  onSend,
 }: {
   taskId: string;
   projectId: string;
@@ -232,6 +412,11 @@ export default function TaskChanges({
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onResolveWithAI?: (taskId: string) => Promise<ResolveResult>;
+  // Send-to-agent path for review comments: the same handler SessionView wires
+  // to runTurn, so a sent comment flips local running state exactly like a
+  // normal chat message. Undefined only in contexts that don't offer it
+  // (shouldn't happen in practice) — the comment still posts, just unsent.
+  onSend?: (text: string) => void;
 }) {
   const [data, setData] = useState<DiffResp | null>(() => diffCache.get(taskId) ?? null);
   const [loading, setLoading] = useState(true);
@@ -247,8 +432,28 @@ export default function TaskChanges({
   // collapsed for big files) — override semantics so a background revalidate
   // doesn't reset the user's choices.
   const [toggled, setToggled] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"unified" | "split">(() => {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === "split" ? "split" : "unified"; } catch { return "unified"; }
+  });
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
+  const [draft, setDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const secRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const setView = (v: "unified" | "split") => {
+    setViewMode(v);
+    try { localStorage.setItem(VIEW_MODE_KEY, v); } catch { /* private browsing, etc. */ }
+  };
+
+  const loadComments = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
+      const j: { comments?: TaskComment[] } = await r.json();
+      setComments(j.comments ?? []);
+    } catch { /* comments are supplementary — a failed fetch just shows none */ }
+  }, [taskId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -270,11 +475,14 @@ export default function TaskChanges({
     setToggled(new Set());
     setManualOpen(false);
     setBinaryConflicts([]);
+    setSel(null);
+    setDraft("");
     // Task switched without a remount: show the new task's cached diff (or the
     // skeleton), never the previous task's stale files, while we revalidate.
     setData(diffCache.get(taskId) ?? null);
     load();
-  }, [taskId, load]);
+    loadComments();
+  }, [taskId, load, loadComments]);
 
   // The diff moves while the agent works — refetch when a turn finishes so a
   // just-written change appears without a manual Refresh (same trigger the
@@ -337,6 +545,39 @@ export default function TaskChanges({
       }),
     []
   );
+
+  // Start or extend the comment selection. Plain click opens a fresh
+  // single-line box; shift-click on another line in the same file extends the
+  // range instead of starting over.
+  const onLineClick = useCallback((file: string, no: number, shiftKey: boolean) => {
+    setSel((prev) => {
+      if (shiftKey && prev && prev.file === file) return { file, start: Math.min(prev.start, no), end: Math.max(prev.end, no) };
+      return { file, start: no, end: no };
+    });
+    setDraft("");
+  }, []);
+  const cancelComment = useCallback(() => { setSel(null); setDraft(""); }, []);
+
+  const submitComment = async (sentToAgent: boolean) => {
+    if (!sel || !draft.trim()) return;
+    setCommentBusy(true);
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file: sel.file, lineStart: sel.start, lineEnd: sel.end, body: draft.trim(), sentToAgent }),
+      });
+      const j: { ok?: boolean; comment?: TaskComment } = await r.json();
+      if (j.ok && j.comment) {
+        setComments((cs) => [...cs, j.comment as TaskComment]);
+        if (sentToAgent) onSend?.(`Review comment on ${sel.file} L${sel.start}–${sel.end}:\n${draft.trim()}`);
+        setSel(null);
+        setDraft("");
+      }
+    } finally {
+      setCommentBusy(false);
+    }
+  };
 
   const doMerge = async () => {
     setMerging(true);
@@ -476,6 +717,12 @@ export default function TaskChanges({
         )}
         {data.isDirty && <span className="tc-dirty">● uncommitted</span>}
         {data.ahead > 0 && <span className="tc-ahead">{data.ahead} commit{data.ahead === 1 ? "" : "s"}</span>}
+        {!nothing && (
+          <span className="tc-vseg">
+            <button className={viewMode === "unified" ? "on" : ""} onClick={() => setView("unified")}>Unified</button>
+            <button className={viewMode === "split" ? "on" : ""} onClick={() => setView("split")}>Split</button>
+          </span>
+        )}
         <span className="tc-spacer" />
         <button className="tc-btn" onClick={load} disabled={loading || merging || resolving}>
           {loading ? "…" : "Refresh"}
@@ -599,7 +846,12 @@ export default function TaskChanges({
 
           {/* per-file diffs with sticky headers */}
           {data.files.map((f) => (
-            <FileDiff key={f.path} file={f} userToggled={toggled.has(f.path)} onToggle={toggle} refs={secRefs} />
+            <FileDiff
+              key={f.path} file={f} userToggled={toggled.has(f.path)} onToggle={toggle} refs={secRefs}
+              viewMode={viewMode} comments={comments} sel={sel} draft={draft} busy={commentBusy}
+              onLineClick={onLineClick} onDraftChange={setDraft}
+              onSend={() => submitComment(true)} onCommentOnly={() => submitComment(false)} onCancel={cancelComment}
+            />
           ))}
         </div>
       )}

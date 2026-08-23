@@ -407,6 +407,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-foot .activity{font-family:var(--mono);font-size:10px;color:var(--ink-3);display:flex;align-items:center;gap:5px;}
 .task-foot .spacer{flex:1;}
 
+/* Board-card / task-row diff footer: worktree branch, +N/-N, sparkline. Shared
+   by TasksColumn's TaskCard (list) and TaskBoard's BoardCard (kanban). */
+.diff-foot{display:flex;align-items:center;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2);font-family:var(--mono);font-size:11px;color:var(--dim);}
+.diff-branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.diff-stat{flex:0 0 auto;white-space:nowrap;}
+.diff-stat .a{color:var(--run);}
+.diff-stat .d{color:var(--dim);}
+.diff-spark{flex:0 0 auto;margin-left:auto;display:block;}
+
 /* multi-select (bulk move) ------------------------------------------- */
 /* Each row is a card plus a fixed left gutter for its checkbox. The gutter is
    ALWAYS reserved, even while the box is invisible, so nothing shifts on hover. */
@@ -901,6 +910,31 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-empty{padding:10px 12px;color:var(--ink-3);font-size:12px;font-family:var(--sans);}
 .tc-bigdiff{display:block;width:100%;padding:10px 12px;border:none;border-radius:0 0 var(--r) var(--r);background:var(--surface);color:var(--ink-3);font-size:12px;font-family:var(--sans);text-align:left;cursor:pointer;}
 .tc-bigdiff:hover{background:var(--surface-2);color:var(--ink);}
+/* Unified/Split toggle in the diff header — a compact pill, distinct from the
+   larger form-picker .seg used in Settings/modals. */
+.tc-vseg{display:flex;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;flex:0 0 auto;}
+.tc-vseg button{font-size:11.5px;font-weight:600;padding:5px 12px;border:none;background:none;color:var(--dim);cursor:pointer;font-family:var(--sans);}
+.tc-vseg button.on{background:var(--panel);color:var(--accent-ink);}
+/* Split view: a two-column grid per file. Each row is its own full-width
+   wrapper (.tc-split-full) so a comment thread can sit under it spanning both
+   columns; the pair itself (.tc-split-pair) is what's actually two columns. */
+.tc-split{display:flex;flex-direction:column;}
+.tc-split-pair{display:grid;grid-template-columns:1fr 1fr;}
+.tc-split-pair>.dl:first-child{border-right:1px solid var(--line);}
+.tc-hunks .tc-split-pair .dl{grid-template-columns:42px 1fr;}
+.dl.spacer{background:var(--panel);}
+.dl-no.click{cursor:pointer;}
+.dl-no.click:hover{opacity:1;color:var(--accent-ink);}
+/* Review comment box (composing) / thread (posted) — anchored under the diff
+   row it targets, in both view modes. */
+.cmt{margin:6px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-family:var(--sans);}
+.cmt-who{font-size:11.5px;color:var(--dim);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
+.cmt-sent{color:var(--green);font-weight:600;}
+.cmt-cancel{margin-left:auto;background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:0;}
+.cmt-cancel:hover{color:var(--ink);}
+.cmt-ta{width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink);font-family:var(--sans);font-size:13px;padding:8px 10px;resize:vertical;min-height:52px;}
+.cmt-row{display:flex;gap:8px;margin-top:8px;}
+.cmt-posted .cmt-body{font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;line-height:1.5;}
 .status-ctl .cv{font-family:var(--mono);font-size:11px;}
 .status-ctl svg{width:14px;height:14px;}
 /* Live "which model actually ran" badge inside the model picker control. */
