@@ -1,7 +1,9 @@
 # Self-hosting
 
 Everything about running your own instance: Docker, tunnels, auth, and configuration.
-The [README](../README.md) has the two-command version; this is the rest.
+The [README](../README.md) has the two-command version; this is the rest. Something already
+broken? See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for first-incident runbooks (DB
+corruption, disk fill, headless re-auth, boot failures).
 
 ## Docker
 

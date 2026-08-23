@@ -145,6 +145,7 @@ belongs.
 - [Insights and usage](docs/INSIGHTS.md)
 - [Managed services](docs/SERVICES.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
 
