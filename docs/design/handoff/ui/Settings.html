@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — settings</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Cascadia+Code:wght@400&family=Red+Hat+Mono:wght@400;500&family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Literata:opsz,wght@7..72,400;7..72,500&family=Atkinson+Hyperlegible+Next:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}
+.wrap{display:grid;grid-template-columns:210px 1fr;min-height:calc(100vh - 50px)}
+.nav{border-right:1px solid var(--line);padding:16px 0}
+.nav a{display:block;font-size:13px;color:var(--dim);padding:7px 18px;text-decoration:none}
+.nav a.on{color:var(--ink);background:var(--panel);box-shadow:inset 2px 0 0 var(--accent)}
+.main{padding:20px 26px 48px;max-width:860px}
+h1{font-family:var(--font-display);font-weight:500;font-size:22px;margin:0 0 20px}
+.sec{margin-bottom:30px}
+.sec h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:600;margin:0 0 10px}
+.themes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.th{border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer}
+.th.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.th .prev{height:58px;display:flex;align-items:center;justify-content:center;gap:6px}
+.th .prev i{width:8px;height:22px;border-radius:4px;display:block}
+.th .lbl{font-size:11.5px;padding:7px 10px;background:var(--panel);display:flex;justify-content:space-between;color:var(--dim)}
+.th .lbl b{color:var(--ink);font-weight:600}
+.faces{display:flex;flex-direction:column;gap:8px}
+.face{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:9px;padding:10px 14px;cursor:pointer;min-width:0}
+.face.on{border-color:var(--accent)}
+.face input{accent-color:var(--accent)}
+.face .nm{font-size:12.5px;font-weight:600;min-width:140px;flex:0 0 auto}
+.face .nm small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+.face .sam{font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:22px}
+.sec{min-width:0}
+.hint{font-size:11.5px;color:var(--dim);margin-top:8px}
+</style>
+</head>
+<body data-screen-label="Settings">
+<div id="tb"></div>
+<div class="wrap">
+<div class="nav">
+<a href="#">General</a><a class="on" href="#">Appearance</a><a href="#">Agents</a><a href="#">Repositories</a><a href="#">Notifications</a><a href="#">Access</a>
+</div>
+<div class="main">
+<h1>Appearance</h1>
+<div class="sec">
+<h2>Theme</h2>
+<div class="themes" id="themes"></div>
+<div class="hint">Each theme has a matched light variant; Calandria follows your OS setting unless pinned.</div>
+</div>
+<div class="row2">
+<div class="sec">
+<h2>Code &amp; terminal font</h2>
+<div class="faces">
+<label class="face on"><input type="radio" name="mono" checked><span class="nm">JetBrains Mono<small>default</small></span><span class="sam" style="font-family:'JetBrains Mono'">const ok = a !== b ? 0 : 1;</span></label>
+<label class="face"><input type="radio" name="mono"><span class="nm">Fira Code</span><span class="sam" style="font-family:'Fira Code'">const ok = a !== b ? 0 : 1;</span></label>
+<label class="face"><input type="radio" name="mono"><span class="nm">Cascadia Code</span><span class="sam" style="font-family:'Cascadia Code'">const ok = a !== b ? 0 : 1;</span></label>
+<label class="face"><input type="radio" name="mono"><span class="nm">Red Hat Mono</span><span class="sam" style="font-family:'Red Hat Mono'">const ok = a !== b ? 0 : 1;</span></label>
+<label class="face"><input type="radio" name="mono"><span class="nm">Atkinson Hyperlegible Mono</span><span class="sam" style="font-family:'Atkinson Hyperlegible Mono'">const ok = a !== b ? 0 : 1;</span></label>
+</div>
+</div>
+<div class="sec">
+<h2>Prompt input font</h2>
+<div class="faces">
+<label class="face on"><input type="radio" name="inp" checked><span class="nm">Source Sans 3<small>default</small></span><span class="sam">Refactor the auth flow to use refresh tokens.</span></label>
+<label class="face"><input type="radio" name="inp"><span class="nm">Literata</span><span class="sam" style="font-family:'Literata'">Refactor the auth flow to use refresh tokens.</span></label>
+<label class="face"><input type="radio" name="inp"><span class="nm">Spectral</span><span class="sam" style="font-family:'Spectral'">Refactor the auth flow to use refresh tokens.</span></label>
+<label class="face"><input type="radio" name="inp"><span class="nm">Atkinson Hyperlegible Next</span><span class="sam" style="font-family:'Atkinson Hyperlegible Next'">Refactor the auth flow to use refresh tokens.</span></label>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+document.getElementById("tb").outerHTML=CalChrome.titlebar("",'<span style="font-family:var(--font-mono)">Settings</span>');
+const T=[["cherenkov","Cherenkov","#081217","#45cabb","#d5e4ea",1],["heavywater","Heavy water","#0d1414","#dd7f68","#dce7e4"],["denoche","De noche","#100e18","#f0a94e","#e5e0ee"],["basic","Basic","#101114","#6c9bd8","#dde0e6"]];
+document.getElementById("themes").innerHTML=T.map(([id,nm,bg,acc,ink,on])=>`
+<div class="th ${on?"on":""}"><div class="prev" style="background:${bg}"><i style="background:${acc}"></i><i style="background:${ink};opacity:.5;height:16px"></i><i style="background:${ink};opacity:.25;height:12px"></i></div><div class="lbl"><b>${nm}</b><span>${on?"active":""}</span></div></div>`).join("");
+// radios swap faces live in the mock
+document.querySelectorAll(".faces").forEach(f=>f.addEventListener("change",e=>{f.querySelectorAll(".face").forEach(x=>x.classList.remove("on"));e.target.closest(".face").classList.add("on");}));
+</script>
+</body>
+</html>

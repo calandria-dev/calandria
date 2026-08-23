@@ -1,0 +1,45 @@
+<!-- @dsCard group="Handoff" viewport="1240x900" name="Claude Code handoff packet" subtitle="design_handoff_calandria_rebrand/ — README + all references" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — handoff packet</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);padding:44px 52px 64px}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+h1{font-family:var(--font-display);font-weight:500;font-size:28px;margin:0 0 6px}
+.sub{color:var(--dim);font-size:14px;margin:0 0 28px;max-width:760px;line-height:1.55}
+.secttl{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:28px 0 10px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.f{display:flex;align-items:baseline;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 14px}
+.f .p{font-family:var(--font-mono);font-size:11.5px}
+.f .d{font-size:11.5px;color:var(--dim);margin-left:auto;text-align:right}
+.note{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-size:13px;line-height:1.55;max-width:760px}
+.note b{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Claude Code handoff packet</h1>
+<p class="sub">Everything an implementer needs to ship the rebrand lives in <code style="font-family:var(--font-mono);font-size:13px">design_handoff_calandria_rebrand/</code>: a self-sufficient README (identity spec, tokens, per-screen anatomy, interactions, keyboard map) plus copies of every hi-fi reference and asset. Download the folder or point Claude Code at it directly.</p>
+<div class="note"><b>Read README.md first.</b> The HTML files are design references, not production code — the task is recreating them in the app's Next.js/React codebase (pointers to the exact target files are in the README). Fidelity is high: colors, type, spacing, and copy are final.</div>
+<div class="secttl">Packet contents</div>
+<div class="grid">
+<div class="f"><span class="p"><a href="README.md">README.md</a></span><span class="d">full implementation spec</span></div>
+<div class="f"><span class="p"><a href="styles.css">styles.css</a></span><span class="d">tokens — 4 themes × dark/light</span></div>
+<div class="f"><span class="p"><a href="brand/Identity.html">brand/Identity.html</a></span><span class="d">mark + lockup construction</span></div>
+<div class="f"><span class="p"><a href="brand/Type System.html">brand/Type System.html</a></span><span class="d">roles + selectable fonts</span></div>
+<div class="f"><span class="p"><a href="brand/OG Header.html">brand/OG Header.html</a></span><span class="d">1200×630 social image</span></div>
+<div class="f"><span class="p"><a href="assets/logo.svg">assets/logo.svg</a></span><span class="d">currentColor mark</span></div>
+<div class="f"><span class="p"><a href="assets/favicon.svg">assets/favicon.svg</a> · <a href="assets/favicon-small.svg">-small</a></span><span class="d">16px+ / sub-14px</span></div>
+<div class="f"><span class="p"><a href="ui/Board.html">ui/Board.html</a> · <a href="ui/Board Light.html">light</a></span><span class="d">session board, both themes</span></div>
+<div class="f"><span class="p"><a href="ui/Diffs.html">ui/Diffs.html</a></span><span class="d">review, unified/split</span></div>
+<div class="f"><span class="p"><a href="ui/Terminals.html">ui/Terminals.html</a></span><span class="d">multiplexer grid</span></div>
+<div class="f"><span class="p"><a href="ui/Insights.html">ui/Insights.html</a></span><span class="d">charts on series tokens</span></div>
+<div class="f"><span class="p"><a href="ui/Onboarding.html">ui/Onboarding.html</a></span><span class="d">wizard lockup</span></div>
+<div class="f"><span class="p"><a href="ui/Settings.html">ui/Settings.html</a></span><span class="d">themes + font pickers</span></div>
+<div class="f"><span class="p"><a href="ui/Mobile Board.html">ui/Mobile Board.html</a></span><span class="d">M1 tab bar, 390px</span></div>
+<div class="f"><span class="p"><a href="ui/States.html">ui/States.html</a></span><span class="d">empty · error · conflict · focus</span></div>
+</div>
+</body>
+</html>

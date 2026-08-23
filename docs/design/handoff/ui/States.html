@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — states</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}
+.wrap{padding:20px 24px 48px}
+.secttl{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:26px 0 12px;font-weight:600}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px;align-items:start}
+.empty{border:1px dashed var(--line);border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:14px;padding:52px 20px;text-align:center}
+.empty .g{color:var(--dim);opacity:.6}
+.empty h2{font-family:var(--font-display);font-weight:500;font-size:20px;margin:0}
+.empty p{font-size:13px;color:var(--dim);margin:0;max-width:380px;line-height:1.5}
+.empty .btn{margin-top:6px}
+.btn{font-size:12.5px;font-weight:600;padding:7px 15px;border-radius:7px;border:1px solid var(--line);color:var(--dim);background:none;font-family:var(--font-body);cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--bg);border-color:transparent}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;display:flex;flex-direction:column;gap:9px}
+.card .top{display:flex;align-items:center;gap:8px}
+.card .nm{font-weight:600;font-size:14px}
+.card .ag{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:2px 8px}
+.card .now{font-size:12.5px;color:var(--dim);line-height:1.45}
+.card .now b{color:var(--ink);font-weight:500}
+.card .foot{display:flex;align-items:center;gap:10px;border-top:1px solid var(--line);padding-top:9px;white-space:nowrap}
+.card.err{border-color:color-mix(in oklab,var(--err) 55%,var(--line))}
+.chip{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:99px}
+.chip.e{background:color-mix(in oklab,var(--err) 18%,transparent);color:var(--err)}
+.chip.w{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn)}
+.elog{background:var(--term);border:1px solid color-mix(in oklab,var(--err) 30%,var(--line));border-radius:8px;padding:8px 11px;font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--dim)}
+.elog .e{color:var(--err)}
+.fdemo{display:flex;flex-direction:column;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.fdemo .k{font-size:12px;color:var(--dim);line-height:1.5}
+.fdemo code{font-family:var(--font-mono);font-size:11px;color:var(--accent)}
+.fitems{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.focus{outline:2px solid var(--accent);outline-offset:2px;border-radius:7px}
+input.demo{background:var(--term);border:1px solid var(--line);border-radius:7px;color:var(--ink);font-family:var(--font-mono);font-size:12px;padding:7px 10px}
+.tabdemo{font-size:13px;color:var(--dim);padding:5px 12px;border-radius:6px}
+</style>
+</head>
+<body data-screen-label="States">
+<div id="tb"></div>
+<div class="wrap">
+
+<div class="secttl">Empty board — first run</div>
+<div class="empty">
+<span class="g" id="eg"></span>
+<h2>No sessions yet</h2>
+<p>Point Calandria at a repository and start your first session. Each one gets an isolated worktree — agents never touch your checkout.</p>
+<button class="btn pri">New session</button>
+<span style="font-size:11.5px;color:var(--dim)">or press <code style="font-family:var(--font-mono);color:var(--accent)">n</code></span>
+</div>
+
+<div class="secttl">Failure states — board cards</div>
+<div class="row">
+<div class="card err">
+<div class="top"><span class="nm">dep-bumps</span><span class="ag">codex</span></div>
+<div class="now"><b>Agent exited unexpectedly</b> — turn 6, non-zero exit while running install.</div>
+<div class="elog"><span class="e">✕ pnpm install exited 1</span>
+ERR_PNPM_NO_MATCHING_VERSION uplot@^3.1.0
+<span class="e">session halted · worktree preserved</span></div>
+<div class="foot"><span class="chip e">errored</span><span style="margin-left:auto;display:flex;gap:8px"><button class="btn pri">Retry turn</button><button class="btn">Open terminal</button><button class="btn">Discard</button></span></div>
+</div>
+<div class="card" style="border-color:color-mix(in oklab,var(--warn) 45%,var(--line))">
+<div class="top"><span class="nm">migrate-charts</span><span class="ag">claude-code</span></div>
+<div class="now"><b>Merge conflict with main</b> — 2 files diverged since the worktree branched.</div>
+<div class="elog" style="border-color:color-mix(in oklab,var(--warn) 30%,var(--line))"><span style="color:var(--warn)">⚠ conflicts:</span> app/globals.css · app/Orchestrator.tsx</div>
+<div class="foot"><span class="chip w">conflict</span><span style="margin-left:auto;display:flex;gap:8px"><button class="btn pri">Ask agent to rebase</button><button class="btn">Resolve manually</button></span></div>
+</div>
+</div>
+
+<div class="secttl">Keyboard focus — focus-visible spec</div>
+<div class="fdemo">
+<div class="k">All interactive elements: <code>outline:2px solid var(--accent); outline-offset:2px</code> — never <code>outline:none</code>. Cards are focusable (board is fully keyboard-navigable: <code>j/k</code> move, <code>enter</code> opens, <code>t</code> terminal, <code>d</code> diff). Shown frozen below:</div>
+<div class="fitems">
+<button class="btn pri focus">Merge session</button>
+<button class="btn">Request changes</button>
+<span class="tabdemo focus" style="color:var(--ink)">Diffs</span>
+<input class="demo focus" value="wt/auth-refactor-3f2a" size="20">
+</div>
+<div class="card focus" style="max-width:340px">
+<div class="top"><span class="nm">auth-refactor</span><span class="ag">claude-code</span></div>
+<div class="now">focused card — <b>enter</b> opens session</div>
+</div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+document.getElementById("tb").outerHTML=CalChrome.titlebar("Board",'<span style="font-family:var(--font-mono)">0 sessions</span><span class="cal-new">New session</span>');
+document.getElementById("eg").innerHTML=CalChrome.glyph(56);
+</script>
+</body>
+</html>

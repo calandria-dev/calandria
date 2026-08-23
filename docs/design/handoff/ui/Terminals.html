@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — terminals</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Cascadia+Code:wght@400&family=Red+Hat+Mono:wght@400;500&family=Atkinson+Hyperlegible+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}
+.wrap{padding:16px 22px 40px}
+.thead{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.thead h1{font-family:var(--font-display);font-weight:500;font-size:20px;margin:0}
+.thead .meta{font-size:12px;color:var(--dim)}
+.thead .right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim)}
+select{background:var(--panel);border:1px solid var(--line);border-radius:7px;color:var(--ink);font-size:12px;padding:5px 8px;font-family:var(--font-body)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pane{background:var(--term);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.pane.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 22px -8px var(--accent)}
+.pbar{display:flex;align-items:center;gap:8px;background:var(--panel);padding:6px 12px;font-size:11.5px;border-bottom:1px solid var(--line)}
+.pbar .nm{font-weight:600}
+.pbar .ag{font-family:var(--font-mono);font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:1px 7px}
+.pbar .st{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--dim);font-size:10.5px}
+.pbar .pulse{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.scr{padding:10px 13px;font-family:var(--mono,var(--font-mono));font-size:12px;line-height:1.65;min-height:150px;white-space:pre-wrap;word-break:break-word}
+.scr .p{color:var(--accent)}.scr .ok{color:var(--run)}.scr .er{color:#e0687a}.scr .d{color:var(--dim)}.scr .y{color:var(--rev)}
+.inp{display:flex;align-items:center;gap:9px;border-top:1px solid var(--line);padding:8px 13px;font-family:var(--mono,var(--font-mono));font-size:12.5px}
+.inp .car{width:7px;height:15px;background:var(--accent);animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+</style>
+</head>
+<body data-screen-label="Terminals">
+<div id="tb"></div>
+<div class="wrap">
+<div class="thead"><h1>Terminals</h1><span class="meta">4 attached · focused pane receives keys</span></div>
+<div class="grid" id="g">
+<div class="pane focus">
+<div class="pbar"><span class="nm">auth-refactor</span><span class="ag">claude-code</span><span class="st"><span class="pulse"></span>running · turn 14</span></div>
+<div class="scr"><span class="d">✻ Thinking… replacing the retry loop with exponential backoff</span>
+<span class="p">●</span> Update(src/session/retry.ts)
+<span class="ok">  ⎿ Updated 2 additions, 1 removal</span>
+<span class="p">●</span> Bash(pnpm vitest run session)
+<span class="d">  ⎿ 141 tests · </span><span class="ok">139 passed</span><span class="d"> · </span><span class="er">2 failed</span>
+<span class="y">▲ retry.spec.ts:44 expected backoff ≥ 200ms, got 180ms</span>
+<span class="d">✻ Adjusting BACKOFF_MS floor and re-running…</span></div>
+<div class="inp"><span style="color:var(--accent)">›</span>tell it to keep the jitter under 50ms<span class="car"></span></div>
+</div>
+<div class="pane">
+<div class="pbar"><span class="nm">insight-cache</span><span class="ag">claude-code</span><span class="st"><span class="pulse"></span>tests · 12m</span></div>
+<div class="scr"><span class="p">●</span> Bash(pnpm vitest run insights)
+<span class="d">  ⎿ RUN v3.2 · 141 tests</span>
+<span class="ok">  ✓ cache.spec.ts (38)</span>
+<span class="ok">  ✓ rollup.spec.ts (61)</span>
+<span class="d">  ⠸ series.spec.ts 28/42…</span></div>
+</div>
+<div class="pane">
+<div class="pbar"><span class="nm">mobile-nav</span><span class="ag">codex</span><span class="st"><span class="pulse"></span>reading · 3m</span></div>
+<div class="scr"><span class="p">●</span> Read(app/Orchestrator.tsx)
+<span class="d">  ⎿ 412 lines · planning a layout split at the nav boundary</span>
+<span class="p">●</span> Grep("useBreakpoint", app/)
+<span class="d">  ⎿ 6 matches in 4 files</span></div>
+</div>
+<div class="pane">
+<div class="pbar"><span class="nm">token-scrub</span><span class="ag">codex</span><span class="st" style="color:var(--rev)">waiting on review · 2h</span></div>
+<div class="scr"><span class="ok">✓ Session tokens no longer written to worktree logs</span>
+<span class="ok">✓ redaction.spec.ts (9) all passing</span>
+<span class="d">Idle — review pending. Reply here or from the Diffs tab.</span></div>
+</div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+document.getElementById("tb").outerHTML=CalChrome.titlebar("Terminals",'<span style="font-family:var(--font-mono)">7 sessions · 3 running</span><span class="cal-new">New session</span>');
+</script>
+</body>
+</html>

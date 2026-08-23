@@ -1,0 +1,25 @@
+/* Calandria — global tokens (type + color settled) */
+@import url('https://fonts.googleapis.com/css2?family=Spectral:wght@400;500;600&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+:root{
+  /* type — settled */
+  --font-display:'Spectral',Georgia,serif; /* page titles + section headers only */
+  --font-body:'Source Sans 3',system-ui,sans-serif; /* everything else: rows, chips, labels, controls */
+  --font-mono:'JetBrains Mono',ui-monospace,monospace; /* code blocks, terminal, metadata */
+  /* user-selectable code/terminal alternates: Fira Code, Cascadia Code, Red Hat Mono, Atkinson Hyperlegible Mono */
+  /* prompt-input faces (default Source Sans 3): Literata, Spectral, Atkinson Hyperlegible Next */
+  --display-weight:500;
+  --display-tracking:-0.005em;
+}
+/* Four selectable themes, each dark + light. Default: cherenkov-dark. */
+[data-theme="cherenkov-dark"],:root{--bg:#081217;--panel:#0d1b22;--line:#1a2f39;--ink:#d5e4ea;--dim:#7e9aa6;--accent:#45cabb;--calandria:#45cabb;--term:#060e12;--run-bg:#0e2e2b;--run:#4ecfb2;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="cherenkov-light"]{--bg:#f2f7f7;--panel:#ffffff;--line:#d7e4e4;--ink:#1a3038;--dim:#5d7d87;--accent:#0e8a7d;--calandria:#0e8a7d;--term:#e8f1f0;--run-bg:#dcf2ec;--run:#0b6e5f;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="heavywater-dark"]{--bg:#0d1414;--panel:#121d1c;--line:#223230;--ink:#dce7e4;--dim:#87a29b;--accent:#dd7f68;--calandria:#dd7f68;--term:#091010;--run-bg:#123123;--run:#54c98a;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="heavywater-light"]{--bg:#f3f6f4;--panel:#ffffff;--line:#dbe4e0;--ink:#22332f;--dim:#63807a;--accent:#b2502f;--calandria:#b2502f;--term:#eaf0ed;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="denoche-dark"]{--bg:#100e18;--panel:#181524;--line:#2b2542;--ink:#e5e0ee;--dim:#9a8fb0;--accent:#f0a94e;--calandria:#e86a95;--term:#0b0a12;--run-bg:#123123;--run:#54c98a;--rev-bg:#3a1526;--rev:#e86a95;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="denoche-light"]{--bg:#f5f3f7;--panel:#ffffff;--line:#e2dce8;--ink:#2c2438;--dim:#6f6383;--accent:#a3520e;--calandria:#c73a6d;--term:#ece8f0;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f8dfe8;--rev:#a12855;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+[data-theme="basic-dark"]{--bg:#101114;--panel:#17181d;--line:#282a32;--ink:#dde0e6;--dim:#8d93a0;--accent:#6c9bd8;--calandria:#6c9bd8;--term:#0c0d10;--run-bg:#14301f;--run:#4fc286;--rev-bg:#33290f;--rev:#d3b054;--err:#e0687a;--warn:#d3b054;--s1:#5f8dff;--s2:#e0b64b;--s3:#e0687a;--s4:#9d7bff;--s5:#7e97a3}
+[data-theme="basic-light"]{--bg:#f5f6f7;--panel:#ffffff;--line:#e0e2e6;--ink:#26292f;--dim:#697080;--accent:#3468a8;--calandria:#3468a8;--term:#eceef0;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
+
+/* motion: honor OS preference */
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+/* production note: self-host all faces as woff2 (fonts/), do not ship the Google Fonts CDN import */

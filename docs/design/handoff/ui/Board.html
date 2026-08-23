@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — board</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}a:hover{filter:brightness(1.15)}
+.tb{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--line)}
+.tb .w2{font-family:var(--font-display);font-weight:500;font-size:15px;letter-spacing:.005em}
+.tb .tabs{display:flex;gap:2px;margin-left:26px}
+.tb .tab{font-size:13px;color:var(--dim);padding:5px 12px;border-radius:6px;text-decoration:none}.tb .tab:hover{color:var(--ink)}
+.tb .tab.on{color:var(--ink);background:var(--panel);box-shadow:inset 0 -2px 0 var(--accent)}
+.tb .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:12px;color:var(--dim)}
+.tb .newbtn{background:var(--accent);color:var(--bg);font-weight:600;font-size:12.5px;padding:6px 14px;border-radius:7px}
+.wrap{padding:20px 24px 40px}
+.bhead{display:flex;align-items:baseline;gap:16px;margin:4px 2px 16px}
+.bhead h1{font-family:var(--font-display);font-weight:500;font-size:24px;margin:0;letter-spacing:-.005em}
+.bhead .meta{font-size:12.5px;color:var(--dim)}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.col .ch{display:flex;align-items:center;gap:8px;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:2px 4px 10px;font-weight:600}
+.col .ch i{width:7px;height:7px;border-radius:50%;display:block}
+.col .ch .n{margin-left:auto;font-family:var(--font-mono);font-size:11px;opacity:.8}
+.col{display:flex;flex-direction:column}
+.cards{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;display:flex;flex-direction:column;gap:9px}
+.card .top{display:flex;align-items:center;gap:8px}
+.card .nm{font-weight:600;font-size:14px}
+.card .agent{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:2px 8px;white-space:nowrap}
+.card .br{font-family:var(--font-mono);font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .now{font-size:12.5px;color:var(--dim);line-height:1.45}
+.card .now b{color:var(--ink);font-weight:500}
+.card .foot{display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--dim);border-top:1px solid var(--line);padding-top:9px;white-space:nowrap}
+.card .diff{font-family:var(--font-mono);font-size:11px;white-space:nowrap}
+.card .diff .a{color:var(--run)}.card .diff .d{color:var(--dim)}
+.spark{display:flex;align-items:flex-end;gap:2px;height:16px;margin-left:auto}
+.spark i{width:3px;display:block;border-radius:1px;background:var(--accent);opacity:.55}
+.live{position:relative}
+.live::before{content:"";position:absolute;inset:-1px;border-radius:10px;border:1px solid var(--accent);opacity:.35;pointer-events:none}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 7px var(--accent)}
+.btns{display:flex;gap:8px}
+.btns span{font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:6px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.btns .pri{background:var(--accent);color:var(--bg);border-color:transparent}
+</style>
+</head>
+<body data-screen-label="Board">
+<div class="tb">
+<span id="lg" style="display:inline-flex;color:var(--accent)"></span><span class="w2">Calandria</span>
+<span class="tabs"><a class="tab on" href="./Board.html">Board</a><a class="tab" href="./Diffs.html">Diffs</a><a class="tab" href="./Terminals.html">Terminals</a><a class="tab" href="./Insights.html">Insights</a></span>
+<span class="right"><span style="font-family:var(--font-mono)">7 sessions · 3 running</span><span class="newbtn">New session</span></span>
+</div>
+<div class="wrap">
+<div class="bhead"><h1>Session board</h1><span class="meta">repo calandria/calandria · main @ 41c2f0e · updated 8s ago</span></div>
+<div class="cols" id="cols"></div>
+</div>
+<script>
+const iso=(i,j)=>[12+(i-j)*2.598,16.6+(i+j)*1.5];
+const glyph=h=>{let s="";const o=[];for(let j=0;j<3;j++)for(let i=0;i<3;i++)o.push([i,j]);o.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1]));
+for(const[i,j]of o){const[x,y]=iso(i,j);const d=Math.abs(i-1)+Math.abs(j-1),op=[1,.55,.3][d],rh=i===1&&j===1?13:9.5;
+s+=`<ellipse cx="${x}" cy="${y}" rx="1.75" ry=".95" stroke="currentColor" stroke-width=".55" opacity="${op*.7}" fill="none"/><rect x="${x-1.05}" y="${y-rh}" width="2.1" height="${rh}" rx="1.05" fill="currentColor" opacity="${op}"/>`;}
+return `<svg width="${(h*14.45/17.23).toFixed(1)}" height="${h}" viewBox="4.78 6.6 14.45 17.23" fill="none" style="display:block">${s}</svg>`;};
+document.getElementById("lg").innerHTML=glyph(18.4);
+const D={running:[
+ {nm:"auth-refactor",br:"wt/auth-refactor-3f2a",ag:"claude-code",now:"<b>writing session.ts</b> — replacing retry loop with backoff, turn 14",diff:["+482","−96"],t:"41m",sp:[4,7,10,6,12,14,9,15]},
+ {nm:"insight-cache",br:"wt/insight-cache-77b0",ag:"claude-code",now:"<b>running tests</b> — vitest 128/141, 2 retries",diff:["+167","−12"],t:"12m",sp:[2,5,3,8,11,7,13,10]},
+ {nm:"mobile-nav",br:"wt/mobile-nav-c4e9",ag:"codex",now:"<b>reading</b> app/Orchestrator.tsx — planning layout split",diff:["+0","−0"],t:"3m",sp:[1,2,2,4,3,5,4,6]}],
+review:[
+ {nm:"flaky-e2e-fix",br:"wt/flaky-e2e-fix-91cc",ag:"claude-code",now:"Stabilized worktree teardown race; two snapshot updates need eyes.",diff:["+41","−97"],t:"1h 20m"},
+ {nm:"token-scrub",br:"wt/token-scrub-2d18",ag:"codex",now:"Session tokens no longer logged; added redaction test.",diff:["+58","−9"],t:"2h 05m"}],
+idle:[
+ {nm:"migrate-charts",br:"wt/migrate-charts-08d1",ag:"claude-code",now:"Waiting on your answer: keep uPlot or move to LightningChart?",diff:["+210","−340"],t:"3h"},
+ {nm:"dep-bumps",br:"wt/dep-bumps-5a2f",ag:"codex",now:"Queued — starts when a runner frees up.",diff:["+0","−0"],t:"—"}]};
+const card=(s,kind)=>`
+<div class="card ${kind==="running"?"live":""}">
+<div class="top">${kind==="running"?'<span class="pulse"></span>':""}<span class="nm">${s.nm}</span><span class="agent">${s.ag}</span></div>
+<div class="br">${s.br}</div>
+<div class="now">${s.now}</div>
+<div class="foot"><span class="diff"><span class="a">${s.diff[0]}</span> <span class="d">${s.diff[1]}</span></span><span>${s.t}</span>
+${s.sp?`<span class="spark">${s.sp.map(v=>`<i style="height:${v}px"></i>`).join("")}</span>`:
+`<span class="btns" style="margin-left:auto">${kind==="review"?'<span class="pri">Review</span><span>Terminal</span>':'<span class="pri">Resume</span><span>Discard</span>'}</span>`}</div>
+</div>`;
+const cols=[["running","Running","var(--accent)",D.running],["review","Needs review","var(--rev)",D.review],["idle","Idle / queued","var(--dim)",D.idle]];
+document.getElementById("cols").innerHTML=cols.map(([k,t,c,list])=>`
+<div class="col"><div class="ch"><i style="background:${c}"></i>${t}<span class="n">${list.length}</span></div>
+<div class="cards">${list.map(s=>card(s,k)).join("")}</div></div>`).join("");
+</script>
+</body>
+</html>

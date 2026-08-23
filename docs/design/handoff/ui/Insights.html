@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — insights</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}
+.wrap{padding:16px 22px 40px}
+.ihead{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.ihead h1{font-family:var(--font-display);font-weight:500;font-size:20px;margin:0}
+.ihead .meta{font-size:12px;color:var(--dim)}
+.cards{display:grid;grid-template-columns:1.4fr 1fr;gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.card h2{font-size:13px;font-weight:600;margin:0 0 2px}
+.card .sub{font-size:11.5px;color:var(--dim);margin:0 0 12px}
+.legend{display:flex;gap:13px;flex-wrap:wrap;font-size:11.5px;color:var(--dim);margin-top:10px}
+.legend .li{display:flex;gap:6px;align-items:center}
+.legend .li i{width:9px;height:9px;border-radius:2px;display:block}
+.legend .cal{color:var(--ink);font-weight:700}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line)}
+td.m{font-family:var(--font-mono);font-size:11.5px}
+tr:last-child td{border-bottom:none}
+.dotcal{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;vertical-align:baseline}
+</style>
+</head>
+<body data-screen-label="Insights">
+<div id="tb"></div>
+<div class="wrap">
+<div class="ihead"><h1>Insights</h1><span class="meta">last 14 days · all agents · repo calandria/calandria</span></div>
+<div class="cards">
+<div class="card">
+<h2>Merged changes per day</h2>
+<p class="sub">stacked by agent — <b style="color:var(--ink)">calandria</b> is the product's own maintenance sessions (the <span style="font-family:var(--font-mono);font-size:11px">--calandria</span> hue)</p>
+<svg id="bars" width="100%" height="220" viewBox="0 0 560 220" preserveAspectRatio="none"></svg>
+<div class="legend" id="lg1"></div>
+</div>
+<div class="card">
+<h2>Tokens per hour</h2>
+<p class="sub">rolling 24h, per agent fleet</p>
+<svg id="lines" width="100%" height="220" viewBox="0 0 360 220" preserveAspectRatio="none"></svg>
+<div class="legend" id="lg2"></div>
+</div>
+<div class="card" style="grid-column:1/-1">
+<h2>Per-session totals</h2>
+<p class="sub">this week</p>
+<table>
+<tr><th>Session</th><th>Agent</th><th>Turns</th><th>Merged</th><th>Diff</th><th>Wall time</th></tr>
+<tr><td><span class="dotcal" style="background:var(--calandria)"></span>self-maintenance</td><td>calandria</td><td class="m">31</td><td class="m">6</td><td class="m">+904 −1,212</td><td class="m">9h 12m</td></tr>
+<tr><td>auth-refactor</td><td>claude-code</td><td class="m">14</td><td class="m">—</td><td class="m">+482 −96</td><td class="m">0h 41m</td></tr>
+<tr><td>flaky-e2e-fix</td><td>claude-code</td><td class="m">22</td><td class="m">1</td><td class="m">+41 −97</td><td class="m">1h 20m</td></tr>
+<tr><td>token-scrub</td><td>codex</td><td class="m">9</td><td class="m">—</td><td class="m">+58 −9</td><td class="m">2h 05m</td></tr>
+<tr><td>migrate-charts</td><td>claude-code</td><td class="m">17</td><td class="m">—</td><td class="m">+210 −340</td><td class="m">3h 02m</td></tr>
+</table>
+</div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+document.getElementById("tb").outerHTML=CalChrome.titlebar("Insights");
+const cs=getComputedStyle(document.documentElement),tk=n=>cs.getPropertyValue(n).trim();
+const cal=tk("--calandria")||"#45cabb";
+const S=[["calandria",cal],["claude-code",tk("--s1")],["codex",tk("--s2")],["other",tk("--s4")]];
+// stacked bars: 14 days × 4 series
+const data=[[1,4,2,0],[0,6,3,1],[2,5,1,0],[1,7,2,1],[0,3,4,0],[1,2,1,0],[0,1,0,0],[2,6,3,1],[1,8,2,0],[0,5,4,2],[1,4,1,0],[2,7,3,1],[0,6,2,0],[1,9,4,1]];
+const bw=560/14,max=Math.max(...data.map(d=>d.reduce((a,b)=>a+b)));
+let bars="";
+data.forEach((d,i)=>{let y=210;d.forEach((v,k)=>{const h=v/max*190;y-=h;
+if(v)bars+=`<rect x="${(i*bw+5).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw-10).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${S[k][1]}" opacity="${k===0?1:.85}"/>`;});});
+document.getElementById("bars").innerHTML=bars;
+document.getElementById("lg1").innerHTML=S.map(([n,c],i)=>`<span class="li ${i===0?"cal":""}"><i style="background:${c}"></i>${n}</span>`).join("");
+// lines: 3 series
+const mk=(pts,c,w,o)=>`<polyline points="${pts.map((v,i)=>`${i*(360/(pts.length-1))},${210-v*1.8}`).join(" ")}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${o}" stroke-linejoin="round"/>`;
+document.getElementById("lines").innerHTML=
+mk([20,34,28,55,61,48,72,80,66,90,84,102],S[1][1],1.6,.85)+
+mk([12,18,25,22,30,42,38,45,52,44,58,60],S[2][1],1.6,.85)+
+mk([8,10,16,14,22,18,28,24,34,30,38,45],cal,2.2,1);
+document.getElementById("lg2").innerHTML=[["calandria",cal,1],["claude-code",S[1][1]],["codex",S[2][1]]].map(([n,c,b])=>`<span class="li ${b?"cal":""}"><i style="background:${c}"></i>${n}</span>`).join("");
+</script>
+</body>
+</html>

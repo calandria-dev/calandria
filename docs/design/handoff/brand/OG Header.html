@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — OG header</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+body{margin:0;width:1200px;height:630px;background:var(--bg);color:var(--ink);font-family:var(--font-body);overflow:hidden;position:relative}
+.lattice{position:absolute;right:-130px;top:50%;transform:translateY(-50%);color:var(--accent);opacity:.9}
+.txt{position:absolute;left:84px;top:50%;transform:translateY(-50%);max-width:640px}
+.lk{display:flex;align-items:center;gap:20px;color:var(--accent);margin-bottom:30px}
+.w2{font-family:var(--font-display);font-weight:500;font-size:76px;letter-spacing:.005em;color:var(--ink);line-height:1}
+.tag{font-family:var(--font-display);font-weight:400;font-size:27px;color:var(--dim);line-height:1.35;margin:0 0 26px}
+.meta{display:flex;gap:14px;font-family:var(--font-mono);font-size:14px;color:var(--dim)}
+.meta span{border:1px solid var(--line);border-radius:99px;padding:5px 14px}
+.meta .hl{color:var(--accent);border-color:color-mix(in oklab,var(--accent) 40%,var(--line))}
+.grain{position:absolute;inset:0;background:radial-gradient(ellipse 900px 500px at 88% 50%,color-mix(in oklab,var(--accent) 9%,transparent),transparent 65%)}
+</style>
+</head>
+<body>
+<div class="grain"></div>
+<span class="lattice" id="big"></span>
+<div class="txt">
+<div class="lk" id="lk"><span class="w2">Calandria</span></div>
+<p class="tag">A self-hosted control room for your coding-agent fleet. Many sessions, one vessel — directed from any browser.</p>
+<div class="meta"><span class="hl">self-hosted</span><span>one worktree per task</span><span>claude code · codex</span></div>
+</div>
+<script src="../ui/chrome.js"></script>
+<script>
+document.getElementById("lk").insertAdjacentHTML("afterbegin",CalChrome.glyph(93));
+document.getElementById("big").innerHTML=CalChrome.glyph(620);
+</script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — diffs</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh}
+a{color:var(--accent)}
+.wrap{display:grid;grid-template-columns:250px 1fr;gap:0;min-height:calc(100vh - 50px)}
+.files{border-right:1px solid var(--line);padding:14px 0}
+.files .sh{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:0 16px 8px;font-weight:600}
+.file{display:flex;align-items:center;gap:8px;padding:6px 16px;font-family:var(--font-mono);font-size:11.5px;color:var(--dim);cursor:default;white-space:nowrap}
+.file .st{margin-left:auto;font-size:10.5px}
+.file.on{background:var(--panel);color:var(--ink);box-shadow:inset 2px 0 0 var(--accent)}
+.file .a{color:var(--run)}.file .d{color:#e0687a}
+.main{padding:16px 22px 40px;min-width:0}
+.dhead{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.dhead h1{font-family:var(--font-display);font-weight:500;font-size:20px;margin:0}
+.dhead .meta{font-size:12px;color:var(--dim);font-family:var(--font-mono)}
+.dhead .acts{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{font-size:12px;font-weight:600;padding:6px 13px;border-radius:7px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;cursor:pointer;background:none;font-family:var(--font-body)}
+.btn.pri{background:var(--accent);color:var(--bg);border-color:transparent}
+.btn.danger{color:#e0687a;border-color:#e0687a44}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{font-size:11.5px;font-weight:600;padding:5px 12px;border:none;background:none;color:var(--dim);cursor:pointer;font-family:var(--font-body)}
+.seg button.on{background:var(--panel);color:var(--accent)}
+.dpane{border:1px solid var(--line);border-radius:10px;overflow:hidden;font-family:var(--font-mono);font-size:12px;line-height:1.75}
+.fbar{display:flex;align-items:center;gap:10px;background:var(--panel);padding:7px 14px;font-size:11.5px;border-bottom:1px solid var(--line)}
+.fbar .diffst{margin-left:auto;color:var(--dim)}
+.hunk{color:var(--dim);background:var(--panel);padding:0 14px;font-size:11px;opacity:.8}
+.ln{display:grid;grid-template-columns:44px 44px 1fr;white-space:pre}
+.ln .no{color:var(--dim);opacity:.5;text-align:right;padding-right:10px;font-size:10.5px;user-select:none}
+.ln .c{padding:0 14px;overflow-x:auto}
+.ln.add{background:color-mix(in oklab,var(--run) 12%,transparent)}.ln.add .c{color:var(--run)}
+.ln.del{background:color-mix(in oklab,#e0687a 12%,transparent)}.ln.del .c{color:#e0687a}
+.ln.ctx .c{color:var(--dim)}
+.split{display:grid;grid-template-columns:1fr 1fr}
+.split>div{min-width:0;border-right:1px solid var(--line)}
+.split>div:last-child{border-right:none}
+.cmt{margin:14px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.cmt .who{font-size:11.5px;color:var(--dim);margin-bottom:6px}
+.cmt textarea{width:100%;box-sizing:border-box;background:var(--term);border:1px solid var(--line);border-radius:7px;color:var(--ink);font-family:var(--font-body);font-size:13.5px;padding:9px 11px;resize:vertical;min-height:54px}
+.cmt .row{display:flex;gap:8px;margin-top:8px;align-items:center}
+.cmt .hint{font-size:11px;color:var(--dim);margin-left:auto}
+</style>
+</head>
+<body data-screen-label="Diffs">
+<div id="tb"></div>
+<div class="wrap">
+<div class="files">
+<div class="sh">flaky-e2e-fix · 6 files</div>
+<div class="file on">e2e/teardown.ts<span class="st"><span class="a">+28</span> <span class="d">−41</span></span></div>
+<div class="file">e2e/worktree.spec.ts<span class="st"><span class="a">+9</span> <span class="d">−31</span></span></div>
+<div class="file">src/session/pool.ts<span class="st"><span class="a">+3</span> <span class="d">−18</span></span></div>
+<div class="file">src/session/attach.ts<span class="st"><span class="a">+1</span> <span class="d">−4</span></span></div>
+<div class="file">__snapshots__/board.snap<span class="st"><span class="a">+0</span> <span class="d">−2</span></span></div>
+<div class="file">__snapshots__/term.snap<span class="st"><span class="a">+0</span> <span class="d">−1</span></span></div>
+</div>
+<div class="main">
+<div class="dhead"><h1>flaky-e2e-fix</h1><span class="meta">wt/flaky-e2e-fix-91cc → main · claude-code · turn 22</span>
+<span class="acts"><span class="seg"><button class="on" id="bu">Unified</button><button id="bs">Split</button></span><button class="btn danger">Request changes</button><button class="btn pri">Merge session</button></span></div>
+<div class="dpane" id="uni">
+<div class="fbar">e2e/teardown.ts<span class="diffst"><span style="color:var(--run)">+28</span> <span style="color:#e0687a">−41</span></span></div>
+<div class="hunk">@@ -18,9 +18,12 @@ async function teardown(pool: WorktreePool)</div>
+<div class="ln ctx"><span class="no">18</span><span class="no">18</span><span class="c">  const active = pool.list();</span></div>
+<div class="ln del"><span class="no">19</span><span class="no"></span><span class="c">- for (const wt of active) await wt.remove();</span></div>
+<div class="ln del"><span class="no">20</span><span class="no"></span><span class="c">- // remove() races the agent's final write</span></div>
+<div class="ln add"><span class="no"></span><span class="no">19</span><span class="c">+ await Promise.all(active.map(wt => wt.flush()));</span></div>
+<div class="ln add"><span class="no"></span><span class="no">20</span><span class="c">+ for (const wt of active) await wt.remove({force: false});</span></div>
+<div class="ln add"><span class="no"></span><span class="no">21</span><span class="c">+ // flush first: remove() no longer races the final write</span></div>
+<div class="ln ctx"><span class="no">21</span><span class="no">22</span><span class="c">  pool.close();</span></div>
+<div class="hunk">@@ -44,6 +47,8 @@ export async function retry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;)</div>
+<div class="ln ctx"><span class="no">44</span><span class="no">47</span><span class="c">  let last: unknown;</span></div>
+<div class="ln del"><span class="no">45</span><span class="no"></span><span class="c">- for (let i = 0; i &lt; 3; i++) {</span></div>
+<div class="ln add"><span class="no"></span><span class="no">48</span><span class="c">+ for (let i = 0; i &lt; MAX_RETRIES; i++) {</span></div>
+<div class="ln add"><span class="no"></span><span class="no">49</span><span class="c">+   await sleep(BACKOFF_MS * 2 ** i);</span></div>
+<div class="ln ctx"><span class="no">46</span><span class="no">50</span><span class="c">    try { return await fn(); }</span></div>
+<div class="ln ctx"><span class="no">47</span><span class="no">51</span><span class="c">    catch (e) { last = e; }</span></div>
+</div>
+<div class="dpane split" id="spl" style="display:none">
+<div>
+<div class="fbar">base · main</div>
+<div class="ln ctx"><span class="no">18</span><span class="no"></span><span class="c">  const active = pool.list();</span></div>
+<div class="ln del"><span class="no">19</span><span class="no"></span><span class="c">- for (const wt of active) await wt.remove();</span></div>
+<div class="ln del"><span class="no">20</span><span class="no"></span><span class="c">- // remove() races the agent's final write</span></div>
+<div class="ln ctx"><span class="no">21</span><span class="no"></span><span class="c">  pool.close();</span></div>
+</div>
+<div>
+<div class="fbar">wt/flaky-e2e-fix-91cc</div>
+<div class="ln ctx"><span class="no">18</span><span class="no"></span><span class="c">  const active = pool.list();</span></div>
+<div class="ln add"><span class="no">19</span><span class="no"></span><span class="c">+ await Promise.all(active.map(wt => wt.flush()));</span></div>
+<div class="ln add"><span class="no">20</span><span class="no"></span><span class="c">+ for (const wt of active) await wt.remove({force: false});</span></div>
+<div class="ln ctx"><span class="no">22</span><span class="no"></span><span class="c">  pool.close();</span></div>
+</div>
+</div>
+<div class="cmt">
+<div class="who">Comment on e2e/teardown.ts · L19–21 — sent to the agent as review feedback</div>
+<textarea placeholder="e.g. flush() can reject on detached worktrees — guard it before the Promise.all"></textarea>
+<div class="row"><button class="btn pri">Send to agent</button><button class="btn">Comment only</button><span class="hint">input face: Source Sans 3 (default) · switch in Settings</span></div>
+</div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+document.getElementById("tb").outerHTML=CalChrome.titlebar("Diffs");
+const u=document.getElementById("uni"),s=document.getElementById("spl"),bu=document.getElementById("bu"),bs=document.getElementById("bs");
+bu.onclick=()=>{u.style.display="";s.style.display="none";bu.classList.add("on");bs.classList.remove("on")};
+bs.onclick=()=>{u.style.display="none";s.style.display="grid";bs.classList.add("on");bu.classList.remove("on")};
+</script>
+</body>
+</html>

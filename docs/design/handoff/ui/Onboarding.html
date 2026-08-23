@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calandria — onboarding</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="icon" href="../assets/favicon.svg">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);min-height:100vh;display:flex;align-items:center;justify-content:center}
+a{color:var(--accent)}
+.wiz{width:520px;max-width:92vw}
+.brand{display:flex;flex-direction:column;align-items:center;gap:18px;padding:8px 0 34px}
+.brand .lk{display:flex;align-items:center;gap:17px;color:var(--accent)}
+.brand .w2{font-family:var(--font-display);font-weight:500;font-size:56px;letter-spacing:.005em;color:var(--ink);line-height:1}
+.brand .tag{font-size:14px;color:var(--dim);letter-spacing:.01em}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:26px 28px}
+.steps{display:flex;gap:6px;margin-bottom:22px}
+.steps i{height:3px;flex:1;border-radius:2px;background:var(--line);display:block}
+.steps i.on{background:var(--accent)}
+h2{font-family:var(--font-display);font-weight:500;font-size:21px;margin:0 0 4px}
+.sub{font-size:13px;color:var(--dim);margin:0 0 20px;line-height:1.5}
+label{display:block;font-size:12px;font-weight:600;color:var(--dim);margin:14px 0 6px}
+input{width:100%;box-sizing:border-box;background:var(--term);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-family:var(--font-mono);font-size:13px;padding:10px 12px}
+input::placeholder{color:var(--dim);opacity:.6}
+.row{display:flex;align-items:center;gap:10px;margin-top:24px}
+.btn{font-size:13px;font-weight:600;padding:9px 18px;border-radius:8px;border:1px solid var(--line);color:var(--dim);background:none;font-family:var(--font-body);cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--bg);border-color:transparent}
+.hint{font-size:11.5px;color:var(--dim);margin-left:auto}
+</style>
+</head>
+<body data-screen-label="Onboarding">
+<div class="wiz">
+<div class="brand">
+<span class="lk" id="lk"><span class="w2">Calandria</span></span>
+<span class="tag">One vessel, many channels — your agent fleet, from any browser.</span>
+</div>
+<div class="card">
+<div class="steps"><i class="on"></i><i class="on"></i><i></i><i></i></div>
+<h2>Connect a repository</h2>
+<p class="sub">Calandria creates an isolated git worktree per session, so agents work in parallel without touching your checkout.</p>
+<label for="rp">Repository path</label>
+<input id="rp" placeholder="/home/dev/src/calandria">
+<label for="br">Base branch</label>
+<input id="br" placeholder="main">
+<div class="row"><button class="btn">Back</button><button class="btn pri">Continue</button><span class="hint">step 2 of 4</span></div>
+</div>
+</div>
+<script src="chrome.js"></script>
+<script>
+const lk=document.getElementById("lk");
+lk.insertAdjacentHTML("afterbegin",CalChrome.glyph(68.5));
+</script>
+</body>
+</html>
