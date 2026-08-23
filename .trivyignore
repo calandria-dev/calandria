@@ -11,17 +11,20 @@
 # keeping this list to exactly what's confirmed unfixable is what makes a red
 # run meaningful again.
 #
-# NOT listed here on purpose (verified fixed upstream, just not rebuilt yet):
-# the golang stdlib + x/net-vendored-in-stdlib CVEs baked into the currently
-# published image's gh 2.97.0 (CVE-2026-33818, CVE-2026-56853, CVE-2026-56858,
-# CVE-2026-56859, CVE-2026-56860, CVE-2026-56862, CVE-2026-39821,
-# CVE-2026-46600). gh 2.98.0 (cli.github.com apt repo, published 2026-08-20)
-# is already built with go1.26.7 (>= the 1.26.6 fix for all eight). The
-# Dockerfile installs gh unpinned (`apt-get install -y gh`), so the next
-# image rebuild picks this up with zero code change — no ignore entry needed,
-# just a republish. Confirmed by downloading gh_2.98.0_amd64.deb from
-# cli.github.com and checking `strings usr/bin/gh` for the embedded
-# go1.26.7 buildinfo string. 2026-08-23.
+# NOT listed here on purpose (verified fixed upstream, just needed a rebuild):
+# the golang stdlib + x/net-vendored-in-stdlib CVEs that were baked into the
+# gh 2.97.0 that shipped in the image at the time this file was written
+# (CVE-2026-33818, CVE-2026-56853, CVE-2026-56858, CVE-2026-56859,
+# CVE-2026-56860, CVE-2026-56862, CVE-2026-39821, CVE-2026-46600). gh 2.98.0
+# is already built with go1.26.7 (>= the 1.26.6 fix for all eight). A first
+# rebuild attempt still shipped 2.97.0 despite that — Docker's layer cache
+# keys on the `apt-get install gh` command's *text*, not on what apt actually
+# resolves, so an unpinned install silently kept the stale cached layer. The
+# Dockerfile now pins `gh=2.98.0` explicitly for this reason; bumping that
+# pin (see the comment there) is how gh updates happen going forward, and how
+# a rebuild is guaranteed to actually change the layer. Confirmed the fix
+# itself by downloading gh_2.98.0_amd64.deb from cli.github.com and checking
+# `strings usr/bin/gh` for the embedded go1.26.7 buildinfo string. 2026-08-23.
 
 # --- golang.org/x/mod, compiled into /usr/bin/gh ---
 # cli/cli's own go.mod pins x/mod v0.38.0; the fix ships in v0.40.0. This is

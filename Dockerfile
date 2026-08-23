@@ -60,12 +60,21 @@ RUN apt-get update \
 # repo picker/clone in project creation. Its token (~/.config/gh/hosts.yml)
 # and the git credential helper it configures (~/.gitconfig) live on the home
 # volume, so a login survives container stop/start.
+# Pinned to an exact apt version (issue #21): an unpinned `apt-get install gh`
+# resolves whatever the cli.github.com repo serves at build time, but Docker's
+# layer cache keys on the RUN command's *text*, not its result — a rebuild
+# that hits a cached layer here silently keeps whatever gh version the cache
+# was made with, even after apt has a newer, CVE-fixed package. Bumping this
+# version string is now how gh updates happen; check
+# `apt-cache madison gh` (or the cli.github.com Packages index) for the
+# current version before bumping, then rebuild uncached to confirm the new
+# layer actually pulls it.
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh \
+  && apt-get install -y --no-install-recommends gh=2.98.0 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
