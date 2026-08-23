@@ -18,6 +18,20 @@ const http = require("node:http");
 const nextImport = require("next");
 const { resolveHostname, hostnameMigrationWarning } = require("./lib/resolveHostname");
 
+// Mirrors num() in lib/config.ts — duplicated because this plain-Node
+// entrypoint can't import TS. Falls back to `def` and warns once when the
+// var is set but not a number, so a typo'd PORT fails loud at boot instead
+// of a NaN deep inside http.listen() (issue #18 item 1).
+function numEnv(name, raw, def) {
+  if (raw === undefined) return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.warn(`[server] ${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
+    return def;
+  }
+  return n;
+}
+
 // Last-resort process guards. Turns run detached (lib/runner.ts), owned by this
 // process and not awaited by any request — so a stray rejection or throw from a
 // background turn would, under Node's default policy, terminate the server and
@@ -73,13 +87,13 @@ const dbLockImport = import("./lib/db-lock.mjs");
 // match what pty-server.js binds — the sidecar is loopback-only by default and
 // is reached exclusively through this proxy.
 const dev = process.env.NODE_ENV !== "production";
-const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+const port = numEnv("PORT", process.env.PORT, 3000);
 // ORCH_HOSTNAME only, defaulting to loopback — bare HOSTNAME is ignored because
 // shells and container runtimes inject it, and the default must not publish an
 // unauthenticated shell to the network. See lib/resolveHostname.js.
 const hostname = resolveHostname();
 const ptyHost = process.env.PTY_HOST || "127.0.0.1";
-const ptyPort = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;
+const ptyPort = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
 
 const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });

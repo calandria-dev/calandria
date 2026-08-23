@@ -46,6 +46,21 @@ const ms = (raw: string | undefined, def: number): number => {
   return raw !== undefined && Number.isFinite(n) && n >= 0 ? n : def;
 };
 
+// Same idea as ms(), for the plain integer knobs below (ports, buffer sizes)
+// that have no meaningful "unset" default to silently prefer. Unlike ms(),
+// a bad value here is loud: it's a typo in an env file, not a deliberate
+// choice, and left unguarded it used to surface as a deep SQLite bind-type
+// error on project creation instead of a named boot warning (issue #18 item 1).
+const num = (name: string, raw: string | undefined, def: number): number => {
+  if (raw === undefined) return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.warn(`[config] ${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
+    return def;
+  }
+  return n;
+};
+
 /**
  * How long a tool-permission prompt parks waiting for a human who IS around
  * (at least one browser tab is watching — see watcherCount() in lib/events.ts)
@@ -129,9 +144,7 @@ export const ALLOW_API_KEY_ENV = ["1", "true", "on"].includes(
  * into the dev/setup/test service env and the project's PTY shell. Override to
  * relocate the block (e.g. avoid a clash with the app/pty ports). See lib/services.ts.
  */
-export const SERVICE_PORT_BASE = process.env.ORCH_SERVICE_PORT_BASE
-  ? Number(process.env.ORCH_SERVICE_PORT_BASE)
-  : 4300;
+export const SERVICE_PORT_BASE = num("ORCH_SERVICE_PORT_BASE", process.env.ORCH_SERVICE_PORT_BASE, 4300);
 
 /**
  * Per-service log ring-buffer cap (lines). Each managed service keeps at most
@@ -139,9 +152,7 @@ export const SERVICE_PORT_BASE = process.env.ORCH_SERVICE_PORT_BASE
  * through startup + recent output without growing unbounded for a dev server
  * that's been up for days.
  */
-export const SERVICE_LOG_LINES = process.env.ORCH_SERVICE_LOG_LINES
-  ? Number(process.env.ORCH_SERVICE_LOG_LINES)
-  : 1500;
+export const SERVICE_LOG_LINES = num("ORCH_SERVICE_LOG_LINES", process.env.ORCH_SERVICE_LOG_LINES, 1500);
 
 /**
  * The origin the app answers on over loopback, for in-container server-to-server
@@ -175,18 +186,18 @@ export const GIT_FETCH_ENABLED = !["0", "off", "false", "no"].includes(
  * carries on from the best ref it already has locally. Keep it short — this is
  * latency a user waits through when they click Start.
  */
-export const GIT_FETCH_TIMEOUT_MS = process.env.ORCH_GIT_FETCH_TIMEOUT_MS
-  ? Number(process.env.ORCH_GIT_FETCH_TIMEOUT_MS)
-  : 10_000;
+export const GIT_FETCH_TIMEOUT_MS = num("ORCH_GIT_FETCH_TIMEOUT_MS", process.env.ORCH_GIT_FETCH_TIMEOUT_MS, 10_000);
 
 /**
  * How long a successful fetch of a repo counts as fresh. Opening a project and
  * immediately launching five tasks should cost ONE fetch, not six; within this
  * window the extra calls reuse the refs the first one wrote.
  */
-export const GIT_FETCH_COOLDOWN_MS = process.env.ORCH_GIT_FETCH_COOLDOWN_MS
-  ? Number(process.env.ORCH_GIT_FETCH_COOLDOWN_MS)
-  : 15_000;
+export const GIT_FETCH_COOLDOWN_MS = num(
+  "ORCH_GIT_FETCH_COOLDOWN_MS",
+  process.env.ORCH_GIT_FETCH_COOLDOWN_MS,
+  15_000,
+);
 
 /**
  * The public origin the app is served from (e.g. https://orch.example.com when

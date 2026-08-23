@@ -13,10 +13,23 @@ const os = require("node:os");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
 
+// Mirrors num() in lib/config.ts — duplicated because this plain-Node
+// entrypoint can't import TS. Falls back to `def` and warns once when the
+// var is set but not a number (issue #18 item 1).
+function numEnv(name, raw, def) {
+  if (raw === undefined) return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.warn(`[pty-server] ${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
+    return def;
+  }
+  return n;
+}
+
 // Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). The sidecar stays bound
 // to loopback by default — the browser never talks to it directly; server.js
 // proxies /pty upgrades to it on the same machine.
-const PORT = process.env.PTY_PORT ? Number(process.env.PTY_PORT) : 3001;
+const PORT = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
 const HOST = process.env.PTY_HOST || "127.0.0.1";
 
 // Last-resort process guards, the same backstop server.js installs and for the
