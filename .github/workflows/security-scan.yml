@@ -5,7 +5,7 @@
 #
 #   npm-audit   — same command as the `audit` job in test.yml, repeated on a
 #                 schedule so a fresh advisory is caught between pushes.
-#   image-scan  — trivy scan of the published :latest image, failing on
+#   image-scan  — trivy scan of the published :edge image, failing on
 #                 fixable HIGH/CRITICAL findings. Nothing else in the
 #                 pipeline scans the built artifact.
 #
