@@ -31,17 +31,21 @@ the *published* image on both and waits for its HEALTHCHECK before the run goes 
 
 | Tag | Points at |
 |-|-|
-| `latest` | The newest build of `main` |
+| `latest` | The newest tagged release |
+| `edge` | The newest nightly build of `main` |
 | `sha-<short>` | One immutable tag per commit — `sha-337ea62`, the 7-char SHA |
 | `<version>` | A pushed `v*` git tag with the `v` stripped — `v1.4.2` → `1.4.2` |
 | `<major>.<minor>` | The newest patch on that line — `1.4` |
 
-`latest` tracks `main` and **only ever moves forward**. A `v*` tag deliberately does not
-move it (`flavor: latest=false` in the workflow): releases are cut from `main`, so a patch
-back-published onto an older line would otherwise silently roll `latest` *backwards* for
-everyone pulling it. Pin `sha-<short>` when you want a tag that can never change under you.
-A manual `workflow_dispatch` run doesn't move it either: `latest` is conditioned on the
-default branch, so test-publishing a branch adds its `sha-<short>` tag and nothing else.
+`latest` moves only on a `v*` tag push and **only ever moves forward**: releases are cut
+from `main`, so a patch back-published onto an older line would otherwise silently roll
+`latest` *backwards* for everyone pulling it. `main` itself no longer moves `latest` —
+ordinary nightly builds publish under `edge` instead, so pulling `latest` never hands you
+untagged, unreleased code. Pin `sha-<short>` (or a specific `vX.Y.Z`) when you want a tag
+that can never change under you. See [Pinning a version](#pinning-a-version) below.
+
+No releases exist yet — `latest` and `<version>`/`<major>.<minor>` start appearing once
+the first `v0.1.0` tag is cut (issue #12). Until then, `edge` is the only moving tag.
 
 ### Verify the image's provenance
 
@@ -68,6 +72,27 @@ plain manifests the merge step can stitch together. Only digests published by a 
 included the `attest` job carry a signature — anything older reports
 `no attestations found`.
 
+### Pinning a version
+
+Once a release exists (issue #12; none has been cut as of this writing), pick one of:
+
+| You want | Set `ORCH_IMAGE` to |
+|-|-|
+| A specific release, never changes | `ghcr.io/calandria-dev/calandria:vX.Y.Z` |
+| The newest patch on a minor line, moves forward within it | `ghcr.io/calandria-dev/calandria:X.Y` |
+| Whatever the newest release is, moves on every release | `ghcr.io/calandria-dev/calandria:latest` |
+| Nightly builds of `main`, ahead of any release, least stable | `ghcr.io/calandria-dev/calandria:edge` |
+
+`vX.Y.Z` is the only one of these that never changes under you — `X.Y` and `latest` are
+both moving targets by design (see the tag table above). Pin `vX.Y.Z` for anything you
+don't want to babysit; use `latest` only if you're fine re-reading the changelog after
+every unattended upgrade.
+
+**Rollback** is re-pinning: set `ORCH_IMAGE` back to the previous `vX.Y.Z` and
+`docker compose pull && up -d --no-build` again. There's no separate rollback mechanism —
+every past release tag stays pullable indefinitely, so "roll back" and "pin an older
+version" are the same operation.
+
 ### Running it
 
 [`docker-compose.yml`](../docker-compose.yml) is the parameterized runner. It builds from
@@ -80,8 +105,9 @@ export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
 docker build -t calandria .
 docker compose -p orch-alice up -d
 
-# B) or run the published image, nothing to build
-export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest
+# B) or run the published image, nothing to build — swap :edge for a version
+# tag (e.g. :v0.1.0) once a release exists; see "Pinning a version" above
+export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:edge
 docker compose -p orch-alice pull
 docker compose -p orch-alice up -d --no-build
 

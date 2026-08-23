@@ -103,11 +103,11 @@ npm start
 Open <http://localhost:3000>. The first-run wizard connects Claude Code or
 Codex and takes you through a short hands-on tutorial.
 
-Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is
-published publicly on every push to `main`:
+Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is published
+publicly: `latest` is the newest tagged release, `edge` tracks nightly builds of `main`.
 
 ```bash
-docker pull ghcr.io/calandria-dev/calandria:latest
+docker pull ghcr.io/calandria-dev/calandria:edge
 ```
 
 Use `npm run dev` only when developing Calandria itself. For Docker tags and

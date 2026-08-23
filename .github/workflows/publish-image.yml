@@ -73,6 +73,15 @@
 # HEAD is already published under its sha- tag — plus v* tags and manual
 # workflow_dispatch. test.yml still runs on every push, so code correctness
 # stays gated per-push; only the image build is batched nightly.
+#
+# RELEASES (issue #12): `latest` now tracks the newest `v*` tag, not main —
+# nightly/dispatch builds off main publish under `edge` instead, so
+# `docker pull …:latest` and `…:edge` are an explicit choice between "newest
+# release" and "newest main" rather than one tag silently meaning whichever
+# ran most recently. A tag push additionally runs the release gate below
+# before `build` starts. release-please.yml is what produces these tags; see
+# its header for the GITHUB_TOKEN caveat on why a tag it creates may need a
+# manual `workflow_dispatch --ref vX.Y.Z` nudge to reach this workflow at all.
 name: Publish image
 
 on:
@@ -109,6 +118,8 @@ jobs:
       contents: read
       # The nightly freshness check reads the registry.
       packages: read
+      # The release gate below reads test.yml's run history for this SHA.
+      actions: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
       # False only when a scheduled run finds HEAD already published; every
@@ -122,14 +133,38 @@ jobs:
     steps:
       # An allowlist, not `!= pull_request`: a negative test silently starts
       # publishing the day someone adds another trigger to this file.
-      # workflow_dispatch stays on the list so a branch can be test-published
-      # under its sha- tag; it can never move `latest`, which is pinned to the
-      # default branch by the metadata rules below.
+      # workflow_dispatch stays on the list so a branch (or an untriggered tag —
+      # see release-please.yml's header) can be test-published under its sha-
+      # tag; it can only move `latest`/`edge` per the ref-type rules below, not
+      # by virtue of being a dispatch.
       # `schedule` publishes too: it only ever runs on the default branch.
       - name: Decide whether this event may publish
         id: gate
         run: |
           echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}" >> "$GITHUB_OUTPUT"
+
+      # A release is only as trustworthy as the signal it's cut from (issue
+      # #12). Tag pushes don't retrigger test.yml — it only listens on
+      # `push: branches: [main]` — so this queries the Test run that already
+      # happened for the commit the tag points to (release-please tags a
+      # merge-to-main commit; a hand-pushed tag on an untested commit has no
+      # matching run either, which fails this the same way). Scoped to actual
+      # tag pushes: PRs, the nightly schedule and manual dispatch already run
+      # `test` themselves via the `needs: [prepare, test]` chain below.
+      - name: Verify the Test workflow succeeded for this commit before releasing
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${SHA}&status=completed&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // "no run found"')
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::Refusing to publish ${GITHUB_REF_NAME}: the Test workflow has not succeeded for ${SHA} (found: ${conclusion}). A release must be cut from a commit whose push-to-main Test run is green — see .github/CLAUDE.md and issue #12."
+            exit 1
+          fi
+          echo "Test workflow succeeded for ${SHA}; proceeding with release ${GITHUB_REF_NAME}"
 
       # The nightly wins nothing when main hasn't moved: if HEAD's sha- tag is
       # already in the registry, `proceed` goes false and every downstream job
@@ -170,12 +205,18 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
           images: ${{ env.IMAGE }}
-          # `latest` tracks main only. Deliberately NOT moved by a v* tag: this
-          # image is deployed from main, and a back-published patch tag silently
-          # rolling `latest` backwards is a nasty way to find that out.
+          # `latest` now tracks the newest v* tag (a release), not main — see
+          # the RELEASES note at the top of this file. `edge` takes over the
+          # role `latest` used to play: it moves on every nightly/dispatch
+          # build off main, so self-hosters get an explicit "bleeding edge"
+          # tag instead of `latest` quietly meaning "whatever main was last
+          # night". type=semver only ever matches on an actual tag ref, so
+          # those two lines are inert outside a release build without needing
+          # their own `enable=`.
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=edge,enable=${{ github.ref_type != 'tag' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

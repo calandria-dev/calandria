@@ -1,0 +1,55 @@
+# Opens/updates a release PR from Conventional Commits on every push to main,
+# and — once that PR is merged — cuts the GitHub Release and the `vX.Y.Z` tag.
+# See issue #12 for the decision record: release-please over manual
+# `gh release create`, semver 0.x while pre-1.0 (bump-minor-pre-major in
+# release-please-config.json keeps a breaking change on the 0.x line instead
+# of jumping to 1.0.0), and `latest` tracking the newest release rather than
+# main (publish-image.yml).
+#
+# Two GITHUB_TOKEN gotchas, both inherent to release-please-action and neither
+# fixable from this file without adding a PAT secret this repo doesn't have:
+#
+#   1. The release PR itself is opened/updated using GITHUB_TOKEN, and GitHub
+#      does not start new workflow runs for events attributed to GITHUB_TOKEN
+#      (recursion prevention). test.yml's `pull_request` trigger therefore
+#      does NOT run on the release PR. This is fine, not a hole: the release
+#      PR only touches package.json/CHANGELOG.md/the manifest, and merging it
+#      is an ordinary human-triggered push to main, so test.yml's `push`
+#      trigger runs normally on the merge commit — which is the SHA that ends
+#      up tagged. publish-image.yml's release gate checks Test against that
+#      SHA before it will build, so the gate is intact end to end.
+#   2. The same recursion rule applies to the tag/Release this action creates
+#      when a release PR merges: that tag push is also attributed to
+#      GITHUB_TOKEN, so publish-image.yml's `push: tags: v*` trigger will NOT
+#      fire automatically. Until this repo adds a fine-grained PAT (contents:
+#      write) as a secret and passes it via `with: token:` below, cut a
+#      release by merging the PR and then either (a) add that PAT, or (b)
+#      manually run `gh workflow run publish-image.yml --ref vX.Y.Z` once —
+#      the tag already exists, this just gives it the build it didn't
+#      auto-trigger. Agents may wire up the PAT if the user provisions one;
+#      they do not provision it themselves (see .github/CLAUDE.md).
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Never cancel a run mid-flight: it may be in the middle of creating the
+  # release tag, and a half-finished release is worse than a queued rerun.
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          release-type: node

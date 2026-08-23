@@ -13,6 +13,11 @@
 # once a real volume mounts. Install as root, reassert ownership, then drop
 # back to the base image's user as the last step.
 
+# :latest is the newest tagged release (issue #12) — correct for an example
+# meant to stay current with no upkeep. A real overlay that cares about
+# reproducible builds should pin a specific `vX.Y.Z` instead once a release
+# exists, and re-pin deliberately on upgrade; see docs/SELF_HOSTING.md,
+# "Pinning a version".
 FROM ghcr.io/calandria-dev/calandria:latest
 
 USER root
