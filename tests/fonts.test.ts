@@ -36,7 +36,7 @@ const fontPicker = readFileSync(path.join(root, "app/orchestrator/types.ts"), "u
 
 /** Every `--nf-*` custom property declared via next/font's `variable:` option. */
 function declaredFonts(): { importName: string; cssVar: string }[] {
-  return [...fontsSrc.matchAll(/export const \w+\s*=\s*(\w+)\(\{[^}]*variable:\s*"(--nf-[a-z0-9-]+)"/gs)].map((m) => ({
+  return [...fontsSrc.matchAll(/export const \w+\s*=\s*(\w+)\(\{[^}]*variable:\s*"(--nf-[a-z0-9-]+)"/g)].map((m) => ({
     importName: m[1],
     cssVar: m[2],
   }));
