@@ -6,6 +6,7 @@ import { posthogSnippet } from "@/lib/analytics";
 import { fontVariables } from "./fonts";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://calandria.dev"),
   title: "Calandria — build, verify & host every app with agents",
   description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
 };

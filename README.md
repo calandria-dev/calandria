@@ -1,6 +1,6 @@
 <div align="center">
 
-# Calandria
+![Calandria](docs/design/og.png)
 
 ### Run Claude Code and Codex in parallel across every project, from any browser.
 

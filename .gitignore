@@ -72,3 +72,5 @@ orchestrator.db-wal
 !docs/images/
 !docs/images/*.png
 !app/apple-icon.png
+!app/opengraph-image.png
+!docs/design/og.png
