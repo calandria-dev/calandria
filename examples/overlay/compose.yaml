@@ -1,0 +1,35 @@
+# Example compose file for the overlay image built from this directory.
+#
+#   cd examples/overlay
+#   docker compose -p orch-example up -d --build
+#   open http://127.0.0.1:10001
+#
+# This only shows the overlay-specific parts: build context, image name, and
+# the env vars an overlay typically pins per site. See ../../docker-compose.yml
+# and ../../docs/SELF_HOSTING.md for the full parameterized runner and the
+# hardening flags (cap_drop, read_only, runsc, resource limits) a real
+# deployment should also carry.
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: orch-example-overlay:latest
+    container_name: orch-u-example
+    restart: unless-stopped
+    environment:
+      PUBLIC_BASE_URL: https://orch.example.com
+      GIT_USER_NAME: Example User
+      GIT_USER_EMAIL: user@example.com
+      # Front the instance with your own auth before setting these — see
+      # docs/SELF_HOSTING.md, "Origin-side auth (Cloudflare Access)".
+      CF_ACCESS_TEAM_DOMAIN: ""
+      CF_ACCESS_AUD: ""
+    ports:
+      - "127.0.0.1:10001:3000"
+    volumes:
+      - home:/home/orch
+
+volumes:
+  home:
+    name: orch-u-example-home

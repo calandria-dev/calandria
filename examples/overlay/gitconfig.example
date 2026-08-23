@@ -1,0 +1,7 @@
+# Example baked-in site config — copied to /etc/gitconfig by the Dockerfile.
+# Generic defaults only; nothing here is a secret. A real overlay might also
+# bake a registry mirror, an internal CA cert, or shared tool config.
+[init]
+	defaultBranch = main
+[pull]
+	rebase = false

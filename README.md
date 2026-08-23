@@ -109,7 +109,8 @@ docker pull ghcr.io/calandria-dev/calandria:latest
 
 Use `npm run dev` only when developing Calandria itself. For Docker tags and provenance,
 authentication, networking, and secure access from anywhere, see the
-[self-hosting guide](docs/SELF_HOSTING.md).
+[self-hosting guide](docs/SELF_HOSTING.md). Layering site-specific CLIs and config on top
+of the published image? See [`examples/overlay/`](examples/overlay/) for a starting point.
 
 One instance per database: Calandria locks `orchestrator.db` at boot and refuses to start
 if another process already owns it, naming the holder — two servers sharing one database

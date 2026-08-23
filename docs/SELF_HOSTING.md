@@ -97,6 +97,10 @@ full shell and a `bypassPermissions` agent, so **never expose the port raw**.
 The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted code, and
 the setup wizard drives that flow from the browser.
 
+Need site-specific CLIs or config layered on top of the published image? See
+[`examples/overlay/`](../examples/overlay/) for a sanitized starting point — real overlays
+belong in a private repo, not committed here.
+
 ## Origin-side auth (Cloudflare Access)
 
 If you front an instance with Cloudflare Access, set `CF_ACCESS_TEAM_DOMAIN` +
