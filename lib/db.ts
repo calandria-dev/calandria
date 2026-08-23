@@ -19,6 +19,10 @@ declare global {
 export function init(db: Database.Database) {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // Default is 0ms: a write racing the concurrent read-only `sqlite3` inspection
+  // this design explicitly supports (lib/db-lock.mjs) throws SQLITE_BUSY
+  // immediately as a 500 instead of briefly stalling. See issue #14 item 3.
+  db.pragma("busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id          TEXT PRIMARY KEY,
