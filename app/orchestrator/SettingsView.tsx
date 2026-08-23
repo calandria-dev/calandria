@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
-import { DEFAULT_SETTINGS, reasoningOptions, permissionOptions, type Settings, type AgentsBundle } from "./types";
+import {
+  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, MONO_FONTS, PROMPT_FONTS,
+  type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
+} from "./types";
 import { capsFor, agentLabel } from "./agents";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
@@ -399,12 +402,106 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   );
 }
 
+// Static preview colors for each palette's dark variant — the design-system
+// values from docs/design/handoff/styles.css, hardcoded here since the swatch
+// has to show every theme at once regardless of which one is currently active
+// (CSS custom properties only expose the LIVE theme, not the other three).
+const PALETTE_PREVIEW: { id: Palette; label: string; bg: string; accent: string; ink: string }[] = [
+  { id: "cherenkov", label: "Cherenkov", bg: "#081217", accent: "#45cabb", ink: "#d5e4ea" },
+  { id: "heavywater", label: "Heavy water", bg: "#0d1414", accent: "#dd7f68", ink: "#dce7e4" },
+  { id: "denoche", label: "De noche", bg: "#100e18", accent: "#f0a94e", ink: "#e5e0ee" },
+  { id: "basic", label: "Basic", bg: "#101114", accent: "#6c9bd8", ink: "#dde0e6" },
+];
+const MONO_SAMPLE = "const ok = a !== b ? 0 : 1;";
+const PROMPT_SAMPLE = "Refactor the auth flow to use refresh tokens.";
+
+// The "Appearance" section: theme cards, mode, and the code/prompt font pickers
+// (docs/design/handoff/ui/Settings.html). Density + text-width stay in the
+// AppearancePanel popover only — no home for them here yet, and duplicating a
+// setter across two surfaces just invites drift.
+function AppearanceSection({ appearance, setAppearance }: {
+  appearance: Appearance;
+  setAppearance: (k: keyof Appearance, v: string) => void;
+}) {
+  return (
+    <>
+      <div className="field">
+        <div className="ap-h2">Theme</div>
+        <div className="ap-themes">
+          {PALETTE_PREVIEW.map((t) => {
+            const active = appearance.palette === t.id;
+            return (
+              <button
+                key={t.id} type="button" className={`ap-th${active ? " on" : ""}`}
+                onClick={() => setAppearance("palette", t.id)}
+              >
+                <div className="ap-prev" style={{ background: t.bg }}>
+                  <i style={{ background: t.accent, height: 22 }} />
+                  <i style={{ background: t.ink, opacity: 0.5, height: 16 }} />
+                  <i style={{ background: t.ink, opacity: 0.25, height: 12 }} />
+                </div>
+                <div className="ap-lbl"><b>{t.label}</b><span>{active ? "active" : ""}</span></div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="field">
+        <div className="ap-h2">Mode</div>
+        <div className="seg" style={{ maxWidth: 320 }}>
+          <button className={appearance.mode === "system" ? "on" : ""} onClick={() => setAppearance("mode", "system")}>Auto</button>
+          <button className={appearance.mode === "light" ? "on" : ""} onClick={() => setAppearance("mode", "light")}>{Icon.sun()} Light</button>
+          <button className={appearance.mode === "dark" ? "on" : ""} onClick={() => setAppearance("mode", "dark")}>{Icon.moon()} Dark</button>
+        </div>
+        <div className="hlp">Each theme has a matched light variant; Calandria follows your OS setting unless pinned.</div>
+      </div>
+
+      <div className="ap-row2">
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="ap-h2">Code &amp; terminal font</div>
+          <div className="ap-faces">
+            {(Object.keys(MONO_FONTS) as MonoFontId[]).map((id) => {
+              const font = MONO_FONTS[id];
+              const active = appearance.monoFont === id;
+              return (
+                <label key={id} className={`ap-face${active ? " on" : ""}`}>
+                  <input type="radio" name="ap-mono" checked={active} onChange={() => setAppearance("monoFont", id)} />
+                  <span className="ap-nm">{font.label}{id === "jetbrains-mono" && <small>default</small>}</span>
+                  <span className="ap-sam" style={{ fontFamily: font.cssFamily }}>{MONO_SAMPLE}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="ap-h2">Prompt input font</div>
+          <div className="ap-faces">
+            {(Object.keys(PROMPT_FONTS) as PromptFontId[]).map((id) => {
+              const font = PROMPT_FONTS[id];
+              const active = appearance.promptFont === id;
+              return (
+                <label key={id} className={`ap-face${active ? " on" : ""}`}>
+                  <input type="radio" name="ap-prompt" checked={active} onChange={() => setAppearance("promptFont", id)} />
+                  <span className="ap-nm">{font.label}{id === "source-sans" && <small>default</small>}</span>
+                  <span className="ap-sam" style={{ fontFamily: font.cssFamily }}>{PROMPT_SAMPLE}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
 // growing settings is adding an entry here + a branch in renderSection — no layout
 // work. Today there's one section; appearance/models/integrations slot in later.
 const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNode }[] = [
   { id: "general", label: "General", icon: Icon.gear },
+  { id: "appearance", label: "Appearance", icon: Icon.sliders },
   { id: "background", label: "Background jobs", icon: Icon.clock },
   { id: "notifications", label: "Notifications", icon: Icon.bell },
   { id: "run", label: "Run defaults", icon: Icon.spark },
@@ -415,9 +512,11 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
+  appearance: Appearance;
+  setAppearance: (k: keyof Appearance, v: string) => void;
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
   agents: AgentsBundle;
@@ -483,7 +582,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
             </button>
           ))}
         </div>
-        <div className="settings-nav-foot">{section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -523,6 +622,7 @@ export function SettingsView({ settings, setSetting, appDefaults, setAppDefault,
                 </div>
               </div>
             )}
+            {section === "appearance" && <AppearanceSection appearance={appearance} setAppearance={setAppearance} />}
             {section === "background" && (
               <>
                 <div className="field">

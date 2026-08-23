@@ -395,6 +395,8 @@ export default function Orchestrator() {
       key={settingsSection ?? "default"}
       settings={o.settings}
       setSetting={o.setSetting}
+      appearance={o.appearance}
+      setAppearance={o.setAppearance}
       appDefaults={o.appDefaults}
       setAppDefault={o.setAppDefault}
       agents={o.agents}

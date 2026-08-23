@@ -328,6 +328,27 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .settings-title{font-size:16px;font-weight:700;color:var(--ink);}
 .settings-body{padding:20px;max-width:680px;}
 .settings-body code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:5px;}
+
+/* settings → appearance — theme cards + font pickers (docs/design/handoff/ui/Settings.html) */
+.ap-h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:0 0 10px;}
+.ap-themes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+.ap-th{display:block;width:100%;border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;background:none;padding:0;text-align:left;font:inherit;color:inherit;transition:border-color .12s,box-shadow .12s;}
+.ap-th:hover{border-color:var(--line-strong);}
+.ap-th.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+.ap-th .ap-prev{height:58px;display:flex;align-items:center;justify-content:center;gap:6px;}
+.ap-th .ap-prev i{width:8px;height:22px;border-radius:4px;display:block;}
+.ap-th .ap-lbl{font-size:11.5px;padding:7px 10px;background:var(--panel);display:flex;justify-content:space-between;color:var(--ink-3);}
+.ap-th .ap-lbl b{color:var(--ink);font-weight:600;}
+.ap-row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;}
+.ap-faces{display:flex;flex-direction:column;gap:8px;}
+.ap-face{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:9px;padding:10px 14px;cursor:pointer;min-width:0;transition:border-color .12s;}
+.ap-face:hover{border-color:var(--line-strong);}
+.ap-face.on{border-color:var(--accent);}
+.ap-face input{accent-color:var(--accent);}
+.ap-face .ap-nm{font-size:12.5px;font-weight:600;min-width:140px;flex:0 0 auto;color:var(--ink);}
+.ap-face .ap-nm small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;}
+.ap-face .ap-sam{font-size:13px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+
 .user-chip .av{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#C2603C,#D89A3A);display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;}
 .user-chip .un{font-weight:600;font-size:13px;}
 .user-chip .ue{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
