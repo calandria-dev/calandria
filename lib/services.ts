@@ -769,20 +769,6 @@ export function listServices(project: Project): ServiceInfo[] {
   return out;
 }
 
-// How many supervised processes are live right now — reported (informationally)
-// by GET /api/instance/idle. Running services deliberately do NOT mark the
-// instance busy: sleeping is safe because desired_state survives in the
-// services table and boot restore relaunches them at the same public URL when
-// the container wakes. A control plane that wants to keep a box warm while a
-// user-visible service runs can apply its own policy on this count.
-export function runningServiceCount(): number {
-  let n = 0;
-  for (const m of reg().services.values()) {
-    if (m.managed && (m.status === "running" || m.status === "starting")) n++;
-  }
-  return n;
-}
-
 // The captured logs for a project's services (snapshot), keyed by service name.
 export function serviceLogs(projectId: string): Record<string, ServiceLogLine[]> {
   const r = reg();

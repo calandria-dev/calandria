@@ -351,9 +351,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   group still runs the service's command before `SIGKILL`ing it, so a recycled pid is
   never killed by mistake), and probing the port first so a conflict with an unmanaged
   process surfaces as a readable `error` on the service instead of an EADDRINUSE crash
-  loop. A clean process exit SIGKILLs every managed group on the way out. Running
-  services don't block idle-stop (`/api/instance/idle` reports `runningServices`
-  informationally — sleeping is safe because boot restore relaunches them). **Public
+  loop. A clean process exit SIGKILLs every managed group on the way out. **Public
   hostnames are a separate opt-in** (`ORCH_SERVICE_HOSTS`): each service then gets a
   stable `<slug>--<appHost>` hostname with per-service visibility (private /
   shared-link / public), dispatched through the reverse-proxy router in
@@ -364,8 +362,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   seeds the utility agent with recent git activity, runs `draftProjectContext()` in the
   repo (read-only), and persists the result for the client to poll via
   `GET /api/projects/[id]/refresh-context`. The draft is for the user to review — never
-  auto-saved. In-flight work marks the instance busy (`lib/idle.ts`) so an idle daemon
-  won't stop the container mid-refresh.
+  auto-saved.
 - **`lib/recap.ts`** — "where you left off" staleness/activity logic + background sweep.
 - **`app/Orchestrator.tsx`** — the dark mission-control client UI (projects rail · task
   list · live session, the session split into transcript + `SessionRail`

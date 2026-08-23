@@ -486,8 +486,6 @@ jobs:
 
           # The healthcheck runs inside the container; confirm the port is
           # actually published and that /api/version reports THIS build.
-          curl -fsS -H "x-service-token: $token" \
-            http://127.0.0.1:3000/api/instance/idle > /dev/null
           version=$(curl -fsS -H "x-service-token: $token" http://127.0.0.1:3000/api/version)
           echo "$version"
           echo "$version" | grep -q "${GITHUB_SHA}" \

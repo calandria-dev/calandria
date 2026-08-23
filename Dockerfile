@@ -157,9 +157,9 @@ ARG BUILT_AT=unknown
 ENV ORCH_GIT_SHA=$GIT_SHA \
     ORCH_BUILT_AT=$BUILT_AT
 
-# The idle endpoint doubles as the health probe (it exercises Next + SQLite).
-# It presents SERVICE_TOKEN — the one path middleware.ts exempts from the
-# Cloudflare Access check, since no Access JWT exists inside the container.
+# /api/version doubles as the health probe (it exercises Next + SQLite-backed
+# routing). It presents SERVICE_TOKEN — the one path middleware.ts exempts from
+# the Cloudflare Access check, since no Access JWT exists inside the container.
 #
 # The token is read from the environment OR from the file the entrypoint writes
 # when Access is on and the operator supplied none (see docker/entrypoint.sh —
@@ -169,6 +169,6 @@ ENV ORCH_GIT_SHA=$GIT_SHA \
 # plus an unset SERVICE_TOKEN meant every probe 403'd and the container was
 # permanently unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "let t=(process.env.SERVICE_TOKEN||'').trim();if(!t){try{t=require('node:fs').readFileSync('/tmp/orch-service-token','utf8').trim()}catch{}}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/instance/idle',{headers:t?{'x-service-token':t}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+  CMD node -e "let t=(process.env.SERVICE_TOKEN||'').trim();if(!t){try{t=require('node:fs').readFileSync('/tmp/orch-service-token','utf8').trim()}catch{}}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/version',{headers:t?{'x-service-token':t}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/orch-entrypoint"]

@@ -42,19 +42,8 @@ of the following:
 Each exposed service can then be **private** (your session), **shared** (tokenized link), or
 **public**. The hostname is stable: `<project-slug>--<operator-host>`.
 
-One thing switches routing back off with all three in place: `ORCH_CONTROL_PLANE=1` vetoes it,
-because a box running as a fleet's control plane must not serve user services off its own
-hostname. It is unset on a normal instance — but if your services keep their
-`http://localhost:<port>` URLs and the three requirements above look right, check it.
-
 Calandria provides a terminal and unattended coding agents. Put authentication in front of
 any internet-facing instance and read the [self-hosting security guidance](SELF_HOSTING.md).
-
-## Idle instances
-
-Running services are reported by the idle endpoint but do not prevent an instance from
-sleeping. Their desired state is persisted, so they resume on boot at the same URL. An
-external supervisor can choose a stricter keep-warm policy if desired.
 
 All service-related environment variables and defaults are documented in
 [`.env.example`](../.env.example).

@@ -32,7 +32,6 @@ import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { isAgentConnected } from "@/lib/agents/connections";
-import { workEnded, workStarted } from "@/lib/idle";
 import type { RunContext } from "@/lib/runContext";
 import type { Priority, Task } from "@/lib/types";
 
@@ -100,7 +99,6 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
     return { ok: false, error: `${check.error}${hint}` };
   }
 
-  workStarted();
   let task: Task | undefined;
   try {
     fs.mkdirSync(project.repo_path, { recursive: true });
@@ -159,7 +157,5 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
     return launched ? { ok: true, task: created } : { ok: false, error: "the turn could not be launched", task: created };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err), task };
-  } finally {
-    workEnded();
   }
 }

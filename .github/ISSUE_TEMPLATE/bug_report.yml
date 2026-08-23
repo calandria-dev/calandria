@@ -23,7 +23,6 @@ body:
       options:
         - Local npm install
         - Self-hosted Docker
-        - Hosted Calandria
         - Other
     validations:
       required: true

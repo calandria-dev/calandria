@@ -1,7 +1,7 @@
 # Self-hosting
 
-Everything about running your own instance: Docker, tunnels, auth, configuration, and
-the idle signal. The [README](../README.md) has the two-command version; this is the rest.
+Everything about running your own instance: Docker, tunnels, auth, and configuration.
+The [README](../README.md) has the two-command version; this is the rest.
 
 ## Docker
 
@@ -150,24 +150,10 @@ environment, so the file is the only way a generated token reaches it). Supply y
 when a monitor outside the container needs to poll. Running bare Node behind Access with
 no token, `server.js` warns loudly at startup instead.
 
-`ORCH_FLEET_TOKEN` is a second, optional secret for the same three read-only routes,
+`ORCH_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
 shared fleet-wide so one dashboard can poll many boxes without learning each one's private
 `SERVICE_TOKEN`. It is deliberately **not** accepted on the mutating internal agent-tool
 endpoints. Unset — the default — it grants nothing.
-
-## Idle signal
-
-`GET /api/instance/idle` reports whether the instance can be safely stopped: live turn
-count, open transcript SSE streams, open terminal WebSockets, awaiting-input tasks, and
-the last-request timestamp. Polling it does not itself count as activity, and the image
-uses it as its `HEALTHCHECK`. An external supervisor can consume it to stop/start idle
-containers.
-
-Running managed services are reported as `runningServices` but deliberately do **not**
-make the instance busy: each service's desired state is persisted, and boot restore
-relaunches it at the same URL when the container comes back, so stopping loses nothing.
-A supervisor that prefers to keep an instance warm while a user-visible service runs can
-apply its own policy on that count.
 
 ## Configuration
 
@@ -189,8 +175,8 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
-| `SERVICE_TOKEN` | *(empty)* | Shared secret for the idle/health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
-| `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same three read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
+| `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
+| `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
 | `ORCH_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
 | `ORCH_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
 | `ORCH_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
@@ -199,10 +185,8 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `ORCH_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
 | `ORCH_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
-| `ORCH_CONTROL_PLANE` | *(off)* | Marks the box as a fleet's **control plane** rather than one of the user instances it manages. Two effects: service-hostname routing is force-disabled — a veto that **overrides** `ORCH_SERVICE_HOSTS=1` rather than adding to it, since the control plane runs the same image off the same env and must not serve a user's service off its own hostname — and `/api/version` reports `controlPlane: true` so one dashboard can tell the two kinds of box apart. Only useful if you run a fleet; a single instance leaves it unset. Check it first if service hostnames quietly fall back to `http://localhost:<port>` |
 | `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
-| `ORCH_ACCOUNT_ID` | *(empty)* | This instance's account identifier. Empty = `self-hosted` |
 
 Example — relocate an instance entirely via env:
 

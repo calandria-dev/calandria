@@ -23,8 +23,8 @@ import {
 
 // The non-Access paths: health probes (Docker HEALTHCHECK / monitoring) and
 // the build-version stamp present the shared SERVICE_TOKEN instead of an Access
-// JWT — and may reach ONLY these routes.
-const HEALTH_PATH = "/api/instance/idle";
+// JWT — and may reach ONLY these routes. VERSION_PATH doubles as the health
+// probe target.
 const VERSION_PATH = "/api/version";
 const USAGE_PATH = "/api/instance/usage";
 // The boot-time self-ping from server.js that restores persisted services.
@@ -36,7 +36,7 @@ const SCHEDULER_PATH = "/api/instance/scheduler";
 // Read-only: the fleet-wide ORCH_FLEET_TOKEN is honored here (see cf-access.mjs)
 // because nothing reachable this way can mutate instance state.
 function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
-  if (pathname === HEALTH_PATH || pathname === VERSION_PATH || pathname === USAGE_PATH) {
+  if (pathname === VERSION_PATH || pathname === USAGE_PATH) {
     return true;
   }
   return pathname === SCHEDULER_PATH && method === "GET";

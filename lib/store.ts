@@ -1208,7 +1208,7 @@ export function getProjectUsage(projectId: string): UsageTotals {
   return sumUsage("project_id = ?", projectId);
 }
 
-// ---------- instance-wide rollup (for the control-plane fleet view) ----------
+// ---------- instance-wide rollup (for fleet-polling dashboards) ----------
 
 export interface InstanceUsage extends UsageTotals {
   internal_cost_usd: number;
@@ -1222,8 +1222,8 @@ export interface InstanceUsage extends UsageTotals {
 }
 
 /**
- * A single-row summary of everything this instance has done, for the control
- * plane to poll and roll up (no per-project fan-out). Cost/tokens are the
+ * A single-row summary of everything this instance has done, for a fleet
+ * dashboard to poll and roll up (no per-project fan-out). Cost/tokens are the
  * cumulative sum over task_usage; counts exclude suggested-tray tasks so they
  * match what the user actually sees. Cheap: three aggregate queries, no joins.
  */

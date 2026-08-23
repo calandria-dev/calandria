@@ -1,7 +1,6 @@
 import { getProject, setProjectRefresh } from "./store";
 import { draftProjectContext } from "./agents/oneshots";
 import { recentCommits, isGitRepo } from "./git";
-import { workStarted, workEnded } from "./idle";
 import type { Project } from "./types";
 
 // Projects whose draft is genuinely executing in THIS process. The DB
@@ -69,11 +68,9 @@ async function buildDigest(repoPath: string): Promise<string> {
   return commits ? `## Recent git commits\n${commits}` : "";
 }
 
-// The actual draft, run detached. Marks the instance busy for its whole life so
-// the control plane can't sleep the container mid-draft, and persists the
-// outcome (done+draft or error) so a client that reconnects later still gets it.
+// The actual draft, run detached. Persists the outcome (done+draft or error)
+// so a client that reconnects later still gets it.
 async function runDraft(project: Project): Promise<void> {
-  workStarted();
   try {
     const digest = await buildDigest(project.repo_path);
     const draft = await draftProjectContext(project, digest);
@@ -84,7 +81,6 @@ async function runDraft(project: Project): Promise<void> {
       refresh_error: e instanceof Error ? e.message : String(e),
     });
   } finally {
-    workEnded();
     inFlight.delete(project.id);
   }
 }

@@ -44,21 +44,16 @@ function withPublicHost() {
   process.env.ORCH_SERVICE_HOSTS = "1"; // public hostnames are their own opt-in
 }
 
-// ORCH_CONTROL_PLANE is stripped alongside the rest for hermeticity: it vetoes
-// hostname routing outright, so a developer who exports it in their shell would
-// otherwise invert every routing assertion below.
 beforeEach(() => {
   wipeRegistry();
   delete process.env.PUBLIC_BASE_URL;
   delete process.env.ORCH_FEATURE_SERVICES;
   delete process.env.ORCH_SERVICE_HOSTS;
-  delete process.env.ORCH_CONTROL_PLANE;
 });
 afterEach(() => {
   delete process.env.PUBLIC_BASE_URL;
   delete process.env.ORCH_FEATURE_SERVICES;
   delete process.env.ORCH_SERVICE_HOSTS;
-  delete process.env.ORCH_CONTROL_PLANE;
 });
 
 // ---------- hostname parsing ----------
@@ -326,27 +321,6 @@ describe("host-header router", () => {
     // All three present (flag by default) → live.
     process.env.PUBLIC_BASE_URL = `https://${APP_HOST}`;
     expect(serviceRoutingEnabled()).toBe(true);
-  });
-
-  it("ORCH_CONTROL_PLANE=1 vetoes routing even with everything else configured", async () => {
-    // A fleet's control plane runs the same image off the same env template, so
-    // it can inherit ORCH_SERVICE_HOSTS=1 — it must still never dispatch a
-    // user's service off its own hostname. This is an override of the opt-in,
-    // not a fourth requirement alongside it, so it is asserted with the other
-    // three deliberately correct. It's also the only way routing goes quiet
-    // while the config looks right, which is why .env.example documents it.
-    const project = createProject({ name: "Fleet" });
-    exposeService(project, "cp", upstreamPort);
-    setServiceVisibility(project, "cp", "public");
-    expect((await request(`cp--${APP_HOST}`, "/")).status).toBe(200);
-
-    process.env.ORCH_CONTROL_PLANE = "1";
-    expect(serviceRoutingEnabled()).toBe(false);
-    // Not a 404 from the router — the router declines the request entirely and
-    // the hostname falls through to Next, as if the feature were never on.
-    const res = await request(`cp--${APP_HOST}`, "/");
-    expect(res.body).toBe("next-app");
-    expect(fellThrough).toBe(true);
   });
 
   it("passes the app host and unknown hosts through to Next", async () => {

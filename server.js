@@ -99,10 +99,10 @@ const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// Idleness signals for GET /api/instance/idle. Next's route handlers run in
-// this same process, so a shared globalThis object is enough — lib/idle.ts
-// owns the shape and the SSE counter; this file stamps requests and counts
-// live /pty sockets. Keep the field names in sync with lib/idle.ts.
+// Activity registry. Next's route handlers run in this same process, so a
+// shared globalThis object is enough — lib/idle.ts owns the shape and the SSE
+// counter; this file stamps requests and counts live /pty sockets. Keep the
+// field names in sync with lib/idle.ts.
 const bootAt = Date.now();
 const activity = (globalThis.__orchActivity ??= {
   startedAt: bootAt,
@@ -110,14 +110,12 @@ const activity = (globalThis.__orchActivity ??= {
   openPty: 0,
   openSse: 0,
 });
-// Health/metadata probes (idle, version, usage) never count as user activity —
-// otherwise a monitor's own loopback polling would keep an idle box perpetually
-// awake and defeat an idle-stop daemon. Mirrors the service-token path list in
-// middleware.ts.
+// Health/metadata probes (version, usage) never count as user activity —
+// otherwise a monitor's own loopback polling would keep lastRequestAt pinned
+// to "just now" forever. Mirrors the service-token path list in middleware.ts.
 const countsAsActivity = (url) => {
   const p = String(url || "").split("?")[0];
   return (
-    p !== "/api/instance/idle" &&
     p !== "/api/instance/usage" &&
     p !== "/api/version" &&
     p !== "/api/instance/services-restore" &&

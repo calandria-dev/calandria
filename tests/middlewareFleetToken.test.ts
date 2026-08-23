@@ -64,7 +64,7 @@ describe("middleware: fleet token stays read-only", () => {
   });
 
   it("still accepts the fleet token on read-only paths", async () => {
-    for (const path of ["/api/instance/idle", "/api/version", "/api/instance/usage"]) {
+    for (const path of ["/api/version", "/api/instance/usage"]) {
       const res = await middleware(req(path, "GET", "fleet-secret"));
       expect(res.status).toBe(200);
     }
@@ -74,7 +74,7 @@ describe("middleware: fleet token stays read-only", () => {
   });
 
   it("still accepts the instance token on read-only paths", async () => {
-    const res = await middleware(req("/api/instance/idle", "GET", "instance-secret"));
+    const res = await middleware(req("/api/version", "GET", "instance-secret"));
     expect(res.status).toBe(200);
   });
 });

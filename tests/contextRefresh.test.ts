@@ -18,7 +18,6 @@ import {
   clearRefresh,
   isRefreshing,
 } from "../lib/contextRefresh";
-import { activity, workStarted, workEnded } from "../lib/idle";
 import { setAgentConnection } from "../lib/agents/connections";
 
 // Utility-agent resolution is connected-first (lib/agents/oneshots.ts): with no
@@ -68,8 +67,6 @@ describe("detached refresh job", () => {
     expect(done.status).toBe("done");
     expect(done.draft).toBe("DRAFTED CONTEXT");
     expect(isRefreshing(project.id)).toBe(false);
-    // openWork must be released so the container isn't kept "busy" forever.
-    expect(activity().openWork).toBe(0);
 
     // Acknowledge the consumed draft → back to idle, draft cleared.
     const cleared = clearRefresh(project.id);
@@ -95,16 +92,6 @@ describe("detached refresh job", () => {
     // Stale + not in-flight → bypasses the running short-circuit and re-evaluates;
     // with no repo_path that surfaces as an error rather than a stuck "running".
     expect(startRefreshJob(project.id).status).toBe("error");
-  });
-
-  it("counts background work as activity (clamped at zero)", () => {
-    const before = activity().openWork;
-    workStarted();
-    expect(activity().openWork).toBe(before + 1);
-    workEnded();
-    expect(activity().openWork).toBe(before);
-    workEnded(); // underflow guarded
-    expect(activity().openWork).toBe(before);
   });
 
   it("returns null state for an unknown project", () => {
