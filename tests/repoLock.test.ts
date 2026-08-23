@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Regression: withRepoLock keyed on the caller's `project.repo_path` verbatim,
 // so two spellings of the SAME repository — a symlinked path, a trailing slash,
@@ -19,8 +19,12 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-// Let every pending microtask/timer chain (key resolution subprocess, lock
-// queue) settle.
+// Negative-timing exception only: proving a queued caller has NOT run yet
+// requires letting its real git subprocess have a fair chance to run if the
+// lock were broken — there's no event to poll for an absence, and fake timers
+// don't advance real child-process I/O. Every other wait below polls a real
+// condition instead (see repoLockKey + the lock registry, or `order`/`ran`
+// directly).
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
 /** `repo` reachable through a symlinked directory, the way /tmp -> /private/tmp is. */
@@ -105,13 +109,17 @@ describe("withRepoLock", () => {
       await gate.promise;
       order.push("holder-out");
     });
-    await settle();
-    expect(order).toEqual(["holder-in"]);
+    // Wait for the holder's critical section to actually start, not just for
+    // withRepoLock to have been called.
+    await vi.waitFor(() => expect(order).toEqual(["holder-in"]));
 
     const cut = ensureWorktree(link, uid()).then((wt) => {
       order.push("worktree-cut");
       return wt;
     });
+    // Negative timing assertion (see comment on `settle`): give the symlinked
+    // ensureWorktree a real subprocess's worth of time to have raced ahead of
+    // the holder if the lock didn't actually cover it.
     await settle();
     // Pre-fix this read ["holder-in", "worktree-cut"]: the symlinked spelling
     // took its own lock and cut the worktree straight through the merge.
@@ -128,11 +136,18 @@ describe("withRepoLock", () => {
     const link = symlinkTo(repo);
     const gate = deferred();
     const holder = withRepoLock(repo, () => gate.promise);
-    await settle();
+    // Wait for the holder to actually be registered in the lock table before
+    // firing the two racing calls, so both are guaranteed to queue behind it.
+    const key = await repoLockKey(repo);
+    await vi.waitFor(() => expect(global.__orchRepoLocks?.has(key)).toBe(true));
 
     const done: string[] = [];
     const a = ensureWorktree(repo, uid()).then((wt) => (done.push("a"), wt));
     const b = ensureWorktree(link, uid()).then((wt) => (done.push("b"), wt));
+    // Negative timing assertion (see comment on `settle`): `b`'s lock key isn't
+    // cached yet, so this gives its real `git rev-parse` subprocess — and a's
+    // real worktree-add, if the lock didn't actually serialize them — a fair
+    // chance to have run.
     await settle();
 
     // Both are parked behind the holder, on ONE queue — the whole point. Two
@@ -157,12 +172,14 @@ describe("withRepoLock", () => {
     const gate = deferred();
     let ran = false;
     const holder = withRepoLock(one, () => gate.promise);
-    await settle();
+    // Wait for the holder to be registered before firing the unrelated repo's
+    // lock, so this is genuinely testing two different keys, not a race.
+    const oneKey = await repoLockKey(one);
+    await vi.waitFor(() => expect(global.__orchRepoLocks?.has(oneKey)).toBe(true));
     const other = withRepoLock(two, async () => {
       ran = true;
     });
-    await settle();
-    expect(ran).toBe(true);
+    await vi.waitFor(() => expect(ran).toBe(true));
     gate.resolve();
     await Promise.all([holder, other]);
   });

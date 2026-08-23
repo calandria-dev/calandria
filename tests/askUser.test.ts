@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // The ask_user bridge flow (lib/agentTools.startAskUser): persists + publishes
 // the same interactive ask card the Claude driver's hook produces, parks a
@@ -15,8 +15,6 @@ import type { ToolData, TaskStreamEvent, AskQuestion } from "../lib/types";
 const QUESTIONS: AskQuestion[] = [
   { question: "Which approach?", header: "Approach", options: [{ label: "Option A" }, { label: "Option B" }] },
 ];
-
-const tick = () => new Promise((r) => setTimeout(r, 10));
 
 function makeTask() {
   const project = createProject({ name: "AskProj" });
@@ -45,7 +43,10 @@ describe("startAskUser", () => {
 
       // Answering through the same path the /answer route uses resolves it.
       expect(submitAnswer(task.id, askId, [["Option A"]])).toBe(true);
-      await tick();
+      // waitForAnswer's resolution handler writes the message, flips
+      // awaiting_input, and publishes ask_answered all in one synchronous
+      // continuation, so awaiting_input hitting 0 proves the whole thing ran.
+      await vi.waitFor(() => expect(getTask(task.id)?.awaiting_input).toBe(0));
 
       const answered = JSON.parse(listMessages(task.id).find((m) => m.id === row.id)!.content) as ToolData;
       expect(answered.ask?.answers).toEqual([["Option A"]]);
@@ -69,9 +70,10 @@ describe("startAskUser", () => {
 
     const { askId } = startAskUser(getTask(task.id)!, QUESTIONS);
     abortTurn(task.id);
-    await tick();
 
-    expect(takeAskOutcome(task.id, askId)).toMatch(/dismissed/);
+    // takeAskOutcome is take-once, so poll it directly rather than sleeping
+    // then reading separately — the successful poll IS the one real read.
+    await vi.waitFor(() => expect(takeAskOutcome(task.id, askId)).toMatch(/dismissed/));
     // The parked waiter is gone — answering now reports nothing waiting, the
     // /answer route's resume-as-normal-reply fallback.
     expect(submitAnswer(task.id, askId, [["Option A"]])).toBe(false);

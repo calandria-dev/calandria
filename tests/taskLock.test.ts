@@ -35,8 +35,6 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-// Let every pending microtask/timer chain (route awaits, lock queue) settle.
-const settle = () => new Promise((r) => setTimeout(r, 30));
 
 // Resolve when the runner publishes the given event type for this task.
 function nextEvent(taskId: string, type: string): Promise<void> {
@@ -73,8 +71,10 @@ describe("withTaskLock", () => {
     const second = withTaskLock("t1", async () => {
       order.push("second-start");
     });
-    await settle();
-    expect(order).toEqual(["first-start"]); // second is queued, not interleaved
+    // second's registration into the lock map happens synchronously when
+    // withTaskLock is called (before any await), so it's already FIFO-queued
+    // behind `first` here — waiting is only for first's fn to actually start.
+    await vi.waitFor(() => expect(order).toEqual(["first-start"])); // second is queued, not interleaved
     expect(isTaskLocked("t1")).toBe(true);
     gate.resolve();
     await Promise.all([first, second]);
@@ -124,14 +124,17 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
       await gitOpGate.promise;
       order.push("gitop-end");
     });
-    await settle();
-    expect(order).toEqual(["gitop-start"]);
+    await vi.waitFor(() => expect(order).toEqual(["gitop-start"]));
 
     // The incoming message must NOT start a turn while the git op runs — this
     // is the window where the old code began writing into the mid-commit tree.
     const ended = nextEvent(task.id, "turn_end");
     const posted = post(task.id);
-    await settle();
+    // claimTurn runs synchronously at the top of the route, before it ever
+    // queues on the task lock (held by gitOp above) — so hasTurn flipping true
+    // is the real signal that the launch is now parked behind gitOp, unable to
+    // reach runTurn until gitOp releases the lock.
+    await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).not.toHaveBeenCalled();
     // The POST claimed the turn slot BEFORE queueing on the lock (that's the
     // launch-TOCTOU guard), so the task reads occupied while it waits — a
@@ -190,7 +193,10 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     const held = withTaskLock(task.id, () => wedge.promise);
     const p1 = post(task.id, "one");
     const p2 = post(task.id, "two");
-    await settle();
+    // Whichever POST wins the atomic claim flips hasTurn before it ever queues
+    // on the (currently held) task lock, so this proves the launch is parked
+    // rather than merely guessing enough real time has passed.
+    await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).not.toHaveBeenCalled();
 
     const ended = nextEvent(task.id, "turn_end");
@@ -239,7 +245,10 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     const dequeued = nextEvent(task.id, "dequeued");
     turnGate.resolve();
     await dequeued;
-    await settle();
+    // The handoff claims occupancy and publish() delivers "dequeued"
+    // synchronously, before the follow-up's withTaskLock call — so hasTurn is
+    // already true here; poll it explicitly rather than lean on that ordering.
+    await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).toHaveBeenCalledTimes(1);
     // The finishing turn handed its occupancy slot to the follow-up before
     // queueing on the lock, so hasTurn never lapses across the drain (a POST

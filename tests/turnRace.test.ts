@@ -59,8 +59,12 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-// Let a resolved gate propagate through the parked generator and the runner's
-// synchronous finally before asserting on the post-unwind state.
+// Negative-timing exception: this waits for A's finally to run and then
+// asserts it did NOT clobber B's state — but the superseded path is silent by
+// design (no turn_end, no dequeued, nothing to poll for), so there's no event
+// to condition-wait on. The chain from gateA.resolve() to the finally
+// completing is pure microtask/promise plumbing (no real I/O), so this only
+// needs to flush that queue, not genuinely wait out wall-clock time.
 const settle = () => new Promise((r) => setTimeout(r, 25));
 
 beforeEach(() => {

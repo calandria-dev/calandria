@@ -92,17 +92,21 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
   it("is declined at once instead of parking the turn forever", async () => {
     const { project, task } = fixture();
     setRunContext(task.id, { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: "run-1" });
+    // The bug was unbounded: no deadline, no signal, no watcher heuristic. The
+    // fix decides at once, with no timer at all involved — proven here by
+    // resolving under fake timers without ever needing to advance the clock,
+    // rather than checking a loose real wall-clock bound.
+    vi.useFakeTimers();
     try {
-      const began = Date.now();
-      const { result, events } = await askDuringTurn(task, project);
-      // The bug was unbounded: no deadline, no signal, no watcher heuristic.
-      expect(Date.now() - began).toBeLessThan(3_000);
+      const { result } = await askDuringTurn(task, project);
+      expect(vi.getTimerCount()).toBe(0);
 
       expect(result?.hookSpecificOutput?.permissionDecision).toBe("deny");
       // Written for the MODEL: it has to stop, not re-ask in a loop.
       expect(result?.hookSpecificOutput?.permissionDecisionReason).toMatch(/scheduled run/i);
       expect(result?.hookSpecificOutput?.permissionDecisionReason).toMatch(/do not ask again/i);
     } finally {
+      vi.useRealTimers();
       clearRunContext(task.id);
     }
   });

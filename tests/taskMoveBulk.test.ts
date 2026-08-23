@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GET as bulkPreviewRoute, POST as bulkMoveRoute } from "@/app/api/tasks/move/route";
 import {
   createProject,
@@ -16,7 +16,7 @@ import { ensureWorktree, mergeTask } from "@/lib/git";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
-import { withRepoLock } from "@/lib/repoLock";
+import { repoLockKey, withRepoLock } from "@/lib/repoLock";
 import { commitFile, makeRepo, writeFile } from "./helpers";
 
 // Moving MANY tasks at once. The motivating case is a handful of tasks filed
@@ -363,10 +363,16 @@ describe("POST /api/tasks/move", () => {
     const { to, ids } = batch("Dest vanishes", 1);
     let release!: () => void;
     const held = withTaskLock(ids[0], () => new Promise<void>((r) => (release = r)));
+    // withTaskLock registers into the lock map synchronously (before any
+    // await), so `held`'s tail is already in the map the instant it returns.
+    const initialTail = global.__orchTaskLocks?.get(ids[0]);
 
     const pending = bulkMove({ ids, project_id: to.id });
-    // Let the request get past its own pre-flight checks and park on the lock.
-    await new Promise((r) => setTimeout(r, 20));
+    // The route's own withTaskLocks call re-registers a new tail chained
+    // behind `held`'s — waiting for that identity change is the real signal
+    // that the request has cleared its pre-flight checks and is now parked on
+    // the lock, rather than guessing how long that takes.
+    await vi.waitFor(() => expect(global.__orchTaskLocks?.get(ids[0])).not.toBe(initialTail));
     deleteProject(to.id);
     release();
     await held;
@@ -512,9 +518,16 @@ describe("a dirty worktree inside a selection", () => {
     const { to, ids, fromRepo } = await startedBatch("Dest vanishes mid-teardown", 1);
     let release!: () => void;
     const held = withRepoLock(fromRepo, () => new Promise<void>((r) => (release = r)));
+    // fromRepo's key is already cached from startedBatch's own git ops, so
+    // this resolves immediately after (not before) `held` has registered.
+    const key = await repoLockKey(fromRepo);
+    const initialTail = global.__orchRepoLocks?.get(key);
 
     const pending = bulkMove({ ids, project_id: to.id, discard_worktree: ids });
-    await new Promise((r) => setTimeout(r, 20));
+    // discardCheckout's withRepoLock call re-registers a new tail chained
+    // behind `held`'s once it reaches the lock — the real signal that the
+    // teardown is now parked, rather than a guess at how long that takes.
+    await vi.waitFor(() => expect(global.__orchRepoLocks?.get(key)).not.toBe(initialTail));
     deleteProject(to.id);
     release();
     await held;

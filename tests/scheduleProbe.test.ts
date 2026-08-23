@@ -172,14 +172,25 @@ describe("the fire-time command probe", () => {
   });
 
   it("gives up on a stalled CLI instead of hanging forever", async () => {
-    scriptStall();
-    const t0 = Date.now();
-    // `null` is "couldn't check", which validatePrompt degrades to `unchecked` —
-    // best-effort by design: a probe we can't complete must not block the
-    // morning's work either way.
-    expect(await listSlashCommands(project(), "claude", 100)).toBeNull();
-    expect(Date.now() - t0).toBeLessThan(3_000);
-    expect(await validatePrompt("/anything", project(), "claude", 100)).toEqual({ ok: true, unchecked: true });
+    // Bound this on the fake clock, same as the "bounds the sweep" test below,
+    // instead of asserting a real wall-clock elapsed time stayed under a loose
+    // safety margin.
+    vi.useFakeTimers();
+    try {
+      scriptStall();
+      const listPending = listSlashCommands(project(), "claude", 100);
+      await vi.advanceTimersByTimeAsync(100);
+      // `null` is "couldn't check", which validatePrompt degrades to `unchecked` —
+      // best-effort by design: a probe we can't complete must not block the
+      // morning's work either way.
+      expect(await listPending).toBeNull();
+
+      const validatePending = validatePrompt("/anything", project(), "claude", 100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await validatePending).toEqual({ ok: true, unchecked: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bounds the sweep on its own clock and leaves the child to the probe's", async () => {
@@ -214,9 +225,17 @@ describe("the fire-time command probe", () => {
     dueNow(stalls.id);
     scriptStall();
 
-    const began = Date.now();
-    await tickSchedules(Date.now());
-    expect(Date.now() - began).toBeLessThan(10_000);
+    // The probe's own giveUp fires at SCHEDULE_PROBE_MS (150ms, set via env at
+    // the top of this file) — advance the fake clock past it instead of
+    // trusting a real wall-clock bound to prove the sweep didn't hang.
+    vi.useFakeTimers();
+    try {
+      const pending = tickSchedules(Date.now());
+      await vi.advanceTimersByTimeAsync(200);
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
     // Unchecked, not failed: we could not reach the registry, so the run went
     // ahead rather than being refused on a probe that never answered.
     expect(lastRun(stalls.id)!.status).toBe("running");

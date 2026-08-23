@@ -6,7 +6,7 @@
 // may be remembered as, what a remembered rule then covers, and every way a
 // prompt can end WITHOUT an answer (all of which must deny).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   allowedByRules,
   bashPrefixOf,
@@ -308,16 +308,22 @@ describe("parking on a human", () => {
   });
 
   it("upgrades to the attended cap when a tab opens during the grace", async () => {
+    // Same idea as the deadline-bracketing fix below: control the clock
+    // directly rather than trusting a real sleep to have safely outrun the
+    // 80ms unattended grace (and the interval's own 40ms poll of it) under a
+    // slow/loaded CI runner.
+    vi.useFakeTimers();
     const p = waitForPermission({ taskId: "t-perm-4", id: "perm:4", attendedMs: 0, unattendedMs: 80 });
     const unsub = subscribeGlobal(() => {});
     try {
       // Past the unattended grace, but a watcher appeared — with attendedMs 0
       // the prompt now parks indefinitely instead of auto-denying.
-      await new Promise((r) => setTimeout(r, 250));
+      await vi.advanceTimersByTimeAsync(250);
       expect(submitAnswer("t-perm-4", "perm:4", [["allow_always"]])).toBe(true);
       await expect(p).resolves.toEqual({ answers: [["allow_always"]] });
     } finally {
       unsub();
+      vi.useRealTimers();
     }
   });
 
