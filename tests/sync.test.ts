@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureWorktree, fastForwardWorktree, worktreeSyncStatus } from "../lib/git";
+import { abortWorktreeMerge, ensureWorktree, fastForwardWorktree, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
 import { commitFile, git, makeRepoWithWorktree, tmpDir, writeFile } from "./helpers";
 
 describe("worktreeSyncStatus", () => {
@@ -14,7 +14,39 @@ describe("worktreeSyncStatus", () => {
       clean: true,
       conflicts: [],
       baseTip: await git(repo, "rev-parse", "main"),
+      mergeInProgress: false,
+      unresolved: [],
     });
+  });
+
+  // The "main moved on / Fix with AI" banner reads this. A resolution turn edits
+  // the markers out WITHOUT committing (the prompt forbids it), so the branch
+  // tips never move: `behind` stays put and merge-tree re-predicts the same
+  // conflicts forever. The banner kept re-offering "Fix with AI" over a finished
+  // resolution because of exactly that — while paused, the worktree is the truth.
+  it("reports a paused merge by the worktree's live state, not the branch prediction", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    const args = { repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main" };
+
+    const prep = await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
+    expect(prep).toMatchObject({ ok: true, clean: false, conflicts: ["file.txt"] });
+
+    // Markers still in place: conflicted, and named — never a fast-forward.
+    let s = await worktreeSyncStatus(args);
+    expect(s).toMatchObject({ behind: 1, ahead: 1, canFastForward: false, clean: false, conflicts: ["file.txt"], mergeInProgress: true, unresolved: ["file.txt"] });
+
+    // What a resolution turn does: rewrite the file marker-free, no `git add`.
+    writeFile(wt.path, "file.txt", "merged version\n");
+    s = await worktreeSyncStatus(args);
+    expect(s.behind).toBe(1); // nothing committed yet — still behind, still paused
+    expect(s).toMatchObject({ mergeInProgress: true, unresolved: [], conflicts: [], clean: true, canFastForward: false });
+
+    // Discarding the resolution returns to the prediction: main still moved on.
+    await abortWorktreeMerge(wt.path);
+    s = await worktreeSyncStatus(args);
+    expect(s).toMatchObject({ behind: 1, mergeInProgress: false, unresolved: [], conflicts: ["file.txt"], clean: false });
   });
 
   it("offers a fast-forward when only the base moved and the tree is clean", async () => {
@@ -77,12 +109,12 @@ describe("worktreeSyncStatus", () => {
     await git(repo, "branch", "-D", "main");
 
     const s = await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main" });
-    expect(s).toEqual({ behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "" });
+    expect(s).toEqual({ behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] });
   });
 
   it("returns the inert status for missing worktree/branch inputs", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
-    const none = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "" };
+    const none = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
     expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: "", workBranch: wt.branch, baseBranch: "main" })).toEqual(none);
     expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: "", baseBranch: "main" })).toEqual(none);
     expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: "orch/ghost", baseBranch: "main" })).toEqual(none);

@@ -1511,6 +1511,8 @@ export interface SyncStatus {
   clean: boolean; // a trial merge of base→work has no conflicts
   conflicts: string[]; // files that would conflict on merge (when not clean)
   baseTip: string; // the base branch tip — the new diff base after a successful sync
+  mergeInProgress: boolean; // a base→work merge is paused in the worktree (MERGE_HEAD present), awaiting accept/discard
+  unresolved: string[]; // while paused: files still carrying markers (or unstaged binaries) — `conflicts` mirrors this
 }
 
 /**
@@ -1525,7 +1527,7 @@ export async function worktreeSyncStatus(input: {
   baseBranch: string;
 }): Promise<SyncStatus> {
   const { repoPath, worktreePath, workBranch, baseBranch } = input;
-  const none: SyncStatus = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "" };
+  const none: SyncStatus = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
   if (!worktreePath || !workBranch) return none;
   const [baseOk, workOk] = await Promise.all([branchExists(repoPath, baseBranch), branchExists(repoPath, workBranch)]);
   if (!baseOk || !workOk) return none;
@@ -1537,16 +1539,34 @@ export async function worktreeSyncStatus(input: {
     countOf(`${baseBranch}..${workBranch}`),
     git(worktreePath, ["status", "--porcelain"]).catch(() => "").then((s) => s.trim().length > 0),
   ]);
+  const idle = { mergeInProgress: false, unresolved: [] as string[] };
 
   // Already up to date — nothing to sync; skip the (relatively costly) conflict probe.
-  if (behind === 0) return { behind, ahead, isDirty, canFastForward: false, clean: true, conflicts: [], baseTip };
+  if (behind === 0) return { behind, ahead, isDirty, canFastForward: false, clean: true, conflicts: [], baseTip, ...idle };
+
+  // A base→work merge paused in the worktree (prepareWorktreeMerge left the
+  // conflicts for a resolution turn or an editor). The branch tips haven't
+  // moved — `behind` is unchanged and merge-tree would re-predict the very
+  // conflicts that have since been edited out — so the truth is the worktree's
+  // live state: what still carries markers is what's still conflicted, and
+  // nothing left means the merge is resolved and only awaits accept/discard.
+  // Without this the sync banner re-offered "Fix with AI" over a finished
+  // resolution, and a second click launched a turn with nothing to fix.
+  const paused = await worktreeMergeStatus(worktreePath);
+  if (paused.mergeInProgress) {
+    return {
+      behind, ahead, isDirty, canFastForward: false, baseTip,
+      clean: paused.unresolved.length === 0, conflicts: paused.unresolved,
+      mergeInProgress: true, unresolved: paused.unresolved,
+    };
+  }
 
   // No divergent commits + clean tree → merging base in is a plain fast-forward
   // (just moves the branch pointer), so there's zero conflict risk.
-  if (ahead === 0 && !isDirty) return { behind, ahead, isDirty, canFastForward: true, clean: true, conflicts: [], baseTip };
+  if (ahead === 0 && !isDirty) return { behind, ahead, isDirty, canFastForward: true, clean: true, conflicts: [], baseTip, ...idle };
 
   const conflicts = await predictMergeConflicts(repoPath, baseBranch, workBranch);
-  return { behind, ahead, isDirty, canFastForward: false, clean: conflicts.length === 0, conflicts, baseTip };
+  return { behind, ahead, isDirty, canFastForward: false, clean: conflicts.length === 0, conflicts, baseTip, ...idle };
 }
 
 // Predict the conflicts of merging `baseBranch` into `workBranch` WITHOUT touching

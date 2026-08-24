@@ -114,12 +114,17 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   );
 }
 
-export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onClear, onCollapse, onSwitchToChat, onSend }: {
+export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onSyncChanged, focusDiff, onClear, onCollapse, onSwitchToChat, onSend }: {
   project: ProjectRow; task: TaskRow; sessions: Session[]; running: boolean;
   reportsContext?: boolean; // the task's agent measures context occupancy (capabilities.reportsContext); decides how an estimate is explained
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
+  onSyncChanged?: () => void; // Changes mutated the merge state — see TaskChanges
+  // Bumped by the parent to bring the DIFF tab forward (the sync banner's
+  // "Review" for a resolved merge): the tab is this rail's own state, so a
+  // counter is the only way in from outside without lifting it.
+  focusDiff?: number;
   onClear: () => void; onCollapse: () => void; onSwitchToChat: () => void;
   onSend: (t: string) => void; // review comments' "Send to agent" — same path chat uses
 }) {
@@ -128,6 +133,7 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   // the live URL actually works. See lib/features.ts.
   const showPreview = clientFeatures().livePreview;
   const [tab, setTab] = useState<Tab>("diff");
+  useEffect(() => { if (focusDiff) setTab("diff"); }, [focusDiff]);
   const Tab = ({ id, label }: { id: Tab; label: string }) => (
     <button className={`rail-tab ${tab === id ? "on" : ""}`} onClick={() => setTab(id)}>{label}</button>
   );
@@ -142,9 +148,9 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
       </div>
       <div className="rail-scroll">
         {tab === "diff" && (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
-            if (res.ok && !res.merged) onSwitchToChat();
+            if (res.resolving) onSwitchToChat();
             return res;
           }} />
         )}

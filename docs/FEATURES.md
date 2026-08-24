@@ -77,7 +77,12 @@ apart. Set `ORCH_GIT_FETCH=off` to keep an instance entirely offline.
 Advancing the base branch is what turns an in-flight task's pending merge from a
 fast-forward into a sync-then-merge, so a task that read "up to date" a moment ago can
 suddenly want syncing. The sync banner names the reason: the base branch moved on, not
-anything about the task.
+anything about the task. When the sync conflicts, **Fix with AI** runs a resolution turn that
+edits the files marker-free but deliberately does not commit — the merge stays paused so
+you can read the result first. The banner tracks that: once the turn ends it switches to
+"conflicts resolved — review", and its button opens the Changes tab where **Accept & merge**
+lands the task or **Discard** returns the worktree to where it was; only then does it clear.
+If the agent left some files conflicted, the banner counts them and offers another pass.
 
 ## Planning and orchestration
 
