@@ -73,7 +73,6 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
             header already says that, and where it goes BACK to is the fact the
             row can't otherwise show. */}
         <span className={`slabel ${awaiting ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
-        <AgentBadge label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         <PriPill p={task.priority} />
       </div>
       {/* Why this card is back where you didn't leave it. An unread marker, not
@@ -99,6 +98,9 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
       <div className="task-foot">
         <span className="activity">{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
         <span className="spacer" />
+        {/* Lower right, not the title row: inline there, the badge + pill took
+            half the width the title exists to use. */}
+        <AgentBadge label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
       {/* Corner affordance, mirroring the board card's .bc-snz. Snoozing fades

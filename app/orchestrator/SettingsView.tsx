@@ -423,6 +423,14 @@ function AppearanceSection({ appearance, setAppearance }: {
   appearance: Appearance;
   setAppearance: (k: keyof Appearance, v: string) => void;
 }) {
+  // Chromium (and kin) treat focus that arrives through a wrapping <label>
+  // click as :focus-visible, so a mouse selection left the radio wearing a
+  // keyboard focus ring. CSS can't tell those apart, so a REAL pointer click
+  // (e.detail > 0; keyboard-synthesized clicks are 0) drops focus after the
+  // change lands — keyboard focus and its row treatment stay untouched.
+  const unfocusOnPointer = (e: React.MouseEvent<HTMLLabelElement>) => {
+    if (e.detail > 0) e.currentTarget.querySelector("input")?.blur();
+  };
   return (
     <>
       <div className="field">
@@ -465,7 +473,7 @@ function AppearanceSection({ appearance, setAppearance }: {
               const font = MONO_FONTS[id];
               const active = appearance.monoFont === id;
               return (
-                <label key={id} className={`ap-face${active ? " on" : ""}`}>
+                <label key={id} className={`ap-face${active ? " on" : ""}`} onClick={unfocusOnPointer}>
                   <input type="radio" name="ap-mono" checked={active} onChange={() => setAppearance("monoFont", id)} />
                   <span className="ap-nm">{font.label}{id === "jetbrains-mono" && <small>default</small>}</span>
                   <span className="ap-sam" style={{ fontFamily: font.cssFamily }}>{MONO_SAMPLE}</span>
@@ -481,7 +489,7 @@ function AppearanceSection({ appearance, setAppearance }: {
               const font = PROMPT_FONTS[id];
               const active = appearance.promptFont === id;
               return (
-                <label key={id} className={`ap-face${active ? " on" : ""}`}>
+                <label key={id} className={`ap-face${active ? " on" : ""}`} onClick={unfocusOnPointer}>
                   <input type="radio" name="ap-prompt" checked={active} onChange={() => setAppearance("promptFont", id)} />
                   <span className="ap-nm">{font.label}{id === "source-sans" && <small>default</small>}</span>
                   <span className="ap-sam" style={{ fontFamily: font.cssFamily }}>{PROMPT_SAMPLE}</span>
