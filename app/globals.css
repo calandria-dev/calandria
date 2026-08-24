@@ -200,7 +200,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tb-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--r-sm);color:var(--ink-3);border:1px solid transparent;}
 .tb-icon:hover{background:var(--panel);color:var(--ink);border-color:var(--line);}
 .tb-icon.on{color:var(--accent);border-color:var(--accent-soft);background:var(--accent-soft);}
-.tb-avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--on-accent);flex:0 0 auto;}
 
 /* Instance-wide "an agent's login expired" strip, between the titlebar and the
    workspace. Not dismissible on purpose: no session can run until it's fixed. */
@@ -1121,6 +1120,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 button.tpeek-more{display:block;margin:5px 0 0 19px;text-align:left;}
 button.tpeek-more:hover{color:var(--accent-ink);}
 .tpeek-sum{display:flex;align-items:center;gap:8px;padding-bottom:3px;}
+.tpeek-fail-label{color:var(--err);font-weight:700;}
 .tpeek-pre{margin:3px 0 0 19px;padding:7px 10px;font-family:var(--mono);font-size:11px;line-height:1.5;background:var(--surface);border:1px solid var(--line-2);border-radius:6px;white-space:pre;overflow-x:auto;color:var(--ink-2);max-height:170px;overflow-y:auto;}
 .tpeek-pre.diff{padding:6px 0;white-space:pre;}
 .tpeek-pre .dl{padding:0 10px;}
@@ -1214,6 +1214,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md table{border-collapse:collapse;margin:8px 0;font-size:13px;width:100%;}
 .md th,.md td{border:1px solid var(--line-2);padding:6px 10px;text-align:left;}
 .md th{background:var(--surface-2);font-weight:700;}
+/* ```mermaid fences rendered as diagrams (<Markdown diagrams>, the collaboration modal). */
+.md-mermaid{margin:0 0 12px;}
+.md-mermaid-svg{overflow-x:auto;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel-2);}
+.md-mermaid-svg svg{display:block;max-width:100%;height:auto;margin:0 auto;}
+.md-mermaid-bad .md-mermaid-svg{opacity:.55;}
+.md-mermaid-err{margin-top:6px;padding:6px 10px;border-radius:var(--r-sm);font-family:var(--mono);font-size:11.5px;line-height:1.45;color:var(--err);background:var(--red-soft);white-space:pre-wrap;overflow-wrap:anywhere;}
 
 /* syntax highlighting (highlight.js token classes — warm palette, dual theme) */
 .hljs-comment,.hljs-quote{color:var(--ink-4);font-style:italic;}
@@ -1255,6 +1261,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    failure (agent exited, etc.), not "a rebase away from clean". */
 .sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
 .sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
+.sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
 

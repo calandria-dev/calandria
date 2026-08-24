@@ -43,6 +43,11 @@ interface MergeResp {
 export interface ResolveResult {
   ok: boolean;
   merged?: boolean; // trial merge was clean and landed immediately
+  // A resolution turn was started — the caller may switch to the chat to watch
+  // it. Absent when there was nothing for the agent to do (the merge is already
+  // paused with every text conflict resolved, or only binaries remain), in which
+  // case the right place to go is the review state in Changes, not the chat.
+  resolving?: boolean;
   error?: string;
   conflicts?: string[];
   binaryConflicts?: string[];
@@ -502,11 +507,17 @@ export default function TaskChanges({
   onMerged,
   onPrCreated,
   onResolveWithAI,
+  onSyncChanged,
   onSend,
 }: {
   taskId: string;
   projectId: string;
   running?: boolean;
+  // Fired after any merge-state mutation here (land, prepare, accept, discard),
+  // successful or not: the session's sync banner reads the same worktree and
+  // only re-reads on its own when a turn ends, so without this an Accept or
+  // Discard in this tab would leave it describing the state from before.
+  onSyncChanged?: () => void;
   prUrl?: string; // GitHub PR already opened from this branch ("" / undefined = none)
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -698,6 +709,7 @@ export default function TaskChanges({
       setMergeRes({ ok: false, targetBranch: "", committed: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
       setMerging(false);
+      onSyncChanged?.();
     }
   };
 
@@ -736,6 +748,7 @@ export default function TaskChanges({
     } finally {
       setResolving(false);
       load(); // reload → mergeInProgress review state (Accept/Discard) or merged
+      onSyncChanged?.();
     }
   };
 
@@ -752,6 +765,7 @@ export default function TaskChanges({
     } finally {
       setMerging(false);
       load();
+      onSyncChanged?.();
     }
   };
 
@@ -765,6 +779,7 @@ export default function TaskChanges({
     } finally {
       setMerging(false);
       load();
+      onSyncChanged?.();
     }
   };
 

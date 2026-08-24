@@ -458,14 +458,14 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
             </div>
             {markdown && (
               <div className="collab-pane collab-render">
-                <Markdown>{text}</Markdown>
+                <Markdown diagrams>{text}</Markdown>
               </div>
             )}
           </div>
         ) : (
           <div className="collab-split">
             <div className="collab-pane collab-render collab-selectable" ref={docRef} onMouseUp={onSelect} onKeyUp={onSelect}>
-              {markdown ? <Markdown>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
+              {markdown ? <Markdown diagrams>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
               {pending && (
                 <button className="collab-addc" style={{ top: pending.top, left: pending.left }} onMouseDown={(e) => e.preventDefault()} onClick={startComment}>
                   {Icon.plus()} Add comment

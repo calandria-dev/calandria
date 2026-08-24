@@ -72,10 +72,12 @@ import {
   buildProjectContext,
   describeToolUse,
   summarizeResult,
+  summarizeFailure,
   formatAnswers,
   makeQueue,
   resultText,
   clip,
+  clipKeepTail,
   type ResultKind,
 } from "../shared";
 import {
@@ -1023,8 +1025,14 @@ async function* runTurn(
                 const raw = resultText(b.content);
                 const kind = resultKinds.get(b.tool_use_id);
                 // Summarize from the raw (pre-clip) output so counts are exact.
-                const peek = kind && !b.is_error ? summarizeResult(kind, raw) : undefined;
-                queue.push({ type: "tool_result", id: b.tool_use_id, content: clip(raw, 6000), isError: !!b.is_error, peek });
+                // A failure ("Exit code N" + output, stderr last) is peeked
+                // tail-first and clipped from the middle: the reason for a
+                // non-zero exit sits at the END, and a head-only clip used to
+                // drop it, so a long failed command read as good output
+                // under a red ✗ with nothing to explain the ✗.
+                const peek = b.is_error ? summarizeFailure(raw) : kind ? summarizeResult(kind, raw) : undefined;
+                const content = b.is_error ? clipKeepTail(raw, 6000) : clip(raw, 6000);
+                queue.push({ type: "tool_result", id: b.tool_use_id, content, isError: !!b.is_error, peek });
               }
             }
           }

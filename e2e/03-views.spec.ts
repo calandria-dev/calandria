@@ -153,3 +153,44 @@ async function idOf(page: import("@playwright/test").Page, title: string): Promi
   const detail = await (await page.request.get(`/api/projects/${proj.id}`)).json();
   return detail.tasks.find((t: { title: string }) => t.title === title).id;
 }
+
+// Phone layout: one pane at a time, with the bottom tab bar. Re-tapping the
+// ACTIVE Board tab from inside a task pops back to the task list (the board
+// root) the way a native tab bar pops its stack; it used to be a dead tap.
+// Tapping Board from another tab only switches tabs — the session you left is
+// still where you left it — so the pop takes one tap from Board, two from Diffs.
+test.describe("mobile tab bar", () => {
+  test.use({ viewport: { width: 390, height: 800 } });
+
+  test("re-tapping Board inside a task returns to the task list", async ({ page }) => {
+    await gotoApp(page);
+    // A phone boots straight into the first project's task pane (there's no
+    // projects column beside it), so step back out before picking the fixture.
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByText(PROJECT).first().click();
+    await page.getByTitle("List view").click();
+    await listRow(page, "Alpha task").click();
+    const backToTasks = page.getByRole("button", { name: "Back to tasks" });
+    await expect(backToTasks).toBeVisible();
+
+    const tab = (label: string) => page.locator(".mtabbar-item").filter({ hasText: label });
+    await expect(tab("Board")).toHaveClass(/\bon\b/);
+    await tab("Board").click();
+    await expect(backToTasks).toBeHidden();
+    await expect(listRow(page, "Alpha task")).toBeVisible();
+    await expect(tab("Board")).toHaveClass(/\bon\b/);
+
+    // From Diffs, the first Board tap restores the session; the second pops.
+    await listRow(page, "Alpha task").click();
+    await expect(backToTasks).toBeVisible();
+    await tab("Diffs").click();
+    await expect(backToTasks).toBeHidden();
+    await tab("Board").click();
+    await expect(backToTasks).toBeVisible();
+    await tab("Board").click();
+    await expect(backToTasks).toBeHidden();
+    await expect(listRow(page, "Alpha task")).toBeVisible();
+  });
+});

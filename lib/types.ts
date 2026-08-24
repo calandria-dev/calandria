@@ -382,12 +382,18 @@ export type DiffLine = { sign: "+" | "-" | " "; text: string };
 // An always-visible "peek" at a tool's effect — mimics Claude Code's `⎿` line.
 // `count`: a one-liner (Read N lines / Found N matches) with no content shown.
 // `diff`: a -/+ hunk for Edits/Writes.  `lines`: a short snippet (Bash output)
-// with a +N-more affordance.  `todos`: a rendered checklist.
+// with a +N-more affordance.  `todos`: a rendered checklist.  `fail`: an
+// error result shown TAIL-first — the exit status when the agent reported one,
+// then the last lines of output, because a shell puts the message that
+// explains a non-zero exit at the end (stderr after stdout), and the head of
+// a failed `cat a b` is just the contents of `a`. `omitted` counts the earlier
+// lines the full body holds.
 export type ToolPeek =
   | { kind: "count"; text: string }
   | { kind: "diff"; added: number; removed: number; label?: string; lines: DiffLine[]; truncated?: number }
   | { kind: "lines"; label?: string; lines: string[]; truncated?: number }
-  | { kind: "todos"; items: { text: string; status: string }[] };
+  | { kind: "todos"; items: { text: string; status: string }[] }
+  | { kind: "fail"; label?: string; lines: string[]; omitted?: number };
 
 // Server-sent stream events from a Claude turn.
 export type StreamEvent =

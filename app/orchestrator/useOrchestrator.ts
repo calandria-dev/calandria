@@ -302,13 +302,6 @@ export function useOrchestrator() {
     setWizardOpen(true);
   }, [setView]);
 
-  // Who unlocked this instance (Cloudflare Access identity, shown in the
-  // titlebar). null when enforcement is off — e.g. local dev — hides the chip.
-  const [accessEmail, setAccessEmail] = useState<string | null>(null);
-  useEffect(() => {
-    jget<{ email: string | null }>("/api/me").then((r) => setAccessEmail(r.email)).catch(() => {});
-  }, []);
-
   // initial load (also the Retry target when the first fetch fails)
   const boot = useCallback(() => {
     setBootError(null);
@@ -475,12 +468,19 @@ export function useOrchestrator() {
         try { const fresh = await jget<TaskRow>(`/api/tasks/${taskId}`); setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, ...fresh } : x))); } catch {}
         return prep.merged?.ok ? { ok: true, merged: true } : { ok: false, error: prep.merged?.error || "merge failed" };
       }
+      // Nothing left for an agent to edit: the merge is already paused with
+      // every text conflict resolved (a finished resolution turn, or a manual
+      // edit) or only binaries remain, which a prompt can't fix. Don't launch
+      // a turn over an empty file list — the caller lands in Changes' review
+      // state (Accept & merge / Discard) instead, which is where this goes next.
+      if (!prep.conflicts?.length)
+        return { ok: true, conflicts: [], binaryConflicts: prep.binaryConflicts ?? [] };
       // Conflicts present — stream the resolution turn (shows in the transcript).
       // Fire-and-forget: the caller switches to the chat view as soon as this
       // returns, so the user watches the resolution stream in live rather than
       // sitting on the "Changes" tab until the whole turn completes.
       void runTurn(taskId, prep.prompt, false);
-      return { ok: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts };
+      return { ok: true, resolving: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -946,7 +946,7 @@ export function useOrchestrator() {
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
     settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
     onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated, baseBranchTick,
-    layout, setLayout, accessEmail, recaps,
+    layout, setLayout, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions

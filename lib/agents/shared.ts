@@ -167,6 +167,35 @@ export function clip(s: unknown, n = 4000): string {
   return str.length > n ? str.slice(0, n) + `\n… (${str.length - n} more chars)` : str;
 }
 
+// The clip for a FAILED result: cut the middle, keep both ends. A shell
+// appends stderr after stdout, so a long failed command ("cat a b" where only
+// b is missing, a compound command whose last step errored) carries its
+// explanation in the last few hundred bytes — and clip() threw exactly that
+// away, leaving 6000 chars of perfectly good output under a red ✗ with no
+// visible reason. The head stays too: the exit status is the first line.
+export function clipKeepTail(s: string, n = 6000): string {
+  if (s.length <= n) return s;
+  const tail = Math.floor(n / 3);
+  const head = n - tail;
+  return s.slice(0, head) + `\n… (${s.length - n} chars omitted) …\n` + s.slice(s.length - tail);
+}
+
+// Turn a failed tool result into its peek: the exit status (the Claude CLI
+// writes "Exit code N" as the first line; Codex reports it as a field, passed
+// in) and the LAST lines of the output, where the reason lives. Applies to
+// every tool, not just shell commands — a Read's "File does not exist" is one
+// line either way. `omitted` is what the full body holds ABOVE the tail; the
+// renderer offers it as "+N earlier lines", not "more".
+export function summarizeFailure(raw: string, exitCode?: number | null): ToolPeek {
+  const exitLine = /^Exit code (-?\d+)\n?/.exec(raw);
+  const label = exitLine ? `Exit code ${exitLine[1]}` : exitCode != null && exitCode !== 0 ? `Exit code ${exitCode}` : undefined;
+  const body = exitLine ? raw.slice(exitLine[0].length) : raw;
+  const lines = body.split("\n");
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  const MAX = 6;
+  return { kind: "fail", label, lines: lines.slice(-MAX), omitted: Math.max(0, lines.length - MAX) };
+}
+
 // How a tool's eventual result should be summarized into a peek. The result
 // content only arrives later (a separate tool_result event), so describeToolUse
 // records the *kind* and summarizeResult turns the raw output into the peek.
