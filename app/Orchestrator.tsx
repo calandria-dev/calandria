@@ -119,6 +119,12 @@ export default function Orchestrator() {
   // silently re-open when a task next starts waiting.
   useEffect(() => { if (o.needsYouTotal === 0) setNeedsYouOpen(false); }, [o.needsYouTotal]);
 
+  // Tab title names the selected project so parallel Calandria tabs are
+  // tellable apart; bare "Calandria" (the SSR title) when none is selected.
+  useEffect(() => {
+    document.title = project ? `Calandria - ${project.name}` : "Calandria";
+  }, [project]);
+
   // ⌘K / Ctrl-K command palette. Same flag as the top-bar omni button, so
   // re-enabling the feature turns on both the visual affordance and the shortcut.
   const [paletteOpen, setPaletteOpen] = useState(false);

@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   // URL; leave metadataBase unset rather than hardcoding a domain this instance
   // may not own. Only set for instances that configured a public origin.
   metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
-  title: "Calandria — build, verify & host every app with agents",
+  title: "Calandria",
   description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
   applicationName: "Calandria",
   // iOS has no manifest-driven install; these metas are what make "Add to Home
