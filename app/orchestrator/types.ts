@@ -169,6 +169,8 @@ export interface SyncStatusResp {
   canFastForward?: boolean;
   clean?: boolean;
   conflicts?: string[];
+  mergeInProgress?: boolean; // a base→work merge is paused in the worktree, awaiting accept/discard in Changes
+  unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
 }
 
 // How the project's LOCAL base branch stands against its remote — the thing
