@@ -254,6 +254,9 @@ export const mockDriver: AgentDriver = {
       type: "assistant",
       content: `Mock turn complete. Wrote ${writes.map((w) => `\`${w.rel}\``).join(", ")} in \`${path.basename(cwd)}\`.`,
     };
+    // Occupancy is reported separately from spend, as the Claude driver does,
+    // so the runner's `context` path runs under e2e too.
+    yield { type: "context", tokens: 120 };
     yield { type: "usage", usage: { cost_usd: 0, input_tokens: 120, output_tokens: 40, cache_read_tokens: 0, cache_creation_tokens: 0 } };
     yield { type: "done", sessionId };
   },

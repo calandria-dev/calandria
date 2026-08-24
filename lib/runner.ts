@@ -567,6 +567,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
         publish(id, ev);
+      } else if (ev.type === "context") {
+        // Measured occupancy, persisted as it arrives (not at turn end) so a
+        // Stop or a crash mid-turn doesn't lose what the window actually
+        // holds. Generation-guarded like the settle in finally: a /clear that
+        // raced this turn has reset the row for a fresh window, and a late
+        // report from the old session must not land on it.
+        const current = getTask(id);
+        if (current && current.generation === gen) updateTask(id, { context_measured: ev.tokens });
+        publish(id, ev);
       } else if (ev.type === "error") {
         // A soft error emitted mid-stream (e.g. "Run ended: …"). Marks the turn
         // failed and publishes the persisted form, so live viewers
