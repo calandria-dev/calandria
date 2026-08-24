@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
@@ -17,6 +17,25 @@ import { DiffFooter } from "./DiffFooter";
 // update as sessions stream — and dragging a card re-statuses it and/or
 // persists a new manual order.
 type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "snoozed" | "on_hold" | "done" | "cancelled";
+
+// On touch devices the cards must not carry draggable=true: iOS Safari routes
+// taps on a draggable element into its drag recognizer instead of synthesizing
+// a click for the <article role="button"> (only taps landing on a text node —
+// the title — still clicked through, which is exactly the bug this fixes).
+// HTML5 drag-and-drop isn't a workable board interaction on a phone anyway;
+// status changes go through the card's edit dialog / list view instead.
+// SSR renders false and the effect corrects on mount, same as useIsMobile.
+function useCoarsePointer() {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCoarse(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return coarse;
+}
 
 const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "snoozed", "on_hold", "done", "cancelled"];
 
@@ -240,6 +259,8 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
 }) {
+  const coarse = useCoarsePointer();
+  const dragEnabled = canDrag && !coarse;
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ col: ColKey; index: number } | null>(null);
   // Terminal columns past MINI_CAP rows collapse under a veil until expanded.
@@ -340,7 +361,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       blockedBy={blockedBy.get(t.id)}
                       mini={def.mini}
                       dragging={dragId === t.id}
-                      canDrag={canDrag}
+                      canDrag={dragEnabled}
                       onSelect={() => (t.suggested ? onEditTask(t.id) : onSelect(t.id))}
                       onDragStart={() => setDragId(t.id)}
                       onDragOverCard={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver({ col: key, index: def.mini ? colTasks.length : i }); }}

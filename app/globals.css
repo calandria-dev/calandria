@@ -1015,7 +1015,11 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .btn-sm{height:28px;padding:0 10px;font-size:12px;}
 
 /* transcript */
-.transcript{flex:1;overflow-y:auto;padding:26px 0 18px;}
+/* overflow-x is pinned to hidden: overflow-y:auto alone makes the x-axis
+   compute to auto, so one over-wide message (a long token, a wide table) let
+   the whole pane pan sideways — worst on a phone, where the bubbles drifted
+   off both screen edges. Wide code already scrolls inside its own <pre>. */
+.transcript{flex:1;overflow-y:auto;overflow-x:hidden;padding:26px 0 18px;}
 .tw{max-width:var(--text-width);margin:0 auto;padding:0 28px;}
 .msg{margin-bottom:22px;}
 .msg .who{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;}
@@ -1374,6 +1378,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 .seg{display:flex;gap:6px;}
 .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--raise);font-size:13px;font-weight:600;color:var(--ink-2);transition:all .12s;}
+/* A seg that's allowed to wrap sizes its buttons to their labels instead of
+   flex:1 — otherwise the one option pushed to a second row (e.g. "plan" among
+   six permission modes on a phone) stretches to the full width alone. */
+.seg.wrap{flex-wrap:wrap;}
+.seg.wrap button{flex:0 1 auto;padding:0 13px;}
 .seg button:hover{border-color:var(--line-strong);background:var(--surface-2);}
 .seg button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
 .seg button svg{width:14px;height:14px;}
@@ -1633,6 +1642,15 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      useful on a phone), keep the brand + the "needs you" pill reachable. Pad for
      the status bar / notch. */
   .app.mobile .titlebar{padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  /* Installed to the home screen, iOS 26 paints its own "scroll edge effect" —
+     a progressive blur over the status-bar strip — on top of the page. Its fade
+     reaches a little past env(safe-area-inset-top), so titlebar icons sitting
+     flush under the inset get their tops smeared. Extra clearance keeps the
+     interactive row below the fade; only the titlebar's background extends into
+     it, which is exactly what black-translucent + viewport-fit=cover intend. */
+  @media (display-mode: standalone){
+    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 10px);height:calc(56px + env(safe-area-inset-top));}
+  }
   .app.mobile .tb-user,
   .app.mobile .tb-actions{display:none;}
   .app.mobile .needs-you-pill{height:34px;}
@@ -1649,9 +1667,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .task{padding-top:11px;padding-bottom:11px;}
 
   /* Session header: the model/reasoning/priority/status chips can't fit on one
-     390px row, so stack the title above a horizontally scrollable control rail. */
+     390px row, so stack the title above a horizontally scrollable control rail.
+     sh-main takes the REMAINDER of row one (basis 0, not 100%) so the back
+     chevron sits to the left of the task name instead of alone on its own row;
+     min-width:0 lets the ellipsised title actually shrink beside it. */
   .app.mobile .sess-head{flex-wrap:wrap;row-gap:8px;align-items:center;}
-  .app.mobile .sh-main{flex:1 1 100%;order:1;}
+  .app.mobile .sh-main{flex:1 1 0;min-width:0;order:1;}
   .app.mobile .mobile-back{order:0;}
   .app.mobile .sh-tools{order:2;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none;}
   .app.mobile .sh-tools::-webkit-scrollbar{display:none;}

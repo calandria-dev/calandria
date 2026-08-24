@@ -259,6 +259,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
           <div className="comp-area">
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
+              // A free-text prompt box: without an explicit autocomplete intent,
+              // iOS heuristics guess — and guess "one-time code", offering an
+              // SMS verification code above the keyboard. "off" declares there
+              // is nothing to autofill; autocorrect/capitalization stay default
+              // (this is prose).
+              autoComplete="off"
               placeholder={disabled ? "Start the session to reply…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
                 const v = e.target.value;
