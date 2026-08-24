@@ -104,6 +104,13 @@ Three upstream differences are visible:
 
 - ChatGPT-plan authentication reports tokens but not dollar cost, so Calandria estimates
   the API-price equivalent and marks it with `~`.
+- The context-window gauge is an estimate, marked `≈`. Claude's stream reports each model
+  request's usage, so a Claude task's gauge is the window's actual contents as of the
+  latest request. `codex exec` reports only the thread's running totals on
+  `turn.completed`, so a Codex task's gauge is derived from its last turn's usage report —
+  and a turn is many requests (every tool call re-reads the whole context), so a
+  tool-heavy turn over-reads. The per-request figure exists in the Codex binary
+  (`last_token_usage`) but only on the app-server protocol, which the SDK doesn't use.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
   Calandria therefore offers Codex's own **workspace-write** (writable sandbox, never
   asks) and **read-only** (plan) modes rather than a

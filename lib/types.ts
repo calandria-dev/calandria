@@ -71,6 +71,13 @@ export interface Task {
   // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
   // what makes going back to the previous category free rather than restored.
   snoozed_until: number;
+  // Context-window occupancy as the agent's own stream last REPORTED it: the
+  // input-side tokens (fresh + cache read + cache written) of the latest
+  // main-session model request. Written by the runner from `context` events,
+  // reset to NULL by /clear. NULL = never measured — a driver that doesn't
+  // report it (Codex), or a task that predates the column — and the gauge
+  // falls back to a per-turn usage heuristic and says so (see getTaskContext).
+  context_measured: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -380,6 +387,16 @@ export type StreamEvent =
   // any project) — the receiving tray is the one that has to refresh.
   | { type: "suggested"; title: string; projectId: string }
   | { type: "usage"; usage: TurnUsage }
+  // How full the context window is RIGHT NOW: the input-side token count
+  // (input + cache_read + cache_creation) of the latest model request in the
+  // main session, as reported by the agent's own stream. Emitted whenever the
+  // figure changes, so the gauge moves mid-turn. Distinct from `usage`, which
+  // is the turn's SPEND — one turn is many API requests (every tool round-trip
+  // re-reads the whole context) plus any subagents, and a usage report sums
+  // all of them, so deriving occupancy from it read "7.6M tokens" against a
+  // 200k window on a tool-heavy turn. Subagent sidechains are excluded: they
+  // have their own windows.
+  | { type: "context"; tokens: number }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
   // The model's turn ended but run_in_background work is still running, and the
   // driver is holding the session open for it (bounded by BACKGROUND_LINGER_MS).

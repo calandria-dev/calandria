@@ -63,7 +63,7 @@ vi.mock("@openai/codex-sdk", () => {
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createProject, createTask, getTask, listMessages, getTaskUsage, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { createProject, createTask, getTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
@@ -149,6 +149,7 @@ describe("driver contract through the runner", () => {
       { type: "ask", id: "a1", questions: [{ question: "Which?", header: "Pick", options: [{ label: "A" }, { label: "B" }] }] },
       { type: "ask_answered", id: "a1", answers: [["A"]] },
       { type: "notice", content: "Service live" },
+      { type: "context", tokens: 95 },
       { type: "usage", usage: { cost_usd: 0.5, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_creation_tokens: 40 } },
       { type: "suggested", title: "Follow-up idea", projectId: project.id },
       { type: "done", sessionId: "thread-abc" },
@@ -184,6 +185,10 @@ describe("driver contract through the runner", () => {
 
     // Usage persisted from the usage event.
     expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0.5, total_tokens: 100, turns: 1 });
+    // Occupancy persisted from the context event — measured, so it beats the
+    // usage-derived estimate (which would have read 80 here).
+    expect(after.context_measured).toBe(95);
+    expect(getTaskContext(task.id)).toMatchObject({ context_tokens: 95, context_estimated: false });
 
     // Transcript: user echo, assistant text, the tool call merged with its
     // result, the answered ask, and the notice — all persisted rows.

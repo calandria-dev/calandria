@@ -122,6 +122,9 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   backgroundTasksLinger: BACKGROUND_LINGER_ENABLED,
   reportsCostUsd: true,
   costIsEstimated: false,
+  // Every assistant message carries its API request's usage; the driver
+  // forwards the input side of the latest main-session one as `context`.
+  reportsContext: true,
   supportsResume: true,
   apiKeyHint: "sk-ant-…",
   loginStyle: "paste_code",
