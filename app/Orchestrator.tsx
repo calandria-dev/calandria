@@ -556,9 +556,6 @@ export default function Orchestrator() {
           <button className="tb-icon" title={isDark ? "Switch to light theme" : "Switch to dark theme"} aria-label="Toggle theme" onClick={() => o.setAppearance("mode", isDark ? "light" : "dark")}>
             {isDark ? Icon.sun() : Icon.moon()}
           </button>
-          <div className="tb-avatar" title={o.accessEmail ? `Signed in: ${o.accessEmail}` : "Your workspace"}>
-            {(o.accessEmail?.[0] ?? "A").toUpperCase()}
-          </div>
         </div>
       </div>
 
