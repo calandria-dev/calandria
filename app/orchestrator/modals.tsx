@@ -6,21 +6,30 @@ import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
 import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
-import { agentLabel, defaultAgentFor, findAgent } from "./agents";
+import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
 
-// Segmented agent picker (Claude Code / Codex …). Hidden when only one agent is
-// registered — nothing to choose. An unauthenticated agent is still selectable
-// (you can create a not-started task and connect later) but flagged, with a
-// Connect CTA that jumps to the setup wizard.
+// Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
+// to choose: one agent registered, OR one agent CONNECTED and it's the one
+// already selected. Every driver is always registered, so "length <= 1" alone
+// never fired on a real instance — a Claude-only user saw a two-button picker
+// whose other button was a dead "Codex · not connected" every time they made a
+// task. The selected-check keeps the picker (and its Connect CTA) visible when
+// the value is an unconnected agent — an old Codex task in Edit, a project
+// default pointing at an agent that was since signed out — because hiding it
+// there would strand the task on an agent it can't run and hide the way out.
+// Nothing connected keeps the picker too, so the connect CTA still renders.
+// An unauthenticated agent is still selectable (you can create a not-started
+// task and connect later) but flagged, with a Connect CTA that jumps to the
+// setup wizard.
 export function AgentPicker({ agents, value, onChange, onConnect, help, label = "Agent" }: {
   agents: AgentsBundle; value: string; onChange: (id: string) => void; onConnect?: () => void; help?: string; label?: string;
 }) {
-  if (agents.agents.length <= 1) return null;
+  if (!agentPickerNeeded(agents, value)) return null;
   const sel = findAgent(agents, value);
   return (
     <div className="field">
