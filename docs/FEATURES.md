@@ -362,7 +362,12 @@ Two channels carry them, both switched on from Settings → Notifications:
   two. The instance signs its pushes with a VAPID key it mints on first use and
   keeps beside the database (`<ORCH_DB_DIR>/vapid.json` — subscriptions are
   bound to it, so back it up with the database); `VAPID_SUBJECT` and
-  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs.
+  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs. **For iPhone/iPad push,
+  set `VAPID_SUBJECT`** (or `PUBLIC_BASE_URL`) to a real `https:` origin or
+  `mailto:` address: Apple's push service rejects the default
+  `mailto:admin@localhost` with `403 BadJwtToken` (it validates the subject and
+  won't accept `localhost`), which the device list surfaces as *failing (403)*.
+  Chrome, Android and Firefox accept the default.
 
 A snoozed task never says it's waiting for input, and neither does an archived
 project's — but both still report a failure. Snoozing a question means "remind
