@@ -18,7 +18,7 @@ import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 import { POST as testNotification } from "@/app/api/notifications/test/route";
-import { shouldDisplay } from "@/app/orchestrator/useNotifications";
+import { classifyNotificationSupport, shouldDisplay } from "@/app/orchestrator/useNotifications";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -493,5 +493,29 @@ describe("the browser channel's display rule", () => {
   it("always shows a test notification, which belongs to no task", () => {
     const test: NotificationPayload = { id: "test", kind: "test", taskId: "", projectId: "", title: "t", body: "b", ts: 1 };
     expect(shouldDisplay(test, { visible: true, selectedTaskId: null })).toBe(true);
+  });
+});
+
+describe("the browser channel's support classifier", () => {
+  it("reads an insecure origin as insecure, not as the user having blocked the site", () => {
+    // The bug this pins: on plain-http LAN origins Chrome reports permission
+    // "denied" without ever prompting. That "denied" must not surface as
+    // "you blocked notifications — unblock in site settings", which can't work.
+    expect(classifyNotificationSupport({ secureContext: false, hasNotificationApi: true, permission: "denied" }))
+      .toBe("insecure");
+    // Some browsers hide the API entirely on insecure origins; same diagnosis.
+    expect(classifyNotificationSupport({ secureContext: false, hasNotificationApi: false, permission: null }))
+      .toBe("insecure");
+  });
+
+  it("reads a missing API on a SECURE origin as genuinely unsupported", () => {
+    expect(classifyNotificationSupport({ secureContext: true, hasNotificationApi: false, permission: null }))
+      .toBe("unsupported");
+  });
+
+  it("passes the browser's real permission through on a secure origin", () => {
+    for (const p of ["granted", "denied", "default"] as const) {
+      expect(classifyNotificationSupport({ secureContext: true, hasNotificationApi: true, permission: p })).toBe(p);
+    }
   });
 });

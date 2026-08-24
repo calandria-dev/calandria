@@ -22,10 +22,39 @@ export function shouldDisplay(
   return !(ctx.visible && ctx.selectedTaskId === payload.taskId);
 }
 
+export type BrowserNotificationState = NotificationPermission | "unsupported" | "insecure";
+
+/**
+ * The pure classifier behind notificationPermission(), pinned by a test.
+ *
+ * The insecure check comes FIRST because it explains the other two signals
+ * away: outside a secure context Chrome reports permission "denied" without
+ * ever having prompted (and can never prompt), and some browsers hide the
+ * Notification API entirely. Reading either of those at face value produces
+ * the wrong diagnosis — "you blocked this site" or "this browser can't" —
+ * when the real fix is reaching the instance over https or localhost.
+ * localhost IS a secure context, so "insecure" only fires on origins where
+ * notifications genuinely cannot work.
+ */
+export function classifyNotificationSupport(env: {
+  secureContext: boolean;
+  hasNotificationApi: boolean;
+  permission: NotificationPermission | null;
+}): BrowserNotificationState {
+  if (!env.secureContext) return "insecure";
+  if (!env.hasNotificationApi || env.permission === null) return "unsupported";
+  return env.permission;
+}
+
 /** Is this browser able to show a notification right now? */
-export function notificationPermission(): NotificationPermission | "unsupported" {
-  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
-  return Notification.permission;
+export function notificationPermission(): BrowserNotificationState {
+  if (typeof window === "undefined") return "unsupported";
+  const hasApi = "Notification" in window;
+  return classifyNotificationSupport({
+    secureContext: window.isSecureContext,
+    hasNotificationApi: hasApi,
+    permission: hasApi ? Notification.permission : null,
+  });
 }
 
 /**
