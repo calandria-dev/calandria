@@ -512,6 +512,15 @@ async function* runTurn(
   let askSeq = 0;
   // tool_use id -> how to summarize its eventual result into a peek.
   const resultKinds = new Map<string, ResultKind>();
+  // tool_use ids whose tool_result has streamed. A task_notification for a
+  // call NOT yet in here is a foreground completion — the CLI announces
+  // every Bash/Agent task it registers (measured on 2.1.240: task_started +
+  // task_notification, summary = the call's own description, then the
+  // tool_result in the same instant) — and the card is about to carry the
+  // result, so the line would only repeat the description. One that IS in
+  // here settled a backgrounded call: its card holds a "running in the
+  // background" placeholder, so the notification is the only news.
+  const resultSeen = new Set<string>();
   // Fallback-id uniquifier for permission prompts, for the same reason as
   // askSeq: the SDK normally supplies a toolUseID, but the registry keys on it.
   let permSeq = 0;
@@ -780,7 +789,7 @@ async function* runTurn(
       queue.push({
         type: "notice",
         content:
-          `⏱ Background work exceeded the linger window (${Math.round(BACKGROUND_LINGER_MS / 60000)}m) and was stopped` +
+          `⚠ Background work exceeded the linger window (${Math.round(BACKGROUND_LINGER_MS / 60000)}m) and was stopped` +
           (cut ? `: ${clip(cut, 500)}` : "") +
           `. Don't assume it finished.` +
           (crons.length ? ` Scheduled wakeup${crons.length > 1 ? "s" : ""} cancelled with it: ${crons.map((c) => describeCron(c, now)).join("; ")}.` : ""),
@@ -1020,6 +1029,7 @@ async function* runTurn(
             for (const block of content) {
               if (block && typeof block === "object" && (block as { type?: string }).type === "tool_result") {
                 const b = block as { tool_use_id: string; content: unknown; is_error?: boolean };
+                resultSeen.add(b.tool_use_id);
                 // The deny-result of an answered ask is already shown via ask_answered.
                 if (askIds.has(b.tool_use_id)) continue;
                 const raw = resultText(b.content);
@@ -1048,8 +1058,17 @@ async function* runTurn(
             if (lingering) {
               lingering = false;
               queue.push({ type: "background_resumed", status: message.status, summary: message.summary });
-            } else {
-              queue.push({ type: "notice", content: message.summary });
+            } else if (
+              !message.skip_transcript &&
+              (!message.tool_use_id || resultSeen.has(message.tool_use_id))
+            ) {
+              // Mid-turn, only a settled BACKGROUND task is news (see
+              // resultSeen); a foreground completion is the card's to show,
+              // and the CLI's own "housekeeping, hide from the transcript"
+              // flag is honored as documented. The tone travels in the glyph:
+              // a failure warns, the rest is a quiet note.
+              const failed = message.status === "failed" || /exit code [1-9]/i.test(message.summary);
+              queue.push({ type: "notice", content: failed ? `⚠ ${message.summary}` : message.summary });
             }
           }
         } else if (message.type === "rate_limit_event") {
