@@ -63,6 +63,7 @@ export interface Task {
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   background_pending: number; // 1 while the turn lingers on background work (model turn ended, run_in_background tasks still running; the session wakes itself when they settle) — running stays 1 the whole time
+  background_note: string; // what the linger is waiting on, phrased for the activity line ("waiting to wake at 12:00"); "" whenever background_pending is 0
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
@@ -428,19 +429,25 @@ export type StreamEvent =
   // have their own windows.
   | { type: "context"; tokens: number }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
-  // The model's turn ended but run_in_background work is still running, and the
-  // driver is holding the session open for it (bounded by BACKGROUND_LINGER_MS).
-  // The runner flips tasks.background_pending on so the UI can say "working in
-  // background" instead of a generic spinner — and instead of the lie this
-  // feature exists to kill, where the turn ended, the work died with the CLI
-  // process, and the row said "needs your input" about a notification that was
-  // never coming.
-  | { type: "background_pending"; tasks: { id: string; kind: string; description: string }[] }
-  // A lingered-on background task settled and its notification woke the model:
-  // a fresh turn is about to stream with NO user message behind it. `summary`
-  // is the CLI's own account of what settled, persisted so the transcript
-  // explains the unprompted continuation.
-  | { type: "background_resumed"; status: "completed" | "failed" | "stopped"; summary: string }
+  // The model's turn ended but run_in_background work is still running — or a
+  // session-scoped wakeup (ScheduleWakeup / CronCreate / /loop) is pending —
+  // and the driver is holding the session open for it (optionally bounded by
+  // BACKGROUND_LINGER_MS). The runner flips tasks.background_pending on and
+  // persists `note` as tasks.background_note so the UI can say "working in
+  // background" / "waiting to wake at 12:00" instead of a generic spinner —
+  // and instead of the lie this feature exists to kill, where the turn ended,
+  // the work died with the CLI process, and the row said "needs your input"
+  // about a notification (or a wake) that was never coming. `kind` is the
+  // CLI's task type for background work, "wakeup" for a one-shot cron and
+  // "cron" for a recurring one; `wakeAt` (ms epoch) is a cron's next fire.
+  | { type: "background_pending"; tasks: { id: string; kind: string; description: string; wakeAt?: number }[]; note: string }
+  // A lingered-on background task settled and its notification woke the model
+  // (status completed/failed/stopped), or a pending wakeup fired (status
+  // "woke"): a fresh turn is about to stream with NO user message behind it.
+  // `summary` is the CLI's own account of what settled — or, for a wake, the
+  // driver's account of which schedule fired and the prompt it submitted —
+  // persisted so the transcript explains the unprompted continuation.
+  | { type: "background_resumed"; status: "completed" | "failed" | "stopped" | "woke"; summary: string }
   | { type: "error"; content: string }
   | { type: "done"; sessionId: string | null };
 
@@ -495,6 +502,8 @@ export type GlobalTaskEvent = {
   awaiting_input: boolean;
   /** Turn lingering on run_in_background work (running stays true) — the "working in background" indicator. */
   background_pending: boolean;
+  /** What the linger is waiting on ("waiting to wake at 12:00"); "" when not lingering. */
+  background_note: string;
   status: Status;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;

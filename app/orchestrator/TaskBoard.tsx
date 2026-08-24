@@ -153,7 +153,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
   const activity = snoozed ? `wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
-    : inBackground ? `live · working in background · ${relTime(task.updated_at)}`
+    : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
     : running ? "live · working"
     : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`

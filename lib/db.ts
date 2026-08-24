@@ -87,6 +87,9 @@ export function init(db: Database.Database) {
       -- ended, session held open for the tasks to settle). Always alongside
       -- running=1; reset with it on crash recovery.
       background_pending INTEGER NOT NULL DEFAULT 0,
+      -- What the linger is waiting on, phrased for the activity line ("waiting
+      -- to wake at 12:00"); '' whenever background_pending is 0.
+      background_note TEXT NOT NULL DEFAULT '',
       -- Opt-in pipeline behavior: 1 = start this task's first turn automatically
       -- the moment its last unfinished blocker is marked done (lib/autoStart.ts).
       auto_start  INTEGER NOT NULL DEFAULT 0,
@@ -475,7 +478,7 @@ function recoverFromCrash(db: Database.Database) {
     // (background_pending) is in-memory state of the dead process's CLI child
     // exactly like running is, so it resets in the same breath — the work it
     // described died with that process.
-    db.prepare("UPDATE tasks SET running = 0, background_pending = 0 WHERE running = 1 OR background_pending = 1").run();
+    db.prepare("UPDATE tasks SET running = 0, background_pending = 0, background_note = '' WHERE running = 1 OR background_pending = 1").run();
     // Drop any queued follow-ups: the turns they were lined up behind died with
     // the previous process, so there's nothing left to dequeue them.
     db.prepare("DELETE FROM pending_messages").run();
@@ -629,6 +632,7 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("awaiting_input")) db.exec("ALTER TABLE tasks ADD COLUMN awaiting_input INTEGER NOT NULL DEFAULT 0");
   // Background-linger state (see BACKGROUND_LINGER_MS in lib/config.ts).
   if (!taskCols.includes("background_pending")) db.exec("ALTER TABLE tasks ADD COLUMN background_pending INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes("background_note")) db.exec("ALTER TABLE tasks ADD COLUMN background_note TEXT NOT NULL DEFAULT ''");
   // Per-task model selection (NULL = inherit Claude's default) and the model the
   // SDK actually resolved for the last turn (shown as a badge in the chat).
   if (!taskCols.includes("model")) db.exec("ALTER TABLE tasks ADD COLUMN model TEXT");

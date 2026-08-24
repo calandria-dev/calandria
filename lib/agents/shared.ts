@@ -56,23 +56,31 @@ export function buildProjectContext(project: Project, task: Task): string {
     // deadline set, name it (and that a cut is announced); without one, the
     // hazard flips — nothing expires, so a backgrounded process that never
     // exits (a dev server) holds the session open until the user stops it.
+    // Scheduled wakeups (ScheduleWakeup / CronCreate / /loop) follow the same
+    // rule — they only fire while the session is held open — so the model
+    // learns the wakeup policy here rather than from a wake that never comes.
     lines.push(
       `\n---\nBackground shell tasks keep running after your turn ends: the session stays open ` +
         `until they settle and their completion notifications re-invoke you. ` +
         (BACKGROUND_LINGER_MS > 0
           ? `The wait is bounded (${Math.round(BACKGROUND_LINGER_MS / 60000)} minutes on this instance; a ` +
             `transcript notice tells you if work was cut off), so prefer the foreground for anything ` +
-            `that must not be interrupted.`
+            `that must not be interrupted. Scheduled wakeups (ScheduleWakeup, CronCreate) are honored ` +
+            `only when they fall inside that window; a wakeup beyond it is cancelled and named in a notice.`
           : `There is no deadline — the session waits until the work finishes (or the user stops it), ` +
             `so never background a process that doesn't exit on its own (a dev server, a watcher); ` +
-            `use the managed services / expose_service path for those instead.`)
+            `use the managed services / expose_service path for those instead. Scheduled wakeups ` +
+            `(ScheduleWakeup, CronCreate) are honored the same way: the session stays open until they fire, ` +
+            `and a recurring one keeps it open until you delete it or the user stops the session.`)
     );
   } else {
     lines.push(
       `\n---\nBackground shell tasks do NOT survive the end of your turn: each turn runs in its ` +
         `own process, and backgrounded commands are killed with it when the turn completes — ` +
         `regardless of what your shell tool's documentation promises. Run long commands in the ` +
-        `foreground, and split a run longer than the foreground timeout into stages.`
+        `foreground, and split a run longer than the foreground timeout into stages. Scheduled ` +
+        `wakeups (ScheduleWakeup, CronCreate) die the same way — nothing re-invokes you after your ` +
+        `turn ends, so don't schedule one.`
     );
   }
 
