@@ -2004,6 +2004,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .collab-general{margin-top:auto;padding-top:6px;}
 .collab-general .lab{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:6px;}
 .collab-status{font-size:12px;color:var(--ink-3);}
+.collab-send-err{color:var(--err);}
+.collab-mode{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);}
+.collab-mode select{font:inherit;color:var(--ink);background:var(--term);border:1px solid var(--line);border-radius:var(--r-sm);padding:4px 6px;max-width:260px;}
 @media (max-width:900px){
   .collab{height:calc(100vh - 200px);}
   /* Stacked: document on top, comments/editor preview below, each its own

@@ -4,8 +4,24 @@ When an agent writes or edits a markdown file, its section in the Changes tab
 carries a **Collaborate** button. It opens the file as a document — not hunk by
 hunk — so you can work on it the way you'd proofread in a word processor:
 
-- **Edit** — a markdown source editor beside a live render. Your wording is sent
-  to the agent as a unified diff, so untouched lines never change.
+- **Edit** — a markdown source editor beside a live render. Untouched lines
+  never change; how the edited ones reach the file is the **Edits** picker in
+  the footer (it appears once you've changed something, and the choice is
+  remembered per browser):
+  - **Write to file** (default) — Send writes the edited text straight into
+    the task's worktree (`POST /api/tasks/[id]/file`, the read route's twin,
+    under the same path guard) and the message carries the diff *for context
+    only*, telling the agent the file already has these changes. This is the
+    reliable route: a model asked to apply a patch verbatim sometimes doesn't.
+    The server refuses it in two cases, both 409: **a turn is running** (the
+    agent owns the worktree until it ends — the picker greys the option out
+    and your edits go as a patch until then), and **the file changed since you
+    opened it** (the agent's last turn or a terminal wrote it; your edits were
+    made against text that is no longer there, so send them as a patch for
+    the agent to reconcile, or cancel and reopen).
+  - **Send as patch** — the message carries a unified diff the agent is told
+    to apply exactly as written. Nothing touches the worktree but the agent's
+    own session, which is the reason to pick it.
 - **Comment** — the rendered document. Select a passage and press **Add
   comment** to attach a note to it; a **General comments** box takes feedback
   that isn't tied to any passage. Commented passages stay tinted while the
@@ -17,7 +33,9 @@ pass. **Send to agent** composes one message (`lib/collab.ts`,
 behind a running turn like any other message. **Cancel** discards everything
 (after a confirmation when there's unsent work).
 
-What the agent receives:
+What the agent receives (patch mode; in direct mode the "My edits" preamble
+says the file on disk already has the changes and the diff must not be
+re-applied, and comment line numbers refer to the current file):
 
 ```
 Document review of `docs/setup.md` — I read it in collaboration mode and have feedback.
@@ -92,9 +110,9 @@ opened.
 - Comments aren't persisted — they live in the modal until sent or cancelled,
   unlike line comments in the Changes tab (`task_comments`), which are stored
   and versioned against the diff head.
-- The user's edits go to the agent as a patch to apply rather than being
-  written to the worktree directly. Writing them straight to the file would be
-  a small change (the read route's twin) if the patch step proves unreliable.
+- A direct write isn't versioned or undoable beyond what git offers: the
+  worktree is the task's branch, so `git diff` in the task terminal shows it
+  and `git checkout -- <file>` takes it back, but there is no in-app undo.
 - The rendered view can't tell two identical passages apart: a quote is
   re-found by text search, so a selection inside the second of two identical
   sentences highlights the first. Rare in prose; the line number in the packet

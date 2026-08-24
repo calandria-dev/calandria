@@ -94,6 +94,27 @@ describe("buildCollabPacket", () => {
     expect(p).toContain("## General comments\nOverall: too terse for a first-time reader.");
   });
 
+  it("in direct mode, presents the diff as context and forbids re-applying it", () => {
+    const edited = DOC.replace("never re-reads them", "re-reads them on SIGHUP");
+    const p = buildCollabPacket({
+      file: "docs/setup.md",
+      original: DOC,
+      edited,
+      comments: [{ quote: "Setup guide", comment: "Rename to Quick start" }],
+      general: "",
+      mode: "direct",
+    }) as string;
+    expect(p).toContain("## My edits");
+    expect(p).toContain("I edited `docs/setup.md` directly in the worktree");
+    expect(p).toContain("do NOT apply this diff again");
+    expect(p).toContain("+re-reads them on SIGHUP while running.");
+    // The file on disk IS the edited text, so comments locate against the current file.
+    expect(p).toContain("Line numbers refer to the current file.");
+    expect(p).not.toContain("Apply this patch");
+    // Omitted mode is the patch contract — nothing that previously called the builder changes behavior.
+    expect(buildCollabPacket({ file: "a.md", original: DOC, edited, comments: [], general: "" })).toContain("Apply this patch");
+  });
+
   it("omits the edits section when the text is untouched", () => {
     const p = buildCollabPacket({ file: "a.md", original: DOC, edited: DOC, comments: [{ quote: "Setup guide", comment: "Rename to Quick start" }], general: "" });
     expect(p).not.toContain("## My edits");
