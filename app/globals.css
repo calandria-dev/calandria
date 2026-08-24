@@ -1264,6 +1264,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
+.sync-err{color:var(--err);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* session break (/clear) */
 .sbreak{display:flex;align-items:center;gap:14px;margin:30px 0;}

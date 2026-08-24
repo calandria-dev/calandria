@@ -508,6 +508,7 @@ export default function TaskChanges({
   onPrCreated,
   onResolveWithAI,
   onSyncChanged,
+  refresh,
   onSend,
 }: {
   taskId: string;
@@ -518,6 +519,10 @@ export default function TaskChanges({
   // only re-reads on its own when a turn ends, so without this an Accept or
   // Discard in this tab would leave it describing the state from before.
   onSyncChanged?: () => void;
+  // Bumped by the parent when the merge state changed OUTSIDE this component
+  // (the session's sync banner accepting a resolution): the review state shown
+  // here is otherwise re-read only on mount, a task switch, or a turn ending.
+  refresh?: number;
   prUrl?: string; // GitHub PR already opened from this branch ("" / undefined = none)
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -603,6 +608,8 @@ export default function TaskChanges({
     if (wasRunning.current && !running) load();
     wasRunning.current = running;
   }, [running, load]);
+
+  useEffect(() => { if (refresh) load(); }, [refresh, load]);
 
   // Track which file is at the top of the scroll area to highlight it in the list.
   useEffect(() => {
