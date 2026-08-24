@@ -235,11 +235,13 @@ npm start
 
 ## Notes & caveats
 
-- **Permissions:** tasks default to **Guarded auto** (`permissionMode: "auto"`), where a
+- **Permissions:** tasks default to Claude Code's **auto** mode, where a
   model classifier approves the calls it judges safe and escalates the rest. Switch a
-  task — or the app default in Settings → Run defaults — to **Auto-run**
-  (`bypassPermissions`) for work that must never block on a prompt, or down to
-  **Accept edits**, **Ask when needed** or **Plan mode**. Anything the
+  task — or the app default in Settings → Run defaults — to **bypassPermissions**
+  for work that must never block on a prompt, or down to
+  **acceptEdits**, **default** or **plan** (the pickers use each agent's own mode
+  names — a Codex task offers its **workspace-write** / **read-only** sandboxes
+  instead). Anything the
   agent isn't pre-approved for parks on a permission card in the transcript, with
   Allow once / Always allow / Decline. Read-only tools pass silently; "Always
   allow" remembers a command for that one project and is revocable in

@@ -466,7 +466,7 @@ const PERMISSION_MODES: readonly PermissionMode[] = ["bypassPermissions", "auto"
 // UNATTENDED work — an escalated call with nobody watching auto-denies after
 // PERMISSION_UNATTENDED_MS and parks the queue (lib/permissions.ts) instead of
 // running on. Fleets that must never stop to ask should set the app-level
-// default back to Auto-run in Settings.
+// default back to bypassPermissions in Settings.
 const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
 
 // The task's run permission, resolved to a mode the SDK accepts.
@@ -556,14 +556,14 @@ async function* runTurn(
   // can field interactive prompts by passing canUseTool — without it the tool
   // simply doesn't exist and Claude can never ask (verified against 2.1.198).
   //
-  // Under "Auto-run" (bypassPermissions) the SDK never consults it, so it stays
+  // Under bypassPermissions the SDK never consults it, so it stays
   // a blanket allow. In every OTHER mode each call the CLI doesn't auto-approve
   // arrives here — and this is what makes those modes mean something rather than
-  // being Auto-run with a different label. What reaches the gate differs per
-  // mode, which is the whole point of offering them: "Guarded auto" escalates
-  // only what its classifier won't vouch for, "Accept edits" lets writes through
-  // and stops at commands, "Ask when needed" stops at anything not pre-approved,
-  // "Plan mode" stops at leaving the plan. Known-safe tools and calls already
+  // being bypassPermissions with a different label. What reaches the gate
+  // differs per mode, which is the whole point of offering them: "auto"
+  // escalates only what its classifier won't vouch for, acceptEdits lets writes
+  // through and stops at commands, "default" stops at anything not pre-approved,
+  // plan stops at leaving the plan. Known-safe tools and calls already
   // covered by a remembered project rule pass silently; anything else parks the
   // turn on a card the user answers, through the very same registry + /answer
   // route an AskUserQuestion uses (lib/permissions.ts).
@@ -795,7 +795,7 @@ async function* runTurn(
         } else if (message.type === "system" && message.subtype === "permission_denied") {
           // A tool call the CLI refused WITHOUT ever consulting canUseTool, so
           // there was no card and the user was never given the choice. Under
-          // "Guarded auto" that's the classifier vetoing a call it judged
+          // "auto" that's the classifier vetoing a call it judged
           // unsafe; it can also be a deny rule in the loaded settings. Reachable
           // in normal use now that "auto" is the default mode, and the only
           // other trace is an is_error tool_result the transcript renders as a

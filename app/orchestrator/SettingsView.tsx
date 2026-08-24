@@ -12,7 +12,7 @@ import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
 import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
-import { notificationPermission } from "./useNotifications";
+import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import type { AgentInfoT, AgentsResponseT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
@@ -301,7 +301,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
 }) {
-  const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [perm, setPerm] = useState<BrowserNotificationState>("unsupported");
   const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "failed" | "error">("idle");
   useEffect(() => { setPerm(notificationPermission()); }, []);
 
@@ -349,13 +349,15 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.bolt()} Browser notifications</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          {perm === "unsupported"
-            ? "This browser can't show notifications, or the page isn't on a secure origin (https or localhost)."
-            : perm === "granted"
-              ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
-              : perm === "denied"
-                ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
-                : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
+          {perm === "insecure"
+            ? "Browsers only allow notifications on a secure origin, and this page is plain http — no site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
+            : perm === "unsupported"
+              ? "This browser can't show notifications."
+              : perm === "granted"
+                ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
+                : perm === "denied"
+                  ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
+                  : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
@@ -546,6 +548,11 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
+  // What the agent being edited calls its never-asks mode — the labels are the
+  // provider's own vocabulary (Claude: "bypassPermissions", Codex:
+  // "workspace-write"), so the help copy resolves the name per agent instead of
+  // hardcoding one.
+  const bypassLabel = caps?.permissionModes.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   const multiAgent = agents.agents.length > 1;
   const backgroundJobs = appDefaults.background_jobs !== "off";
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -748,9 +755,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to the default. Every mode except <strong>Auto-run</strong>
+                    How tasks run when their own picker is set to the default. Every mode except <strong>{bypassLabel}</strong>
                     {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
-                    away, where an unanswered card declines itself. Pick <strong>Auto-run</strong> for work that must never stop to ask.
+                    away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
                     {permissionOptions(caps).map((p) => (

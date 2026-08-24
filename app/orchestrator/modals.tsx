@@ -75,10 +75,19 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   const agentReady = selAgent ? selAgent.authenticated : true;
   const canStart = !blocked && agentReady;
   const willAutoStart = autoStart && deps.length > 0;
-  const permissionOpts = permissionOptions(selAgent?.capabilities);
-  // Auto-run is the only mode that never parks on a card. "Default" (null) can
-  // resolve to one that does, so it counts as unsafe-for-unattended too — we
-  // deliberately don't guess what it resolves to and claim it's fine.
+  const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
+  // Permission modes are provider-specific (each driver labels its own — Claude
+  // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
+  // under one agent may not exist under the next: switching agents drops it back
+  // to Default rather than silently sending a value the new driver would coerce.
+  useEffect(() => {
+    if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
+  }, [permissionOpts, permission]);
+  // What this agent calls its never-asks mode, for the unattended warning below.
+  const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
+  // bypassPermissions is the only mode that never parks on a card. "Default"
+  // (null) can resolve to one that does, so it counts as unsafe-for-unattended
+  // too — we deliberately don't guess what it resolves to and claim it's fine.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
   const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, permission_mode: permission });
   return (
@@ -133,8 +142,8 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
           This task auto-starts when its blockers clear, which may be while nobody is watching. Any mode but{" "}
-          <strong>Auto-run</strong> parks on a permission card, and an unanswered card declines itself and stops the
-          turn. Pick Auto-run if it needs to run all the way through unattended.
+          <strong>{bypassLabel}</strong> parks on a permission card, and an unanswered card declines itself and stops the
+          turn. Pick {bypassLabel} if it needs to run all the way through unattended.
         </div>
       )}
     </Modal>
