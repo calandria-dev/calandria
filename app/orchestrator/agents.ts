@@ -33,3 +33,15 @@ export function defaultAgentFor(bundle: AgentsBundle, projectDefault: string | n
   const connected = bundle.agents.find((a) => a.authenticated);
   return connected?.id ?? want?.id ?? bundle.agents[0]?.id ?? bundle.default;
 }
+
+// Whether an agent picker has a choice to offer. False when only one agent is
+// registered, or when exactly one is connected and `value` already names it —
+// the picker's other entries would all be dead "not connected" buttons. True
+// whenever `value` is NOT the lone connected agent (the user needs the picker
+// to move off it, or its Connect CTA), and when nothing is connected at all.
+export function agentPickerNeeded(bundle: AgentsBundle, value: string | null | undefined): boolean {
+  if (bundle.agents.length <= 1) return false;
+  const connected = bundle.agents.filter((a) => a.authenticated);
+  if (connected.length === 1 && connected[0].id === value) return false;
+  return true;
+}
