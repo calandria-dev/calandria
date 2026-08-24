@@ -1252,6 +1252,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    output, not just an alert banner. */
 .msg.system .msg-body{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--err);background:var(--term);border:1px solid color-mix(in oklab,var(--err) 30%,var(--line));border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
 .msg.system.info .msg-body{color:var(--run);border-color:color-mix(in oklab,var(--run) 30%,var(--line));}
+.msg.system.note .msg-body{color:var(--ink-3);border-color:var(--line-2);}
 /* context-overflow recovery — warning line + one-click /clear */
 .msg.system.overflow .overflow-actions{margin-top:9px;}
 .msg.system.overflow .overflow-actions .btn{font-family:var(--sans);}

@@ -424,13 +424,19 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // Notes that already carry their own glyph (✓/ℹ — e.g. the "caught up to main"
-    // sync note) render quietly; anything else is a warning. The runner's error
-    // lines arrive with their own ⚠ already, so only glyph-less content gets one
-    // (prepending unconditionally used to render "⚠ ⚠ …").
-    const info = /^[✓ℹ▶]/.test(m.content);
-    const glyphed = info || m.content.startsWith("⚠");
-    return <div className={`msg system${info ? " info" : ""}`}><div className="msg-body">{glyphed ? m.content : `⚠ ${m.content}`}</div></div>;
+    // The glyph the PRODUCER wrote decides the tone: ✓/ℹ/▶ is good news (the
+    // "caught up to main" sync note, the parked-queue note, a deferred start
+    // firing at the usage-window reset), ⚠ is a warning (every runner error
+    // line is minted with one — tests/authFailure.test.ts and e2e/04 count
+    // errors by it) and so is ⏰ (a scheduled wakeup that will NOT fire,
+    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note —
+    // a background command settling, a service URL, a lingered wake-up (⏵).
+    // This used to prepend ⚠ to glyph-less content, which turned every quiet
+    // notice into an error banner: `Background command "…" completed (exit
+    // code 0)` and the bare description of a command that ran fine both
+    // rendered red.
+    const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
+    return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
   }
   const isUser = m.role === "user";
   // Only user messages carry attachment markers; assistant text passes through.
