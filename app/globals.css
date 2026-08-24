@@ -689,6 +689,29 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* sidebar per-project badge, pinned to the project glyph */
 .proj-await{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--rev);color:var(--bg);font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);}
 
+/* subscription plan-usage meter (titlebar) — quiet by default, tinted only
+   when a window is worth glancing at (≥80% warn, ≥95%/rejected limit) */
+.plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
+.plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
+.plan-pill .pp-div{opacity:.5;}
+.plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
+.plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
+.pu-menu{width:270px;padding-bottom:8px;}
+.pu-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
+.pu-note.limit{background:var(--red-soft);color:var(--err);}
+.pu-row{padding:5px 13px 7px;}
+.pu-row-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.pu-label{font-size:12px;font-weight:600;color:var(--ink);}
+.pu-pct{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.pu-bar{margin-top:4px;height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.pu-fill{height:100%;border-radius:999px;background:var(--accent);}
+.pu-row.warn .pu-fill{background:var(--warn);}
+.pu-row.warn .pu-pct{color:var(--warn);}
+.pu-row.limit .pu-fill{background:var(--err);}
+.pu-row.limit .pu-pct{color:var(--err);}
+.pu-reset{margin-top:3px;font-size:10.5px;color:var(--ink-3);}
+.pu-foot{margin-top:6px;padding:6px 13px 0;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink-3);}
+
 /* priority pill */
 .pri{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px;flex:0 0 auto;line-height:1.35;}
 .pri.hi{background:var(--red-soft);color:var(--err);}

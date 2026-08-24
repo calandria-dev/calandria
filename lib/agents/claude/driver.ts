@@ -25,6 +25,7 @@ import type {
 import type { AgentDriver, OneShotResult } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands } from "./commands";
+import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import {
   createSuggestedTask,
@@ -846,8 +847,11 @@ async function* runTurn(
           }
         } else if (message.type === "rate_limit_event") {
           // Subscription rate-limit telemetry (status/utilization/resetsAt).
-          // Not surfaced as a transcript event — just remember the reset time
-          // so a subsequent usage-limit failure can say when the quota heals.
+          // Not surfaced as a transcript event — it feeds the instance-wide
+          // plan-usage snapshot (the titlebar session/week meter reads it via
+          // GET /api/plan-usage), and the reset time is remembered so a
+          // subsequent usage-limit failure can say when the quota heals.
+          recordClaudeRateLimit(message.rate_limit_info);
           const resetsAt = message.rate_limit_info?.resetsAt;
           if (typeof resetsAt === "number") limitResetsAt = resetsAt;
         } else if (message.type === "result") {
@@ -1047,6 +1051,10 @@ export const claudeDriver: AgentDriver = {
   // tail and nothing else, so both failures land on the same empty list.
   listCommands: async (task, project) =>
     (await listClaudeCommands(sessionCwd(task, project), SETTING_SOURCES)) ?? [],
+  // Session/week plan usage for the titlebar meter — passive rate_limit_event
+  // telemetry merged with a conservatively-cached /api/oauth/usage fetch (see
+  // ./planUsage.ts for why both sources are needed).
+  planUsage: getClaudePlanUsage,
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,

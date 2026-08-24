@@ -23,6 +23,7 @@ import { OnboardingWizard } from "./orchestrator/OnboardingWizard";
 import { AgentNudge, AgentAuthBanner } from "./orchestrator/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./orchestrator/Welcome";
 import { NeedsYouMenu } from "./orchestrator/NeedsYouMenu";
+import { PlanUsagePill } from "./orchestrator/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./orchestrator/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./orchestrator/MobileTabBar";
 
@@ -470,6 +471,7 @@ export default function Orchestrator() {
         )}
 
         <div className="tb-right">
+          <PlanUsagePill />
           {o.needsYouTotal > 0 && (
             <div style={{ position: "relative" }}>
               <button

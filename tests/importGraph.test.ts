@@ -34,6 +34,7 @@ const PINNED = [
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only

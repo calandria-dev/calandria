@@ -303,6 +303,44 @@ export interface UsageTotals extends TurnUsage {
   turns: number;
 }
 
+// One rolling rate-limit window of a subscription plan (Claude Pro/Max's
+// 5-hour session and 7-day week), as the usage display renders it. `id` is the
+// provider's window key ("five_hour", "seven_day", "seven_day_sonnet", …);
+// `utilization` is percent spent (0–100); `resetsAt` epoch ms, null when the
+// provider didn't say.
+export interface PlanUsageWindow {
+  id: string;
+  label: string;
+  utilization: number;
+  resetsAt: number | null;
+}
+
+// Instance-wide snapshot of one agent's subscription-plan usage — what the
+// titlebar meter renders. Two sources merged server-side (see
+// lib/agents/claude/planUsage.ts): `windows` come from the provider's usage
+// API (cached, conservatively refetched), while the `status*` trio is the
+// PASSIVE signal — the latest rate-limit telemetry a turn we were already
+// running carried, which is fresher than any poll and free.
+export interface PlanUsageSnapshot {
+  /** False = nothing to show (no subscription login, or no data yet). */
+  available: boolean;
+  /** Why unavailable/stale, human-readable (shown in the popover footer). */
+  reason: string | null;
+  /** Subscription tier when known ("max", "pro"), for the popover title. */
+  plan: string | null;
+  windows: PlanUsageWindow[];
+  /** Latest passive telemetry: are turns currently allowed? */
+  status: "allowed" | "allowed_warning" | "rejected" | null;
+  /** Which window the passive status is about (a PlanUsageWindow id). */
+  statusWindow: string | null;
+  /** When the binding limit resets (epoch ms), from the passive signal. */
+  statusResetsAt: number | null;
+  /** When `windows` was last fetched from the usage API (epoch ms). */
+  fetchedAt: number | null;
+  /** The last refetch failed; `windows` is being served from an older fetch. */
+  stale: boolean;
+}
+
 // One rendered diff line: added (+, green), removed (-, red), or unchanged
 // context (" ", dim). Used by both the capped peek and the full expanded diff.
 export type DiffLine = { sign: "+" | "-" | " "; text: string };

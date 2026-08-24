@@ -27,6 +27,23 @@ With an API key, the amount represents billed API usage. Claude can report its S
 figure directly. Codex currently reports tokens only, so its amount is estimated from token
 counts and published prices and carries a `~`.
 
+## Plan usage meter
+
+On a Claude Pro/Max subscription login, the titlebar shows a compact meter with the current
+session (5-hour) and week (7-day) plan utilization — running many parallel sessions burns a
+plan faster than one terminal, so the remaining headroom is worth a glance before dispatching
+more work. Click it for the full breakdown: every window Anthropic reports (including
+per-model weeks), reset times, and data freshness. The pill tints amber at 80% and red at
+95% or when a limit is reached.
+
+Two data sources feed it. Percentages come from the same usage endpoint the Claude CLI's own
+`/usage` panel reads, fetched conservatively — only while a tab is open, at most once per
+five minutes (`ORCH_PLAN_USAGE_MIN_FETCH_MS`), backing off when Anthropic rate-limits it.
+Between fetches it coasts on the cache plus the rate-limit telemetry every turn already
+carries for free, so an approaching or reached limit shows up immediately rather than on the
+next poll. Set `ORCH_PLAN_USAGE=off` to hide the meter and guarantee the app never calls the
+usage endpoint. The meter doesn't render for API-key auth (there is no plan to meter).
+
 ## Calandria overhead
 
 Insights separates task activity from Calandria's own convenience jobs, including:
