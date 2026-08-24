@@ -337,6 +337,36 @@ Notifications are composed on the server, not in the browser, so the channels
 planned next — an outbound webhook (Slack, Discord, Teams) and an iMessage relay
 — will deliver exactly the same messages under exactly the same rules.
 
+## Install as an app
+
+Calandria is an installable PWA: Chrome and Edge offer "Install app" from the
+address bar, and on iOS Safari's Share → **Add to Home Screen** does the same.
+Installed, it gets its own icon, its own standalone window (no browser chrome),
+and its own entry in the app switcher — which is what makes the phone a real
+surface for the "needs you" workflow rather than a tab you have to go find.
+
+Two requirements, both browser rules rather than Calandria's:
+
+- **A secure context.** Install (like the Notification permission) only exists
+  over HTTPS or on `localhost`/`127.0.0.1`. A tunnel such as Cloudflare Access
+  is already HTTPS; a raw LAN IP over plain HTTP gets neither install nor
+  notifications.
+- **A logged-in browser.** Behind Cloudflare Access the manifest is fetched
+  with your session cookie (the app links it `crossorigin="use-credentials"`
+  for exactly this), so install from the same browser profile you log in with.
+  The standalone window shares that profile's cookies, so an existing Access
+  session carries over — when it expires, the window shows the Access login
+  and continues as normal.
+
+There is deliberately **no service worker and no offline mode**: everything on
+screen is live server state (SSE event streams, the terminal's WebSocket), so
+there is nothing useful to serve from a cache, and a stale cache intercepting
+the event stream would be far worse than a browser error page when the server
+is unreachable. Chrome no longer requires a service worker for install. One is
+planned for exactly one job — **Web Push**, so a phone with no tab open still
+hears "a task needs you"; today's browser notifications need the app open
+somewhere ([Notifications](#notifications)).
+
 ## Workspace tools
 
 The integrated terminal provides a real shell for each project. It opens in the project's
