@@ -70,6 +70,16 @@ This is the **open-source repo** — the whole local app lives here and all core
 | Per-task git worktrees | `ORCH_WORKTREES_DIR` (default `~/.agent-orchestrator/worktrees`) — deliberately **outside** every repo |
 | Cloned project repos | `ORCH_PROJECTS_DIR` (default `~/projects`) |
 
+## Codebase graph
+
+A graphify knowledge graph of this repo (~2,700 nodes) lives in the main checkout at `/home/penmoid/repos/calandria/graphify-out/graph.json`. `graphify-out/` is gitignored, so task worktrees never contain it — always pass the absolute path. For architecture / "what calls X" / "where does Y live" questions, query it before grepping or reading files:
+
+```bash
+graphify query "<question>" --graph /home/penmoid/repos/calandria/graphify-out/graph.json
+```
+
+(`explain "<node>"` and `path "A" "B"` take the same `--graph` flag.) Post-commit/post-checkout hooks in the main checkout rebuild it on every commit there, so it tracks main — unmerged worktree changes aren't in it; verify locations against your working tree before editing.
+
 ## Conventions & gotchas
 
 - **Env-driven, zero code edits per instance.** Every per-instance knob is an env var with a documented default — add new ones to `lib/config.ts` (or `lib/features.ts` for flags) **and** `.env.example`. `server.js`/`pty-server.js` can't import TS, so they read the same env names directly; keep names in sync.
