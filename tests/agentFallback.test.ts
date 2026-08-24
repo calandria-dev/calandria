@@ -12,7 +12,7 @@ import { setAgentConnection, isAgentConnected, firstConnectedAgent, resolveConne
 import { utilityDriver, resolveUtilityAgent } from "../lib/agents/oneshots";
 import { completeOnboarding } from "../lib/onboarding";
 import { createSuggestedTask } from "../lib/agentTools";
-import { defaultAgentFor } from "../app/orchestrator/agents";
+import { agentPickerNeeded, defaultAgentFor } from "../app/orchestrator/agents";
 import type { AgentsBundle } from "../app/orchestrator/types";
 
 // Settings persist across tests (one shared DB per suite run) — reset every key
@@ -160,6 +160,39 @@ describe("defaultAgentFor (client, connected-first)", () => {
 
   it("falls back to existence when nothing is connected", () => {
     expect(defaultAgentFor(bundle({ claude: false, codex: false }), null)).toBe("claude");
+  });
+
+  // The picker hides when there's nothing to choose. Every driver is always
+  // registered, so the "one agent registered" case never fires on a real
+  // instance; the case that matters is one agent CONNECTED and already picked.
+  describe("agentPickerNeeded", () => {
+    it("hides with a single registered agent", () => {
+      expect(agentPickerNeeded(bundle({ claude: true }), "claude")).toBe(false);
+      expect(agentPickerNeeded(bundle({ claude: false }), "claude")).toBe(false);
+    });
+
+    it("hides when the only connected agent is the one selected", () => {
+      expect(agentPickerNeeded(bundle({ claude: true, codex: false }), "claude")).toBe(false);
+      expect(agentPickerNeeded(bundle({ claude: false, codex: true }), "codex")).toBe(false);
+      // What defaultAgentFor picks is what the New-task dialog opens on, so a
+      // Claude-only instance never renders the picker for a new task.
+      const b = bundle({ claude: true, codex: false });
+      expect(agentPickerNeeded(b, defaultAgentFor(b, "codex"))).toBe(false);
+    });
+
+    it("shows when the selected agent is NOT the lone connected one", () => {
+      // An old Codex task in Edit, or a project default that was signed out:
+      // the picker is the way off it and carries the Connect CTA.
+      expect(agentPickerNeeded(bundle({ claude: true, codex: false }), "codex")).toBe(true);
+    });
+
+    it("shows when two or more agents are connected", () => {
+      expect(agentPickerNeeded(bundle({ claude: true, codex: true }), "claude")).toBe(true);
+    });
+
+    it("shows when nothing is connected, so the Connect CTA still renders", () => {
+      expect(agentPickerNeeded(bundle({ claude: false, codex: false }), "claude")).toBe(true);
+    });
   });
 });
 
