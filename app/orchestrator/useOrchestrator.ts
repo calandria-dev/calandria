@@ -302,13 +302,6 @@ export function useOrchestrator() {
     setWizardOpen(true);
   }, [setView]);
 
-  // Who unlocked this instance (Cloudflare Access identity, shown in the
-  // titlebar). null when enforcement is off — e.g. local dev — hides the chip.
-  const [accessEmail, setAccessEmail] = useState<string | null>(null);
-  useEffect(() => {
-    jget<{ email: string | null }>("/api/me").then((r) => setAccessEmail(r.email)).catch(() => {});
-  }, []);
-
   // initial load (also the Retry target when the first fetch fails)
   const boot = useCallback(() => {
     setBootError(null);
@@ -953,7 +946,7 @@ export function useOrchestrator() {
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
     settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
     onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated, baseBranchTick,
-    layout, setLayout, accessEmail, recaps,
+    layout, setLayout, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions

@@ -200,7 +200,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tb-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--r-sm);color:var(--ink-3);border:1px solid transparent;}
 .tb-icon:hover{background:var(--panel);color:var(--ink);border-color:var(--line);}
 .tb-icon.on{color:var(--accent);border-color:var(--accent-soft);background:var(--accent-soft);}
-.tb-avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--on-accent);flex:0 0 auto;}
 
 /* Instance-wide "an agent's login expired" strip, between the titlebar and the
    workspace. Not dismissible on purpose: no session can run until it's fixed. */
