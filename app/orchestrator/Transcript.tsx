@@ -46,6 +46,18 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
       </div>
     );
   }
+  // fail: the exit status and the LAST lines — the reason for a non-zero exit
+  // is at the end of the output, so that's what shows without expanding. Only
+  // the status is red; the output itself isn't the error.
+  if (peek.kind === "fail") {
+    return (
+      <div className="tpeek tpeek-fail">
+        <div className="tpeek-sum">{corner}<span className="tpeek-fail-label">{peek.label ?? "Failed"}</span></div>
+        <pre className="tpeek-pre">{peek.lines.join("\n") || "(no output)"}</pre>
+        {peek.omitted ? <button className="tpeek-more btn-link" onClick={onExpand}>+{peek.omitted} earlier lines</button> : null}
+      </div>
+    );
+  }
   // lines (Bash output)
   return (
     <div className="tpeek tpeek-lines">
@@ -64,8 +76,12 @@ function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (fi
   const [open, setOpen] = useState(false);
   const hasDiff = !!data.diff?.length;
   const expandable = !!(data.detail || hasDiff || data.result !== undefined);
-  // Failures surface their output automatically, like Claude Code.
-  const showBody = open || (!!data.isError && data.result !== undefined);
+  // A failure surfaces its reason without a click. Results persisted with a
+  // `fail` peek show it there (status + the tail of the output); older rows
+  // and drivers that peek nothing fall back to opening the whole body, which
+  // is what every failure did before — 6000 red chars with the reason clipped
+  // off the end, i.e. an "error banner" over output that looked fine.
+  const showBody = open || (!!data.isError && data.result !== undefined && !data.peek);
   const file = data.file;
   return (
     <div className="tool">

@@ -1121,6 +1121,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 button.tpeek-more{display:block;margin:5px 0 0 19px;text-align:left;}
 button.tpeek-more:hover{color:var(--accent-ink);}
 .tpeek-sum{display:flex;align-items:center;gap:8px;padding-bottom:3px;}
+.tpeek-fail-label{color:var(--err);font-weight:700;}
 .tpeek-pre{margin:3px 0 0 19px;padding:7px 10px;font-family:var(--mono);font-size:11px;line-height:1.5;background:var(--surface);border:1px solid var(--line-2);border-radius:6px;white-space:pre;overflow-x:auto;color:var(--ink-2);max-height:170px;overflow-y:auto;}
 .tpeek-pre.diff{padding:6px 0;white-space:pre;}
 .tpeek-pre .dl{padding:0 10px;}
