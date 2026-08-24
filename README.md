@@ -71,8 +71,9 @@ silently dying with the process).
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
   conflicts, merge, or create a GitHub PR from the same screen.
-- **Collaborate on documents:** open a file the agent wrote as a document —
-  edit the text, select passages and attach comments — and send the lot back
+- **Collaborate on documents:** open a file the agent wrote as a document
+  (mermaid fences rendered as diagrams) — edit the text, select passages and
+  attach comments — and send the lot back
   as one message: your comments in place (saved as you go), your edits either
   written straight into the task's worktree (default) or sent as a diff for
   the agent to apply. Reachable from the diff or straight from the Write/Edit
