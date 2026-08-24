@@ -30,7 +30,8 @@ counts and published prices and carries a `~`.
 ## Plan usage meter
 
 On a Claude Pro/Max subscription login, the titlebar shows a compact meter with the current
-session (5-hour) and week (7-day) plan utilization — running many parallel sessions burns a
+session (5-hour) and week (7-day) plan utilization — plus the time left before the session
+window resets, since that's the number you pace dispatches against — running many parallel sessions burns a
 plan faster than one terminal, so the remaining headroom is worth a glance before dispatching
 more work. Click it for the full breakdown: every window Anthropic reports (including
 per-model weeks), reset times, and data freshness. The pill tints amber at 80% and red at
