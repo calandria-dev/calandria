@@ -105,6 +105,11 @@ export function init(db: Database.Database) {
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
       position    INTEGER NOT NULL DEFAULT 0,
+      -- Context-window occupancy as the agent's stream last reported it (the
+      -- latest main-session request's input-side tokens). NULL = never
+      -- measured: the gauge then falls back to the current generation's last
+      -- usage row and labels itself an estimate. Reset to NULL by /clear.
+      context_measured INTEGER,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
@@ -622,6 +627,10 @@ export function migrate(db: Database.Database) {
   // Why an agent withdrew a tray suggestion (lib/agentTools withdrawSuggestionForAgent).
   // Empty on every pre-existing row, which is correct: nothing was ever withdrawn before.
   if (!taskCols.includes("withdrawn_reason")) db.exec("ALTER TABLE tasks ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''");
+  // Measured context-window occupancy (see the schema comment). No backfill:
+  // NULL is the honest value for every pre-existing row, and is exactly what
+  // routes the gauge to the usage-derived estimate it showed before.
+  if (!taskCols.includes("context_measured")) db.exec("ALTER TABLE tasks ADD COLUMN context_measured INTEGER");
   // Which schedule minted this task (lib/scheduler.ts). SET NULL rather than
   // cascade — deleting a schedule must not delete the work it produced.
   if (!taskCols.includes("schedule_id")) db.exec("ALTER TABLE tasks ADD COLUMN schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL");

@@ -86,6 +86,17 @@ export interface AgentCapabilities {
    * with an ~ and labels it estimated. Mutually exclusive with reportsCostUsd.
    */
   costIsEstimated: boolean;
+  /**
+   * The turn stream emits `context` events — the agent's own report of how
+   * many tokens the window currently holds (StreamEvent in lib/types.ts).
+   * False = the gauge is derived from the last usage report instead, which
+   * on a tool-heavy turn sums many requests and over-reads; the UI labels
+   * that figure an estimate. Codex is false: `codex exec`'s JSONL carries
+   * only the thread's running totals on turn.completed (the per-request
+   * `last_token_usage` exists in the binary, but only on the app-server
+   * protocol the SDK doesn't speak).
+   */
+  reportsContext: boolean;
   /** Turns can resume a prior session/thread id (tasks.session_id). */
   supportsResume: boolean;
   /**
