@@ -35,6 +35,19 @@ function fmtReset(ms: number): string {
   return `${d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" })}, ${time}`;
 }
 
+// Time left in a window, compact ("18m", "3h05m"). Null once the reset is
+// past or unreported. Recomputed on every poll re-render, so it's at worst a
+// minute stale — the same granularity it displays.
+function fmtRemaining(resetsAt: number | null): string | null {
+  if (resetsAt == null) return null;
+  const mins = Math.ceil((resetsAt - Date.now()) / 60_000);
+  if (mins <= 0) return null;
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h${String(m).padStart(2, "0")}m` : `${h}h`;
+}
+
 function agoText(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
   if (s < 90) return "just now";
@@ -81,6 +94,11 @@ export function PlanUsagePill() {
 
   const session = snap.windows.find((w) => w.id === "five_hour");
   const week = snap.windows.find((w) => w.id === "seven_day");
+  // Session reset countdown, on the pill itself: the 5-hour window is the one
+  // you pace work against ("can I dispatch another batch before it rolls?"),
+  // so its time-to-reset earns pill space where the week's doesn't — the
+  // popover still shows every window's reset in full.
+  const sessionLeft = session ? fmtRemaining(session.resetsAt) : null;
   const rejected = snap.status === "rejected";
   const worst = Math.max(...snap.windows.map((w) => w.utilization));
   const t = tone(worst, rejected);
@@ -93,7 +111,12 @@ export function PlanUsagePill() {
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         title={`Claude ${planName ? `${planName} ` : ""}plan usage — click for the breakdown`}
       >
-        {session && <span className="pp-seg">5h {Math.floor(session.utilization)}%</span>}
+        {session && (
+          <span className="pp-seg">
+            5h {Math.floor(session.utilization)}%
+            {sessionLeft && <span className="pp-left"> ({sessionLeft})</span>}
+          </span>
+        )}
         {session && week && <span className="pp-div">·</span>}
         {week && <span className="pp-seg">wk {Math.floor(week.utilization)}%</span>}
         {!session && !week && <span className="pp-seg">{Math.floor(worst)}%</span>}

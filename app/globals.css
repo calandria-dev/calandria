@@ -714,6 +714,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
 .plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
 .plan-pill .pp-div{opacity:.5;}
+.plan-pill .pp-left{opacity:.7;}
 .plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
 .plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
 .pu-menu{width:270px;padding-bottom:8px;}
