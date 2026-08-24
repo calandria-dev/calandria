@@ -4,9 +4,70 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
-import { PROJECTS_DIR } from "./config";
+import { GH_BIN, PROJECTS_DIR } from "./config";
 
 const run = promisify(execFile);
+
+// ---------- binary resolution ----------
+
+// Where package managers that DON'T land in a minimal system PATH put gh.
+// The server process never reads a shell profile (systemd unit, container,
+// `npm start` from a non-login context), so linuxbrew/Homebrew/snap installs
+// that work fine in the user's terminal ENOENT here without this probe.
+const GH_PROBE_DIRS = [
+  "/home/linuxbrew/.linuxbrew/bin",
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/snap/bin",
+  path.join(os.homedir(), ".local", "bin"),
+];
+
+const isExecutable = (p: string): boolean => {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The gh binary to spawn: ORCH_GH_BIN if set (taken verbatim — a wrong path
+ * should fail loudly, not be silently papered over by the probe), else bare
+ * "gh" when the server's PATH can resolve it, else the first hit in the
+ * well-known install dirs. Falls back to "gh" so the ENOENT lands in the
+ * callers' existing not-installed handling. Re-resolved per call on purpose
+ * (a handful of stat()s): installing gh mid-session works on the next click.
+ */
+export function resolveGhBin(
+  configured: string = GH_BIN,
+  pathEnv: string = process.env.PATH || "",
+  probeDirs: string[] = GH_PROBE_DIRS,
+): string {
+  if (configured) return configured;
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (dir && isExecutable(path.join(dir, "gh"))) return "gh";
+  }
+  for (const dir of probeDirs) {
+    const candidate = path.join(dir, "gh");
+    if (isExecutable(candidate)) return candidate;
+  }
+  return "gh";
+}
+
+/**
+ * What to tell a human when spawning gh ENOENT'd. "Not installed" was the old
+ * message and it sent people the wrong way: the common case is gh IS installed
+ * but only the user's shell profile puts it on PATH, which the server process
+ * never reads.
+ */
+export function ghMissingMessage(configured: string = GH_BIN): string {
+  if (configured)
+    return `GitHub CLI not found: ORCH_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
+  return (
+    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set ORCH_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
+  );
+}
 
 // GitHub onboarding, built on the `gh` CLI (bundled in the container image).
 // All state gh writes — the OAuth token (~/.config/gh/hosts.yml) and the git
@@ -32,7 +93,7 @@ export interface GhStatus {
 /** Is gh present, and is anyone logged in to github.com? */
 export async function ghStatus(): Promise<GhStatus> {
   try {
-    const { stdout, stderr } = await run("gh", ["auth", "status", "--hostname", "github.com"], { timeout: 15_000 });
+    const { stdout, stderr } = await run(resolveGhBin(), ["auth", "status", "--hostname", "github.com"], { timeout: 15_000 });
     // "✓ Logged in to github.com account <login> (keyring)" (or "as <login>" on older gh).
     const m = `${stdout}\n${stderr}`.match(/Logged in to \S+ (?:account|as) ([\w-]+)/);
     return { installed: true, authenticated: true, login: m ? m[1] : null };
@@ -43,7 +104,7 @@ export async function ghStatus(): Promise<GhStatus> {
 }
 
 export async function ghLogout(): Promise<void> {
-  await run("gh", ["auth", "logout", "--hostname", "github.com"], { timeout: 15_000 });
+  await run(resolveGhBin(), ["auth", "logout", "--hostname", "github.com"], { timeout: 15_000 });
 }
 
 // ---------- device-flow login session ----------
@@ -146,7 +207,7 @@ export async function startLogin(): Promise<LoginSession> {
   try {
     // BROWSER=true: gh "opens" the verification URL with /bin/true instead of
     // erroring on a headless box — the user opens the link we show in the UI.
-    st.proc = ptySpawn("gh", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"], {
+    st.proc = ptySpawn(resolveGhBin(), ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"], {
       name: "xterm-256color",
       cols: 200,
       rows: 50,
@@ -203,7 +264,7 @@ export async function startLogin(): Promise<LoginSession> {
       if (st.timer) clearTimeout(st.timer);
       // gh already configured the credential helper (we answered Yes above);
       // run setup-git anyway so a quirky version still leaves git working.
-      run("gh", ["auth", "setup-git", "--hostname", "github.com"], { timeout: 15_000 }).catch(() => {});
+      run(resolveGhBin(), ["auth", "setup-git", "--hostname", "github.com"], { timeout: 15_000 }).catch(() => {});
     }
   });
 
@@ -247,7 +308,7 @@ export interface GhRepo {
 /** The user's repos, most recently pushed first (gh's default ordering). */
 export async function listRepos(): Promise<GhRepo[]> {
   const { stdout } = await run(
-    "gh",
+    resolveGhBin(),
     ["repo", "list", "--limit", "200", "--json", "nameWithOwner,description,isPrivate,updatedAt"],
     { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }
   );
@@ -288,7 +349,7 @@ export async function cloneRepo(spec: string): Promise<{ path: string; branch: s
   const { installed, authenticated } = await ghStatus();
   try {
     if (installed && authenticated && githubSpec) {
-      await run("gh", ["repo", "clone", spec, dest], opts);
+      await run(resolveGhBin(), ["repo", "clone", spec, dest], opts);
     } else {
       const url = OWNER_REPO.test(spec) ? `https://github.com/${spec}.git` : spec;
       await run("git", ["clone", url, dest], opts);
@@ -355,8 +416,7 @@ export async function createTaskPr(input: {
   const { worktreePath, workBranch, baseBranch, title, body } = input;
 
   const st = await ghStatus();
-  if (!st.installed)
-    return { ok: false, error: "GitHub CLI (gh) is not installed — install it from https://cli.github.com, then try again" };
+  if (!st.installed) return { ok: false, error: ghMissingMessage() };
   if (!st.authenticated)
     return { ok: false, error: "gh is not logged in to GitHub — connect GitHub in Settings (or run `gh auth login`), then try again" };
 
@@ -382,7 +442,7 @@ export async function createTaskPr(input: {
 
   // Already an open PR for this branch? The push above just updated it.
   try {
-    const { stdout } = await run("gh", ["pr", "list", "--head", workBranch, "--state", "open", "--json", "url", "--limit", "1"], opts);
+    const { stdout } = await run(resolveGhBin(), ["pr", "list", "--head", workBranch, "--state", "open", "--json", "url", "--limit", "1"], opts);
     const found = JSON.parse(stdout || "[]") as { url?: string }[];
     if (found[0]?.url) return { ok: true, url: found[0].url, existing: true };
   } catch {
@@ -392,7 +452,7 @@ export async function createTaskPr(input: {
   try {
     // `--flag=value` form so a title/body that begins with "-" can't be read as a flag.
     const { stdout } = await run(
-      "gh",
+      resolveGhBin(),
       ["pr", "create", `--head=${workBranch}`, `--base=${baseBranch}`, `--title=${title}`, `--body=${body}`],
       opts
     );

@@ -220,6 +220,7 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
 | `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
+| `ORCH_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
 
 Example — relocate an instance entirely via env:
 
