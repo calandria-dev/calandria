@@ -52,7 +52,7 @@ diff header in the Changes tab, and the **Write**/**Edit** tool card in the tran
 card is keyed on the path the agent wrote rather than on git status, so a document under a
 gitignored directory — which the diff never lists — opens the moment it's written. It opens
 the file as a document with two tabs — **Edit** (a source editor, beside a live render for
-markdown) and **Comment** (select a passage, attach a note; plus a general comments box) —
+markdown, with ```mermaid fences drawn as diagrams) and **Comment** (select a passage, attach a note; plus a general comments box) —
 and **Send to agent** turns your edits into a unified diff (or writes them straight into the
 worktree, the default) and your comments into located, quoted feedback, in one message
 through the ordinary chat path. Passage comments save as you add them and survive a reload;

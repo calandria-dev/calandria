@@ -15,8 +15,9 @@ and knows nothing about git status.
 It opens the file as a document — not hunk by hunk — so you can work on it the
 way you'd proofread in a word processor:
 
-- **Edit** — a source editor beside a live render (markdown), or the editor
-  alone with syntax picked from the filename (any other text file). Untouched
+- **Edit** — a source editor beside a live render (markdown; a ```mermaid
+  fence renders as a diagram, see below), or the editor alone with syntax
+  picked from the filename (any other text file). Untouched
   lines never change; how the edited ones reach the file is the **Edits**
   picker in the footer (it appears once you've changed something, and the
   choice is remembered per browser):
@@ -86,6 +87,24 @@ substring of the source, then by a markdown-syntax-insensitive match that
 tolerates emphasis, code spans, list markers, links and soft line breaks. When
 neither finds it, the packet says so and the heading is the anchor.
 
+## Diagrams
+
+A ```` ```mermaid ```` fence renders as the diagram it describes, in both tabs
+(`<Markdown diagrams>` → `app/Mermaid.tsx`), so an agent's design doc reads as
+a design doc and a passage comment can be attached to a node label like any
+other text. The transcript keeps showing the fence as code, deliberately:
+a message re-renders on every streamed token, so a half-written diagram would
+fail to parse on each one — and a document is read whole. In the Edit tab the
+render follows the source with a short debounce, and a source that doesn't
+parse keeps the **last good diagram** on screen, dimmed, with the parser's
+message under it — a diagram being typed is invalid far more often than
+valid, and the picture blinking out on every keystroke would make the live
+render useless exactly when it's wanted. Rendering runs with mermaid's
+`strict` security level (the SVG goes through DOMPurify — the source is
+whatever the agent or the user wrote) and follows the app theme. `mermaid` is
+loaded on first use with a dynamic import, so its ~2MB never reaches a session
+that opens no diagram.
+
 ## Comments are saved as you go
 
 Passage comments persist the moment you add them — `task_doc_comments`, via
@@ -134,7 +153,7 @@ needed.
 Dependencies added: `diff` (jsdiff, the unified patch), `@uiw/react-codemirror`,
 `@codemirror/lang-markdown`, `@codemirror/language-data` — CodeMirror is loaded
 through `next/dynamic` so it stays out of the main bundle until a document is
-opened.
+opened — and `mermaid`, loaded the same lazy way on the first diagram.
 
 ## What the spike does not do (yet)
 
