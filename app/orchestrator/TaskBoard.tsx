@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
@@ -8,7 +8,7 @@ import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
-import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
+import { StatusDot, PriPill, SearchBar, AgentBadge, useCoarsePointer } from "./shared";
 import { DiffFooter } from "./DiffFooter";
 
 // The kanban alternative to the grouped task list (layout from the Claude
@@ -17,25 +17,6 @@ import { DiffFooter } from "./DiffFooter";
 // update as sessions stream — and dragging a card re-statuses it and/or
 // persists a new manual order.
 type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "snoozed" | "on_hold" | "done" | "cancelled";
-
-// On touch devices the cards must not carry draggable=true: iOS Safari routes
-// taps on a draggable element into its drag recognizer instead of synthesizing
-// a click for the <article role="button"> (only taps landing on a text node —
-// the title — still clicked through, which is exactly the bug this fixes).
-// HTML5 drag-and-drop isn't a workable board interaction on a phone anyway;
-// status changes go through the card's edit dialog / list view instead.
-// SSR renders false and the effect corrects on mount, same as useIsMobile.
-function useCoarsePointer() {
-  const [coarse, setCoarse] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(pointer: coarse)");
-    const sync = () => setCoarse(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
-  return coarse;
-}
 
 const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "snoozed", "on_hold", "done", "cancelled"];
 

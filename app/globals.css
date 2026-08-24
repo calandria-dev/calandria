@@ -1266,8 +1266,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .composer-inner{max-width:var(--text-width);margin:0 auto;position:relative;}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* The row bottom-aligns so the send button hugs the last line as the box grows.
+   The textarea's vertical padding is sized so ONE line of text stands as tall
+   as the send button (21px line + 2×6.5 = 34px desktop; 24px + 2×8 = 40px
+   mobile, see the phone block) — without it the empty-ish textarea bottom-aligns
+   inside the taller row and the first line of text sits at the bottom of the
+   box. scrollHeight includes the padding, so autosize keeps working. */
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
-.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;}
+.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;}
 .comp-area textarea::placeholder{color:var(--ink-4);}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
@@ -1684,7 +1690,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   /* Composer: 16px text stops iOS from zooming on focus; pad out the bottom for
      the home indicator. The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px calc(12px + env(safe-area-inset-bottom));}
-  .app.mobile .comp-area textarea{font-size:16px;}
+  /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
+     line against the 40px send button (see .comp-area's comment). */
+  .app.mobile .comp-area textarea{font-size:16px;padding:8px 0;}
   .app.mobile .comp-foot{display:none;}
   .app.mobile .send{width:40px;height:40px;}
 
@@ -1717,6 +1725,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    bottom-padding/z-index bookkeeping is needed. The full-screen terminal sheet
    (z-index 150, see .mterm) paints over it when the Terminals tab is open. */
 .mtabbar{display:flex;flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom);}
+/* While the on-screen keyboard is up (a text field is focused), the tab bar
+   would otherwise ride on top of it — 100dvh shrinks to the visible viewport
+   and the bottom-docked bar lands right above the keys, between them and the
+   composer. Hide it for the duration; it returns on blur. Text-type inputs
+   only: focusing a checkbox raises no keyboard and must not blink the bar. */
+.app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
 .mtabbar-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:8px 0;background:none;border:0;color:var(--dim);font-size:10px;cursor:pointer;}
 .mtabbar-item svg{width:18px;height:18px;}
 .mtabbar-item.on{color:var(--accent);}

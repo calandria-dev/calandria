@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { attachmentMarker, fileAttachmentMarker } from "./format";
+import { useCoarsePointer } from "./shared";
 import { PASTE_ATTACH_THRESHOLD } from "@/lib/promptLimits";
 import type { AgentCommand } from "@/lib/agents/types";
 import type { TaskRow } from "./types";
@@ -48,6 +49,10 @@ type MenuCommand = { name: string; desc: string; hint?: string; aliases?: string
 
 export function Composer({ task, agentLabel, disabled, running, onSend, onStop, onClear }: { task: TaskRow; agentLabel: string; disabled: boolean; running: boolean; onSend: (t: string) => void; onStop: () => void; onClear: () => void }) {
   const [val, setVal] = useState(() => loadDraft(task.id));
+  // On a touch keyboard, return means "new line" — there is no Shift to hold,
+  // and the send button is the one visible affordance for sending. Enter-to-send
+  // stays a hardware-keyboard behavior.
+  const coarse = useCoarsePointer();
   const [slash, setSlash] = useState(false);
   // The agent's own slash commands, fetched once per task the first time the
   // user types "/". Lazy because a task the user only reads should never spawn
@@ -290,7 +295,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
                   choose(highlighted);
                   return;
                 }
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+                if (e.key === "Enter" && !e.shiftKey && !coarse) { e.preventDefault(); submit(); }
                 if (e.key === "Escape") setSlash(false);
               }}
               onPaste={(e) => {

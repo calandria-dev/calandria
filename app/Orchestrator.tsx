@@ -212,6 +212,14 @@ export default function Orchestrator() {
     if (isMobile && selTask && selTask !== prevSelTaskRef.current) setMobileTab("board");
     prevSelTaskRef.current = selTask;
   }, [isMobile, selTask]);
+  // …and the selTask watch above can't see a jump to the task that's ALREADY
+  // selected (needs-you row for the chat you left to look at Diffs), so every
+  // goToTask also bumps navEpoch: an explicit "navigate somewhere" signal that
+  // snaps the tab back to the board even when no selection changed.
+  useEffect(() => {
+    if (isMobile && o.navEpoch > 0) setMobileTab("board");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, o.navEpoch]);
   const selectMobileTab = (t: MobileTabId) => {
     setMobileTab(t);
     if (t === "insights") o.setView("insights");

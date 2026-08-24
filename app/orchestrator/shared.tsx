@@ -6,6 +6,22 @@ import type { Priority, Status } from "@/lib/types";
 import { Icon, AgentMark } from "../icons";
 import { SCLS, SLABEL, AWAIT_LABEL } from "./types";
 
+// Touch-device detection, shared by every surface that must behave differently
+// under a finger (TaskBoard drops draggable=true, the Composer's return key
+// inserts a newline instead of sending). SSR renders false and the effect
+// corrects on mount — the same pattern as useIsMobile in Orchestrator.tsx.
+export function useCoarsePointer() {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCoarse(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return coarse;
+}
+
 export function StatusDot({ status, running, awaiting, background, lg }: { status: Status; running?: boolean; awaiting?: boolean; background?: boolean; lg?: boolean }) {
   // Signal language (mission-control): "needs your input" is an alert coral, a
   // *live* working session is blue (both pulse to draw the eye), and an idle
