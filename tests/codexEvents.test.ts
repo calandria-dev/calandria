@@ -141,6 +141,8 @@ describe("codex event mapping", () => {
     const bad = results.find((r) => r.id === "item_m1")!;
     expect(bad.isError).toBe(true);
     expect(bad.content).toBe("tool exploded");
+    // …and a tail-first failure peek, so the card shows the reason unexpanded.
+    expect(bad.peek).toEqual({ kind: "fail", label: undefined, lines: ["tool exploded"], omitted: 0 });
 
     // Item-level and turn-level failures both surface as error events.
     const errors = (byType(evs, "error") as Extract<StreamEvent, { type: "error" }>[]).map((e) => e.content);

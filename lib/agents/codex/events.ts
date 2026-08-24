@@ -25,7 +25,7 @@ import type {
 // The SDK's Usage, with every counter optional: the app reads a `codex` binary
 // the user installed, which may be older or newer than the SDK types.
 type TurnCompletedUsage = Partial<Usage>;
-import { clip, summarizeResult, resultText } from "../shared";
+import { clip, clipKeepTail, summarizeResult, summarizeFailure, resultText } from "../shared";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
 import { codexUsage } from "./usage";
 
@@ -181,12 +181,14 @@ function mapCommand(phase: ItemPhase, item: CommandExecutionItem, state: CodexMa
   if (phase === "completed") {
     const raw = item.aggregated_output ?? "";
     const isError = item.status === "failed" || (item.exit_code != null && item.exit_code !== 0);
+    // A failure keeps its tail (stderr lands there) and peeks tail-first;
+    // codex reports the exit status as a field rather than an output line.
     out.push({
       type: "tool_result",
       id: item.id,
-      content: clip(raw, 6000),
+      content: isError ? clipKeepTail(raw, 6000) : clip(raw, 6000),
       isError,
-      peek: summarizeResult("output", raw),
+      peek: isError ? summarizeFailure(raw, item.exit_code) : summarizeResult("output", raw),
     });
   }
   return out;
@@ -200,7 +202,7 @@ function mapFileChange(phase: ItemPhase, item: FileChangeItem, state: CodexMapSt
   const tool = toolOnce(state, item.id, describeFileChange(item.changes));
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed" && item.status === "failed") {
-    out.push({ type: "tool_result", id: item.id, content: "Patch failed", isError: true });
+    out.push({ type: "tool_result", id: item.id, content: "Patch failed", isError: true, peek: summarizeFailure("Patch failed") });
   }
   return out;
 }
@@ -240,9 +242,9 @@ function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): 
     out.push({
       type: "tool_result",
       id: item.id,
-      content: clip(content, 6000),
+      content: isError ? clipKeepTail(content, 6000) : clip(content, 6000),
       isError,
-      peek: isError ? undefined : summarizeResult("output", content),
+      peek: isError ? summarizeFailure(content) : summarizeResult("output", content),
     });
   }
   return out;

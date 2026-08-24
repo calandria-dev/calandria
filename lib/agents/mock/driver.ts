@@ -46,6 +46,7 @@ import {
   blockedReason,
   DENIED_BY_USER,
 } from "@/lib/permissions";
+import { summarizeFailure } from "@/lib/agents/shared";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
@@ -215,7 +216,8 @@ export const mockDriver: AgentDriver = {
         peek: { kind: "count", text: "1 file" },
       };
       if (!abs) {
-        yield { type: "tool_result", id, content: `refused path outside worktree: ${w.rel}`, isError: true };
+        const refused = `refused path outside worktree: ${w.rel}`;
+        yield { type: "tool_result", id, content: refused, isError: true, peek: summarizeFailure(refused) };
         continue;
       }
       fs.mkdirSync(path.dirname(abs), { recursive: true });
