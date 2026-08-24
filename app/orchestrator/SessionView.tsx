@@ -8,8 +8,9 @@ import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, 
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, RAIL_W,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow,
 } from "./types";
+import { GroupBadge, selectGroupFilter } from "./GroupChips";
 import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { capsFor, agentLabel, findAgent } from "./agents";
@@ -169,8 +170,8 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
-  project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
+export function SessionView({ project, task, group, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+  project: ProjectRow; task: TaskRow; group?: TaskGroupRow | null; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
@@ -403,6 +404,9 @@ export function SessionView({ project, task, agents, messages, running, blockedB
           {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
         </a>
       )}
+      {/* Which feature this session is a step of. Clicking selects the
+          group's chip in the list/board, the way the row badges do. */}
+      {group && <GroupBadge group={group} onSelect={() => selectGroupFilter(project.id, group.id)} />}
       <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
       {(task.cost_usd > 0 || task.total_tokens > 0) && (
         <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>

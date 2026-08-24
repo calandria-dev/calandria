@@ -86,6 +86,15 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
       window.dispatchEvent(new CustomEvent("orch:runbooks", { detail: ev.projectId }));
       return;
     }
+    // A project's task groups changed (create/rename/recolor/delete — here, in
+    // another tab, or by an agent). The groups ride the project GET with their
+    // derived counts, so this is task_edited's answer: refetch the tray, if
+    // it's the one on screen. A deleted group also nulled its members'
+    // group_id, which the same refetch picks up.
+    if (ev.type === "task_groups_changed") {
+      if (selProjRef.current === ev.projectId) void loadTasks(ev.projectId, false);
+      return;
+    }
     // A notification the server composed for a human. Nothing in this hook's
     // state changes — the badges and spinners ride the task events below — so
     // it goes straight to the channel.

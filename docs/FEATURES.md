@@ -90,6 +90,39 @@ Use a compact list or a full-width kanban board with Suggested, Not started, In 
 Needs input, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
 
+### Groups
+
+A feature, a migration or a refactor is rarely one task, and until now the app had no noun
+for the set: a plan arrived as N rows related only by the moment they were filed. A **group**
+is that noun — a named, project-scoped container with a description, the nearest thing here
+to an epic (the word is avoided in the UI; a group can be two tasks). It is deliberately not
+a task: no session, no worktree, no status of its own. Its progress is derived from the
+members every time it's read — done when every member is done or cancelled — so there is
+no "close group" verb and nothing to go stale when a task is deleted or moved.
+
+Every task belongs to at most one group. Pick it in **New task** or **Edit task** from the
+**Group** field, above **Blocked by** (which feature comes before which step), where **New
+group…** mints one inline by name. Names are unique within a project; a collision says so.
+Groups never span projects: moving a task elsewhere clears its group, and the move field
+says as much beside the dropped blocked-by links.
+
+Once a project has a group, a chip bar appears over the task list and the board — **All ·
+Auth migration 3/7 · Mobile PWA 0/4 · Done (2)**. One chip narrows every status bucket, the
+Suggested tray included, to that group's members; the fraction is done over members still
+counted (a withdrawn or cancelled step leaves the denominator rather than reading as
+unfinished), a blue dot marks a group with a member waiting on you, and finished groups fold
+behind the **Done** chip so a long-lived project's bar isn't a wall of shipped work. The
+selection is remembered per project, like the collapsed Done section, and survives flipping
+between list and board. Each member carries a tinted badge with the group's name — after the
+title in the list, on the board card, in the suggested tray, and in the session header —
+and clicking any badge selects that chip. Dragging cards on the board is paused while a chip
+is active, for the same reason it pauses during a search: hidden cards would fall out of
+the order a drop persists.
+
+Deleting a group ungroups its members and never deletes them. Groups sit orthogonal to
+dependencies — a group says *belongs with*, an edge says *waits for*, and nothing is inferred
+from one to the other.
+
 ### Snoozing
 
 Not everything needs deciding today. The moon button on a task — in the list gutter, in the

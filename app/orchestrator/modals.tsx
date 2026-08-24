@@ -5,7 +5,8 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow } from "./types";
+import { groupProgress } from "./GroupChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
@@ -54,7 +55,73 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null }) => void; onOpenSetup?: () => void }) {
+// The Group field — which feature this task is a step of. A select over the
+// project's groups plus an inline "New group…" (name only; description and
+// color come from the group strip later). Sits above Blocked by in both task
+// dialogs, since "which feature" is decided before "which step". Without
+// `onCreate` (no project to mint into) it only offers the existing groups.
+export function GroupField({ groups, value, onChange, onCreate }: {
+  groups: TaskGroupRow[]; value: string | null; onChange: (id: string | null) => void;
+  onCreate?: (name: string) => Promise<TaskGroupRow>;
+}) {
+  const NEW = "__new__";
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // A remembered id that no longer names a group (deleted under the dialog)
+  // reads as "No group" rather than as an empty select.
+  const current = value && groups.some((g) => g.id === value) ? value : "";
+  const cancel = () => { setCreating(false); setName(""); setErr(null); };
+  const create = async () => {
+    const n = name.trim();
+    if (!n || !onCreate || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const g = await onCreate(n);
+      onChange(g.id);
+      cancel();
+    } catch (e) {
+      // 409 on a name collision: the group exists, so say so and leave the
+      // name in place — picking it from the select is one click away.
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (groups.length === 0 && !onCreate) return null;
+  return (
+    <div className="field group-field">
+      <div className="lab">Group <span className="opt">— which feature this is a step of</span></div>
+      <select value={creating ? NEW : current} aria-label="Group"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === NEW) { setCreating(true); return; }
+          cancel();
+          onChange(v || null);
+        }}>
+        <option value="">No group</option>
+        {groups.map((g) => <option key={g.id} value={g.id}>{g.name} · {groupProgress(g).label}</option>)}
+        {onCreate && <option value={NEW}>New group…</option>}
+      </select>
+      {creating && (
+        <div className="group-new">
+          <input type="text" value={name} placeholder="Group name, e.g. Auth migration" autoFocus aria-label="New group name"
+            onChange={(e) => { setName(e.target.value); setErr(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void create(); } if (e.key === "Escape") { e.stopPropagation(); cancel(); } }} />
+          <button className="btn btn-line btn-sm" disabled={!name.trim() || busy} onClick={() => void create()}>{busy ? "Creating…" : "Create"}</button>
+          <button className="btn btn-ghost btn-sm" onClick={cancel}>Cancel</button>
+        </div>
+      )}
+      {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
+      <div className="hlp">Groups filter the list and board, and badge every member. A group never spans projects.</div>
+    </div>
+  );
+}
+
+export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate, onCreateGroup, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; groups: TaskGroupRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null; group_id: string | null }) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onOpenSetup?: () => void }) {
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
@@ -98,7 +165,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
   // (null) can resolve to one that does, so it counts as unsafe-for-unattended
   // too — we deliberately don't guess what it resolves to and claim it's fine.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, permission_mode: permission });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, permission_mode: permission, group_id: groupId });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -147,6 +214,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
           </div>
         </div>
       )}
+      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -277,6 +345,7 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
           <div className="hlp" style={{ color: "var(--amber)" }}>
             Moves this task to {dest.name} right away — unsaved edits above are discarded.
             {links > 0 && ` ${links} blocked-by link${links !== 1 ? "s" : ""} drop${links === 1 ? "s" : ""}: dependencies can't span projects.`}
+            {task.group_id && " Its group is cleared: groups don't span projects either."}
             {switching && ` It will run on ${agentLabel(agents, switching)}, ${dest.name}'s default.`}
             {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
             {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
@@ -405,6 +474,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
+  // Grouped rows lose their group on the way (same rule as the links).
+  const grouped = selected.filter((t) => !!t.group_id).length;
   let dropped = 0;
   for (const t of tasks) {
     for (const dep of t.depends_on ?? []) {
@@ -549,6 +620,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
               <div className="hlp" style={{ color: "var(--amber)" }}>
                 Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.
                 {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""} — the other end isn't coming.`}
+                {grouped > 0 && ` ${grouped} ${grouped === 1 ? "is" : "are"} in a group; the move clears that — groups don't span projects.`}
                 {kept > 0 && ` ${kept} link${kept !== 1 ? "s" : ""} survive${kept === 1 ? "s" : ""}: both ends are moving together.`}
                 {switching > 0 && ` ${switching} will switch to ${agentLabel(agents, dest.default_agent || "claude")}, ${dest.name}'s default agent.`}
                 {contextFlips > 0 && ` ${contextFlips} will follow ${dest.name}'s project-context setting.`}
@@ -564,12 +636,13 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   );
 }
 
-export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, onDelete, onMove, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean }, action?: SaveAction) => void; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, onSave, onDelete, onMove, onCreateGroup, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean; group_id: string | null }, action?: SaveAction) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [agent, setAgent] = useState(task.agent);
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
+  const [groupId, setGroupId] = useState<string | null>(task.group_id ?? null);
   const [autoStart, setAutoStart] = useState(!!task.auto_start);
   const [confirmDel, setConfirmDel] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -577,7 +650,7 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
   const can = title.trim().length > 0;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0 }, action);
+  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0, group_id: groupId }, action);
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
   // gesture, rather than saving, closing, and hunting for the row again.
@@ -648,6 +721,7 @@ export function EditTaskModal({ task, tasks, projects, agents, onClose, onSave, 
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
+      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {/* Unlike the agent picker above, this is NOT gated on the task being
           unstarted: a started one can move by discarding the worktree it cut

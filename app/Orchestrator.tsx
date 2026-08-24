@@ -97,6 +97,9 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
 export default function Orchestrator() {
   const o = useOrchestrator();
   const { project, task, selProj, selTask, layout } = o;
+  // The selected task's group, for the session header's badge. Looked up here
+  // because both SessionView mounts (list layout, board slide-over) need it.
+  const taskGroup = task?.group_id ? o.groups.find((g) => g.id === task.group_id) ?? null : null;
   const isMobile = useIsMobile();
   const features = clientFeatures();
   // Resolves "system" against the OS preference for this quick toggle's icon/
@@ -254,7 +257,7 @@ export default function Orchestrator() {
       onBack={isMobile ? () => window.history.back() : undefined}
       width={layout.taskW}
       onCollapse={() => o.setLayout((l) => ({ ...l, taskCollapsed: true }))}
-      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
+      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} groups={o.groups} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
       sparklines={o.sparklines}
       loading={o.tasksLoading}
       view={o.taskView} onSetView={setTaskView} onMoveTask={o.moveTask}
@@ -276,7 +279,7 @@ export default function Orchestrator() {
             key={task.id}
             mobile={isMobile}
             onBack={isMobile ? () => window.history.back() : undefined}
-            project={project} task={task} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
+            project={project} task={task} group={taskGroup} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
             transcriptLoading={o.transcriptLoading}
             onSend={(text) => o.runTurn(task.id, text, false)}
             onStart={() => o.runTurn(task.id, "", true)}
@@ -349,7 +352,7 @@ export default function Orchestrator() {
   // Services/Terminal toggles keep working while the board is up).
   const boardWorkspace = project && (
     <BoardWorkspace
-      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested}
+      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} groups={o.groups}
       selTaskId={selTask} running={o.running} blockedBy={o.blockedBy} sparklines={o.sparklines} loading={o.tasksLoading}
       onSetView={setTaskView} onMoveTask={o.moveTask}
       onSelectTask={openBoardTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
@@ -370,7 +373,7 @@ export default function Orchestrator() {
             <div className="session-body">
               <SessionView
                 key={task.id}
-                project={project} task={task} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
+                project={project} task={task} group={taskGroup} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
                 transcriptLoading={o.transcriptLoading}
                 onSend={(text) => o.runTurn(task.id, text, false)}
                 onStart={() => o.runTurn(task.id, "", true)}
@@ -645,9 +648,9 @@ export default function Orchestrator() {
         <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
       )}
 
-      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} onClose={() => o.setModal(null)} onCreate={o.createTask} onOpenSetup={o.rerunOnboarding} />}
+      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} groups={o.groups} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateGroup={o.createGroup} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
-        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onOpenSetup={o.rerunOnboarding} />
+        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} groups={o.groups} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateGroup={o.createGroup} onOpenSetup={o.rerunOnboarding} />
       )}
       {bulkMoveIds && project && (
         <MoveTasksModal

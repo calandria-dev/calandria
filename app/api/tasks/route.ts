@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createTask, getProject, listAllTasksLite } from "@/lib/store";
+import { createTask, getProject, listAllTasksLite, getGroup } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +14,16 @@ export async function POST(req: Request) {
   if (!body?.project_id || !getProject(body.project_id))
     return NextResponse.json({ error: "valid project_id required" }, { status: 400 });
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
+  // Same screen the PATCH route applies: the group must exist and belong to
+  // the project the task is being filed into.
+  let groupId: string | null = null;
+  if (body.group_id) {
+    if (typeof body.group_id !== "string") return NextResponse.json({ error: "group_id must be a string" }, { status: 400 });
+    const group = getGroup(body.group_id);
+    if (!group) return NextResponse.json({ error: "no such group" }, { status: 400 });
+    if (group.project_id !== body.project_id) return NextResponse.json({ error: "group belongs to another project — a group can't span projects" }, { status: 400 });
+    groupId = group.id;
+  }
   const task = createTask({
     project_id: body.project_id,
     title: body.title.trim(),
@@ -31,6 +41,7 @@ export async function POST(req: Request) {
     // driver resolves anything it doesn't recognize (permissionModeFor), so a
     // stale or cross-agent value degrades to the default instead of 400ing.
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
+    group_id: groupId,
   });
   return NextResponse.json(task, { status: 201 });
 }
