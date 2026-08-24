@@ -8,6 +8,9 @@ import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./form
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { deferredStartFor } from "@/lib/usageReset";
+import { wakeLabel } from "./snooze";
+import { resetClock } from "./queuedStart";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
@@ -290,7 +293,20 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
 // changes), so unchanged messages skip re-rendering — and re-parsing their
 // markdown — entirely. Callers must pass identity-stable handlers or the memo
 // is defeated (SessionView wraps its handlers for exactly this reason).
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onCollaborate }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onCollaborate?: (file: string) => void }) {
+// The usage-limit notice's one action, supplied only for the LAST message of
+// the transcript (an old notice from a limit that has since healed must not
+// offer to queue anything): `queuedAt` is the task's start_at (0 = not
+// queued), `resetAt` the reset the plan meter currently reports (null = none
+// known — a Codex task, or no telemetry yet), and the two handlers set/clear
+// the deadline. See app/orchestrator/queuedStart.ts.
+export interface LimitResume {
+  queuedAt: number;
+  resetAt: number | null;
+  onQueue: (at: number) => void;
+  onCancel: () => void;
+}
+
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onCollaborate, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onCollaborate?: (file: string) => void; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -358,14 +374,32 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The agent's usage limit is spent: same shape as the two cases above, but
-    // the only recovery is waiting for the reset (the error line above the
-    // notice carries the reset time when the SDK reported one), so this renders
-    // the notice styled like the others with no action button.
+    // The agent's usage limit is spent: same shape as the two cases above. The
+    // only recovery is waiting for the reset — so the one action is to have
+    // the wait done for you: queue the task to resume on its own once the
+    // reset the plan meter reports has passed (lib/deferredStart.ts). Offered
+    // only on the newest message (see LimitResume) and only when a reset time
+    // is actually known; once queued, the same slot says so and offers Cancel.
     if (m.content.includes(USAGE_LIMIT_NOTICE)) {
       return (
         <div className="msg system overflow">
-          <div className="msg-body">{m.content}</div>
+          <div className="msg-body">
+            {m.content}
+            {limitResume && limitResume.queuedAt > 0 && (
+              <div className="overflow-actions queued">
+                <span className="queued-note">{Icon.clock()} Queued — resumes {wakeLabel(limitResume.queuedAt)}.</span>
+                <button className="btn btn-sm" onClick={limitResume.onCancel} title="Don't resume automatically">Cancel</button>
+              </div>
+            )}
+            {limitResume && limitResume.queuedAt === 0 && limitResume.resetAt != null && (
+              <div className="overflow-actions">
+                <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
+                  title="Resume this session on its own once the usage window resets — the queued follow-up if there is one, otherwise a continue prompt">
+                  {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
@@ -390,18 +424,18 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The glyph the PRODUCER wrote decides the tone: ✓/ℹ is good news (the
-    // "caught up to main" sync note, the parked-queue note), ⚠ is a warning
-    // (every runner error line is minted with one — tests/authFailure.test.ts
-    // and e2e/04 count errors by it) and so is ⏰ (a scheduled wakeup that
-    // will NOT fire, lib/agents/claude/sessionCrons.ts), and anything else is
-    // a quiet note — a background command settling, a service URL, a
-    // lingered wake-up (⏵).
+    // The glyph the PRODUCER wrote decides the tone: ✓/ℹ/▶ is good news (the
+    // "caught up to main" sync note, the parked-queue note, a deferred start
+    // firing at the usage-window reset), ⚠ is a warning (every runner error
+    // line is minted with one — tests/authFailure.test.ts and e2e/04 count
+    // errors by it) and so is ⏰ (a scheduled wakeup that will NOT fire,
+    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note —
+    // a background command settling, a service URL, a lingered wake-up (⏵).
     // This used to prepend ⚠ to glyph-less content, which turned every quiet
     // notice into an error banner: `Background command "…" completed (exit
     // code 0)` and the bare description of a command that ran fine both
     // rendered red.
-    const tone = /^[✓ℹ]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
+    const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
     return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
   }
   const isUser = m.role === "user";

@@ -108,6 +108,24 @@ explains itself. Opening the task clears that marker. Nothing sweeps for due sno
 timer, so one that comes due while the app is closed is simply already awake next time you
 look, and a running turn is unaffected: a snoozed task still works, it just stops asking.
 
+### Starting at the usage-window reset
+
+A spent subscription limit — Claude's five-hour window, the weekly cap — stops every turn on
+the instance until it resets, usually at an hour nobody wants to sit up for. The titlebar
+plan meter already shows when that is; **Start at reset** hands the wait to the server. On a
+task that hasn't started, the button sits beside **Start session** and queues the first
+turn for a minute after the reset the meter reports. On a task whose turn died on the limit,
+the notice in the transcript offers **Resume when the limit resets**: at the reset, the
+session picks up with the oldest queued follow-up if you left one, otherwise with a
+"continue where you left off" prompt. The task's card says *Starts at 4:49 PM* (or
+*Resumes …*) until then, the session header carries a chip that cancels it, and the
+transcript records why the session moved on its own. Starting or messaging the task by hand
+in the meantime consumes the queued start — nothing fires twice — and a queued task that is
+still blocked by another, or whose turn is already live, when its time comes is skipped
+with a note rather than started. The button only appears for an agent whose plan reports a
+reset time (a Codex task, or an API-key login, has nothing to aim at). The sweep runs in
+the server, so a start queued from a phone at midnight fires with no tab open.
+
 A misfiled task can be moved to another project from **Edit task**, keeping its description
 and transcript. The move drops any blocked-by links it had, since dependencies can't span
 projects.

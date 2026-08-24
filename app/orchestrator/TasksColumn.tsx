@@ -5,6 +5,7 @@ import { Icon } from "../icons";
 import { Logo } from "../Logo";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
+import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
@@ -97,6 +98,13 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           {Icon.lock()} Blocked by {blockedBy!.length === 1 ? blockedBy![0] : `${blockedBy!.length} tasks`}
         </div>
       ))}
+      {/* Queued for the usage-window reset (./queuedStart.ts) — blue like the
+          auto-start chip, since both say "this launches itself". */}
+      {isQueuedStart(task) && !running && (
+        <div className="blocked-chip auto" title={`Queued for the usage-window reset — ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
+          {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
+        </div>
+      )}
       {task.description && <div className="tdesc">{task.description}</div>}
       <DiffFooter task={task} points={sparkline} />
       <div className="task-foot">

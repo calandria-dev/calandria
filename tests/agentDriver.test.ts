@@ -63,7 +63,7 @@ vi.mock("@openai/codex-sdk", () => {
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createProject, createTask, getTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { createProject, createTask, getTask, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
@@ -136,6 +136,28 @@ describe("agent registry", () => {
 });
 
 describe("driver contract through the runner", () => {
+  it("any launched turn consumes a queued start (tasks.start_at) and announces the edit", async () => {
+    // "Start at the usage-window reset" (lib/deferredStart.ts) is one deadline
+    // on the row; a turn is what it was waiting for, so a turn the user sends
+    // BEFORE the reset must clear it — or the sweep would resume the session
+    // again when the reset passed, with a "continue" it didn't need.
+    const project = createProject({ name: "Queued" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    updateTask(task.id, { start_at: Date.now() + 3_600_000 });
+    script([{ type: "session", sessionId: "thread-q" }, { type: "done", sessionId: "thread-q" }]);
+    const edits: string[] = [];
+    const unsub = subscribeGlobal((tid, ev) => { if (tid === task.id && ev.type === "task_edited") edits.push(ev.type); });
+    const { done } = collectEvents(task.id);
+    try {
+      await startResumeTurn(getTask(task.id)!, project, "go early");
+      await done;
+    } finally {
+      unsub();
+    }
+    expect(getTask(task.id)!.start_at).toBe(0);
+    expect(edits).toEqual(["task_edited"]);
+  });
+
   it("persists and publishes a full scripted turn exactly like the Claude driver", async () => {
     const project = createProject({ name: "Contract" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
