@@ -346,6 +346,12 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .ap-face:hover{border-color:var(--line-strong);}
 .ap-face.on{border-color:var(--accent);}
 .ap-face input{accent-color:var(--accent);}
+/* Clicking the row focuses the radio THROUGH the label, which Chromium counts
+   as keyboard-ish focus — so the global :focus-visible outline boxed the radio
+   on every mouse selection. Keep a focus indicator (design rule: never bare
+   outline:none) but move it to the row, as the field-focus treatment. */
+.ap-face input:focus-visible{outline:none;}
+.ap-face:has(input:focus-visible){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .ap-face .ap-nm{font-size:12.5px;font-weight:600;min-width:140px;flex:0 0 auto;color:var(--ink);}
 .ap-face .ap-nm small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;}
 .ap-face .ap-sam{font-size:13px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
@@ -401,8 +407,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* active-row treatment (file-rail pattern from ui/Diffs.html): panel bg + an
    inset accent rule, layered under the elevation shadow the row already has. */
 .task.sel{background:var(--panel);border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent), var(--sh-2);}
-.task-top{display:flex;align-items:center;gap:9px;}
-.task .ttitle{flex:1;min-width:0;font-weight:650;font-size:13.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* flex-start (not center): the title wraps to two lines now, and the dot/chips
+   should hug its first line the way the board's .bc-top does. The right
+   padding keeps the priority pill clear of the snooze corner (.task-snz). */
+.task-top{display:flex;align-items:flex-start;gap:9px;padding-right:18px;}
+.task-top .pick-slot{margin-top:4px;}
+.task-top .agent-badge,.task-top .pri{margin-top:1px;}
+/* Two lines before the ellipsis — one line of a default-width column rarely
+   conveys the task, which is what the title is for. */
+.task .ttitle{flex:1;min-width:0;font-weight:650;font-size:13.5px;letter-spacing:-.01em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .task .tdesc{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.42;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .task-foot{display:flex;align-items:center;gap:8px;margin-top:9px;}
 .task-foot .activity{font-family:var(--mono);font-size:10px;color:var(--ink-3);display:flex;align-items:center;gap:5px;}
@@ -418,18 +431,25 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .diff-spark{flex:0 0 auto;margin-left:auto;display:block;}
 
 /* multi-select (bulk move) ------------------------------------------- */
-/* Each row is a card plus a fixed left gutter for its checkbox. The gutter is
-   ALWAYS reserved, even while the box is invisible, so nothing shifts on hover. */
-.task-row{display:flex;align-items:flex-start;gap:2px;}
-.task-row .task{flex:1;min-width:0;}
-.pickbox{flex:0 0 20px;display:grid;place-items:center;height:34px;cursor:pointer;opacity:0;transition:opacity .12s;}
+/* The card runs the column's full width (matching the suggested tray) — no
+   reserved gutters. The checkbox lives INSIDE the card, stacked over the
+   status dot: hovering a pickable row swaps dot → checkbox in place, so
+   nothing shifts and no width is spent. */
+.task-row{display:block;}
+.pickbox{display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .12s;}
 .pickbox input{cursor:pointer;margin:0;}
 .pickbox input:disabled{cursor:not-allowed;}
-/* Visible on hover, once picked, or anywhere in a list that has a selection
-   going — so the affordance is discoverable without making the list a form. */
-.task-row:hover .pickbox,.task-row.picked .pickbox,.sug:hover .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
+.pick-slot{position:relative;flex:0 0 auto;width:14px;height:14px;display:grid;place-items:center;}
+/* Slightly outset for a usable hit target; the label stops propagation, so a
+   miss that lands on it doesn't select the task. */
+.pick-slot .pickbox{position:absolute;inset:-4px;}
+/* Visible on hover (pickable rows only — a mid-turn row keeps its live dot),
+   once picked, or anywhere in a list that has a selection going — so the
+   affordance is discoverable without making the list a form. */
+.task-row:hover .pick-slot:not(.no-pick) .pickbox,.task-row.picked .pickbox,.sug:hover .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
+.task-row:hover .pick-slot:not(.no-pick) .sdot,.task-row.picked .pick-slot .sdot,.col-tasks:has(.pick-bar) .pick-slot .sdot{opacity:0;}
 .task-row.picked .task,.sug.picked{background:var(--accent-soft);}
-.sug .pickbox{height:22px;flex-basis:18px;}
+.sug .pickbox{height:22px;flex:0 0 18px;}
 /* Docked action bar for the current selection. */
 .pick-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--line-strong);background:var(--raise);box-shadow:0 -3px 12px rgba(0,0,0,.06);}
 .pick-bar .pb-count{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
@@ -450,8 +470,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-row.snoozed .task,.bcard.snoozed{opacity:.62;}
 .task-row.snoozed:hover .task,.bcard.snoozed:hover{opacity:1;}
 
-/* The right gutter, mirroring .pickbox on the left. */
-.task-snz{flex:0 0 22px;display:grid;place-items:center;height:34px;}
+/* Corner affordance inside the card, mirroring the board's .bc-snz. */
+.task-snz{position:absolute;top:calc(9px*var(--density));right:8px;display:grid;place-items:center;}
 .snz-set{opacity:0;transition:opacity .12s,color .12s;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--ink-4);display:grid;place-items:center;}
 .task-row:hover .snz-set,.bcard:hover .snz-set,.snz-set:focus-visible{opacity:1;}
 .snz-set:hover{color:var(--ink-2);}
@@ -722,27 +742,26 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .suggest{margin:6px 10px 12px;border-radius:var(--r-lg);border:1px dashed var(--accent);background:var(--accent-soft);overflow:hidden;}
 .suggest-h{display:flex;align-items:center;gap:7px;padding:10px 13px 8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);}
 .suggest-h .sp{margin-left:auto;font-weight:600;}
-.sug{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
-.sug-acts{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
+.sug{display:flex;align-items:flex-start;flex-wrap:wrap;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
+/* Actions live on their own line, always: inline, four buttons left the title
+   ~45px in a default-width column — the one thing a suggestion row exists to
+   show. (Expanded rows already did this; now every row does.) */
+.sug-acts{display:flex;align-items:center;gap:7px;flex-basis:100%;justify-content:flex-end;}
 .sug .sg-meta{flex:1;min-width:0;text-align:left;padding:0;}
-.sug .sg-name{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Two lines before the ellipsis, same reasoning as .ttitle. */
+.sug .sg-name{font-weight:600;font-size:12.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .sug .sg-why{font-size:10.5px;color:var(--ink-2);margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;}
 /* The disclosure triangle: a suggestion's brief is the case for accepting it,
    and one clamped line rarely carries it. `.is-spacer` is the same-width stand-in
    a row with nothing to reveal renders instead, so titles stay aligned. Negative
-   margins because the row is cramped — four action buttons leave the title ~45px
-   in a default-width column, and the triangle must not take much of it. */
+   margins keep it slim — the title line is still the row's scarcest space. */
 .sug-chev{flex:0 0 auto;width:14px;height:16px;margin:0 -3px;display:grid;place-items:center;color:var(--ink-4);transform:rotate(-90deg);transition:transform .15s,color .12s;}
 .sug-chev svg{width:13px;height:13px;}
 .sug-chev:hover{color:var(--accent-ink);}
 .sug.open .sug-chev{transform:none;}
-/* Expanded: the clamps come off (title included — it ellipsises too) and the
-   actions drop to a line of their own, so the brief gets the column's full
-   width instead of the ~50px four inline buttons leave it. */
-.sug.open{align-items:flex-start;}
-.sug.open .sg-name{white-space:normal;overflow:visible;text-overflow:clip;}
+/* Expanded: the clamps come off (title included — it ellipsises too). */
+.sug.open .sg-name{display:block;-webkit-line-clamp:unset;line-clamp:unset;overflow:visible;}
 .sug.open .sg-why{-webkit-line-clamp:unset;line-clamp:unset;display:block;}
-.sug.open .sug-acts{flex-basis:100%;justify-content:flex-end;}
 .sug-btn{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--on-accent);background:var(--accent);padding:5px 9px;border-radius:var(--r-sm);}
 .sug-btn:hover{filter:brightness(1.06);}
 .sug-add{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent-ink);background:transparent;border:1px solid rgba(194,96,60,.4);padding:4px 8px;border-radius:var(--r-sm);}
@@ -1301,7 +1320,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .modal{width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-3);animation:pop .18s cubic-bezier(.2,.9,.3,1.2);}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
 .modal-h{display:flex;align-items:center;gap:10px;padding:18px 22px 14px;border-bottom:1px solid var(--line);}
-.modal-h .m-title{font-size:17px;font-weight:700;letter-spacing:-.02em;flex:1;}
+/* Display face, per the type system (handoff/README: Spectral 500 for page +
+   section titles, never below 18px — 20px is the scale step that clears it).
+   17px/700 tight-tracked body was the pre-revamp heading style. */
+.modal-h .m-title{font-family:var(--font-display);font-size:20px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);flex:1;}
 .modal-h .m-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
 .modal-b{padding:20px 22px;}
 .modal-f{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:14px 22px 20px;}

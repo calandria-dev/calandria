@@ -13,7 +13,10 @@ export function AppearancePanel({ appearance, setAppearance, onClose }: { appear
   return (
     <div className="modal" style={{ position: "fixed", right: 16, bottom: 16, width: 264, zIndex: 300, animation: "pop .16s ease" }}>
       <div className="modal-h" style={{ padding: "14px 16px 12px" }}>
-        <div className="m-title" style={{ fontSize: 15, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>{Icon.sliders()} Appearance</div>
+        {/* No size override: .m-title is the display face now, and Spectral is
+            never set below 18px (type-system rule) — the popover takes the
+            same 20px every modal title gets. */}
+        <div className="m-title" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>{Icon.sliders()} Appearance</div>
         <button className="modal-close" onClick={onClose}>{Icon.x()}</button>
       </div>
       <div className="modal-b" style={{ padding: 16 }}>
