@@ -259,12 +259,13 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
           <div className="comp-area">
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
-              // A free-text prompt box: without an explicit autocomplete intent,
-              // iOS heuristics guess — and guess "one-time code", offering an
-              // SMS verification code above the keyboard. "off" declares there
-              // is nothing to autofill; autocorrect/capitalization stay default
-              // (this is prose).
-              autoComplete="off"
+              // A free-text prompt box: with no declared intent, iOS heuristics
+              // guess — and guessed "code entry", which both offered an SMS
+              // verification code above the keyboard AND silently switched
+              // autocorrect off (codes must not be autocorrected). So every
+              // intent is stated explicitly: nothing to autofill, but this IS
+              // prose — autocorrect, sentence caps and spellcheck on.
+              autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
               placeholder={disabled ? "Start the session to reply…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
                 const v = e.target.value;

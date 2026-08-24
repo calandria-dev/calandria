@@ -705,7 +705,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bpanel .session-body{flex:1;min-height:0;display:flex;}
 .app.mobile .bcol{flex:0 0 min(78vw,260px);}
 /* toolbar pill — the cross-project count */
-.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;}
+/* nowrap + no-shrink: in a tight titlebar (phones) the flex line otherwise
+   compresses the pill and wraps "N NEED YOU" onto two lines — squished. */
+.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;white-space:nowrap;flex:0 0 auto;}
 .needs-you-pill:hover{filter:brightness(1.12);}
 .needs-you-pill .ny-dot{width:7px;height:7px;border-radius:50%;background:var(--rev);box-shadow:0 0 10px color-mix(in oklab,var(--rev) 40%,transparent);position:relative;}
 .needs-you-pill .ny-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--rev);animation:ping 2s ease-out infinite;}
