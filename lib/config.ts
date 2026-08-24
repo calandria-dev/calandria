@@ -93,21 +93,36 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMP
 export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDED_MS, 45_000);
 
 /**
- * How long a Claude turn may linger after the model stops, keeping the CLI
- * process alive while run_in_background tasks it started are still running.
- * Each turn is one SDK query whose CLI process owns those children AND the
+ * Master switch for background linger. Each Claude turn is one SDK query
+ * whose CLI process owns both the run_in_background children and the
  * in-memory task registry that promises "you'll be notified when it
  * completes" — so ending the query at result time kills the work silently.
- * Instead the driver holds the session open (streaming-input mode) until the
- * tasks settle and their notifications wake the model, bounded by this
- * deadline measured from the first moment the turn starts lingering (wake
- * turns don't reset it). On expiry the work is stopped and a transcript
- * notice says so. The task stays `running` (Stop works, the SIGTERM drain
- * covers it, follow-up messages queue) and shows "working in background".
- * Set to 0 to disable lingering entirely — turns then end at result time and
- * background tasks die with the CLI, the pre-feature behavior.
+ * With linger on (the default), the driver holds the session open
+ * (streaming-input mode) until the tasks settle and their notifications wake
+ * the model. The task stays `running` the whole time (Stop works, the
+ * SIGTERM drain covers it, follow-up messages queue) and shows "working in
+ * background". Set to off/0/false for the pre-feature behavior: turns end at
+ * result time and background tasks die with the CLI.
  */
-export const BACKGROUND_LINGER_MS = ms(process.env.ORCH_BACKGROUND_LINGER_MS, 30 * 60 * 1000);
+export const BACKGROUND_LINGER_ENABLED = !["0", "off", "false", "no"].includes(
+  String(process.env.ORCH_BACKGROUND_LINGER || "").toLowerCase(),
+);
+
+/**
+ * Optional deadline on a linger, measured from the first moment the turn
+ * starts lingering (wake turns don't reset it). Default 0 = NO deadline —
+ * the session waits until the work settles, the user presses Stop, or the
+ * process shuts down. That's a deliberate default: the lingering state is
+ * visible ("working in background", with how long it's been), so a session
+ * held too long is the user's call to kick, whereas an automatic cut kills
+ * real work to enforce a bound nobody asked for. Set a positive value to
+ * auto-stop lingering work at that age instead — the work is killed and a
+ * transcript notice names what was cut so the next turn doesn't assume it
+ * finished. The cost of an unbounded linger is one idle CLI process and the
+ * task's turn slot; a backgrounded process that never exits (a dev server)
+ * holds both until stopped.
+ */
+export const BACKGROUND_LINGER_MS = ms(process.env.ORCH_BACKGROUND_LINGER_MS, 0);
 
 /**
  * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by

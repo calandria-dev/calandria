@@ -7,6 +7,7 @@
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
 import { getCapabilities } from "./capabilities";
+import { BACKGROUND_LINGER_MS } from "../config";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
 // already supplied by buildProjectContext(). Keep this prompt deliberately
@@ -51,11 +52,20 @@ export function buildProjectContext(project: Project, task: Task): string {
   // time, backgrounded commands with it — so the model is warned off a promise
   // ("you'll be notified when it completes") its harness cannot keep.
   if (getCapabilities(task.agent).backgroundTasksLinger) {
+    // The bound is instance config, so say what's actually true here: with a
+    // deadline set, name it (and that a cut is announced); without one, the
+    // hazard flips — nothing expires, so a backgrounded process that never
+    // exits (a dev server) holds the session open until the user stops it.
     lines.push(
       `\n---\nBackground shell tasks keep running after your turn ends: the session stays open ` +
-        `until they settle and their completion notifications re-invoke you. The wait is bounded ` +
-        `(about 30 minutes by default; a transcript notice tells you if work was cut off), so ` +
-        `prefer the foreground for anything that must not be interrupted.`
+        `until they settle and their completion notifications re-invoke you. ` +
+        (BACKGROUND_LINGER_MS > 0
+          ? `The wait is bounded (${Math.round(BACKGROUND_LINGER_MS / 60000)} minutes on this instance; a ` +
+            `transcript notice tells you if work was cut off), so prefer the foreground for anything ` +
+            `that must not be interrupted.`
+          : `There is no deadline — the session waits until the work finishes (or the user stops it), ` +
+            `so never background a process that doesn't exit on its own (a dev server, a watcher); ` +
+            `use the managed services / expose_service path for those instead.`)
     );
   } else {
     lines.push(
