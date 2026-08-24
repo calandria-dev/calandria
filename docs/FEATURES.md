@@ -80,8 +80,9 @@ suddenly want syncing. The sync banner names the reason: the base branch moved o
 anything about the task. When the sync conflicts, **Fix with AI** runs a resolution turn that
 edits the files marker-free but deliberately does not commit — the merge stays paused so
 you can read the result first. The banner tracks that: once the turn ends it switches to
-"conflicts resolved — review", and its button opens the Changes tab where **Accept & merge**
-lands the task or **Discard** returns the worktree to where it was; only then does it clear.
+"conflicts resolved", with **Accept & merge** right there (the same action as the Changes
+tab's button — it lands the task) and **Review** to open that tab first, where **Discard**
+returns the worktree to where it was. Only an accept or a discard clears the banner.
 If the agent left some files conflicted, the banner counts them and offers another pass.
 
 ## Planning and orchestration
