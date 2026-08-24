@@ -1,8 +1,8 @@
 // Tool-permission policy: the decision logic behind the Claude driver's
 // canUseTool gate (lib/agents/claude/driver.ts).
 //
-// Under "Auto-run" (bypassPermissions) nothing here runs — the SDK never
-// consults the callback. Under "Accept edits" / "Plan mode" every tool call the
+// Under bypassPermissions nothing here runs — the SDK never
+// consults the callback. Under acceptEdits / plan every tool call the
 // SDK doesn't auto-approve lands here, and the gate answers in three steps:
 //
 //   1. a built-in read-only allowlist  → allow silently (otherwise a prompted
@@ -61,7 +61,7 @@ const ORCHESTRATOR_TOOLS = new Set([
 
 // Tools that must be decided EVERY time, no rule and no allowlist.
 // ExitPlanMode is the "approve this plan" gate — auto-approving or remembering
-// it would defeat Plan mode, which is the one thing that mode exists to do.
+// it would defeat plan mode, which is the one thing that mode exists to do.
 const NEVER_REMEMBER = new Set(["ExitPlanMode"]);
 
 /**
@@ -86,7 +86,7 @@ export function isAlwaysAllowed(tool: string, blockedPath?: string): boolean {
 //
 // Caveat worth knowing: a remembered command names a script, not a behaviour.
 // `npm test` is whatever package.json says today, and an agent running under
-// "Accept edits" can rewrite that. Rules are a convenience against prompt
+// acceptEdits can rewrite that. Rules are a convenience against prompt
 // fatigue, not a sandbox — that's what the worktree is for.
 
 // A Bash command is only ever generalized into a prefix rule when it is a

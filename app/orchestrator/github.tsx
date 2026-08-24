@@ -27,7 +27,7 @@ export function GitHubClonePicker({ value, onChange }: { value: string; onChange
         <GitHubConnect onConnected={refresh} />
       ) : (
         <div className="hlp" style={{ marginBottom: 14 }}>
-          The GitHub CLI (<code>gh</code>) isn&apos;t available in this workspace, so only public repos can be cloned — paste a URL below.
+          The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so only public repos can be cloned — paste a URL below. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH — set <code>ORCH_GH_BIN</code> to its full path.
         </div>
       )}
       <div className="field">
@@ -210,7 +210,7 @@ export function GitHubSettings() {
 
   if (!status) return <LoadNote style={{ padding: 0 }}>Checking GitHub connection…</LoadNote>;
   if (!status.installed) {
-    return <div className="hlp">The GitHub CLI (<code>gh</code>) isn&apos;t available in this workspace, so there&apos;s nothing to connect here. Public repos can still be cloned by URL when creating a project.</div>;
+    return <div className="hlp">The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so there&apos;s nothing to connect here. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH — set <code>ORCH_GH_BIN</code> to the binary&apos;s full path and restart. Public repos can still be cloned by URL when creating a project.</div>;
   }
   return (
     <div className="field">

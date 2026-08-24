@@ -217,7 +217,7 @@ export function init(db: Database.Database) {
     );
 
     -- Remembered "always allow" answers to a tool-permission prompt (the
-    -- canUseTool gate under "Accept edits" / "Plan mode" — see lib/permissions.ts).
+    -- canUseTool gate under acceptEdits / plan — see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not
     -- approve it everywhere. match_kind is 'bash_prefix' (leading command
     -- tokens) or 'bash_exact' (one literal command line) — Bash-only, because a

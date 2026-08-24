@@ -484,7 +484,7 @@ export interface ToolData {
   // it). `answers` is absent while awaiting the user, set once answered.
   ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers };
   // Present when this "tool" message is a permission prompt (the canUseTool
-  // gate under "Accept edits" / "Plan mode"). Same shape of deal as `ask`: the
+  // gate under acceptEdits / plan). Same shape of deal as `ask`: the
   // request is persisted so a reload re-renders an answerable card, and
   // `outcome` is absent while the turn is parked, set once it settles.
   permission?: { request: PermissionRequest; outcome?: PermissionOutcome };

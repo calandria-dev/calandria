@@ -78,6 +78,9 @@ the work runs to completion, and its finish wakes the agent to continue
 - **Notifications:** a browser notification when a task stops and waits for
   you, when a turn fails, or when a scheduled run fails. Off-tab by design:
   quiet only when you're already looking at the task in question.
+- **Installable app:** a PWA with its own icon and standalone window — install
+  from Chrome/Edge or iOS Add to Home Screen and the "needs you" inbox lives
+  on your phone's home screen (needs HTTPS, works behind Cloudflare Access).
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   transparent token and usage insights stay together — including a live
   session/week plan-usage meter for a Claude Pro/Max login.

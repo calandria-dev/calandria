@@ -122,6 +122,11 @@ The container publishes its port on the **host's loopback only**. To reach it fr
 elsewhere, put an authenticated tunnel or reverse proxy in front — this app hands out a
 full shell and a `bypassPermissions` agent, so **never expose the port raw**.
 
+An HTTPS front has a second payoff beyond safety: browsers only offer **PWA install**
+(Add to Home Screen / standalone window) and the **Notification permission** in a secure
+context — HTTPS or `localhost`. A plain-HTTP LAN IP gets neither, so if the phone is one
+of your surfaces, reach the instance through the tunnel hostname rather than `http://192.168.x.x`.
+
 The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted code, and
 the setup wizard drives that flow from the browser.
 
@@ -215,6 +220,7 @@ Export the variables in the environment that launches `npm run dev` / `npm start
 | `ORCH_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
 | `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
+| `ORCH_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
 
 Example — relocate an instance entirely via env:
 
@@ -229,11 +235,13 @@ npm start
 
 ## Notes & caveats
 
-- **Permissions:** tasks default to **Guarded auto** (`permissionMode: "auto"`), where a
+- **Permissions:** tasks default to Claude Code's **auto** mode, where a
   model classifier approves the calls it judges safe and escalates the rest. Switch a
-  task — or the app default in Settings → Run defaults — to **Auto-run**
-  (`bypassPermissions`) for work that must never block on a prompt, or down to
-  **Accept edits**, **Ask when needed** or **Plan mode**. Anything the
+  task — or the app default in Settings → Run defaults — to **bypassPermissions**
+  for work that must never block on a prompt, or down to
+  **acceptEdits**, **default** or **plan** (the pickers use each agent's own mode
+  names — a Codex task offers its **workspace-write** / **read-only** sandboxes
+  instead). Anything the
   agent isn't pre-approved for parks on a permission card in the transcript, with
   Allow once / Always allow / Decline. Read-only tools pass silently; "Always
   allow" remembers a command for that one project and is revocable in

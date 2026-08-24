@@ -38,6 +38,17 @@ export const CLAUDE_CLI_PATH =
  */
 export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
 
+/**
+ * Path to the GitHub CLI (`gh`) used for repo listing/cloning, the guided
+ * device-flow login, and opening PRs. Empty = auto-resolve: bare `gh` if the
+ * server's PATH can see it, else a best-effort probe of the usual install dirs
+ * (linuxbrew/Homebrew, /usr/local/bin, snap, ~/.local/bin). The probe exists
+ * because the server process never reads a shell profile — a gh that works in
+ * the user's terminal (Homebrew, snap) can be invisible to the app's PATH and
+ * used to be reported as "not installed". Set this to pin a specific binary.
+ */
+export const GH_BIN = process.env.ORCH_GH_BIN || "";
+
 // Number of milliseconds from an env var, falling back to `def` for anything
 // unset, unparseable, or negative. (0 is meaningful for the knobs below — it
 // means "no deadline" — so it must survive.)

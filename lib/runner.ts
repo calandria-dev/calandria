@@ -27,11 +27,15 @@ import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
 
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something. Named, because the docs promise the user that a
-// non-Auto-run schedule "can stop early with the job half done" — this is that
-// sentence arriving on the run it happened to, instead of a green "ran".
+// schedule on any mode but its agent's never-asks one "can stop early with the
+// job half done" — this is that sentence arriving on the run it happened to,
+// instead of a green "ran". Phrased without naming a mode: this text is
+// agent-agnostic while the mode labels are provider-native (Claude's
+// "bypassPermissions", Codex's "workspace-write"), so any one name would be
+// wrong for somebody's schedule.
 export const SCHEDULE_UNATTENDED_DETAIL =
   "the agent needed approval and nobody was watching, so it was declined automatically — " +
-  "the run may have stopped with the job half done. Use Auto-run, or start this one by hand.";
+  "the run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -476,7 +480,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         }
       } else if (ev.type === "permission") {
         // A tool call parked on the user's approval (the canUseTool gate under
-        // "Accept edits" / "Plan mode"). Same deal as an ask: persist the
+        // acceptEdits / plan). Same deal as an ask: persist the
         // request with its id so a reload re-renders an answerable card, and
         // flag the task now — the turn is live but blocked on a human.
         const data: ToolData = { title: "Permission needed", permission: { request: ev.request } };

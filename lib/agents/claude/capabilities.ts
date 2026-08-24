@@ -42,6 +42,11 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "claude-opus-4-7", label: "Opus 4.7", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-4-6", label: "Opus 4.6", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
   ],
+  // Claude's own extended-thinking vocabulary — the think / think hard /
+  // ultrathink keywords the CLI honors in a prompt — so these labels are already
+  // provider-native. The values double as the cross-agent preset keys other
+  // drivers map from (codex: EFFORT in codex/driver.ts), which is why they stay
+  // spelled this way even where a driver's labels differ.
   reasoningOptions: [
     { value: "off", label: "Off", sub: "no extended thinking" },
     { value: "think", label: "Think", sub: "light reasoning" },
@@ -57,7 +62,17 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   //
   // The subs describe what actually happens now that canUseTool is a real gate
   // (lib/permissions.ts): anything a mode doesn't auto-approve parks the turn on
-  // a permission card. "Auto-run" is the one mode that never consults the gate.
+  // a permission card. bypassPermissions is the one mode that never consults the
+  // gate.
+  //
+  // Labels are Anthropic's own spellings — the exact strings `--permission-mode`
+  // takes and the docs use — rather than an app-invented vocabulary, so a Claude
+  // Code user sees the modes they already know. The plain-English behavior lives
+  // in the sub. (Codex's descriptor does the same with OpenAI's sandbox/approval
+  // terms; each driver speaks its provider's language, which is the point of the
+  // labels living on the descriptor at all.) "auto" is the one entry Anthropic's
+  // docs don't list — it's the CLI's classifier mode, spelled the way the CLI
+  // accepts it.
   //
   // The SDK also defines "dontAsk" (deny anything not pre-approved, without
   // prompting). It stays OFF — decided again, against the live CLI, once
@@ -74,16 +89,16 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // not write and should not start writing behind their back.
   //
   // Which leaves nothing for it to be. "Deny unless I have already allowed it"
-  // is already "Ask when needed" plus remembered rules — and that one can also
+  // is already "default" plus remembered rules — and that one can also
   // ask, records what it grants where Settings can revoke it, and auto-denies
   // when nobody is watching. dontAsk would offer strictly less control while
   // reading like more, which is the worst thing a permission mode can do.
   permissionModes: [
-    { value: "bypassPermissions", label: "Auto-run", sub: "never asks — bypasses every permission check" },
-    { value: "auto", label: "Guarded auto", sub: "a model screens each call; risky ones ask you (default)" },
-    { value: "acceptEdits", label: "Accept edits", sub: "auto-accept file edits, ask before commands" },
-    { value: "default", label: "Ask when needed", sub: "ask before anything not already approved" },
-    { value: "plan", label: "Plan mode", sub: "propose a plan, don't edit" },
+    { value: "bypassPermissions", label: "bypassPermissions", sub: "never asks — bypasses every permission check" },
+    { value: "auto", label: "auto", sub: "a model screens each call; risky ones ask you (the app's default)" },
+    { value: "acceptEdits", label: "acceptEdits", sub: "auto-accept file edits, ask before commands" },
+    { value: "default", label: "default", sub: "Claude Code's standard prompting — ask before anything not already approved" },
+    { value: "plan", label: "plan", sub: "propose a plan, don't edit" },
   ],
   supportsAsks: true,
   supportsMcpTools: true,
@@ -92,8 +107,9 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // to ["user", "project"] (see SETTING_SOURCES in ./driver.ts; 'local' is
   // deliberately excluded — it's worktree-writable and gitignored, so it never
   // surfaces in the diff a task's changes get reviewed through).
-  // Their tools are then gated like any other: auto-approved under Auto-run,
-  // classifier-screened under the "auto" default, a permission card otherwise —
+  // Their tools are then gated like any other: auto-approved under
+  // bypassPermissions, classifier-screened under the "auto" default, a
+  // permission card otherwise —
   // reachable in every mode, which is what makes this differ from Codex, where
   // an inherited tool call can never succeed. CLAUDE.md has the comparison.
   inheritsUserMcpServers: true,

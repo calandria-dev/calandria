@@ -408,11 +408,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    inset accent rule, layered under the elevation shadow the row already has. */
 .task.sel{background:var(--panel);border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent), var(--sh-2);}
 /* flex-start (not center): the title wraps to two lines now, and the dot/chips
-   should hug its first line the way the board's .bc-top does. The right
-   padding keeps the priority pill clear of the snooze corner (.task-snz). */
-.task-top{display:flex;align-items:flex-start;gap:9px;padding-right:18px;}
+   should hug its first line the way the board's .bc-top does. No right
+   padding: the priority pill sits flush with the card edge, on the same line
+   the foot's session count ends on; the hover-only snooze corner overlays it
+   transiently with its own backdrop (below), the way the board's does. */
+.task-top{display:flex;align-items:flex-start;gap:9px;}
 .task-top .pick-slot{margin-top:4px;}
-.task-top .agent-badge,.task-top .pri{margin-top:1px;}
+.task-top .pri{margin-top:1px;}
 /* Two lines before the ellipsis — one line of a default-width column rarely
    conveys the task, which is what the title is for. */
 .task .ttitle{flex:1;min-width:0;font-weight:650;font-size:13.5px;letter-spacing:-.01em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
@@ -470,8 +472,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-row.snoozed .task,.bcard.snoozed{opacity:.62;}
 .task-row.snoozed:hover .task,.bcard.snoozed:hover{opacity:1;}
 
-/* Corner affordance inside the card, mirroring the board's .bc-snz. */
-.task-snz{position:absolute;top:calc(9px*var(--density));right:8px;display:grid;place-items:center;}
+/* Corner affordance inside the card, mirroring the board's .bc-snz. It sits
+   over the priority pill while hovered, so it carries its own raised backdrop
+   to read as a control on top rather than mushing into the pill. */
+.task-snz{position:absolute;top:calc(8px*var(--density));right:8px;display:grid;place-items:center;}
+.task-snz .snz-set{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:3px;box-shadow:var(--sh-1);}
+.task-snz .snz-wake{background:var(--raise);box-shadow:var(--sh-1);}
+/* …and the pill yields while the snooze control is present, mirroring the
+   dot → checkbox swap in the left corner: hover swaps pill → snooze; a parked
+   row's always-visible wake button owns the corner outright. */
+.task .task-top .pri{transition:opacity .12s;}
+.task-row:hover .task-top .pri,.task-row.snoozed .task-top .pri{opacity:0;}
 .snz-set{opacity:0;transition:opacity .12s,color .12s;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--ink-4);display:grid;place-items:center;}
 .task-row:hover .snz-set,.bcard:hover .snz-set,.snz-set:focus-visible{opacity:1;}
 .snz-set:hover{color:var(--ink-2);}
@@ -1333,7 +1344,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 .field{margin-bottom:18px;}
 .field:last-child{margin-bottom:0;}
-.field .lab{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);margin-bottom:8px;}
+/* Body-face caps, matching the design language's section headers (.ap-h2 /
+   handoff Settings.html .sec h2) — the mono-caps version was the pre-revamp
+   operator style. */
+.field .lab{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:8px;}
 .field .lab svg{width:13px;height:13px;}
 .field .lab .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--ink-4);}
 .field input[type=text],.field input[type=number],.field textarea{
