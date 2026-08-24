@@ -1214,6 +1214,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md table{border-collapse:collapse;margin:8px 0;font-size:13px;width:100%;}
 .md th,.md td{border:1px solid var(--line-2);padding:6px 10px;text-align:left;}
 .md th{background:var(--surface-2);font-weight:700;}
+/* ```mermaid fences rendered as diagrams (<Markdown diagrams>, the collaboration modal). */
+.md-mermaid{margin:0 0 12px;}
+.md-mermaid-svg{overflow-x:auto;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel-2);}
+.md-mermaid-svg svg{display:block;max-width:100%;height:auto;margin:0 auto;}
+.md-mermaid-bad .md-mermaid-svg{opacity:.55;}
+.md-mermaid-err{margin-top:6px;padding:6px 10px;border-radius:var(--r-sm);font-family:var(--mono);font-size:11.5px;line-height:1.45;color:var(--err);background:var(--red-soft);white-space:pre-wrap;overflow-wrap:anywhere;}
 
 /* syntax highlighting (highlight.js token classes — warm palette, dual theme) */
 .hljs-comment,.hljs-quote{color:var(--ink-4);font-style:italic;}

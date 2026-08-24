@@ -26,6 +26,21 @@ const DOC = [
   "",
 ].join("\n");
 
+// A design doc with a ```mermaid fence: the collaboration modal renders it
+// as a diagram (the transcript deliberately doesn't — see app/Markdown.tsx).
+const DIAGRAM_DOC = [
+  "# Architecture",
+  "",
+  "Requests flow left to right.",
+  "",
+  "```mermaid",
+  "graph LR",
+  "  Browser --> Server",
+  "  Server --> Database",
+  "```",
+  "",
+].join("\n");
+
 let taskId: string;
 let worktreePath: string;
 let docPath: string;
@@ -64,6 +79,7 @@ test.beforeAll(async ({ request }) => {
   docPath = path.join(worktreePath, "docs", "setup.md");
   fs.mkdirSync(path.dirname(docPath), { recursive: true });
   fs.writeFileSync(docPath, DOC);
+  fs.writeFileSync(path.join(worktreePath, "docs", "architecture.md"), DIAGRAM_DOC);
 });
 
 test("the file route serves worktree files and refuses everything else", async ({ request }) => {
@@ -273,5 +289,50 @@ test("a gitignored file the agent wrote opens from its transcript card, though t
   await expect(modal.locator(".m-sub")).toHaveText("scratch/notes.md");
   await expect(modal.locator(".collab-render h1")).toHaveText("Scratch notes");
   await modal.getByRole("button", { name: "Cancel" }).click();
+  await expect(modal).toBeHidden();
+});
+
+
+test("a mermaid fence renders as a diagram, and a broken edit keeps the last good one", async ({ page }) => {
+  await gotoApp(page);
+  await page.getByText(PROJECT, { exact: true }).first().click();
+  await page.getByText("Write the setup guide").first().click();
+  await collaborateOn(page, "docs/architecture.md").click();
+  const modal = page.locator(".modal", { hasText: "Collaborate on document" });
+  await expect(modal.locator(".collab-render h1")).toHaveText("Architecture");
+
+  // Comment tab: the fence is a picture, not a code block. mermaid is loaded
+  // on demand, so the SVG arrives a beat after the prose.
+  const diagram = modal.locator(".collab-render [data-testid=mermaid]");
+  await expect(diagram.locator("svg")).toBeVisible();
+  await expect(diagram).toContainText("Database");
+  await expect(diagram.locator("pre")).toHaveCount(0);
+
+  // Edit tab: the render beside the editor follows the source. A dangling
+  // arrow is the state a diagram is in for most of the time it's being typed;
+  // the last good picture stays up, dimmed, with the parser's complaint under
+  // it, rather than blinking out.
+  await modal.locator(".collab-tabs").getByRole("button", { name: "EDIT" }).click();
+  const live = modal.locator(".collab-render [data-testid=mermaid]");
+  await expect(live.locator("svg")).toBeVisible();
+  await modal.locator(".cm-content").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("ArrowUp"); // closing fence
+  await page.keyboard.press("ArrowUp"); // "  Server --> Database"
+  await page.keyboard.press("End");
+  await page.keyboard.type(" -->");
+  await expect(live.locator(".md-mermaid-err")).toBeVisible();
+  await expect(live.locator("svg")).toBeVisible();
+  await expect(live).toContainText("Database");
+
+  // Completing the edge makes it valid again: the error clears and the new
+  // node is drawn.
+  await page.keyboard.type(" Cache");
+  await expect(live.locator(".md-mermaid-err")).toHaveCount(0);
+  await expect(live).toContainText("Cache");
+
+  // Nothing was sent, so discard — the confirm is the edited-document one.
+  page.once("dialog", (d) => d.accept());
+  await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
   await expect(modal).toBeHidden();
 });
