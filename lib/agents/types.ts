@@ -6,7 +6,7 @@
 // flow — the same swappable-seam pattern as lib/billing/ and
 // lib/control-plane/provisioner/.
 
-import type { Project, Task, StreamEvent, TurnUsage } from "../types";
+import type { PlanUsageSnapshot, Project, Task, StreamEvent, TurnUsage } from "../types";
 
 export type { StreamEvent };
 
@@ -206,6 +206,19 @@ export interface AgentDriver {
    * cheap and non-mutating: it runs on a keystroke, not a turn.
    */
   listCommands?(task: Task, project: Project): Promise<AgentCommand[]>;
+
+  /**
+   * Subscription-plan usage (session/week rate-limit windows) for the login
+   * this driver runs on, feeding the titlebar meter via GET /api/plan-usage.
+   *
+   * OPTIONAL, same rule as listCommands: an agent whose auth has no metered
+   * plan (or no way to read it) omits it and the meter simply doesn't render
+   * for that agent. Must be cheap on the cached path — the client polls it —
+   * with any real fetch of a provider API rate-limit-respecting and
+   * instance-cached inside the driver (see lib/agents/claude/planUsage.ts).
+   * `null` = nothing to show (feature off, or not a subscription login).
+   */
+  planUsage?(): Promise<PlanUsageSnapshot | null>;
 
   // ---------- one-shot helpers (no session, text in → text out) ----------
   //

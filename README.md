@@ -76,7 +76,8 @@ lineage.
   you, when a turn fails, or when a scheduled run fails. Off-tab by design:
   quiet only when you're already looking at the task in question.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
-  transparent token and usage insights stay together.
+  transparent token and usage insights stay together — including a live
+  session/week plan-usage meter for a Claude Pro/Max login.
 
 ![Calandria diff review beside an agent session](docs/images/changes.png)
 

@@ -16,7 +16,7 @@ function ensureRoot(): string {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "orch-e2e-"));
     process.env.ORCH_E2E_ROOT = root;
   }
-  for (const d of ["db", "worktrees", "projects", "fixtures"]) {
+  for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
   }
   // Pinned git identity/config for BOTH the server (worktree + merge commits)
@@ -69,5 +69,10 @@ export const SERVER_ENV: Record<string, string> = {
   // Registers the deterministic mock agent (lib/agents/mock/driver.ts) so
   // onboarding and turns run without any real agent CLI or login.
   ORCH_E2E_MOCK_AGENT: "1",
+  // Hermetic Claude config, same reasoning as tests/setup.ts: the server reads
+  // this dir for the developer's real settings.json (model catalog/provider)
+  // and .credentials.json — which the plan-usage meter would otherwise use to
+  // call Anthropic's real usage API mid-suite, once per titlebar render.
+  CLAUDE_CONFIG_DIR: path.join(E2E_ROOT, "claude-config"),
   ...GIT_ENV,
 };

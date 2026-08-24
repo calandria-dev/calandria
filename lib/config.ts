@@ -257,3 +257,23 @@ export const SCHEDULE_PROBE_MS = ms(process.env.ORCH_SCHEDULE_PROBE_MS, 20_000);
 export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
   String(process.env.ORCH_SCHEDULER || "").toLowerCase(),
 );
+
+/**
+ * Subscription plan-usage display (the titlebar session/week meter). On by
+ * default. Set to off/0/false to hide it and never touch the provider's usage
+ * API — for an instance that shares a rate-limited plan with many other
+ * consumers, or one that should make no requests beyond the turns themselves.
+ */
+export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
+  String(process.env.ORCH_PLAN_USAGE || "").toLowerCase(),
+);
+
+/**
+ * Floor between two fetches of a provider's plan-usage API. Anthropic
+ * rate-limits its usage endpoint aggressively, so the app fetches at most this
+ * often — and only while a browser is actually asking (the meter polls; no tab
+ * open means no fetches at all). 300s matches the Claude CLI's own minimum
+ * interval for the same endpoint. Between fetches the display coasts on the
+ * cache plus the passive rate-limit telemetry that rides every turn for free.
+ */
+export const PLAN_USAGE_MIN_FETCH_MS = ms(process.env.ORCH_PLAN_USAGE_MIN_FETCH_MS, 300_000);
