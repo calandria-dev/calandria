@@ -41,6 +41,18 @@ export function buildProjectContext(project: Project, task: Task): string {
     lines.push(`\nContinue this task from where the previous session left off.`);
   }
 
+  // STOPGAP until background tasks linger past turn end (linger-until-quiet):
+  // both drivers run each turn as its own CLI process (Claude SDK query(),
+  // codex exec), killed with its process group at result time — so the shell
+  // tool's own "keeps running across turns" promise is false here. Remove this
+  // block when the linger feature ships.
+  lines.push(
+    `\n---\nBackground shell tasks do NOT survive the end of your turn: each turn runs in its ` +
+      `own process, and backgrounded commands are killed with it when the turn completes — ` +
+      `regardless of what your shell tool's documentation promises. Run long commands in the ` +
+      `foreground, and split a run longer than the foreground timeout into stages.`
+  );
+
   lines.push(
     `\n---\nYou have an "orchestrator" MCP tool \`suggest_task\` that creates a task. By ` +
       `default it files into THIS project. New tasks land in the user's "Suggested" tray for ` +
