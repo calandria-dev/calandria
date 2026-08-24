@@ -135,6 +135,31 @@ export interface TaskComment {
   created_at: number;
 }
 
+// A passage comment from the document collaboration modal (CollabDoc) — the
+// document twin of TaskComment. Anchored by the rendered text the user selected
+// (`quote`, re-found in the document by text search) plus the nearest heading
+// above it, not by a line number: the selection happens in the rendered view,
+// and prose moves. `anchor_sha` is the FILE's git blob id (the file route's
+// `sha`) when the comment was written — not the worktree HEAD, because the
+// modal reads the file itself and an agent edits documents without committing,
+// so HEAD would miss exactly the change a review cares about. A sent comment
+// whose anchor no longer matches is shown as outdated; an unsent one stays a
+// live draft regardless (the user decides whether it still applies) and is
+// flagged when its quote can't be found in the current text. Rows outlive the
+// modal so a review survives a reload or a rail collapse; `sent_to_agent` rows
+// are read-only.
+export interface TaskDocComment {
+  id: string;
+  task_id: string;
+  file: string;
+  quote: string;
+  heading: string | null;
+  body: string;
+  sent_to_agent: number;
+  anchor_sha: string | null;
+  created_at: number;
+}
+
 export interface Session {
   id: string;
   project_id: string;

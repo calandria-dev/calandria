@@ -51,8 +51,11 @@ A markdown file the agent wrote or changed carries a **Collaborate** button in i
 header. It opens the file as a document with two tabs — **Edit** (a markdown source editor
 beside a live render) and **Comment** (select a passage, attach a note; plus a general
 comments box) — and **Send to agent** turns your edits into a unified diff and your comments
-into located, quoted feedback, in one message through the ordinary chat path. Details and
-the library survey behind the design are in [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
+into located, quoted feedback, in one message through the ordinary chat path. Passage
+comments save as you add them and survive a reload; sent ones stay listed against the
+document, read-only, and collapse into an outdated group once the document changes. Details
+and the library survey behind the design are in
+[DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
 
 ### Staying level with the remote
 

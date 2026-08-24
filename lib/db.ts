@@ -377,6 +377,25 @@ export function init(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);
+
+    -- Passage comments from the document collaboration modal: task_comments'
+    -- document twin, anchored by the selected text + nearest heading instead
+    -- of a line number, and stamped with the FILE's blob sha rather than the
+    -- worktree HEAD (see TaskDocComment in lib/types.ts). Persisted so a
+    -- review survives a reload; sent rows are never edited or deleted.
+    CREATE TABLE IF NOT EXISTS task_doc_comments (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file          TEXT NOT NULL,
+      quote         TEXT NOT NULL,
+      heading       TEXT,
+      body          TEXT NOT NULL,
+      sent_to_agent INTEGER NOT NULL DEFAULT 0,
+      anchor_sha    TEXT,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_doc_comments_task ON task_doc_comments(task_id);
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);

@@ -14,8 +14,9 @@ hunk — so you can work on it the way you'd proofread in a word processor:
 Both tabs work on the same document state, so you can edit *and* comment in one
 pass. **Send to agent** composes one message (`lib/collab.ts`,
 `buildCollabPacket`) and sends it through the ordinary chat path, so it queues
-behind a running turn like any other message. **Cancel** discards everything
-(after a confirmation when there's unsent work).
+behind a running turn like any other message. **Cancel** discards your edits
+and the general note (after a confirmation when there are any); passage
+comments are already saved and are there when you reopen the document.
 
 What the agent receives:
 
@@ -54,6 +55,23 @@ substring of the source, then by a markdown-syntax-insensitive match that
 tolerates emphasis, code spans, list markers, links and soft line breaks. When
 neither finds it, the packet says so and the heading is the anchor.
 
+## Comments are saved as you go
+
+Passage comments persist the moment you add them — `task_doc_comments`, via
+`/api/tasks/[id]/doc-comments` — so a review survives a reload or the Changes
+tab remounting (it does that on every rail collapse and tab switch, which
+unmounts this modal). Each comment is stamped with the *file's* git blob sha
+as it was loaded (the file route's `sha`), not the worktree HEAD: an agent
+edits documents without committing, so HEAD wouldn't see the change a review
+is actually about. On Send, the drafts folded into the packet are marked sent
+— read-only from then on, but still listed against the document, under "Sent
+to agent" — and once the file's content moves on from the sha they were
+written against, they collapse into a "Show N outdated comment(s)" group
+rather than being guess-painted onto text they weren't written for. Drafts
+stay live regardless of their anchor — removable, and folded into the next Send
+(the user decides whether they still apply) — and are flagged "not found" if
+their passage isn't in the current text.
+
 ## Why a source editor, not a WYSIWYG one
 
 The spike surveyed the widely used editors (August 2026): MDXEditor, Milkdown,
@@ -89,9 +107,8 @@ opened.
 
 ## What the spike does not do (yet)
 
-- Comments aren't persisted — they live in the modal until sent or cancelled,
-  unlike line comments in the Changes tab (`task_comments`), which are stored
-  and versioned against the diff head.
+- Edits in the Edit tab and the General comments box are still modal-only —
+  closing discards them (after a confirmation).
 - The user's edits go to the agent as a patch to apply rather than being
   written to the worktree directly. Writing them straight to the file would be
   a small change (the read route's twin) if the patch step proves unreliable.
