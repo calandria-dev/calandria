@@ -70,13 +70,24 @@ function PreviewPane({ project }: { project: ProjectRow }) {
   );
 }
 
-function ContextPane({ task, sessions, running, onClear }: { task: TaskRow; sessions: Session[]; running: boolean; onClear: () => void }) {
+function ContextPane({ task, sessions, running, onClear, reportsContext }: { task: TaskRow; sessions: Session[]; running: boolean; onClear: () => void; reportsContext: boolean }) {
   const pct = Math.min(100, Math.max(0, Math.round(task.context_pct)));
+  // An estimated figure is the last usage report's input side — which sums
+  // every request of a tool-heavy turn, so it over-reads. Say so rather than
+  // present spend as occupancy; the reason depends on whether this agent CAN
+  // measure (a Claude task from before measurement existed heals on its next
+  // turn; a Codex task never will).
+  const estimated = task.context_estimated && task.context_tokens > 0;
+  const note = estimated
+    ? reportsContext
+      ? "Estimated from the last turn's usage report — measured occupancy arrives with the next turn."
+      : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
+    : "Tokens in the window as of the latest model request, as reported by the agent.";
   return (
     <div className="rail-pad">
       <div className="ctxw-head">
         <span className="rail-eyebrow">CONTEXT WINDOW</span>
-        <span className="ctxw-pct">{pct}% used{task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}</span>
+        <span className="ctxw-pct" title={note}>{estimated ? "≈ " : ""}{pct}% used{task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}</span>
       </div>
       <div className="ctxw-meter"><div className="ctxw-fill" style={{ width: `${pct}%` }} /></div>
 
@@ -103,8 +114,9 @@ function ContextPane({ task, sessions, running, onClear }: { task: TaskRow; sess
   );
 }
 
-export function SessionRail({ project, task, sessions, running, onResolveWithAI, onMerged, onPrCreated, onClear, onCollapse, onSwitchToChat, onSend }: {
+export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onClear, onCollapse, onSwitchToChat, onSend }: {
   project: ProjectRow; task: TaskRow; sessions: Session[]; running: boolean;
+  reportsContext?: boolean; // the task's agent measures context occupancy (capabilities.reportsContext); decides how an estimate is explained
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -137,7 +149,7 @@ export function SessionRail({ project, task, sessions, running, onResolveWithAI,
           }} />
         )}
         {tab === "preview" && showPreview && <PreviewPane project={project} />}
-        {tab === "context" && <ContextPane task={task} sessions={sessions} running={running} onClear={onClear} />}
+        {tab === "context" && <ContextPane task={task} sessions={sessions} running={running} onClear={onClear} reportsContext={reportsContext} />}
       </div>
     </aside>
   );

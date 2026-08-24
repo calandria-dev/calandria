@@ -12,6 +12,7 @@ import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
 import { useNotifications } from "./useNotifications";
+import { usePushRelay } from "./usePush";
 import { usePrefs } from "./usePrefs";
 import { useRecaps } from "./useRecaps";
 
@@ -545,6 +546,10 @@ export function useOrchestrator() {
     // the first instance is safe and keeps the listener stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // A click on a PUSHED notification arrives from the service worker as a
+  // message, not a window event; this relays it onto orch:goto-task above and
+  // re-registers this browser's push subscription once per load (usePush.ts).
+  usePushRelay();
 
   const clearSession = useCallback(async (taskId: string) => {
     const t = tasks.find((x) => x.id === taskId);

@@ -324,7 +324,9 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   server.listen(port, hostname, () => {
     // Managed dev servers with desired_state='running' restart with the box.
     bootPing("services", "/api/instance/services-restore");
-    // Scheduled tasks fire with the server, not with a browser.
+    // Scheduled tasks fire with the server, not with a browser. The same ping
+    // attaches the notification bus subscriber, so Web Push reaches a phone
+    // when no tab is open anywhere.
     bootPing("scheduler", "/api/instance/scheduler");
     const auth = cfAccess.originAuthEnabled()
       ? `origin auth ON — Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`

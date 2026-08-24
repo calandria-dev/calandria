@@ -100,7 +100,7 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
     `${n(split.fresh)} new tokens this task: ${n(split.inOut)} in/out · ${n(split.cacheWrite)} written to cache`,
   ];
   if (split.cacheRead > 0) {
-    lines.push(`${n(split.cacheRead)} cache reads (context re-read each turn, billed at ~10% of the input rate)`);
+    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request — each tool call is one, by the main session and any subagents — billed at ~10% of the input rate)`);
     lines.push(`${n(split.total)} tokens total`);
   }
   if (cost.show && costUsd > 0) {

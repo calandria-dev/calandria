@@ -68,9 +68,11 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   conflicts, merge, or create a GitHub PR from the same screen.
 - **Collaborate on documents:** open a file the agent wrote as a document —
   edit the text, select passages and attach comments — and send the lot back
-  as one message: your edits as a diff, your comments in place. Reachable from
-  the diff or straight from the Write/Edit card in the transcript, so a
-  gitignored notes file is a click away the moment it's written.
+  as one message: your comments in place (saved as you go), your edits either
+  written straight into the task's worktree (default) or sent as a diff for
+  the agent to apply. Reachable from the diff or straight from the Write/Edit
+  card in the transcript, so a gitignored notes file is a click away the
+  moment it's written.
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.
@@ -82,9 +84,10 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   own timezone, with nobody logged in. Each firing mints a fresh task you
   review like any other, and can fire a runbook so one recipe serves both
   the clock and the button.
-- **Notifications:** a browser notification when a task stops and waits for
-  you, when a turn fails, or when a scheduled run fails. Off-tab by design:
-  quiet only when you're already looking at the task in question.
+- **Notifications:** when a task stops and waits for you, when a turn fails,
+  or when a scheduled run fails — as a browser notification in any open tab,
+  and as a push to your phone with the app closed. Quiet only when you're
+  already looking at the task in question.
 - **Installable app:** a PWA with its own icon and standalone window — install
   from Chrome/Edge or iOS Add to Home Screen and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS, works behind Cloudflare Access).

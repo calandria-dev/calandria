@@ -193,10 +193,16 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
           }),
         };
       });
+    } else if (ev.type === "context") {
+      // The agent's own report of how full the window is right now — moves
+      // mid-turn, one event per model request whose figure changed. Once a
+      // task has one of these it is MEASURED, and the usage-derived estimate
+      // below stops touching the gauge.
+      setTasks((prev) => prev.map((x) => (x.id === taskId
+        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: false }
+        : x)));
     } else if (ev.type === "usage") {
       // Live cumulative spend: add this turn's totals to the task's figure.
-      // Context occupancy, by contrast, is the latest turn's INPUT-side
-      // tokens (not a sum) — it tracks how full the window is right now.
       const u = ev.usage;
       const turnTokens = u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_creation_tokens;
       const ctxTokens = u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens;
@@ -206,7 +212,14 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             // fresh-vs-cached split stays right mid-turn, not just after a reload.
             cache_read_tokens: (x.cache_read_tokens ?? 0) + u.cache_read_tokens,
             cache_creation_tokens: (x.cache_creation_tokens ?? 0) + u.cache_creation_tokens,
-            context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)) }
+            // Only an UNMEASURED task (no `context` event this turn or before:
+            // Codex, or a pre-measurement row — a measured figure is never 0)
+            // derives its gauge from spend — the turn's input side, which
+            // over-reads on tool-heavy turns and is labelled an estimate.
+            // Mirrors the COALESCE in lib/store.ts.
+            ...(x.context_estimated || !(x.context_tokens > 0)
+              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: true }
+              : {}) }
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "error") upsertMsg(taskId, { id: ev.msgId ?? `e-${Date.now()}`, role: "system", content: ev.content, generation: gen });

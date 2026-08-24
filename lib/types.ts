@@ -71,6 +71,13 @@ export interface Task {
   // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
   // what makes going back to the previous category free rather than restored.
   snoozed_until: number;
+  // Context-window occupancy as the agent's own stream last REPORTED it: the
+  // input-side tokens (fresh + cache read + cache written) of the latest
+  // main-session model request. Written by the runner from `context` events,
+  // reset to NULL by /clear. NULL = never measured — a driver that doesn't
+  // report it (Codex), or a task that predates the column — and the gauge
+  // falls back to a per-turn usage heuristic and says so (see getTaskContext).
+  context_measured: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -122,6 +129,31 @@ export interface TaskComment {
   side: "old" | "new";
   line_start: number;
   line_end: number;
+  body: string;
+  sent_to_agent: number;
+  anchor_sha: string | null;
+  created_at: number;
+}
+
+// A passage comment from the document collaboration modal (CollabDoc) — the
+// document twin of TaskComment. Anchored by the rendered text the user selected
+// (`quote`, re-found in the document by text search) plus the nearest heading
+// above it, not by a line number: the selection happens in the rendered view,
+// and prose moves. `anchor_sha` is the FILE's git blob id (the file route's
+// `sha`) when the comment was written — not the worktree HEAD, because the
+// modal reads the file itself and an agent edits documents without committing,
+// so HEAD would miss exactly the change a review cares about. A sent comment
+// whose anchor no longer matches is shown as outdated; an unsent one stays a
+// live draft regardless (the user decides whether it still applies) and is
+// flagged when its quote can't be found in the current text. Rows outlive the
+// modal so a review survives a reload or a rail collapse; `sent_to_agent` rows
+// are read-only.
+export interface TaskDocComment {
+  id: string;
+  task_id: string;
+  file: string;
+  quote: string;
+  heading: string | null;
   body: string;
   sent_to_agent: number;
   anchor_sha: string | null;
@@ -385,6 +417,16 @@ export type StreamEvent =
   // any project) — the receiving tray is the one that has to refresh.
   | { type: "suggested"; title: string; projectId: string }
   | { type: "usage"; usage: TurnUsage }
+  // How full the context window is RIGHT NOW: the input-side token count
+  // (input + cache_read + cache_creation) of the latest model request in the
+  // main session, as reported by the agent's own stream. Emitted whenever the
+  // figure changes, so the gauge moves mid-turn. Distinct from `usage`, which
+  // is the turn's SPEND — one turn is many API requests (every tool round-trip
+  // re-reads the whole context) plus any subagents, and a usage report sums
+  // all of them, so deriving occupancy from it read "7.6M tokens" against a
+  // 200k window on a tool-heavy turn. Subagent sidechains are excluded: they
+  // have their own windows.
+  | { type: "context"; tokens: number }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
   // The model's turn ended but run_in_background work is still running, and the
   // driver is holding the session open for it (bounded by BACKGROUND_LINGER_MS).

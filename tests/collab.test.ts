@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCollabPacket, collabPatch, isMarkdownPath, locateQuote, worktreeRelative } from "../lib/collab";
-import { resolveWorktreeFile } from "../lib/worktreeFile";
+import { blobSha, resolveWorktreeFile } from "../lib/worktreeFile";
 import { describeToolUse } from "../lib/agents/shared";
 import { createProject, createTask, updateTask } from "../lib/store";
 import { GET as fileRoute } from "../app/api/tasks/[id]/file/route";
@@ -97,6 +97,27 @@ describe("buildCollabPacket", () => {
     expect(p).toContain("## General comments\nOverall: too terse for a first-time reader.");
   });
 
+  it("in direct mode, presents the diff as context and forbids re-applying it", () => {
+    const edited = DOC.replace("never re-reads them", "re-reads them on SIGHUP");
+    const p = buildCollabPacket({
+      file: "docs/setup.md",
+      original: DOC,
+      edited,
+      comments: [{ quote: "Setup guide", comment: "Rename to Quick start" }],
+      general: "",
+      mode: "direct",
+    }) as string;
+    expect(p).toContain("## My edits");
+    expect(p).toContain("I edited `docs/setup.md` directly in the worktree");
+    expect(p).toContain("do NOT apply this diff again");
+    expect(p).toContain("+re-reads them on SIGHUP while running.");
+    // The file on disk IS the edited text, so comments locate against the current file.
+    expect(p).toContain("Line numbers refer to the current file.");
+    expect(p).not.toContain("Apply this patch");
+    // Omitted mode is the patch contract — nothing that previously called the builder changes behavior.
+    expect(buildCollabPacket({ file: "a.md", original: DOC, edited, comments: [], general: "" })).toContain("Apply this patch");
+  });
+
   it("omits the edits section when the text is untouched", () => {
     const p = buildCollabPacket({ file: "a.md", original: DOC, edited: DOC, comments: [{ quote: "Setup guide", comment: "Rename to Quick start" }], general: "" });
     expect(p).not.toContain("## My edits");
@@ -184,5 +205,30 @@ describe("GET /api/tasks/[id]/file", () => {
     expect((await get(task.id, "../" + path.basename(outside) + "/secret.md")).status).toBe(400);
     expect((await get(task.id, "scratch/../../" + path.basename(outside) + "/secret.md")).status).toBe(400);
     expect((await get(task.id, "scratch/missing.md")).status).toBe(404);
+  });
+});
+
+describe("blobSha", () => {
+  // The document comment anchor is this value, computed in-process rather
+  // than shelling out to `git hash-object` on every file read — pinned here
+  // against the real thing so it can never quietly drift from what git itself
+  // would compute for the same bytes.
+  it("matches `git hash-object` for a UTF-8 file with a non-ASCII character", async () => {
+    const dir = tmpDir("blobsha-");
+    await git(dir, "init", "-b", "main");
+    const abs = path.join(dir, "notes.md");
+    fs.writeFileSync(abs, "café — naïve\n", "utf8");
+    const expected = (await git(dir, "hash-object", abs)).trim();
+    expect(blobSha(fs.readFileSync(abs))).toBe(expected);
+  });
+
+  it("matches `git hash-object` for an empty file", async () => {
+    const dir = tmpDir("blobsha-");
+    await git(dir, "init", "-b", "main");
+    const abs = path.join(dir, "empty.md");
+    fs.writeFileSync(abs, "");
+    const expected = (await git(dir, "hash-object", abs)).trim();
+    expect(expected).toBe("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+    expect(blobSha(fs.readFileSync(abs))).toBe(expected);
   });
 });

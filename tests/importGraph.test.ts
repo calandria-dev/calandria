@@ -43,6 +43,11 @@ const PINNED = [
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "lib/notifications/notify.ts", //   composes notifications; store + bus only, no driving
   "lib/notifications/dispatcher.ts", // the bus subscriber behind /api/events
+  "lib/push/store.ts", //         push subscriptions; DB only
+  "lib/push/vapid.ts", //         VAPID keys + JWT; node:crypto + fs only
+  "lib/push/encrypt.ts", //       RFC 8291 payload encryption; node:crypto only
+  "lib/push/send.ts", //          the push channel notify.ts fans out to; fetch only
+  "app/api/notifications/push/route.ts",
   "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
   "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
   "app/api/settings/permissions/route.ts",

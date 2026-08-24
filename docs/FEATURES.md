@@ -53,9 +53,12 @@ card is keyed on the path the agent wrote rather than on git status, so a docume
 gitignored directory — which the diff never lists — opens the moment it's written. It opens
 the file as a document with two tabs — **Edit** (a source editor, beside a live render for
 markdown) and **Comment** (select a passage, attach a note; plus a general comments box) —
-and **Send to agent** turns your edits into a unified diff and your comments into located,
-quoted feedback, in one message through the ordinary chat path. Details and the library
-survey behind the design are in [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
+and **Send to agent** turns your edits into a unified diff (or writes them straight into the
+worktree, the default) and your comments into located, quoted feedback, in one message
+through the ordinary chat path. Passage comments save as you add them and survive a reload;
+sent ones stay listed against the document, read-only, and collapse into an outdated group
+once the document changes. Details and the library survey behind the design are in
+[DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
 
 ### Staying level with the remote
 
@@ -335,18 +338,34 @@ so a turn that ends with the work handed back to you does reach you, while a
 scheduled run that got the job done, a task you already closed, and a snoozed
 one stay quiet.
 
-Today the only channel is a **browser notification**, which needs the app open
-in a tab (any tab, in any window — it doesn't have to be in front of you) and
-one grant of the browser's notification permission, from Settings →
-Notifications. The only time Calandria stays quiet is when the tab is visible AND
-you already have that exact task selected.
+Two channels carry them, both switched on from Settings → Notifications:
+
+- A **browser notification** needs the app open in a tab (any tab, in any
+  window — it doesn't have to be in front of you) and one grant of the
+  browser's notification permission. The only time Calandria stays quiet is
+  when the tab is visible AND you already have that exact task selected.
+- **Push** needs nothing open at all. Subscribe a device with "Enable push on
+  this device" and the notification arrives through the OS, like any app's —
+  the phone in your pocket hears "a task needs you" with Calandria closed, and
+  tapping it opens the app at that task. Each browser subscribes separately
+  and every subscribed device is listed in Settings, with a Remove for the
+  phone you no longer have. A subscription the push service reports expired is
+  pruned automatically; one that keeps failing is shown as failing rather than
+  silently dropped. On iPhone and iPad, push only works for an app added to the
+  Home Screen ([Install as an app](#install-as-an-app)), and the subscribe
+  button says so. A device that has both channels sees one notification, not
+  two. The instance signs its pushes with a VAPID key it mints on first use and
+  keeps beside the database (`<ORCH_DB_DIR>/vapid.json` — subscriptions are
+  bound to it, so back it up with the database); `VAPID_SUBJECT` and
+  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs.
 
 A snoozed task never says it's waiting for input, and neither does an archived
 project's — but both still report a failure. Snoozing a question means "remind
 me later about this decision", not "hide it from me if the session then
 crashes".
 
-Notifications are composed on the server, not in the browser, so the channels
+Notifications are composed on the server, not in the browser: the tab and the
+push service receive the same message from the same exit, and the channels
 planned next — an outbound webhook (Slack, Discord, Teams) and an iMessage relay
 — will deliver exactly the same messages under exactly the same rules.
 
@@ -371,14 +390,15 @@ Two requirements, both browser rules rather than Calandria's:
   session carries over — when it expires, the window shows the Access login
   and continues as normal.
 
-There is deliberately **no service worker and no offline mode**: everything on
-screen is live server state (SSE event streams, the terminal's WebSocket), so
-there is nothing useful to serve from a cache, and a stale cache intercepting
-the event stream would be far worse than a browser error page when the server
-is unreachable. Chrome no longer requires a service worker for install. One is
-planned for exactly one job — **Web Push**, so a phone with no tab open still
-hears "a task needs you"; today's browser notifications need the app open
-somewhere ([Notifications](#notifications)).
+There is a service worker (`public/sw.js`), but it exists for exactly one job —
+**Web Push**, so a phone with no tab open still hears "a task needs you"
+([Notifications](#notifications)) — and it is registered only when a device
+subscribes. It deliberately has **no fetch handler and no offline mode**:
+everything on screen is live server state (SSE event streams, the terminal's
+WebSocket), so there is nothing useful to serve from a cache, and a stale cache
+intercepting the event stream would be far worse than a browser error page when
+the server is unreachable. Chrome no longer requires a service worker for
+install, so install works whether or not you ever subscribe.
 
 ## Workspace tools
 

@@ -105,6 +105,11 @@ export function init(db: Database.Database) {
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
       position    INTEGER NOT NULL DEFAULT 0,
+      -- Context-window occupancy as the agent's stream last reported it (the
+      -- latest main-session request's input-side tokens). NULL = never
+      -- measured: the gauge then falls back to the current generation's last
+      -- usage row and labels itself an estimate. Reset to NULL by /clear.
+      context_measured INTEGER,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
@@ -324,6 +329,29 @@ export function init(db: Database.Database) {
       value TEXT NOT NULL
     );
 
+    -- Web Push subscriptions (lib/push/store.ts), one row per BROWSER that
+    -- enabled push in Settings → Notifications. endpoint is the push service's
+    -- per-subscription URL and is the identity: a browser re-subscribing
+    -- (page load re-sync, pushsubscriptionchange) upserts on it. Not tied to a
+    -- user: an instance is single-user, so every row hears every notification.
+    -- last_status/last_error are the most recent delivery's answer, kept so the
+    -- device list can show a subscription that is failing rather than silently
+    -- keeping a dead one; a 404/410 (the push service says it's gone) deletes
+    -- the row outright.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id              TEXT PRIMARY KEY,
+      endpoint        TEXT NOT NULL UNIQUE,
+      p256dh          TEXT NOT NULL,
+      auth            TEXT NOT NULL,
+      expiration_time INTEGER,
+      label           TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      last_seen_at    INTEGER NOT NULL,
+      last_sent_at    INTEGER NOT NULL DEFAULT 0,
+      last_status     INTEGER NOT NULL DEFAULT 0,
+      last_error      TEXT NOT NULL DEFAULT ''
+    );
+
     -- Persisted service registry (lib/services.ts writes through to this).
     -- Processes never survive a restart; these rows do — so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL
@@ -372,6 +400,25 @@ export function init(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);
+
+    -- Passage comments from the document collaboration modal: task_comments'
+    -- document twin, anchored by the selected text + nearest heading instead
+    -- of a line number, and stamped with the FILE's blob sha rather than the
+    -- worktree HEAD (see TaskDocComment in lib/types.ts). Persisted so a
+    -- review survives a reload; sent rows are never edited or deleted.
+    CREATE TABLE IF NOT EXISTS task_doc_comments (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file          TEXT NOT NULL,
+      quote         TEXT NOT NULL,
+      heading       TEXT,
+      body          TEXT NOT NULL,
+      sent_to_agent INTEGER NOT NULL DEFAULT 0,
+      anchor_sha    TEXT,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_doc_comments_task ON task_doc_comments(task_id);
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
@@ -603,6 +650,10 @@ export function migrate(db: Database.Database) {
   // Why an agent withdrew a tray suggestion (lib/agentTools withdrawSuggestionForAgent).
   // Empty on every pre-existing row, which is correct: nothing was ever withdrawn before.
   if (!taskCols.includes("withdrawn_reason")) db.exec("ALTER TABLE tasks ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''");
+  // Measured context-window occupancy (see the schema comment). No backfill:
+  // NULL is the honest value for every pre-existing row, and is exactly what
+  // routes the gauge to the usage-derived estimate it showed before.
+  if (!taskCols.includes("context_measured")) db.exec("ALTER TABLE tasks ADD COLUMN context_measured INTEGER");
   // Which schedule minted this task (lib/scheduler.ts). SET NULL rather than
   // cascade — deleting a schedule must not delete the work it produced.
   if (!taskCols.includes("schedule_id")) db.exec("ALTER TABLE tasks ADD COLUMN schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL");

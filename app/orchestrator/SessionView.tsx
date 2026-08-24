@@ -571,7 +571,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 onWidth={onRailWidth} onReset={onRailReset}
               />
               <SessionRail
-                project={project} task={task} sessions={sessions} running={running}
+                project={project} task={task} sessions={sessions} running={running} reportsContext={caps?.reportsContext !== false}
                 onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
                 onSend={onSend}
               />
@@ -591,7 +591,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
       {/* Collaboration mode opened from a transcript tool card (the Changes
           tab mounts its own for files it lists). Same modal, same send path. */}
       {collab && (
-        <CollabDoc taskId={task.id} file={collab} onClose={closeCollab} onSend={onSend} />
+        <CollabDoc taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} />
       )}
       </div>
   );

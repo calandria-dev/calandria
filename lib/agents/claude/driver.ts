@@ -708,6 +708,10 @@ async function* runTurn(
   // report is per-turn after all — taken at face value, codex-style, rather
   // than clamped into a lie.
   let costBaseline = 0;
+  // Last context-occupancy figure emitted, so the gauge only moves when the
+  // number does — the CLI splits one API response into several assistant
+  // messages (one per content block) that all carry the same usage.
+  let lastContext = 0;
   let closeInput!: () => void;
   const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
   const endTurn = () => {
@@ -912,6 +916,24 @@ async function* runTurn(
             ...(message.agent_id ? { agentId: message.agent_id } : {}),
           });
         } else if (message.type === "assistant") {
+          // Context-window occupancy: each assistant message carries ITS API
+          // request's usage, and the request's input side (fresh + cache read
+          // + cache written) is precisely how many tokens the window held when
+          // it was sent. The LAST main-session one is the current figure. The
+          // result message's usage is useless for this — it's the SUM over
+          // every request in the turn (each tool round-trip re-reads the whole
+          // context) plus every subagent, which is spend, not occupancy.
+          // Subagent messages arrive with parent_tool_use_id set and describe
+          // THEIR window, so they're skipped; a synthesized error message
+          // carries zero usage and is skipped by the > 0 guard.
+          if (message.parent_tool_use_id == null) {
+            const u = message.message.usage;
+            const ctx = (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0) + (u?.cache_creation_input_tokens ?? 0);
+            if (ctx > 0 && ctx !== lastContext) {
+              lastContext = ctx;
+              queue.push({ type: "context", tokens: ctx });
+            }
+          }
           for (const block of message.message.content) {
             if (block.type === "text" && block.text.trim()) {
               queue.push({ type: "assistant", content: block.text });
