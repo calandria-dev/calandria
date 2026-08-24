@@ -155,6 +155,7 @@ belongs.
 - [Managed services](docs/SERVICES.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Windows compatibility assessment](docs/WINDOWS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
 
