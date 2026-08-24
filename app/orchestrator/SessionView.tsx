@@ -30,11 +30,12 @@ import { jget } from "./api";
 // next message — so the banner only appears for tier 2 (clean merge → Sync) and
 // tier 3 (conflicts → Fix with AI). Fix with AI leaves the merge PAUSED — the
 // resolution turn edits the files marker-free and is told not to commit — so
-// there's a fourth state after it: "resolved, review it", whose button opens the
-// Changes tab (Accept & merge / Discard). The banner clears only once the merge
-// is accepted (the task lands, `behind` drops to 0) or discarded (back to tier 3,
-// which is honest — main still moved on).
-function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat, onReview }: {
+// there's a fourth state after it: "resolved" — Accept & merge lands it from
+// right here (the same POST the Changes tab's button makes), Review opens that
+// tab for a look first (Discard lives there). The banner clears only once the
+// merge is accepted (the task lands, `behind` drops to 0) or discarded (back to
+// tier 3, which is honest — main still moved on).
+function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat, onReview, onMerged, onAccepted }: {
   taskId: string; running: boolean;
   // Bumped by the parent when Changes mutates the merge state (accept, discard,
   // land) — the banner otherwise re-reads only when a turn ends.
@@ -42,9 +43,12 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onSwitchToChat: () => void;
   onReview: () => void;
+  onMerged?: () => void; // the task landed — same hook TaskChanges fires
+  onAccepted: () => void; // this banner mutated the merge state — a mounted Changes tab must re-read
 }) {
   const [st, setSt] = useState<SyncStatusResp | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try { const r = await fetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
@@ -86,6 +90,23 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
     finally { setBusy(false); load(); }
   };
 
+  // Accept the resolution: commit the paused merge and land the branch into the
+  // base — exactly what TaskChanges.doComplete does, so the banner's button and
+  // the tab's button can't drift. On success `behind` reads 0 and the banner
+  // goes away on its own reload; a failure stays on screen with the reason.
+  const doAccept = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, { method: "POST" });
+      const res: { ok?: boolean; error?: string } = await r.json().catch(() => ({ ok: false, error: `merge request failed (HTTP ${r.status})` }));
+      if (res.ok) onMerged?.();
+      else setErr(res.error || "could not complete the merge");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onAccepted(); }
+  };
+
   // A task that read "up to date" a moment ago can land here without having
   // changed at all: catching the local base branch up to its remote (or landing
   // another task) moves the goalposts under every task in flight. Saying which
@@ -106,9 +127,13 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   return (
     <div className={`sync-banner${conflicts ? " conflict" : ""}${resolved ? " resolved" : ""}`} title={why} data-sync-state={resolved ? "resolved" : conflicts ? "conflict" : "behind"}>
       <span className="sync-msg">{msg}</span>
+      {err && <span className="sync-err" title={err}>{err}</span>}
       <span className="sync-spacer" />
       {resolved ? (
-        <button className="tc-btn primary" onClick={onReview} disabled={running}>Review &amp; accept</button>
+        <>
+          <button className="tc-btn" onClick={onReview} disabled={busy || running}>Review</button>
+          <button className="tc-btn primary" onClick={doAccept} disabled={busy || running}>{busy ? "Merging…" : "Accept & merge"}</button>
+        </>
       ) : conflicts > 0 ? (
         <button className="tc-btn primary" onClick={doFix} disabled={busy || running}>{busy ? "…" : "Fix with AI"}</button>
       ) : (
@@ -230,6 +255,11 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const [syncTick, setSyncTick] = useState(0);
   const onSyncChanged = useCallback(() => setSyncTick((n) => n + 1), []);
   const [diffFocus, setDiffFocus] = useState(0);
+  // The banner's Accept & merge changes what a mounted Changes tab is showing
+  // (its review state); it reloads on this counter, not on `syncTick`, which
+  // Changes itself bumps and must not answer with a reload of its own.
+  const [changesTick, setChangesTick] = useState(0);
+  const onAccepted = useCallback(() => setChangesTick((n) => n + 1), []);
   const onReview = useCallback(() => {
     if (mobile) { setView("changes"); return; }
     if (railCollapsed) onRailExpand();
@@ -623,7 +653,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
         </div>
 
         {hasSession && (
-          <SyncBanner taskId={task.id} running={running} refresh={syncTick} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} />
+          <SyncBanner taskId={task.id} running={running} refresh={syncTick} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onAccepted={onAccepted} />
         )}
 
         {clearConfirming && (
@@ -658,13 +688,13 @@ export function SessionView({ project, task, agents, messages, running, blockedB
               />
               <SessionRail
                 project={project} task={task} sessions={sessions} running={running} reportsContext={caps?.reportsContext !== false}
-                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
+                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} refreshChanges={changesTick} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
                 onSend={onSend}
               />
             </div>
           )
         ) : view === "changes" ? (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             // Resolution turn was kicked off (conflicts, not a clean merge) —
             // jump back to Chat so the user sees the message stream in. With

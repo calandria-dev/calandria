@@ -80,8 +80,9 @@ suddenly want syncing. The sync banner names the reason: the base branch moved o
 anything about the task. When the sync conflicts, **Fix with AI** runs a resolution turn that
 edits the files marker-free but deliberately does not commit — the merge stays paused so
 you can read the result first. The banner tracks that: once the turn ends it switches to
-"conflicts resolved — review", and its button opens the Changes tab where **Accept & merge**
-lands the task or **Discard** returns the worktree to where it was; only then does it clear.
+"conflicts resolved", with **Accept & merge** right there (the same action as the Changes
+tab's button — it lands the task) and **Review** to open that tab first, where **Discard**
+returns the worktree to where it was. Only an accept or a discard clears the banner.
 If the agent left some files conflicted, the banner counts them and offers another pass.
 
 ## Planning and orchestration
@@ -380,7 +381,12 @@ Two channels carry them, both switched on from Settings → Notifications:
   two. The instance signs its pushes with a VAPID key it mints on first use and
   keeps beside the database (`<ORCH_DB_DIR>/vapid.json` — subscriptions are
   bound to it, so back it up with the database); `VAPID_SUBJECT` and
-  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs.
+  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs. **For iPhone/iPad push,
+  set `VAPID_SUBJECT`** (or `PUBLIC_BASE_URL`) to a real `https:` origin or
+  `mailto:` address: Apple's push service rejects the default
+  `mailto:admin@localhost` with `403 BadJwtToken` (it validates the subject and
+  won't accept `localhost`), which the device list surfaces as *failing (403)*.
+  Chrome, Android and Firefox accept the default.
 
 A snoozed task never says it's waiting for input, and neither does an archived
 project's — but both still report a failure. Snoozing a question means "remind

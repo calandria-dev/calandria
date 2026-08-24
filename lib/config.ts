@@ -270,8 +270,11 @@ export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$
  * browsers' push services (RFC 8292); the subject is the contact they may use
  * about the traffic — a `mailto:` or `https:` URL. Defaults to PUBLIC_BASE_URL
  * when that is https (the instance's own address is a truthful contact), else
- * a placeholder the services accept. Set it to a real mailbox on an instance
- * you care about hearing from.
+ * `mailto:admin@localhost`. That fallback is accepted by FCM (Chrome, Android,
+ * Firefox) but REJECTED by Apple's push service with 403 BadJwtToken — Apple
+ * validates the subject and won't take `localhost` — so an instance that wants
+ * iOS push must set this to a real `https:` origin or `mailto:` address (or set
+ * PUBLIC_BASE_URL to its https origin, which this then adopts).
  */
 export const VAPID_SUBJECT =
   process.env.VAPID_SUBJECT || (PUBLIC_BASE_URL.startsWith("https://") ? PUBLIC_BASE_URL : "mailto:admin@localhost");
