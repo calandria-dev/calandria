@@ -38,7 +38,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -92,6 +92,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     allowed.snoozed_until = v;
   }
   if ((body as { unsnooze?: unknown }).unsnooze === true) allowed.snoozed_until = Date.now();
+  // Queued start (lib/deferredStart.ts): the same shape and the same validation
+  // as the snooze deadline — a ms epoch the user picked (the client reads the
+  // usage-window reset off the plan meter), 0 to cancel. Past deadlines are
+  // accepted rather than refused: they fire on the next sweep, which is what
+  // "start it once the reset passes" means when the reset already has.
+  if ("start_at" in body) {
+    const v = body.start_at;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
+      return NextResponse.json({ error: "start_at must be a non-negative epoch in milliseconds" }, { status: 400 });
+    if (v > 0 && (current.status === "done" || current.status === "cancelled"))
+      return NextResponse.json({ error: "a finished task can't be queued to start" }, { status: 409 });
+    allowed.start_at = v;
+  }
   if ("agent" in body) {
     if (typeof body.agent !== "string" || !isAgentId(body.agent))
       return NextResponse.json({ error: "valid agent required" }, { status: 400 });
@@ -167,6 +180,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const edited = depsChanged || EDIT_FIELDS.some((k) => k in allowed && allowed[k] !== current[k]);
   if (edited) publishGlobal(id, { type: "task_edited" });
   else if ("status" in allowed) publishGlobal(id, { type: "task_updated" });
+  // The sweep that honours a queued start is started by the boot ping; make
+  // sure of it here too, so a deadline set on an instance whose ping was lost
+  // still fires. Idempotent. Dynamic for the reason on /api/instance/scheduler:
+  // the module reaches the runner and must not be linked statically from here.
+  if (task.start_at > 0) void import("@/lib/deferredStart").then((m) => m.startDeferredStartTicker());
   // Reaching a TERMINAL status may have cleared the last blocker some auto-start
   // dependent was waiting on. done and cancelled both count, because both are
   // what lib/autoStart's blocks() calls cleared — firing only on done left a

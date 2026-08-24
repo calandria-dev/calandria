@@ -107,6 +107,12 @@ export function init(db: Database.Database) {
       -- sweeps this — a past deadline simply stops matching — so a wake can't
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
+      -- Queued to start on its own at this instant (ms epoch; 0 = not queued).
+      -- The one stored fact behind "start at the usage-window reset": a server
+      -- sweep (lib/deferredStart.ts) launches an unstarted task's first turn or
+      -- resumes a started one once it passes, then zeroes it. Any turn launch
+      -- consumes it too, so a task the user started by hand is never re-run.
+      start_at INTEGER NOT NULL DEFAULT 0,
       position    INTEGER NOT NULL DEFAULT 0,
       -- Context-window occupancy as the agent's stream last reported it (the
       -- latest main-session request's input-side tokens). NULL = never
@@ -666,6 +672,9 @@ export function migrate(db: Database.Database) {
   // because the state is derived from the value rather than stored beside it,
   // there is no companion column to backfill consistently.
   if (!taskCols.includes("snoozed_until")) db.exec("ALTER TABLE tasks ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0");
+  // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
+  // row is right for the same reason as snoozed_until: nothing was queued.
+  if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");
   // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for the
   // same reason — and it is also what "last run" is read from, since runbooks
   // deliberately keep no ledger of their own.

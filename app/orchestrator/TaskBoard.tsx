@@ -5,6 +5,7 @@ import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
+import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
@@ -151,6 +152,8 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   const withdrawn = isWithdrawn(task);
   // Held open for run_in_background work — live, but the model isn't talking.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
+  // Queued for the usage-window reset (./queuedStart.ts); moot once a turn is live.
+  const queued = isQueuedStart(task) && !running;
   const activity = snoozed ? `wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
@@ -210,8 +213,13 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         </div>
       )}
       {!mini && <DiffFooter task={task} points={sparkline} />}
-      {(blocked || sessionCount > 0) && !mini && (
+      {(blocked || queued || sessionCount > 0) && !mini && (
         <div className="bc-foot">
+          {queued && (
+            <span className="bc-chip autostart" title={`Queued for the usage-window reset — ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
+              {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
+            </span>
+          )}
           {blocked && (task.auto_start ? (
             <span className="bc-chip autostart" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
               {Icon.bolt()} Auto-starts after {blockedBy!.length === 1 ? "1 task" : `${blockedBy!.length} tasks`}

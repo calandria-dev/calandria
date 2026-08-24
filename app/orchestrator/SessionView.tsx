@@ -12,9 +12,12 @@ import {
 } from "./types";
 import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
+import { isQueuedStart, resetClock } from "./queuedStart";
+import { usePlanUsage } from "./PlanUsage";
+import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
-import { MessageView, SessionBreak } from "./Transcript";
+import { MessageView, SessionBreak, type LimitResume } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
@@ -140,9 +143,12 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, blockedBy }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; running: boolean; blockedBy?: string[] }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
   const blocked = !!blockedBy?.length && !task.started;
+  // Queued for the usage-window reset (./queuedStart.ts): the server launches
+  // it on its own when the deadline passes; "Start now" is still offered.
+  const queued = isQueuedStart(task);
   const sendContext = task.send_context !== 0;
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
@@ -172,10 +178,27 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
           {Icon.lock()} Blocked until {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.
         </div>
       ))}
-      <div style={{ display: "flex", gap: 10 }}>
+      {queued && !blocked && (
+        <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)} — a minute after the usage window resets`}>
+          {Icon.clock()} <span>Queued — starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
+          <button className="btn btn-line btn-sm" onClick={onCancelQueuedStart} title="Leave it for you to start by hand">Cancel</button>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blocked ? `Blocked until done: ${blockedBy!.join(", ")}` : undefined}>
-          {Icon.play()} {running ? "Starting…" : blocked ? (task.auto_start ? "Queued" : "Blocked") : "Start session"}
+          {Icon.play()} {running ? "Starting…" : blocked ? (task.auto_start ? "Queued" : "Blocked") : queued ? "Start now" : "Start session"}
         </button>
+        {/* "Start at reset": only when this task's agent reports a usage window
+            with a known reset — the plan meter's data, so a Codex task or an
+            API-key login never sees a button that would have nothing to aim
+            at. Hidden once queued (the notice above owns cancelling) and while
+            blocked (a dependency decides when it may start, not the clock). */}
+        {!queued && !blocked && resetAt != null && (
+          <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={() => onQueueStart(deferredStartFor(resetAt))} disabled={running}
+            title="Queue this task to start on its own a minute after the usage window resets — no need to come back for it">
+            {Icon.clock()} Start at reset ({resetClock(resetAt)})
+          </button>
+        )}
         <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={onEdit} disabled={running} title="Edit title & description before starting">
           {Icon.edit()} Edit
         </button>
@@ -194,7 +217,7 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -204,6 +227,8 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
   onSetSendContext: (v: boolean) => void;
   onSnooze: (until: number) => void; onUnsnooze: () => void;
+  // Queue / un-queue a start at the usage-window reset (PATCH start_at; see ./queuedStart.ts).
+  onQueueStart: (at: number) => void; onCancelQueuedStart: () => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -249,6 +274,17 @@ export function SessionView({ project, task, agents, messages, running, blockedB
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  // When this task's agent says its usage window resets — the plan meter's
+  // snapshot, keyed by agent, so only an agent that reports one gets the
+  // queue-at-reset offers (the hero's button, the usage-limit notice's).
+  const planUsage = usePlanUsage();
+  const resetAt = usageResetAt(planUsage[task.agent] ?? null);
+  const stableQueueStart = useStableHandler(onQueueStart);
+  const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
+  const limitResume = useMemo<LimitResume>(
+    () => ({ queuedAt: task.start_at, resetAt, onQueue: stableQueueStart, onCancel: stableCancelQueuedStart }),
+    [task.start_at, resetAt, stableQueueStart, stableCancelQueuedStart],
+  );
   // Retry for an approval-blocked failure (Transcript's APPROVAL_BLOCKED_NOTICE
   // branch): resend the user message that preceded the failure line — the Codex
   // driver has since negotiated a working approval policy, so the same message
@@ -385,7 +421,10 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 const prev = s.messages[mi - 1];
                 // collapse the repeated "Claude Code" header across an assistant run (text → tool → text)
                 const hideWho = m.role === "assistant" && !!prev && (prev.role === "assistant" || prev.role === "tool");
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onCollaborate={setCollab} />;
+                // Only the newest message may offer to resume at the reset —
+                // an older usage-limit notice describes a limit that has healed.
+                const last = si === sessions.length - 1 && mi === s.messages.length - 1;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onCollaborate={setCollab} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
@@ -578,6 +617,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             ) : (
               <SnoozeButton className="status-ctl" label="Snooze" onSnooze={onSnooze} />
             )}
+            {/* A started task queued to resume at the usage-window reset: the
+                chip is the cancel, the way the snoozed chip is the wake. */}
+            {hasSession && isQueuedStart(task) && !running && (
+              <button className="status-ctl snz-on" title={`Resumes on its own ${wakeLabel(task.start_at)}, once the usage window resets. Click to cancel.`}
+                onClick={onCancelQueuedStart}>
+                {Icon.clock()} <span className="cv">Resumes {wakeLabel(task.start_at)}</span>
+              </button>
+            )}
             {/* The counterpart to TaskHero's Edit button, which only exists
                 before the first session. Everything in that modal still applies
                 to a task that has run — its title and description are the
@@ -620,7 +667,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} running={running} blockedBy={blockedBy} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),

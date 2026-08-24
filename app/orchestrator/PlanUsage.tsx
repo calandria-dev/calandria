@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Popover } from "./shared";
 import { jget } from "./api";
 import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
@@ -19,6 +19,47 @@ import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
 // reports plan usage (API-key auth, feature off, nothing fetched yet).
 
 const POLL_MS = 60_000;
+
+// One poll per tab, shared: the pill was the only reader, but the queued-start
+// button (SessionView's hero, the transcript's usage-limit notice) needs the
+// same snapshot to know WHEN the reset is, and a second poller per surface
+// would multiply the provider fetches the server so carefully floors. A
+// module-level store with ref-counted polling — the interval runs while any
+// subscriber is mounted and stops when the last one leaves.
+type PlanUsageMap = Record<string, PlanUsageSnapshot>;
+const EMPTY: PlanUsageMap = {};
+let current: PlanUsageMap = EMPTY;
+const listeners = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function load() {
+  if (document.hidden) return; // a hidden tab shouldn't keep the server polling the provider
+  jget<{ agents: PlanUsageMap }>("/api/plan-usage")
+    .then((d) => { current = d.agents; listeners.forEach((l) => l()); })
+    .catch(() => { /* transient — keep showing the last snapshot */ });
+}
+const onVis = () => { if (!document.hidden) load(); };
+function subscribe(l: () => void): () => void {
+  listeners.add(l);
+  if (listeners.size === 1) {
+    load();
+    timer = setInterval(load, POLL_MS);
+    document.addEventListener("visibilitychange", onVis);
+  }
+  return () => {
+    listeners.delete(l);
+    if (listeners.size === 0 && timer) {
+      clearInterval(timer);
+      timer = null;
+      document.removeEventListener("visibilitychange", onVis);
+    }
+  };
+}
+
+/** Every agent's plan-usage snapshot, keyed by agent id; `{}` until the first poll answers. */
+export function usePlanUsage(): PlanUsageMap {
+  return useSyncExternalStore(subscribe, () => current, () => EMPTY);
+}
 
 // Meter tinting: quiet until a window is actually worth glancing at.
 function tone(pct: number, rejected: boolean): "" | "warn" | "limit" {
@@ -72,23 +113,8 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
 }
 
 export function PlanUsagePill() {
-  const [snap, setSnap] = useState<PlanUsageSnapshot | null>(null);
+  const snap: PlanUsageSnapshot | null = usePlanUsage().claude ?? null;
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      if (document.hidden) return; // a hidden tab shouldn't keep the server polling the provider
-      jget<{ agents: Record<string, PlanUsageSnapshot> }>("/api/plan-usage")
-        .then((d) => { if (alive) setSnap(d.agents.claude ?? null); })
-        .catch(() => { /* transient — keep showing the last snapshot */ });
-    };
-    load();
-    const iv = setInterval(load, POLL_MS);
-    const onVis = () => { if (!document.hidden) load(); };
-    document.addEventListener("visibilitychange", onVis);
-    return () => { alive = false; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
-  }, []);
 
   if (!snap?.available || snap.windows.length === 0) return null;
 

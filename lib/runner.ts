@@ -12,7 +12,7 @@ import { updateTask, addMessage, updateMessage, recordSession, endSession, addUs
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
-import { publish, subscribeGlobal } from "@/lib/events";
+import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
@@ -75,6 +75,17 @@ export function startTurn(
   // it to settle the schedule run. Registered here rather than inside run() so
   // it is in place before the first tool call can possibly arrive.
   if (runContext) setRunContext(task.id, runContext);
+  // A turn is what a queued start (tasks.start_at, lib/deferredStart.ts) was
+  // waiting to produce, so ANY launch consumes the deadline — the sweep's own,
+  // a Start-session click, a follow-up sent by hand. Left set, a task the user
+  // resumed before the reset would be resumed AGAIN when it passed, with a
+  // "continue" the session didn't need. Announced as an edit because the
+  // coarse turn events don't carry the field, and the hero/card chips read it.
+  if (task.start_at) {
+    updateTask(task.id, { start_at: 0 });
+    task.start_at = 0;
+    publishGlobal(task.id, { type: "task_edited" });
+  }
   // Detached: nobody awaits this. `run()` guards its own body (try/catch/finally)
   // and unregisterTurn runs in that finally, but a throw from the finally itself
   // (e.g. the task row was deleted mid-turn, so updateTask/endSession hit a
