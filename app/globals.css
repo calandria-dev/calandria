@@ -132,7 +132,12 @@ a{color:var(--accent);text-decoration:none;}
 a:hover{text-decoration:underline;text-underline-offset:2px;}
 
 *{box-sizing:border-box;}
+/* html carries the theme background too: on iOS the canvas behind the page —
+   exposed around the on-screen keyboard and during viewport resizes — paints
+   the ROOT element's background, and an unset one renders as a black slab
+   instead of the app surface. */
 html,body{margin:0;height:100%;}
+html{background:var(--bg);}
 body{
   background:var(--bg);
   color:var(--ink);
@@ -1649,7 +1654,16 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   /* Titlebar: drop the identity chip and desktop actions (terminal/appearance aren't
      useful on a phone), keep the brand + the "needs you" pill reachable. Pad for
      the status bar / notch. */
-  .app.mobile .titlebar{padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  /* Flex, not the desktop's 1fr·auto·1fr grid: grid tracks let over-wide
+     content in one column paint OVER the neighbor (the logo landed on top of
+     the plan-usage pill), where flex lays the two groups out sequentially.
+     The center omni-search is desktop-only, so nothing needs the middle track.
+     The wordmark goes too — the glyph carries the brand and the freed width is
+     what the usage pill + needs-you pill actually need. */
+  .app.mobile .titlebar{display:flex;justify-content:space-between;padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  .app.mobile .tb-word{display:none;}
+  .app.mobile .tb-left{flex:0 1 auto;}
+  .app.mobile .tb-right{flex:0 1 auto;}
   /* Installed to the home screen, iOS 26 paints its own "scroll edge effect" —
      a progressive blur over the status-bar strip — on top of the page. Its fade
      reaches a little past env(safe-area-inset-top), so titlebar icons sitting
@@ -1657,7 +1671,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      interactive row below the fade; only the titlebar's background extends into
      it, which is exactly what black-translucent + viewport-fit=cover intend. */
   @media (display-mode: standalone){
-    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 10px);height:calc(56px + env(safe-area-inset-top));}
+    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 16px);height:calc(62px + env(safe-area-inset-top));}
   }
   .app.mobile .tb-user,
   .app.mobile .tb-actions{display:none;}
@@ -1685,6 +1699,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .sh-tools{order:2;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none;}
   .app.mobile .sh-tools::-webkit-scrollbar{display:none;}
   .app.mobile .sh-tools > *{flex:0 0 auto;}
+  /* "More" expanded: the rail stops being a one-line scroll and wraps the full
+     control set into rows (see SessionView's sh-tools comment). */
+  .app.mobile .sh-tools.open{flex-wrap:wrap;row-gap:7px;overflow-x:visible;}
   .app.mobile .status-ctl{height:36px;}
 
   /* Composer: 16px text stops iOS from zooming on focus; pad out the bottom for
