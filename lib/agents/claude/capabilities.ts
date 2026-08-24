@@ -7,7 +7,7 @@
 // lists carry only explicit choices.
 
 import type { AgentCapabilities, AgentModelOption } from "../types";
-import { BACKGROUND_LINGER_MS } from "../../config";
+import { BACKGROUND_LINGER_ENABLED } from "../../config";
 import { configuredProvider, claudeDefaultModels } from "./provider";
 
 // Every value below is a string `claude --model` accepts: a family alias
@@ -116,9 +116,10 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   // The driver holds the session open past the result while run_in_background
   // work runs (streaming-input linger — see driver.ts). Off when the operator
-  // disabled the linger window, and then buildProjectContext re-warns the
-  // model that backgrounded commands die at turn end.
-  backgroundTasksLinger: BACKGROUND_LINGER_MS > 0,
+  // disabled the feature (ORCH_BACKGROUND_LINGER=off), and then
+  // buildProjectContext re-warns the model that backgrounded commands die at
+  // turn end.
+  backgroundTasksLinger: BACKGROUND_LINGER_ENABLED,
   reportsCostUsd: true,
   costIsEstimated: false,
   supportsResume: true,
