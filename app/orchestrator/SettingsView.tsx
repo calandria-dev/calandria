@@ -12,7 +12,7 @@ import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
 import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
-import { notificationPermission } from "./useNotifications";
+import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import type { AgentInfoT, AgentsResponseT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
@@ -301,7 +301,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
 }) {
-  const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [perm, setPerm] = useState<BrowserNotificationState>("unsupported");
   const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "failed" | "error">("idle");
   useEffect(() => { setPerm(notificationPermission()); }, []);
 
@@ -349,13 +349,15 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.bolt()} Browser notifications</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          {perm === "unsupported"
-            ? "This browser can't show notifications, or the page isn't on a secure origin (https or localhost)."
-            : perm === "granted"
-              ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
-              : perm === "denied"
-                ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
-                : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
+          {perm === "insecure"
+            ? "Browsers only allow notifications on a secure origin, and this page is plain http — no site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
+            : perm === "unsupported"
+              ? "This browser can't show notifications."
+              : perm === "granted"
+                ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
+                : perm === "denied"
+                  ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
+                  : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
