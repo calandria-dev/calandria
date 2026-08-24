@@ -664,7 +664,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                     Choose when Calandria writes a fresh “where you left off” recap. Manual refreshes remain available in every mode.
                   </div>
-                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 620 }}>
+                  <div className="seg wrap" style={{ maxWidth: 620 }}>
                     {([
                       ["automatic", "Automatic"],
                       ["on_open", "Only when I open a project"],
@@ -681,7 +681,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                     Put Calandria&apos;s utility work on a cheaper or second login—for example, run recaps on Codex while keeping Claude quota for your main tasks.
                   </div>
-                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                  <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {agents.agents.map((a) => (
                       <button
                         key={a.id}
@@ -707,7 +707,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                       The agent new tasks use when a project hasn&apos;t set its own default. A task&apos;s agent is fixed once created.
                     </div>
-                    <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                    <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
                         <button
                           key={a.id}
@@ -727,7 +727,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                       Each agent carries its own reasoning &amp; permission defaults — pick which to edit.
                     </div>
-                    <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                    <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
                         <button key={a.id} className={editAgent === a.id ? "on" : ""} onClick={() => setEditAgent(a.id)}>{a.label}</button>
                       ))}
@@ -739,7 +739,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                     The thinking level a task uses when its own picker is set to <strong>Default</strong>. Per-task choices always override this.
                   </div>
-                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                  <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {reasoningOptions(caps).map((r) => (
                       <button
                         key={r.label}
@@ -759,7 +759,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
                     away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
                   </div>
-                  <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+                  <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {permissionOptions(caps).map((p) => (
                       <button
                         key={p.label}

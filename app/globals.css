@@ -705,7 +705,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bpanel .session-body{flex:1;min-height:0;display:flex;}
 .app.mobile .bcol{flex:0 0 min(78vw,260px);}
 /* toolbar pill — the cross-project count */
-.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;}
+/* nowrap + no-shrink: in a tight titlebar (phones) the flex line otherwise
+   compresses the pill and wraps "N NEED YOU" onto two lines — squished. */
+.needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;white-space:nowrap;flex:0 0 auto;}
 .needs-you-pill:hover{filter:brightness(1.12);}
 .needs-you-pill .ny-dot{width:7px;height:7px;border-radius:50%;background:var(--rev);box-shadow:0 0 10px color-mix(in oklab,var(--rev) 40%,transparent);position:relative;}
 .needs-you-pill .ny-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--rev);animation:ping 2s ease-out infinite;}
@@ -1015,7 +1017,11 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .btn-sm{height:28px;padding:0 10px;font-size:12px;}
 
 /* transcript */
-.transcript{flex:1;overflow-y:auto;padding:26px 0 18px;}
+/* overflow-x is pinned to hidden: overflow-y:auto alone makes the x-axis
+   compute to auto, so one over-wide message (a long token, a wide table) let
+   the whole pane pan sideways — worst on a phone, where the bubbles drifted
+   off both screen edges. Wide code already scrolls inside its own <pre>. */
+.transcript{flex:1;overflow-y:auto;overflow-x:hidden;padding:26px 0 18px;}
 .tw{max-width:var(--text-width);margin:0 auto;padding:0 28px;}
 .msg{margin-bottom:22px;}
 .msg .who{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;}
@@ -1260,8 +1266,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .composer-inner{max-width:var(--text-width);margin:0 auto;position:relative;}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* The row bottom-aligns so the send button hugs the last line as the box grows.
+   The textarea's vertical padding is sized so ONE line of text stands as tall
+   as the send button (21px line + 2×6.5 = 34px desktop; 24px + 2×8 = 40px
+   mobile, see the phone block) — without it the empty-ish textarea bottom-aligns
+   inside the taller row and the first line of text sits at the bottom of the
+   box. scrollHeight includes the padding, so autosize keeps working. */
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
-.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;}
+.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;}
 .comp-area textarea::placeholder{color:var(--ink-4);}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
@@ -1374,6 +1386,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 .seg{display:flex;gap:6px;}
 .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--raise);font-size:13px;font-weight:600;color:var(--ink-2);transition:all .12s;}
+/* A seg that's allowed to wrap sizes its buttons to their labels instead of
+   flex:1 — otherwise the one option pushed to a second row (e.g. "plan" among
+   six permission modes on a phone) stretches to the full width alone. */
+.seg.wrap{flex-wrap:wrap;}
+.seg.wrap button{flex:0 1 auto;padding:0 13px;}
 .seg button:hover{border-color:var(--line-strong);background:var(--surface-2);}
 .seg button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
 .seg button svg{width:14px;height:14px;}
@@ -1633,6 +1650,15 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      useful on a phone), keep the brand + the "needs you" pill reachable. Pad for
      the status bar / notch. */
   .app.mobile .titlebar{padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  /* Installed to the home screen, iOS 26 paints its own "scroll edge effect" —
+     a progressive blur over the status-bar strip — on top of the page. Its fade
+     reaches a little past env(safe-area-inset-top), so titlebar icons sitting
+     flush under the inset get their tops smeared. Extra clearance keeps the
+     interactive row below the fade; only the titlebar's background extends into
+     it, which is exactly what black-translucent + viewport-fit=cover intend. */
+  @media (display-mode: standalone){
+    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 10px);height:calc(56px + env(safe-area-inset-top));}
+  }
   .app.mobile .tb-user,
   .app.mobile .tb-actions{display:none;}
   .app.mobile .needs-you-pill{height:34px;}
@@ -1649,9 +1675,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .task{padding-top:11px;padding-bottom:11px;}
 
   /* Session header: the model/reasoning/priority/status chips can't fit on one
-     390px row, so stack the title above a horizontally scrollable control rail. */
+     390px row, so stack the title above a horizontally scrollable control rail.
+     sh-main takes the REMAINDER of row one (basis 0, not 100%) so the back
+     chevron sits to the left of the task name instead of alone on its own row;
+     min-width:0 lets the ellipsised title actually shrink beside it. */
   .app.mobile .sess-head{flex-wrap:wrap;row-gap:8px;align-items:center;}
-  .app.mobile .sh-main{flex:1 1 100%;order:1;}
+  .app.mobile .sh-main{flex:1 1 0;min-width:0;order:1;}
   .app.mobile .mobile-back{order:0;}
   .app.mobile .sh-tools{order:2;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none;}
   .app.mobile .sh-tools::-webkit-scrollbar{display:none;}
@@ -1661,7 +1690,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   /* Composer: 16px text stops iOS from zooming on focus; pad out the bottom for
      the home indicator. The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px calc(12px + env(safe-area-inset-bottom));}
-  .app.mobile .comp-area textarea{font-size:16px;}
+  /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
+     line against the 40px send button (see .comp-area's comment). */
+  .app.mobile .comp-area textarea{font-size:16px;padding:8px 0;}
   .app.mobile .comp-foot{display:none;}
   .app.mobile .send{width:40px;height:40px;}
 
@@ -1694,6 +1725,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    bottom-padding/z-index bookkeeping is needed. The full-screen terminal sheet
    (z-index 150, see .mterm) paints over it when the Terminals tab is open. */
 .mtabbar{display:flex;flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom);}
+/* While the on-screen keyboard is up (a text field is focused), the tab bar
+   would otherwise ride on top of it — 100dvh shrinks to the visible viewport
+   and the bottom-docked bar lands right above the keys, between them and the
+   composer. Hide it for the duration; it returns on blur. Text-type inputs
+   only: focusing a checkbox raises no keyboard and must not blink the bar. */
+.app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
 .mtabbar-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:8px 0;background:none;border:0;color:var(--dim);font-size:10px;cursor:pointer;}
 .mtabbar-item svg{width:18px;height:18px;}
 .mtabbar-item.on{color:var(--accent);}

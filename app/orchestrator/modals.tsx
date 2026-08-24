@@ -25,7 +25,7 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   return (
     <div className="field">
       <div className="lab">{label}</div>
-      <div className="seg" style={{ flexWrap: "wrap" }}>
+      <div className="seg wrap">
         {agents.agents.map((a) => (
           <button key={a.id} className={a.id === value ? "on" : ""} onClick={() => onChange(a.id)}
             title={a.authenticated ? `Run on ${a.label}` : `${a.label} isn't connected yet`}>
@@ -124,7 +124,7 @@ export function NewTaskModal({ project, agents, tasks, onClose, onCreate, onOpen
       {permissionOpts.length > 1 && (
         <div className="field">
           <div className="lab">{Icon.lock()} Permission mode</div>
-          <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
+          <div className="seg wrap" style={{ maxWidth: 520 }}>
             {permissionOpts.map((p) => (
               <button key={p.label} className={permission === p.value ? "on" : ""} title={p.sub}
                 onClick={() => setPermission(p.value)}>

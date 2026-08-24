@@ -344,6 +344,26 @@ export function SessionView({ project, task, agents, messages, running, blockedB
     </>
   );
 
+  // Read-only header chips — rendered at the head of the tools rail on
+  // desktop, demoted to its tail on mobile (see the rail's comment).
+  const infoChips = (
+    <>
+      {task.pr_url && (
+        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request — ${task.pr_url}`}>
+          {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
+        </a>
+      )}
+      <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
+      {(task.cost_usd > 0 || task.total_tokens > 0) && (
+        <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
+          {fmtTokens(usage.fresh)} tok
+          {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
+          {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
+        </span>
+      )}
+    </>
+  );
+
   return (
       <div className="session">
         <div className="sess-head">
@@ -355,26 +375,19 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             </div>
             <div className="sh-title">{task.title}</div>
           </div>
+          {/* On a phone this rail is one horizontal scroll, so ORDER is
+              priority: the Chat/Changes toggle leads, the interactive controls
+              follow, and the read-only chips (PR link, agent, usage) trail at
+              the far end — see infoChips at the close of the rail. On desktop
+              everything fits, so the chips keep their leading spot. */}
           <div className="sh-tools">
-            {task.pr_url && (
-              <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request — ${task.pr_url}`}>
-                {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
-              </a>
-            )}
-            <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
-            {(task.cost_usd > 0 || task.total_tokens > 0) && (
-              <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
-                {fmtTokens(usage.fresh)} tok
-                {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
-                {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
-              </span>
-            )}
             {mobile && hasSession && (
               <div className="viewseg">
                 <button className={`viewseg-btn ${view === "chat" ? "on" : ""}`} onClick={() => setView("chat")}>Chat</button>
                 <button className={`viewseg-btn ${view === "changes" ? "on" : ""}`} onClick={() => setView("changes")}>Changes</button>
               </div>
             )}
+            {!mobile && infoChips}
             <div style={{ position: "relative" }}>
               <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
                 {Icon.spark()}
@@ -491,6 +504,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             {hasSession && task.started === 1 && (
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
             )}
+            {mobile && infoChips}
           </div>
         </div>
 

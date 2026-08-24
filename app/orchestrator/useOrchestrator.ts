@@ -519,10 +519,17 @@ export function useOrchestrator() {
   // Jump straight to a specific task in any project — the "need you" dropdown's
   // row action. Setting selProj fires the load-tasks effect with selectFirst=false
   // (useEffect on selProj), so it won't clobber the selTask we set here.
+  // navEpoch bumps on EVERY jump, including one to the already-selected task:
+  // the mobile shell watches selTask changes to snap its tab bar back to the
+  // board, and a jump that changes nothing (you were in that chat, then went
+  // to Diffs) would otherwise leave the screen where it is — looking like the
+  // tap did nothing.
+  const [navEpoch, setNavEpoch] = useState(0);
   const goToTask = (projectId: string, taskId: string) => {
     setView("workspace");
     setSelProj(projectId);
     setSelTask(taskId);
+    setNavEpoch((e) => e + 1);
   };
 
   // Clicking a browser notification. A window event rather than a prop because
@@ -939,7 +946,7 @@ export function useOrchestrator() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
-    selectProject, jumpToNeedsYou, goToTask, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask,
+    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask,
     setReasoning, setPermission, setSendContext, createTask, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,

@@ -8,7 +8,7 @@ import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
 import { agentLabel } from "./agents";
-import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
+import { StatusDot, PriPill, SearchBar, AgentBadge, useCoarsePointer } from "./shared";
 import { DiffFooter } from "./DiffFooter";
 
 // The kanban alternative to the grouped task list (layout from the Claude
@@ -240,6 +240,8 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
 }) {
+  const coarse = useCoarsePointer();
+  const dragEnabled = canDrag && !coarse;
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ col: ColKey; index: number } | null>(null);
   // Terminal columns past MINI_CAP rows collapse under a veil until expanded.
@@ -340,7 +342,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       blockedBy={blockedBy.get(t.id)}
                       mini={def.mini}
                       dragging={dragId === t.id}
-                      canDrag={canDrag}
+                      canDrag={dragEnabled}
                       onSelect={() => (t.suggested ? onEditTask(t.id) : onSelect(t.id))}
                       onDragStart={() => setDragId(t.id)}
                       onDragOverCard={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver({ col: key, index: def.mini ? colTasks.length : i }); }}
