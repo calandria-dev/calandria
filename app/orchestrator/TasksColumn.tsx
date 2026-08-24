@@ -14,10 +14,13 @@ import { TaskBoard, type TaskMovePatch } from "./TaskBoard";
 import { BaseBranchBanner } from "./BaseBranchBanner";
 import { DiffFooter } from "./DiffFooter";
 
-// The multi-select checkbox that sits in every row's left gutter. Rendered
-// outside the card (a checkbox inside a <button> is invalid, and the card IS a
-// button) and faded until the row is hovered or anything is picked, so the
-// affordance is there without turning the list into a form.
+// The multi-select checkbox. In a task row it sits INSIDE the card, stacked
+// over the status dot (.pick-slot) and swapped in on hover or while a
+// selection is going — the card used to reserve a left gutter for it, which
+// left every card ~46px narrower than the suggested tray beside it. In a
+// suggestion row it's an ordinary flex item. Either way it stays faded until
+// hovered or anything is picked, so the affordance is there without turning
+// the list into a form.
 //
 // Wired through onClick rather than onChange because the SHIFT key is the whole
 // range gesture and only a mouse event carries it; onChange keeps React from
@@ -47,12 +50,24 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
+  const pickable = canPick(task);
   return (
     <div className={`task-row ${picked ? "picked" : ""} ${snoozed ? "snoozed" : ""}`}>
-      <PickBox picked={picked} pickable={canPick(task)} onPick={(range) => onPick(task.id, range)} />
-      <button className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} onClick={onSelect}>
+      {/* An <article role="button">, not a <button>: the card hosts real
+          controls (the pick checkbox, the snooze corner) and interactive
+          content inside a <button> is invalid — same shape, and same reason,
+          as the board's BoardCard. Keeping them inside is what lets the card
+          run the column's full width instead of reserving side gutters. */}
+      <article className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} role="button" tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); onSelect(); } }}>
       <div className="task-top">
-        <StatusDot status={task.status} running={running} awaiting={awaiting} />
+        {/* The status dot doubles as the pick affordance: a pickable row swaps
+            it for the checkbox on hover (or whenever a selection is going). */}
+        <span className={`pick-slot${pickable ? "" : " no-pick"}`}>
+          <StatusDot status={task.status} running={running} awaiting={awaiting} />
+          <PickBox picked={picked} pickable={pickable} onPick={(range) => onPick(task.id, range)} />
+        </span>
         <span className="ttitle">{task.title}</span>
         {/* Snoozed reports the category it came from, not "Snoozed": the group
             header already says that, and where it goes BACK to is the fact the
@@ -86,12 +101,11 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <span className="spacer" />
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
-      </button>
-      {/* Right gutter, mirroring the pickbox on the left — and outside the card
-          for the same reason it is: the card IS a button, and a button inside a
-          button is invalid. Snoozing fades in on hover like the checkbox does;
-          waking stays visible, because "unsnooze it from here" is the one
-          action a parked row exists to offer. */}
+      {/* Corner affordance, mirroring the board card's .bc-snz. Snoozing fades
+          in on hover like the checkbox does; waking stays visible, because
+          "unsnooze it from here" is the one action a parked row exists to
+          offer. SnoozeButton stops click propagation itself, so opening the
+          menu doesn't select the task. */}
       <div className="task-snz">
         {snoozed ? (
           <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)} — click to wake it now`}
@@ -102,6 +116,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           <SnoozeButton className="snz-set" onSnooze={(until) => onSnooze(task.id, until)} />
         )}
       </div>
+      </article>
     </div>
   );
 }
