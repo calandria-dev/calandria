@@ -49,7 +49,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // waiting on you, so it should read "waiting", not "working".
   const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
-    : inBackground ? "live · working in background"
+    : inBackground ? `live · working in background · ${relTime(task.updated_at)}`
     : running ? "live · working"
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`

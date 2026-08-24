@@ -58,6 +58,7 @@ import {
   DENIED_UNATTENDED,
 } from "../../permissions";
 import {
+  BACKGROUND_LINGER_ENABLED,
   BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   PERMISSION_PROMPT_TIMEOUT_MS,
@@ -685,10 +686,14 @@ async function* runTurn(
   //
   // Closing the held-open iterable is the whole teardown: the CLI gives still-
   // running tasks a ~5s grace, kills them (task_updated status:"killed"), and
-  // exits — so Stop, the SIGTERM drain, and the linger deadline all converge on
-  // closeInput(). BACKGROUND_LINGER_MS bounds the WHOLE linger phase from its
-  // first entry (one deadline, never reset by wake turns): a deadline reset per
-  // wake would let a task chain 29-minute sleeps forever, and a deadline
+  // exits — so Stop, the SIGTERM drain, and the (optional) linger deadline all
+  // converge on closeInput(). By default there is NO deadline: the lingering
+  // state is visible in the UI with its age, so a session held too long is
+  // the user's to kick (Stop), not the harness's to kill — an automatic cut
+  // destroys real work to enforce a bound nobody asked for. When an operator
+  // sets BACKGROUND_LINGER_MS > 0, that deadline bounds the WHOLE linger
+  // phase from its first entry (one timer, never reset by wake turns): a
+  // deadline reset per wake would let a task chain sleeps forever, and one
   // cleared on wake would hang the query if a notification ever arrives
   // without a wake turn behind it (skip_transcript housekeeping tasks).
   let pendingBg: BackgroundTaskSummary[] = [];
@@ -980,7 +985,7 @@ async function* runTurn(
           // the query open so the work survives, tell the runner, and start
           // the bounded wait for the task_notification wake.
           if (!closing) {
-            if (pendingBg.length > 0 && BACKGROUND_LINGER_MS > 0) {
+            if (pendingBg.length > 0 && BACKGROUND_LINGER_ENABLED) {
               lingering = true;
               queue.push({
                 type: "background_pending",
