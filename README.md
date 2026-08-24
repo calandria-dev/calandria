@@ -66,11 +66,13 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
   conflicts, merge, or create a GitHub PR from the same screen.
-- **Collaborate on documents:** open a markdown file the agent wrote as a
-  document — edit the text, select passages and attach comments — and send
-  the lot back as one message: your comments in place (saved as you go),
-  your edits either written straight into the task's worktree (default) or
-  sent as a diff for the agent to apply.
+- **Collaborate on documents:** open a file the agent wrote as a document —
+  edit the text, select passages and attach comments — and send the lot back
+  as one message: your comments in place (saved as you go), your edits either
+  written straight into the task's worktree (default) or sent as a diff for
+  the agent to apply. Reachable from the diff or straight from the Write/Edit
+  card in the transcript, so a gitignored notes file is a click away the
+  moment it's written.
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.

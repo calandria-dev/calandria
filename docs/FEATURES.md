@@ -47,14 +47,17 @@ work requires an explicit permanent-discard confirmation.
 
 ### Collaborating on a document
 
-A markdown file the agent wrote or changed carries a **Collaborate** button in its diff
-header. It opens the file as a document with two tabs — **Edit** (a markdown source editor
-beside a live render) and **Comment** (select a passage, attach a note; plus a general
-comments box) — and **Send to agent** turns your edits into a unified diff and your comments
-into located, quoted feedback, in one message through the ordinary chat path. Passage
-comments save as you add them and survive a reload; sent ones stay listed against the
-document, read-only, and collapse into an outdated group once the document changes. Details
-and the library survey behind the design are in
+A text file the agent wrote or changed carries a **Collaborate** button in two places: its
+diff header in the Changes tab, and the **Write**/**Edit** tool card in the transcript. The
+card is keyed on the path the agent wrote rather than on git status, so a document under a
+gitignored directory — which the diff never lists — opens the moment it's written. It opens
+the file as a document with two tabs — **Edit** (a source editor, beside a live render for
+markdown) and **Comment** (select a passage, attach a note; plus a general comments box) —
+and **Send to agent** turns your edits into a unified diff (or writes them straight into the
+worktree, the default) and your comments into located, quoted feedback, in one message
+through the ordinary chat path. Passage comments save as you add them and survive a reload;
+sent ones stay listed against the document, read-only, and collapse into an outdated group
+once the document changes. Details and the library survey behind the design are in
 [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
 
 ### Staying level with the remote

@@ -15,6 +15,7 @@ import { SnoozeButton } from "./SnoozeMenu";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
 import { MessageView, SessionBreak } from "./Transcript";
+import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
 import { ColResize, ColRail } from "./Layout";
@@ -190,6 +191,13 @@ export function SessionView({ project, task, agents, messages, running, blockedB
       if (messages[j].role === "user") { onSend(messages[j].content); return; }
     }
   });
+  // Worktree-relative path open in collaboration mode from a tool card, or
+  // null. Dropped on task switch: the path was resolved against THAT task's
+  // worktree, and the setter is passed to MessageView as-is (a stable identity,
+  // so the memo holds).
+  const [collab, setCollab] = useState<string | null>(null);
+  useEffect(() => { setCollab(null); }, [task.id]);
+  const closeCollab = useCallback(() => setCollab(null), []);
   useEffect(() => {
     if (!clearConfirming) { setClearEstimate(null); return; }
     let alive = true;
@@ -308,7 +316,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 const prev = s.messages[mi - 1];
                 // collapse the repeated "Claude Code" header across an assistant run (text → tool → text)
                 const hideWho = m.role === "assistant" && !!prev && (prev.role === "assistant" || prev.role === "tool");
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onCollaborate={setCollab} />;
               })}
             </div>
           ))}
@@ -580,6 +588,11 @@ export function SessionView({ project, task, agents, messages, running, blockedB
         ) : (
           chatPane
         )}
+      {/* Collaboration mode opened from a transcript tool card (the Changes
+          tab mounts its own for files it lists). Same modal, same send path. */}
+      {collab && (
+        <CollabDoc taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} />
+      )}
       </div>
   );
 }

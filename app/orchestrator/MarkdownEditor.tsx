@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { LanguageDescription } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
+import { isMarkdownPath } from "@/lib/collab";
 
 // The edit half of collaboration mode: a SOURCE editor, deliberately not a
 // WYSIWYG one. Every rich markdown editor surveyed (MDXEditor, Milkdown,
@@ -15,12 +18,36 @@ import { languages } from "@codemirror/language-data";
 // text, which makes that true by construction. The rendered view sits beside
 // it (CollabDoc), so the user still reads the document as a document.
 //
+// `filename` picks the syntax: markdown for a document, otherwise whatever
+// @codemirror/language-data matches the extension (loaded on demand, since
+// each grammar is its own chunk), and plain text when nothing matches.
+//
 // Loaded through next/dynamic from CollabDoc so CodeMirror stays out of the
 // main bundle until someone actually opens a document.
-export default function MarkdownEditor({ value, onChange, dark }: { value: string; onChange: (v: string) => void; dark: boolean }) {
+export default function MarkdownEditor({ value, onChange, dark, filename = "document.md" }: {
+  value: string;
+  onChange: (v: string) => void;
+  dark: boolean;
+  filename?: string;
+}) {
+  const [lang, setLang] = useState<{ file: string; ext: Extension } | null>(null);
+  useEffect(() => {
+    if (isMarkdownPath(filename)) {
+      setLang({ file: filename, ext: markdown({ base: markdownLanguage, codeLanguages: languages }) });
+      return;
+    }
+    const desc = LanguageDescription.matchFilename(languages, filename);
+    if (!desc) { setLang({ file: filename, ext: [] }); return; }
+    let dead = false;
+    desc.load().then(
+      (support) => { if (!dead) setLang({ file: filename, ext: support }); },
+      () => { if (!dead) setLang({ file: filename, ext: [] }); }
+    );
+    return () => { dead = true; };
+  }, [filename]);
   const extensions = useMemo(
-    () => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping],
-    []
+    () => [lang?.file === filename ? lang.ext : [], EditorView.lineWrapping],
+    [lang, filename]
   );
   return (
     <CodeMirror

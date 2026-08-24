@@ -1,13 +1,25 @@
 # Document collaboration mode
 
-When an agent writes or edits a markdown file, its section in the Changes tab
-carries a **Collaborate** button. It opens the file as a document — not hunk by
-hunk — so you can work on it the way you'd proofread in a word processor:
+When an agent writes or edits a text file, its section in the Changes tab
+carries a **Collaborate** button, and so does the **Write**/**Edit** tool card in
+the transcript. The two differ in what they can see: the Changes tab follows the
+diff, which lists tracked changes plus untracked files *minus* anything
+gitignored, so notes the agent keeps under an ignored `scratch/` or `.local/`
+never appear there. The tool card is keyed on the path the agent actually wrote
+(the runner stores it worktree-relative on the tool message, and only when it
+resolves inside the task's worktree), so those files open the moment the Write
+lands — and any document opens without switching to the diff. Either way the
+file is read by `GET /api/tasks/[id]/file`, which confines reads to the worktree
+and knows nothing about git status.
 
-- **Edit** — a markdown source editor beside a live render. Untouched lines
-  never change; how the edited ones reach the file is the **Edits** picker in
-  the footer (it appears once you've changed something, and the choice is
-  remembered per browser):
+It opens the file as a document — not hunk by hunk — so you can work on it the
+way you'd proofread in a word processor:
+
+- **Edit** — a source editor beside a live render (markdown), or the editor
+  alone with syntax picked from the filename (any other text file). Untouched
+  lines never change; how the edited ones reach the file is the **Edits**
+  picker in the footer (it appears once you've changed something, and the
+  choice is remembered per browser):
   - **Write to file** (default) — Send writes the edited text straight into
     the task's worktree (`POST /api/tasks/[id]/file`, the read route's twin,
     under the same path guard) and the message carries the diff *for context
@@ -22,8 +34,9 @@ hunk — so you can work on it the way you'd proofread in a word processor:
   - **Send as patch** — the message carries a unified diff the agent is told
     to apply exactly as written. Nothing touches the worktree but the agent's
     own session, which is the reason to pick it.
-- **Comment** — the rendered document. Select a passage and press **Add
-  comment** to attach a note to it; a **General comments** box takes feedback
+- **Comment** — the rendered document (the verbatim text, for a non-markdown
+  file). Select a passage and press **Add comment** to attach a note to it; a
+  **General comments** box takes feedback
   that isn't tied to any passage. Commented passages stay tinted while the
   modal is open, and clicking a comment scrolls to its passage.
 

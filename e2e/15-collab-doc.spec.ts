@@ -2,11 +2,14 @@
 // a selected passage takes a comment, the source can be edited, and Send turns
 // both into ONE message — the edit as a patch OR written straight into the
 // worktree with the diff as context, the comment with its located line — that
-// lands in the transcript through the ordinary chat path.
+// lands in the transcript through the ordinary chat path. The second entry
+// point is the transcript's own Write card, keyed on the path the agent wrote
+// rather than on git status, which is what makes a GITIGNORED file reachable:
+// the diff never lists it, the card still offers it.
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { createProject, createTask, ensureOnboarded, getTask, gotoApp, makeFixtureRepo, sendMessage, uid, waitForIdle } from "./helpers";
+import { createProject, createTask, ensureOnboarded, getTask, git, gotoApp, makeFixtureRepo, sendMessage, uid, waitForIdle } from "./helpers";
 
 const PROJECT = `Collab Doc ${uid()}`;
 const DOC = [
@@ -37,8 +40,21 @@ const collaborateOn = (page: Page, file: string) => fileSection(page, file).getB
 
 test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
-  const project = await createProject(request, { name: PROJECT, repoPath: makeFixtureRepo("collab-doc") });
-  const task = await createTask(request, { projectId: project.id, title: "Write the setup guide" });
+  // `scratch/` is gitignored in the fixture, so what the mock writes there is
+  // invisible to `git ls-files --others --exclude-standard` — the diff's
+  // untracked list — while CHANGELOG.md gives the branch a real commit.
+  const repo = makeFixtureRepo("collab-doc");
+  fs.writeFileSync(path.join(repo, ".gitignore"), "scratch/\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-m", "ignore scratch");
+  const project = await createProject(request, { name: PROJECT, repoPath: repo });
+  // Directives live in the description: the opening turn's user text is the
+  // fixed INITIAL_TASK_PROMPT, and the mock reads the task metadata instead.
+  const task = await createTask(request, {
+    projectId: project.id,
+    title: "Write the setup guide",
+    description: ["e2e:write=CHANGELOG.md:- setup guide", "e2e:write=scratch/notes.md:# Scratch notes"].join("\n"),
+  });
   await sendMessage(request, task.id);
   const settled = await waitForIdle(request, task.id);
   taskId = task.id;
@@ -68,8 +84,8 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   await page.getByText(PROJECT, { exact: true }).first().click();
   await page.getByText("Write the setup guide").first().click();
 
-  // Only the markdown file offers collaboration; the notes file the mock
-  // writes is markdown too, so scope to the document's own section.
+  // Every text file in the diff offers collaboration, so scope to the
+  // document's own section.
   await collaborateOn(page, "docs/setup.md").click();
   const modal = page.locator(".modal", { hasText: "Collaborate on document" });
   await expect(modal.locator(".collab-render h1")).toHaveText("Setup guide");
@@ -230,4 +246,32 @@ test("the write route refuses a live turn and a stale original", async ({ reques
   const ok = await write(current, current + "Appended over the API.\n");
   expect(ok.status()).toBe(200);
   expect(fs.readFileSync(docPath, "utf8")).toBe(current + "Appended over the API.\n");
+});
+
+test("a gitignored file the agent wrote opens from its transcript card, though the diff never lists it", async ({ page, request }) => {
+  // The route's only screen is "inside the worktree" — git status is not
+  // consulted, so the ignored file is served like any other.
+  const served = await request.get(`/api/tasks/${taskId}/file?path=scratch/notes.md`);
+  expect(served.status()).toBe(200);
+  expect((await served.json()).content).toBe("# Scratch notes\n");
+  // …and the diff, which follows git, doesn't know it exists.
+  const diff = await request.get(`/api/tasks/${taskId}/diff`);
+  const listed = ((await diff.json()).files as { path: string }[]).map((f) => f.path);
+  expect(listed).toContain("CHANGELOG.md");
+  expect(listed).not.toContain("scratch/notes.md");
+
+  await gotoApp(page);
+  await page.getByText(PROJECT, { exact: true }).first().click();
+  await page.getByText("Write the setup guide").first().click();
+  await expect(page.locator(".tc-file", { hasText: "CHANGELOG.md" })).toBeVisible();
+  await expect(page.locator(".tc-file", { hasText: "scratch/notes.md" })).toHaveCount(0);
+
+  const card = page.locator(".tool", { hasText: "Write notes.md" });
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "Collaborate" }).click();
+  const modal = page.locator(".modal", { hasText: "Collaborate on document" });
+  await expect(modal.locator(".m-sub")).toHaveText("scratch/notes.md");
+  await expect(modal.locator(".collab-render h1")).toHaveText("Scratch notes");
+  await modal.getByRole("button", { name: "Cancel" }).click();
+  await expect(modal).toBeHidden();
 });

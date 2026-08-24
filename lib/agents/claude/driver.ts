@@ -940,9 +940,9 @@ async function* runTurn(
             } else if (block.type === "tool_use") {
               // AskUserQuestion is rendered as an interactive card by the hook.
               if (block.name === "AskUserQuestion") continue;
-              const { title, detail, peek, diff, resultKind } = describeToolUse(block.name, block.input as Record<string, unknown>);
+              const { title, detail, peek, diff, resultKind, file } = describeToolUse(block.name, block.input as Record<string, unknown>);
               if (resultKind) resultKinds.set(block.id, resultKind);
-              queue.push({ type: "tool", id: block.id, title, detail, peek, diff });
+              queue.push({ type: "tool", id: block.id, title, detail, peek, diff, file });
             }
           }
         } else if (message.type === "user") {

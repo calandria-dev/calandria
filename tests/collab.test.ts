@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildCollabPacket, collabPatch, isMarkdownPath, locateQuote } from "../lib/collab";
+import { buildCollabPacket, collabPatch, isMarkdownPath, locateQuote, worktreeRelative } from "../lib/collab";
 import { blobSha, resolveWorktreeFile } from "../lib/worktreeFile";
-import { git, tmpDir } from "./helpers";
+import { describeToolUse } from "../lib/agents/shared";
+import { createProject, createTask, updateTask } from "../lib/store";
+import { GET as fileRoute } from "../app/api/tasks/[id]/file/route";
+import { git, makeRepo, tmpDir, writeFile } from "./helpers";
 
 const DOC = [
   "# Setup guide",
@@ -139,6 +142,69 @@ describe("resolveWorktreeFile", () => {
     expect(resolveWorktreeFile(wt, "docs/link.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "docs/missing.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "")).toBeNull();
+  });
+});
+
+// The transcript's Collaborate button is keyed on the path the agent WROTE,
+// not on git status — that's what lets a gitignored doc open. The tool
+// normalizer names the file, the runner stores it worktree-relative (or not
+// at all), and the file route serves anything inside the worktree, ignored
+// or not, while still refusing everything outside it.
+describe("worktreeRelative", () => {
+  it("strips the worktree prefix and refuses anything outside it", () => {
+    expect(worktreeRelative("/wt/a", "/wt/a/docs/x.md")).toBe("docs/x.md");
+    expect(worktreeRelative("/wt/a/", "/wt/a/scratch/notes.md")).toBe("scratch/notes.md");
+    expect(worktreeRelative("/wt/a", "docs/x.md")).toBe("docs/x.md"); // relative = relative to the cwd, the worktree
+    expect(worktreeRelative("/wt/a", "./docs//x.md")).toBe("docs/x.md");
+    expect(worktreeRelative("/wt/a", "/wt/a")).toBeNull(); // the root itself is no file
+    expect(worktreeRelative("/wt/a", "/wt/ab/x.md")).toBeNull(); // sibling with a shared prefix
+    expect(worktreeRelative("/wt/a", "/etc/passwd")).toBeNull();
+    expect(worktreeRelative("/wt/a", "../a/x.md")).toBeNull(); // `..` is a probe, never a spelling
+    expect(worktreeRelative("/wt/a", "/wt/a/../a/x.md")).toBeNull();
+    expect(worktreeRelative("", "/wt/a/x.md")).toBeNull(); // no worktree yet
+    expect(worktreeRelative("/wt/a", "")).toBeNull();
+  });
+});
+
+describe("describeToolUse names the file a writing call touched", () => {
+  it("only for Write and Edit", () => {
+    expect(describeToolUse("Write", { file_path: "/wt/a/scratch/notes.md", content: "x" }).file).toBe("/wt/a/scratch/notes.md");
+    expect(describeToolUse("Edit", { file_path: "/wt/a/README.md", old_string: "a", new_string: "b" }).file).toBe("/wt/a/README.md");
+    expect(describeToolUse("NotebookEdit", { notebook_path: "/wt/a/n.ipynb", new_source: "" }).file).toBeUndefined();
+    expect(describeToolUse("Read", { file_path: "/wt/a/README.md" }).file).toBeUndefined();
+    expect(describeToolUse("Bash", { command: "cat x" }).file).toBeUndefined();
+  });
+});
+
+describe("GET /api/tasks/[id]/file", () => {
+  const params = (id: string) => ({ params: Promise.resolve({ id }) });
+  const get = (id: string, p: string) => fileRoute(new Request(`http://x/api/tasks/${id}/file?path=${encodeURIComponent(p)}`), params(id));
+
+  it("serves a gitignored file inside the worktree and still refuses paths outside it", async () => {
+    const wt = await makeRepo();
+    writeFile(wt, ".gitignore", "scratch/\n");
+    await git(wt, "add", "-A");
+    await git(wt, "commit", "-m", "ignore scratch");
+    writeFile(wt, "scratch/notes.md", "# Scratch notes\n");
+    // Sanity: git really does hide it from what the diff lists.
+    expect(await git(wt, "ls-files", "--others", "--exclude-standard")).toBe("");
+    expect(await git(wt, "status", "--porcelain", "--ignored")).toContain("!! scratch/");
+
+    const outside = tmpDir("outside-");
+    fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
+
+    const project = createProject({ name: "CollabRoute" });
+    const task = createTask({ project_id: project.id, title: "T" });
+    updateTask(task.id, { worktree_path: wt });
+
+    const ok = await get(task.id, "scratch/notes.md");
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ path: "scratch/notes.md", content: "# Scratch notes\n" });
+
+    expect((await get(task.id, path.join(outside, "secret.md"))).status).toBe(400);
+    expect((await get(task.id, "../" + path.basename(outside) + "/secret.md")).status).toBe(400);
+    expect((await get(task.id, "scratch/../../" + path.basename(outside) + "/secret.md")).status).toBe(400);
+    expect((await get(task.id, "scratch/missing.md")).status).toBe(404);
   });
 });
 

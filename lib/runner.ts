@@ -21,6 +21,7 @@ import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailur
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
+import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { settleRun } from "@/lib/schedule/store";
 import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
@@ -440,10 +441,14 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const m = addMessage(id, gen, "assistant", ev.content);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool") {
-        const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff };
+        // A file the call wrote is stored worktree-RELATIVE, and only when it
+        // is inside the worktree: that's the form the file route takes, and a
+        // path it would refuse must not grow a Collaborate button.
+        const file = ev.file ? worktreeRelative(task.worktree_path, ev.file) ?? undefined : undefined;
+        const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff, file };
         const m = addMessage(id, gen, "tool", JSON.stringify(data));
         toolMsgs[ev.id] = { dbId: m.id, data };
-        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+        publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
         const t = toolMsgs[ev.id];
         if (t) {

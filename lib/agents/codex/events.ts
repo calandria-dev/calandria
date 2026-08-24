@@ -162,11 +162,11 @@ function mapItem(phase: ItemPhase, item: ThreadItem, state: CodexMapState): Stre
 function toolOnce(
   state: CodexMapState,
   id: string,
-  fields: { title: string; detail: string; peek?: ToolPeek }
+  fields: { title: string; detail: string; peek?: ToolPeek; file?: string }
 ): StreamEvent {
   if (state.emittedTool.has(id)) return EMPTY;
   state.emittedTool.add(id);
-  return { type: "tool", id, title: fields.title, detail: fields.detail, peek: fields.peek };
+  return { type: "tool", id, title: fields.title, detail: fields.detail, peek: fields.peek, file: fields.file };
 }
 
 // A "no event" marker used by toolOnce; filtered by nonEmpty(). Kept as a typed
@@ -208,7 +208,7 @@ function mapFileChange(phase: ItemPhase, item: FileChangeItem, state: CodexMapSt
 const CHANGE_LETTER: Record<FileChangeItem["changes"][number]["kind"], string> = { add: "A", update: "M", delete: "D" };
 const CHANGE_VERB: Record<FileChangeItem["changes"][number]["kind"], string> = { add: "Create", update: "Edit", delete: "Delete" };
 
-function describeFileChange(changes: FileChangeItem["changes"]): { title: string; detail: string; peek: ToolPeek } {
+function describeFileChange(changes: FileChangeItem["changes"]): { title: string; detail: string; peek: ToolPeek; file?: string } {
   const MAX = 14;
   const lines = changes.map((c) => `${CHANGE_LETTER[c.kind] ?? "?"}  ${c.path}`);
   const title =
@@ -219,6 +219,9 @@ function describeFileChange(changes: FileChangeItem["changes"]): { title: string
     title,
     detail: changes.map((c) => c.path).join("\n"),
     peek: { kind: "lines", lines: lines.slice(0, MAX), truncated: Math.max(0, lines.length - MAX) },
+    // One surviving file → the card can open it in collaboration mode. A
+    // multi-file patch names no single document, and a delete leaves nothing.
+    file: changes.length === 1 && changes[0].kind !== "delete" ? changes[0].path : undefined,
   };
 }
 

@@ -39,6 +39,30 @@ export interface CollabSubmission {
   mode?: CollabEditMode; // defaults to "patch" — the packet is only ever told "direct" by a caller that has written the file
 }
 
+// The worktree-relative form of a path an agent's tool call named, or null
+// when it isn't inside the worktree. Absolute paths are what Write/Edit carry;
+// a relative one is taken as relative to the worktree (the driver's cwd), and
+// any `..` segment refuses it — the file route would refuse it too, so the
+// button must not be offered. String-only (no node:path): this module is
+// bundled for the client, and both sides need the same answer.
+export function worktreeRelative(worktree: string, p: string): string | null {
+  if (!worktree || !p) return null;
+  const norm = (s: string) => s.replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = norm(worktree);
+  const target = norm(p);
+  if (!root) return null;
+  let rel: string;
+  if (target.startsWith("/")) {
+    if (target === root || !target.startsWith(root + "/")) return null;
+    rel = target.slice(root.length + 1);
+  } else {
+    rel = target;
+  }
+  const segs = rel.split("/").filter((s) => s !== "" && s !== ".");
+  if (segs.length === 0 || segs.some((s) => s === "..")) return null;
+  return segs.join("/");
+}
+
 export const MARKDOWN_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown", ".mkd"]);
 
 export function isMarkdownPath(p: string): boolean {

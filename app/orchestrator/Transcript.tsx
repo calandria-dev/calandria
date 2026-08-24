@@ -56,20 +56,32 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
   );
 }
 
-function ToolView({ data }: { data: ToolData }) {
+// `onCollaborate` opens a file the call wrote in collaboration mode. The card
+// is the entry point that doesn't go through git: `data.file` is set by the
+// runner from the path the agent WROTE, so a gitignored scratch doc — which
+// the Changes tab never lists — is reachable the moment the Write lands.
+function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (file: string) => void }) {
   const [open, setOpen] = useState(false);
   const hasDiff = !!data.diff?.length;
   const expandable = !!(data.detail || hasDiff || data.result !== undefined);
   // Failures surface their output automatically, like Claude Code.
   const showBody = open || (!!data.isError && data.result !== undefined);
+  const file = data.file;
   return (
     <div className="tool">
-      <button className="tool-h" style={{ cursor: expandable ? "pointer" : "default" }} onClick={() => expandable && setOpen((o) => !o)}>
-        {expandable && <span className={`tchev ${showBody ? "open" : ""}`}>{Icon.chevRight()}</span>}
-        <span className="tbullet">●</span>
-        <span className="tg">{data.title}</span>
-        {data.result !== undefined && <span className={data.isError ? "tx" : "tcheck"}>{data.isError ? Icon.x() : Icon.check()}</span>}
-      </button>
+      <div className="tool-hrow">
+        <button className="tool-h" style={{ cursor: expandable ? "pointer" : "default" }} onClick={() => expandable && setOpen((o) => !o)}>
+          {expandable && <span className={`tchev ${showBody ? "open" : ""}`}>{Icon.chevRight()}</span>}
+          <span className="tbullet">●</span>
+          <span className="tg">{data.title}</span>
+          {data.result !== undefined && <span className={data.isError ? "tx" : "tcheck"}>{data.isError ? Icon.x() : Icon.check()}</span>}
+        </button>
+        {file && onCollaborate && !data.isError && (
+          <button className="tc-fact tool-collab" title={`Open ${file} in collaboration mode: edit the file and attach comments`} onClick={() => onCollaborate(file)}>
+            {Icon.edit()} Collaborate
+          </button>
+        )}
+      </div>
       {data.peek && !showBody && <PeekView peek={data.peek} expandable={expandable} onExpand={() => setOpen(true)} />}
       {showBody && (
         <div className="tool-body">
@@ -262,7 +274,7 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
 // changes), so unchanged messages skip re-rendering — and re-parsing their
 // markdown — entirely. Callers must pass identity-stable handlers or the memo
 // is defeated (SessionView wraps its handlers for exactly this reason).
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onCollaborate }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onCollaborate?: (file: string) => void }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -287,7 +299,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
-    return <div className="msg msg-tool"><ToolView data={data} /></div>;
+    return <div className="msg msg-tool"><ToolView data={data} onCollaborate={onCollaborate} /></div>;
   }
   if (m.role === "system") {
     // A context-overflow failure: render the warning line plus a one-click path

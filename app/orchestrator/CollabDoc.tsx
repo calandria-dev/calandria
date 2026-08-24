@@ -6,15 +6,19 @@ import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { Modal } from "./Modal";
 import { Skel, ErrNote } from "./shared";
-import { buildCollabPacket, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
+import { buildCollabPacket, isMarkdownPath, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
 import type { TaskDocComment } from "@/lib/types";
 
-// Document collaboration mode — a Word-style review of one markdown file the
-// agent touched. Two tabs over ONE document state: EDIT (source editor beside
-// a live render) and COMMENT (the render, select a passage → attach a note,
-// plus a general box). Send builds a single message (lib/collab.ts) carrying
-// the edit diff and/or the comments with their location, and hands it to the
-// same onSend chat uses — so it queues behind a running turn like any message.
+// Document collaboration mode — a Word-style review of one file the agent
+// touched. Two tabs over ONE document state: EDIT (source editor beside a live
+// render) and COMMENT (the render, select a passage → attach a note, plus a
+// general box). A non-markdown text file gets the same two tabs with the
+// render replaced by the verbatim text — there is nothing to render, but a
+// passage of code takes a comment as well as a paragraph does — and the editor
+// picks its syntax from the filename. Send builds a single message
+// (lib/collab.ts) carrying the edit diff and/or the comments with their
+// location, and hands it to the same onSend chat uses — so it queues behind a
+// running turn like any message.
 //
 // Passage comments are PERSISTED (task_doc_comments, via /api/tasks/[id]/
 // doc-comments) the moment they're added, the way the Changes tab's line
@@ -162,6 +166,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   const [written, setWritten] = useState<string | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
   const dark = typeof document !== "undefined" && document.documentElement.dataset.mode !== "light";
+  const markdown = isMarkdownPath(file);
 
   const api = `/api/tasks/${taskId}/doc-comments`;
 
@@ -432,8 +437,12 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
           <span className="collab-hint">
             {tab === "edit"
               ? effectiveMode === "direct"
-                ? "Edit the markdown source; it's written to the file as-is when you send."
-                : "Edit the markdown source; your exact wording is sent as a patch."
+                ? markdown
+                  ? "Edit the markdown source; it's written to the file as-is when you send."
+                  : "Edit the file; it's written to the worktree as-is when you send."
+                : markdown
+                  ? "Edit the markdown source; your exact wording is sent as a patch."
+                  : "Edit the file; your exact text is sent as a patch."
               : "Select text in the document to attach a comment to it."}
           </span>
         </div>
@@ -443,18 +452,20 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
         ) : original === null ? (
           <Skel w="100%" h={320} />
         ) : tab === "edit" ? (
-          <div className="collab-split">
+          <div className={`collab-split${markdown ? "" : " collab-solo"}`}>
             <div className="collab-pane collab-editor">
-              <MarkdownEditor value={text} onChange={setText} dark={dark} />
+              <MarkdownEditor value={text} onChange={setText} dark={dark} filename={file} />
             </div>
-            <div className="collab-pane collab-render">
-              <Markdown>{text}</Markdown>
-            </div>
+            {markdown && (
+              <div className="collab-pane collab-render">
+                <Markdown>{text}</Markdown>
+              </div>
+            )}
           </div>
         ) : (
           <div className="collab-split">
             <div className="collab-pane collab-render collab-selectable" ref={docRef} onMouseUp={onSelect} onKeyUp={onSelect}>
-              <Markdown>{text}</Markdown>
+              {markdown ? <Markdown>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
               {pending && (
                 <button className="collab-addc" style={{ top: pending.top, left: pending.left }} onMouseDown={(e) => e.preventDefault()} onClick={startComment}>
                   {Icon.plus()} Add comment
