@@ -286,6 +286,7 @@ export default function Orchestrator() {
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
             onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
+            onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
             onResolveWithAI={o.resolveConflictsWithAI}
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
@@ -380,6 +381,7 @@ export default function Orchestrator() {
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
                 onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
+                onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
                 onResolveWithAI={o.resolveConflictsWithAI}
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}

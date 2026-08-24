@@ -351,6 +351,25 @@ export function listAutoStartCandidates(dependsOnId: string): Task[] {
     .all(dependsOnId) as Task[];
 }
 
+// Tasks whose queued start has come due (lib/deferredStart.ts sweeps this on a
+// timer). Oldest deadline first, so tasks queued for the same reset launch in
+// the order they were queued. Deliberately does NOT read `running`: turn
+// liveness belongs to the abort registry (the row's flag can be stale after a
+// crash), so the sweep asks hasTurn() itself. Terminal and tray rows are out —
+// a done or cancelled task has nothing to start, and a suggestion hasn't been
+// accepted yet — while every other status is in: the user queued it, so
+// on_hold (which auto-start refuses) is theirs to override here.
+export function listDueDeferredStarts(now: number): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT t.* FROM tasks t
+       WHERE t.start_at > 0 AND t.start_at <= ? AND t.suggested = 0
+         AND t.status NOT IN ('done', 'cancelled')
+       ORDER BY t.start_at ASC, t.rowid ASC`
+    )
+    .all(now) as Task[];
+}
+
 /**
  * Same dependency set, order-insensitively — edges have no order, so a caller
  * that resubmits the stored list in a different order hasn't changed anything.
@@ -798,9 +817,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 

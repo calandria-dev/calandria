@@ -594,6 +594,20 @@ export function useOrchestrator() {
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
   };
 
+  // ---------- queued start (see ./queuedStart.ts; the sweep is lib/deferredStart.ts) ----------
+  //
+  // "Start at the usage-window reset": one deadline on the row, set from the
+  // reset the plan meter reports and cleared with 0. The launch itself is the
+  // server's — it arrives here as ordinary turn events plus a task_edited.
+  const queueStart = async (id: string, at: number) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { start_at: at });
+    setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
+  };
+  const cancelQueuedStart = async (id: string) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { start_at: 0 });
+    setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
+  };
+
   /**
    * The wake timer. A deadline passing writes NOTHING — a snooze decays by
    * being compared against the clock, which is what makes it survive the app
@@ -951,7 +965,7 @@ export function useOrchestrator() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
-    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask,
+    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSendContext, createTask, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
