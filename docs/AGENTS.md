@@ -1,7 +1,10 @@
 # Supported agents
 
 Calandria supports Claude Code and OpenAI Codex as first-class task agents. You can connect
-either one or both, choose a default, and override the agent for an individual task.
+either one or both, choose a default, and override the agent for an individual task. With
+only one agent connected the New-task and Edit-task dialogs skip the agent picker — there is
+nothing to choose — and it reappears the moment a second agent is connected (or when a task
+already points at an agent that isn't).
 
 ## Support matrix
 
