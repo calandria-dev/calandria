@@ -325,7 +325,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             // the session is held open for run_in_background work — say so, or
             // the dots promise imminent output that may be minutes away.
             task.background_pending ? (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>Working in background — the session stays open and continues when the task finishes.</span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open — ${task.background_note}. It continues on its own when that settles.` : "Working in background — the session stays open and continues when the task finishes."}</span></div></div>
             ) : (
               <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
             )

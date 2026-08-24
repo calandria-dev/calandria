@@ -44,12 +44,17 @@ when needed → you review and merge.**
 Project context is written once and carried into each task. Server-owned
 turns and persisted transcripts survive browser reloads and laptop sleep,
 and `/clear` starts a fresh context window while preserving the task's
-lineage. When a Claude turn starts background shell work, the session
-lingers after the model stops — the task shows "working in background"
-with its age, the work runs to completion, and its finish wakes the agent
-to continue. No deadline by default: a session held too long is yours to
-stop, not the harness's to kill (`ORCH_BACKGROUND_LINGER_MS` sets an
-optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
+lineage. When a Claude turn starts background shell work or schedules a
+wakeup (`ScheduleWakeup`, `CronCreate`, `/loop`), the session lingers after
+the model stops — the task shows "working in background" or "waiting to
+wake at 12:00" with its age, the work runs to completion or the wakeup
+fires, and that wakes the agent to continue. No deadline by default: a
+session held too long (a recurring `/loop` holds it open until stopped) is
+yours to stop, not the harness's to kill (`ORCH_BACKGROUND_LINGER_MS` sets
+an optional auto-cut — a wakeup beyond it is cancelled and named in the
+transcript; `ORCH_BACKGROUND_LINGER=off` disables lingering, and then every
+pending wakeup is reported cancelled at the end of the turn instead of
+silently dying with the process).
 
 ## What makes it different
 
