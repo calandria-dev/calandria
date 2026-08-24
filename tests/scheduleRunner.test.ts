@@ -71,7 +71,7 @@ describe("scheduled turns in the runner", () => {
 
   it("settles a run whose tool calls were auto-denied as FAILED, not as a green 'ran'", async () => {
     // The silent-success case, and the one this whole feature exists to make
-    // impossible. Under any mode but Auto-run a scheduled turn's permission
+    // impossible. Under any mode but bypassPermissions a scheduled turn's permission
     // prompts are declined automatically (nobody is there to answer), so the
     // agent stops partway with the job half done — and the run recorded
     // `succeeded`, because the status was computed from stopped/error/opened

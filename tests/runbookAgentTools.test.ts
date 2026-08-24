@@ -90,7 +90,7 @@ describe("runbook agent tools", () => {
     expect(getRunbook(rb.id)!.name).toBe("A");
   });
 
-  // bypassPermissions ("Auto-run") skips every permission card, and the ⌘K
+  // bypassPermissions (the never-asks mode) skips every permission card, and the ⌘K
   // palette dispatches a runbook with no preview — so this is the one field an
   // agent (steered by injected instructions in anything it read) must never be
   // able to write. Only a human, from the UI, may set it.

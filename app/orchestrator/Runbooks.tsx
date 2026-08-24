@@ -269,7 +269,10 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
       <div className="rb-meta">
         <span>{agentLabel(agents, runbook.agent)}</span>
         <span>·</span>
-        <span>{runbook.permission_mode ?? "default permissions"}</span>
+        {/* Show the mode the way this runbook's agent names it (labels are
+            provider-native); fall back to the stored value if the descriptor
+            hasn't loaded or no longer lists it. */}
+        <span>{capsFor(agents, runbook.agent)?.permissionModes.find((m) => m.value === runbook.permission_mode)?.label ?? runbook.permission_mode ?? "default permissions"}</span>
         <span>·</span>
         <span>{runbook.priority} priority</span>
       </div>
