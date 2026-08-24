@@ -5,6 +5,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { ComponentProps } from "react";
+import type { ExtraProps } from "react-markdown";
+import { Mermaid } from "./Mermaid";
+import { mermaidSourceOf } from "@/lib/mermaid";
 
 // Renders Claude's markdown output: headings, lists, tables, fenced code blocks
 // (syntax-highlighted), inline code, links. Used for assistant + user messages.
@@ -13,15 +16,25 @@ import type { ComponentProps } from "react";
 // highlighted; hljs auto-detection ran over every bare code block and was a
 // hot spot during streaming turns. Memoized so messages whose text hasn't
 // changed skip the whole markdown parse + highlight on transcript re-renders.
-export const Markdown = memo(function Markdown({ children }: { children: string }) {
+//
+// `diagrams` swaps a ```mermaid fence for the rendered diagram. Opt-in rather
+// than default because the transcript renders a message on every streamed
+// token: a half-written diagram would fail to parse on each one, and the
+// mermaid chunk would load for every session that mentions a flowchart. The
+// collaboration modal turns it on — a document is read whole.
+const link = (props: ComponentProps<"a">) => <a {...props} target="_blank" rel="noreferrer" />;
+const diagramPre = ({ node, children, ...props }: ComponentProps<"pre"> & ExtraProps) => {
+  const source = mermaidSourceOf(node);
+  return source === null ? <pre {...props}>{children}</pre> : <Mermaid source={source} />;
+};
+
+export const Markdown = memo(function Markdown({ children, diagrams = false }: { children: string; diagrams?: boolean }) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-        components={{
-          a: (props: ComponentProps<"a">) => <a {...props} target="_blank" rel="noreferrer" />,
-        }}
+        components={diagrams ? { a: link, pre: diagramPre } : { a: link }}
       >
         {children}
       </ReactMarkdown>
