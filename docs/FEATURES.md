@@ -45,6 +45,15 @@ Calandria puts the task conversation and git diff side by side. From there you c
 Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
 work requires an explicit permanent-discard confirmation.
 
+### Collaborating on a document
+
+A markdown file the agent wrote or changed carries a **Collaborate** button in its diff
+header. It opens the file as a document with two tabs — **Edit** (a markdown source editor
+beside a live render) and **Comment** (select a passage, attach a note; plus a general
+comments box) — and **Send to agent** turns your edits into a unified diff and your comments
+into located, quoted feedback, in one message through the ordinary chat path. Details and
+the library survey behind the design are in [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
+
 ### Staying level with the remote
 
 Work does not only arrive through the merge button — a pull request merged on GitHub, a
