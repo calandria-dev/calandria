@@ -978,8 +978,13 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
    outside the viewport; contain-intrinsic-size `auto` keeps the last rendered
    height as the placeholder so the scrollbar stays stable. */
 .tc-file{margin:0 16px 12px;border:1px solid var(--line);border-radius:var(--r);content-visibility:auto;contain-intrinsic-size:auto 480px;}
-.tc-fhead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:9px;width:100%;padding:8px 12px;border:none;border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;background:var(--panel);cursor:pointer;font-family:var(--mono);font-size:11.5px;text-align:left;color:var(--ink);}
-.tc-fhead:hover{background:var(--surface-2);}
+.tc-fhead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:9px;width:100%;padding:0 8px 0 0;border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;background:var(--panel);font-family:var(--mono);font-size:11.5px;color:var(--ink);}
+/* the toggle is the header's whole width minus any action button beside it */
+.tc-fhead-main{display:flex;align-items:center;gap:9px;flex:1;min-width:0;padding:8px 12px;border:none;background:none;cursor:pointer;font:inherit;text-align:left;color:inherit;border-radius:var(--r) 0 0 0;}
+.tc-fhead-main:hover{background:var(--surface-2);}
+.tc-fact{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;height:24px;padding:0 9px;border-radius:var(--r-sm);border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);font-family:var(--sans);font-size:11.5px;font-weight:600;cursor:pointer;}
+.tc-fact:hover{background:var(--surface-2);}
+.tc-fact svg{width:12px;height:12px;}
 .tc-chev{transition:transform .12s;color:var(--ink-3);display:inline-block;font-size:10px;}
 .tc-chev.open{transform:rotate(90deg);}
 .tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);}
@@ -1951,4 +1956,58 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .in-wrap{padding:16px 14px 40px;}
   .in-head{margin-bottom:16px;}
   .in-dd{min-width:0;flex:1;}
+}
+
+/* ============================== document collaboration ============================== */
+/* CollabDoc.tsx — Word-style review of one markdown file: EDIT (source beside
+   a live render) / COMMENT (select a passage → note). The modal body fills the
+   viewport so both panes scroll independently instead of the whole modal. */
+.collab{display:flex;flex-direction:column;height:calc(100vh - 230px);min-height:380px;}
+.collab-tabs{display:flex;align-items:center;gap:4px;margin-bottom:12px;}
+.collab-tabs .rail-tab{display:inline-flex;align-items:center;gap:6px;}
+.collab-tabs .rail-tab svg{width:12px;height:12px;}
+.collab-hint{margin-left:auto;font-size:12px;color:var(--ink-3);}
+.collab-split{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;min-height:0;}
+.collab-split:has(.collab-side){grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);}
+.collab-pane{min-height:0;overflow:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);}
+.collab-render{padding:18px 22px;position:relative;font-size:14px;line-height:1.6;}
+.collab-render .md pre{white-space:pre-wrap;}
+.collab-selectable{cursor:text;}
+.collab-editor{background:var(--term);}
+.collab-editor .collab-cm,.collab-editor .cm-editor{height:100%;}
+.collab-editor .cm-editor{background:transparent;font-size:13px;}
+.collab-editor .cm-editor.cm-focused{outline:none;}
+.collab-editor .cm-scroller{font-family:var(--mono);line-height:1.6;}
+.collab-editor .cm-gutters{background:var(--term);border-right:1px solid var(--line);color:var(--ink-4);}
+.collab-addc{position:absolute;z-index:3;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font-size:12px;font-weight:600;box-shadow:var(--sh-2);cursor:pointer;animation:pop .14s cubic-bezier(.2,.9,.3,1.2);}
+.collab-addc svg{width:12px;height:12px;}
+/* The ::highlight() rules for the comment tints live in CollabDoc.tsx (injected
+   at runtime): Lightning CSS, which Turbopack runs over this file, rejects the
+   pseudo-element at parse time and fails the build. */
+.collab-side{display:flex;flex-direction:column;gap:10px;padding:12px;background:var(--panel);}
+.collab-empty{font-size:12.5px;color:var(--ink-3);padding:6px 2px;}
+.collab-compose,.collab-c{border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;background:var(--surface);}
+.collab-compose{border-color:var(--accent);}
+.collab-c{cursor:pointer;transition:border-color .12s,background .12s;}
+.collab-c:hover,.collab-c.on{border-color:color-mix(in oklab,var(--warn) 60%,var(--line));background:color-mix(in oklab,var(--warn) 8%,var(--surface));}
+.collab-c-h{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;color:var(--ink-3);}
+.collab-c-n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--warn);color:var(--bg);font-weight:700;font-size:10.5px;}
+.collab-c-where{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.collab-c-x{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;color:var(--ink-3);background:none;border:0;cursor:pointer;}
+.collab-c-x:hover{background:var(--surface-2);color:var(--ink);}
+.collab-c-x svg{width:12px;height:12px;}
+.collab-quote{font-size:12px;color:var(--ink-2);border-left:3px solid var(--warn);padding:2px 8px;margin-bottom:8px;max-height:72px;overflow:hidden;white-space:pre-wrap;}
+.collab-c-body{font-size:13px;white-space:pre-wrap;}
+.collab-compose textarea,.collab-general textarea{width:100%;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--term);padding:8px 10px;font-family:var(--sans);font-size:13px;color:var(--ink);outline:none;resize:vertical;}
+.collab-compose textarea:focus,.collab-general textarea:focus{border-color:var(--accent);}
+.collab-compose-a{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;}
+.collab-general{margin-top:auto;padding-top:6px;}
+.collab-general .lab{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:6px;}
+.collab-status{font-size:12px;color:var(--ink-3);}
+@media (max-width:900px){
+  .collab{height:calc(100vh - 200px);}
+  /* Stacked: document on top, comments/editor preview below, each its own
+     scroller — a content-sized bottom row clipped the general-comments box. */
+  .collab-split,.collab-split:has(.collab-side){grid-template-columns:1fr;grid-template-rows:minmax(0,1.3fr) minmax(0,1fr);}
+  .collab-hint{display:none;}
 }

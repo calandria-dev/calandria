@@ -2,6 +2,9 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote } from "./orchestrator/shared";
+import { CollabDoc } from "./orchestrator/CollabDoc";
+import { Icon } from "./icons";
+import { isMarkdownPath } from "@/lib/collab";
 import type { TaskComment } from "@/lib/types";
 
 interface DiffFile {
@@ -275,6 +278,7 @@ const FileDiff = memo(function FileDiff({
   onSend,
   onCommentOnly,
   onCancel,
+  onCollaborate,
 }: {
   file: DiffFile;
   userToggled: boolean; // user flipped this file away from its default state
@@ -291,6 +295,7 @@ const FileDiff = memo(function FileDiff({
   onSend: () => void;
   onCommentOnly: () => void;
   onCancel: () => void;
+  onCollaborate?: (path: string) => void; // opens the document collaboration modal (markdown only)
 }) {
   const lines = useMemo(() => (f.binary ? [] : numberedLines(f.patch)), [f]);
   const rows = useMemo(() => (f.binary || viewMode === "unified" ? [] : splitLines(f.patch)), [f, viewMode]);
@@ -351,14 +356,23 @@ const FileDiff = memo(function FileDiff({
       style={{ containIntrinsicSize: `auto ${est}px` }}
       ref={(el) => { refs.current[f.path] = el; }}
     >
-      <button className="tc-fhead" onClick={() => onToggle(f.path)}>
-        <span className={`tc-chev ${isCollapsed ? "" : "open"}`}>▸</span>
-        <span className={`tc-st s-${f.status === "?" ? "new" : f.status}`}>{f.status}</span>
-        <span className="tc-fpath">{f.path}</span>
-        <span className="tc-cnt">
-          <b className="add">+{f.additions}</b> <b className="del">−{f.deletions}</b>
-        </span>
-      </button>
+      <div className="tc-fhead">
+        <button className="tc-fhead-main" onClick={() => onToggle(f.path)}>
+          <span className={`tc-chev ${isCollapsed ? "" : "open"}`}>▸</span>
+          <span className={`tc-st s-${f.status === "?" ? "new" : f.status}`}>{f.status}</span>
+          <span className="tc-fpath">{f.path}</span>
+          <span className="tc-cnt">
+            <b className="add">+{f.additions}</b> <b className="del">−{f.deletions}</b>
+          </span>
+        </button>
+        {/* A markdown document the agent wrote or changed can be reviewed as a
+            document — edited and commented on — rather than hunk by hunk. */}
+        {onCollaborate && !f.binary && f.status !== "D" && isMarkdownPath(f.path) && (
+          <button className="tc-fact" title="Open in collaboration mode: edit the document and attach comments" onClick={() => onCollaborate(f.path)}>
+            {Icon.edit()} Collaborate
+          </button>
+        )}
+      </div>
       {isCollapsed ? (
         // A big file collapsed by default still needs to say why it's empty.
         big && (
@@ -521,6 +535,7 @@ export default function TaskChanges({
   });
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
+  const [collab, setCollab] = useState<string | null>(null); // markdown path open in collaboration mode
   const [draft, setDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -939,9 +954,13 @@ export default function TaskChanges({
               viewMode={viewMode} comments={comments} diffHead={data.head ?? null} sel={sel} draft={draft} busy={commentBusy}
               onLineClick={onLineClick} onDraftChange={setDraft}
               onSend={() => submitComment(true)} onCommentOnly={() => submitComment(false)} onCancel={cancelComment}
+              onCollaborate={onSend ? setCollab : undefined}
             />
           ))}
         </div>
+      )}
+      {collab && onSend && (
+        <CollabDoc taskId={taskId} file={collab} onClose={() => setCollab(null)} onSend={onSend} />
       )}
     </div>
   );
