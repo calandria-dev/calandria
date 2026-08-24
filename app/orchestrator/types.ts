@@ -59,8 +59,9 @@ export interface TaskRow {
   depends_on: string[]; // task ids this task is blocked by until they're done
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
-  context_tokens: number; // latest turn's input-side tokens ≈ current context-window occupancy
+  context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
+  context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
   work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
@@ -278,6 +279,7 @@ export interface AgentCapabilities {
   supportsMcpTools: boolean;  // can mount the orchestrator MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
   costIsEstimated: boolean;   // cost is estimated from tokens × API prices — show with ~
+  reportsContext?: boolean;   // the stream reports real context occupancy; false = the gauge is a usage-derived estimate (absent on a stale bundle = assume true)
   supportsResume: boolean;    // turns can resume a prior session/thread id
 }
 // How this agent is signed in. "subscription" (a Max/Pro or ChatGPT login) means

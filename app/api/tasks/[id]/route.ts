@@ -27,6 +27,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     cache_creation_tokens: usage.cache_creation_tokens,
     context_tokens: ctx.context_tokens,
     context_pct: ctx.context_pct,
+    context_estimated: ctx.context_estimated,
     depends_on: getTaskDeps(id),
     messages: listMessages(id),
   });

@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCollabPacket, collabPatch, isMarkdownPath, locateQuote } from "../lib/collab";
-import { resolveWorktreeFile } from "../lib/worktreeFile";
-import { tmpDir } from "./helpers";
+import { blobSha, resolveWorktreeFile } from "../lib/worktreeFile";
+import { git, tmpDir } from "./helpers";
 
 const DOC = [
   "# Setup guide",
@@ -139,5 +139,30 @@ describe("resolveWorktreeFile", () => {
     expect(resolveWorktreeFile(wt, "docs/link.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "docs/missing.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "")).toBeNull();
+  });
+});
+
+describe("blobSha", () => {
+  // The document comment anchor is this value, computed in-process rather
+  // than shelling out to `git hash-object` on every file read — pinned here
+  // against the real thing so it can never quietly drift from what git itself
+  // would compute for the same bytes.
+  it("matches `git hash-object` for a UTF-8 file with a non-ASCII character", async () => {
+    const dir = tmpDir("blobsha-");
+    await git(dir, "init", "-b", "main");
+    const abs = path.join(dir, "notes.md");
+    fs.writeFileSync(abs, "café — naïve\n", "utf8");
+    const expected = (await git(dir, "hash-object", abs)).trim();
+    expect(blobSha(fs.readFileSync(abs))).toBe(expected);
+  });
+
+  it("matches `git hash-object` for an empty file", async () => {
+    const dir = tmpDir("blobsha-");
+    await git(dir, "init", "-b", "main");
+    const abs = path.join(dir, "empty.md");
+    fs.writeFileSync(abs, "");
+    const expected = (await git(dir, "hash-object", abs)).trim();
+    expect(expected).toBe("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+    expect(blobSha(fs.readFileSync(abs))).toBe(expected);
   });
 });

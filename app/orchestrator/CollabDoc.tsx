@@ -6,7 +6,8 @@ import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { Modal } from "./Modal";
 import { Skel, ErrNote } from "./shared";
-import { buildCollabPacket, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode, type PassageComment } from "@/lib/collab";
+import { buildCollabPacket, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
+import type { TaskDocComment } from "@/lib/types";
 
 // Document collaboration mode — a Word-style review of one markdown file the
 // agent touched. Two tabs over ONE document state: EDIT (source editor beside
@@ -14,6 +15,17 @@ import { buildCollabPacket, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode, type 
 // plus a general box). Send builds a single message (lib/collab.ts) carrying
 // the edit diff and/or the comments with their location, and hands it to the
 // same onSend chat uses — so it queues behind a running turn like any message.
+//
+// Passage comments are PERSISTED (task_doc_comments, via /api/tasks/[id]/
+// doc-comments) the moment they're added, the way the Changes tab's line
+// comments are: TaskChanges remounts on every rail collapse and tab switch,
+// which unmounts this modal, so an in-progress review has to live on the
+// server to survive it. Each row carries the file's blob sha as loaded
+// (anchor_sha) — sent comments whose anchor still matches are listed read-only
+// against the document; sent ones whose anchor doesn't are "outdated". Unsent
+// drafts stay live either way (the user decides whether they still apply) and
+// are what Send folds into the packet. Edits and the general box are still
+// modal-only.
 //
 // Edits reach the file one of two ways (`CollabEditMode`). "direct" — the
 // default — writes the edited text into the worktree first (POST
@@ -38,12 +50,13 @@ function loadEditMode(): CollabEditMode {
 const MarkdownEditor = dynamic(() => import("./MarkdownEditor"), { ssr: false, loading: () => <Skel w="100%" h={200} /> });
 
 type Tab = "edit" | "comment";
-type Draft = PassageComment & { id: number };
 // A selection the user just made in the rendered view, before it's a comment.
 type Pending = { quote: string; heading: string | null; top: number; left: number };
 
 const HIGHLIGHT_NAME = "collab-comments";
+const SENT_HIGHLIGHT_NAME = "collab-comments-sent";
 const ACTIVE_HIGHLIGHT_NAME = "collab-comment-active";
+const HIGHLIGHT_NAMES = [HIGHLIGHT_NAME, SENT_HIGHLIGHT_NAME, ACTIVE_HIGHLIGHT_NAME];
 
 // Nearest heading above a range in the rendered DOM: walk up to the block that
 // contains the selection start, then back through its siblings.
@@ -108,8 +121,15 @@ function ensureHighlightStyle() {
   el.id = HIGHLIGHT_STYLE_ID;
   el.textContent =
     `::highlight(${HIGHLIGHT_NAME}){background:color-mix(in oklab,var(--warn) 28%,transparent);}` +
+    `::highlight(${SENT_HIGHLIGHT_NAME}){background:color-mix(in oklab,var(--accent) 16%,transparent);}` +
     `::highlight(${ACTIVE_HIGHLIGHT_NAME}){background:color-mix(in oklab,var(--warn) 55%,transparent);}`;
   document.head.appendChild(el);
+}
+
+async function readJson<T>(r: Response): Promise<T & { error?: string }> {
+  const j = (await r.json().catch(() => ({}))) as T & { error?: string };
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
 }
 
 export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
@@ -121,54 +141,81 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   onWritten?: () => void; // the file on disk changed under the Changes tab — refetch the diff
 }) {
   const [original, setOriginal] = useState<string | null>(null);
+  const [sha, setSha] = useState<string | null>(null); // blob sha of `original` — the anchor new comments get
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("comment");
-  const [comments, setComments] = useState<Draft[]>([]);
+  const [comments, setComments] = useState<TaskDocComment[]>([]);
+  const [commentErr, setCommentErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [general, setGeneral] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
   const [composing, setComposing] = useState<{ quote: string; heading: string | null } | null>(null);
   const [draft, setDraft] = useState("");
-  const [active, setActive] = useState<number | null>(null);
+  const [active, setActive] = useState<string | null>(null);
+  const [showOutdated, setShowOutdated] = useState(false);
   const [mode, setMode] = useState<CollabEditMode>(loadEditMode);
-  const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // The text a direct write already landed on disk, so a retry after a later
+  // step failed (marking drafts sent) doesn't write again — the second write
+  // would be refused as stale, since `original` is still what the modal loaded.
+  const [written, setWritten] = useState<string | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
-  const nextId = useRef(1);
   const dark = typeof document !== "undefined" && document.documentElement.dataset.mode !== "light";
+
+  const api = `/api/tasks/${taskId}/doc-comments`;
 
   useEffect(() => {
     let dead = false;
     fetch(`/api/tasks/${taskId}/file?path=${encodeURIComponent(file)}`, { cache: "no-store" })
-      .then(async (r) => {
-        const j = (await r.json().catch(() => ({}))) as { content?: string; error?: string };
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-        return j.content ?? "";
-      })
-      .then((c) => { if (!dead) { setOriginal(c); setText(c); } })
+      .then((r) => readJson<{ content?: string; sha?: string }>(r))
+      .then((j) => { if (!dead) { setOriginal(j.content ?? ""); setSha(j.sha ?? null); setText(j.content ?? ""); } })
       .catch((e) => { if (!dead) setError(e instanceof Error ? e.message : String(e)); });
+    // The persisted review, loaded beside the document. A failure here is
+    // shown in the side pane rather than blocking the document: the user can
+    // still read and edit, they just can't trust the comment list.
+    fetch(`${api}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
+      .then((r) => readJson<{ comments?: TaskDocComment[] }>(r))
+      .then((j) => { if (!dead) setComments(j.comments ?? []); })
+      .catch((e) => { if (!dead) setCommentErr(`Couldn't load saved comments: ${e instanceof Error ? e.message : String(e)}`); });
     return () => { dead = true; };
-  }, [taskId, file]);
+  }, [taskId, file, api]);
+
+  // Three buckets. Drafts are what Send folds into the packet, whatever their
+  // anchor; a sent comment is read-only and, once the file's content has moved
+  // on from the sha it was written against, outdated — its passage may be
+  // gone, so it's collapsed rather than guess-painted onto the document.
+  const drafts = useMemo(() => comments.filter((c) => !c.sent_to_agent), [comments]);
+  const sentCurrent = useMemo(() => comments.filter((c) => c.sent_to_agent && sha !== null && c.anchor_sha === sha), [comments, sha]);
+  const outdated = useMemo(() => comments.filter((c) => c.sent_to_agent && !(sha !== null && c.anchor_sha === sha)), [comments, sha]);
 
   const edited = original !== null && text !== original;
   // The mode that will actually be used: a running turn makes direct
   // impossible, and the server would refuse it anyway.
   const effectiveMode: CollabEditMode = mode === "direct" && running ? "patch" : mode;
   const packet = useMemo(
-    () => (original === null ? null : buildCollabPacket({ file, original, edited: text, comments, general, mode: effectiveMode })),
-    [file, original, text, comments, general, effectiveMode]
+    () =>
+      original === null
+        ? null
+        : buildCollabPacket({
+            file, original, edited: text, general, mode: effectiveMode,
+            comments: drafts.map((c) => ({ quote: c.quote, comment: c.body, heading: c.heading })),
+          }),
+    [file, original, text, drafts, general, effectiveMode]
   );
   const pickMode = (m: CollabEditMode) => {
     setMode(m);
     setSendError(null);
     try { localStorage.setItem(EDIT_MODE_KEY, m); } catch { /* private browsing, etc. */ }
   };
-  const dirty = edited || comments.length > 0 || general.trim().length > 0;
+  // Comments are saved as they're added, so only the modal-local halves —
+  // edits and the general box — can be lost by closing.
+  const dirty = edited || general.trim().length > 0;
 
   // Closing with unsent work asks once; the scrim, Escape and Cancel all go
   // through here.
   const close = useCallback(() => {
-    if (dirty && !window.confirm("Discard your edits and comments?")) return;
+    if (dirty && !window.confirm("Discard your unsent edits? Passage comments are saved.")) return;
     onClose();
   }, [dirty, onClose]);
 
@@ -199,36 +246,65 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setPending(null);
     window.getSelection()?.removeAllRanges();
   };
-  const addComment = () => {
-    if (!composing || !draft.trim()) return;
-    setComments((cs) => [...cs, { ...composing, comment: draft.trim(), id: nextId.current++ }]);
-    setComposing(null);
-    setDraft("");
+  const addComment = async () => {
+    if (!composing || !draft.trim() || busy) return;
+    setBusy(true);
+    setCommentErr(null);
+    try {
+      const r = await fetch(api, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file, quote: composing.quote, heading: composing.heading, body: draft.trim(), anchorSha: sha }),
+      });
+      const j = await readJson<{ comment?: TaskDocComment }>(r);
+      if (j.comment) setComments((cs) => [...cs, j.comment as TaskDocComment]);
+      setComposing(null);
+      setDraft("");
+    } catch (e) {
+      setCommentErr(`Couldn't save the comment: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
   };
-  const remove = (id: number) => setComments((cs) => cs.filter((c) => c.id !== id));
+  const remove = async (id: string) => {
+    setCommentErr(null);
+    try {
+      const r = await fetch(`${api}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (r.status === 404) { setComments((cs) => cs.filter((c) => c.id !== id)); return; } // already gone — same outcome
+      await readJson(r);
+      setComments((cs) => cs.filter((c) => c.id !== id));
+    } catch (e) {
+      setCommentErr(`Couldn't remove the comment: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   // Paint every comment's passage via the CSS Custom Highlight API — no DOM
   // mutation, so react-markdown's tree is never fought over, and a re-render
   // (tab switch, edit) simply repaints from the quotes. Browsers without it
-  // still get the list on the right; the passage just isn't tinted.
+  // still get the list on the right; the passage just isn't tinted. Drafts
+  // and sent-but-current comments get different tints; outdated ones aren't
+  // painted at all (their passage was written against other text).
   useEffect(() => {
     if (!highlightsSupported()) return;
     ensureHighlightStyle();
+    const clear = () => HIGHLIGHT_NAMES.forEach((n) => CSS.highlights.delete(n));
     const root = docRef.current;
-    if (!root || tab !== "comment") { CSS.highlights.delete(HIGHLIGHT_NAME); CSS.highlights.delete(ACTIVE_HIGHLIGHT_NAME); return; }
+    if (!root || tab !== "comment") { clear(); return; }
     const all: Range[] = [];
+    const sent: Range[] = [];
     const act: Range[] = [];
-    for (const c of comments) {
+    for (const c of [...drafts, ...sentCurrent]) {
       const r = findRange(root, c.quote);
       if (!r) continue;
-      (c.id === active ? act : all).push(r);
+      (c.id === active ? act : c.sent_to_agent ? sent : all).push(r);
     }
     CSS.highlights.set(HIGHLIGHT_NAME, new Highlight(...all));
+    CSS.highlights.set(SENT_HIGHLIGHT_NAME, new Highlight(...sent));
     CSS.highlights.set(ACTIVE_HIGHLIGHT_NAME, new Highlight(...act));
-    return () => { CSS.highlights.delete(HIGHLIGHT_NAME); CSS.highlights.delete(ACTIVE_HIGHLIGHT_NAME); };
-  }, [comments, active, tab, text]);
+    return clear;
+  }, [drafts, sentCurrent, active, tab, text]);
 
-  const jumpTo = (c: Draft) => {
+  const jumpTo = (c: TaskDocComment) => {
     setActive(c.id);
     const root = docRef.current;
     if (!root) return;
@@ -237,15 +313,24 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
+  // Send, in three steps whose order matters. (1) In direct mode, write the
+  // edited text into the worktree — the server can refuse (live turn, file
+  // changed since load), and a refusal must leave the review exactly as it
+  // was: nothing marked, nothing sent. (2) Flip every draft to sent BEFORE
+  // handing the packet to chat: if the mark fails the packet isn't sent and
+  // the drafts stay drafts, so nothing reaches the agent that the record
+  // doesn't show; the reverse order could send a review and then leave it
+  // re-sendable. (3) The packet itself.
   const send = async () => {
-    if (!packet || sending || original === null) return;
-    if (edited && effectiveMode === "direct") {
-      setSending(true);
-      setSendError(null);
-      try {
+    if (!packet || busy || original === null) return;
+    setBusy(true);
+    setCommentErr(null);
+    setSendError(null);
+    try {
+      if (edited && effectiveMode === "direct" && written !== text) {
         const r = await fetch(`/api/tasks/${taskId}/file`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: file, original, content: text }),
         });
         if (!r.ok) {
@@ -257,22 +342,64 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
               : why
           );
         }
+        setWritten(text);
         onWritten?.();
-      } catch (e) {
-        setSendError(e instanceof Error ? e.message : String(e));
-        setSending(false);
-        return;
       }
+      if (drafts.length) {
+        const r = await fetch(`${api}/sent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: drafts.map((c) => c.id) }),
+        });
+        await readJson(r);
+      }
+      onSend(packet);
+      onClose();
+    } catch (e) {
+      setSendError(`Couldn't send: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
-    onSend(packet);
-    onClose();
   };
 
   const status = [
     edited ? "edited" : null,
-    comments.length ? `${comments.length} comment${comments.length === 1 ? "" : "s"}` : null,
+    drafts.length ? `${drafts.length} comment${drafts.length === 1 ? "" : "s"}` : null,
     general.trim() ? "general note" : null,
   ].filter(Boolean).join(" · ");
+
+  // One comment card. Drafts are numbered (the packet numbers them the same
+  // way) and removable; sent ones are read-only, tagged, and — when the
+  // document has changed since — dimmed as outdated.
+  const card = (c: TaskDocComment, i: number | null, variant: "draft" | "sent" | "outdated") => {
+    const missing = variant === "draft" && locateQuote(text, c.quote) === null;
+    return (
+      <div
+        key={c.id}
+        className={`collab-c ${variant === "draft" ? "" : variant} ${active === c.id ? "on" : ""}`}
+        onMouseEnter={() => setActive(c.id)}
+        onMouseLeave={() => setActive(null)}
+        onClick={() => jumpTo(c)}
+      >
+        <div className="collab-c-h">
+          {i !== null && <span className="collab-c-n">{i + 1}</span>}
+          {variant !== "draft" && <span className="collab-c-tag" title="Already sent to the agent; read-only.">{Icon.check()} sent</span>}
+          {c.heading && <span className="collab-c-where">{c.heading}</span>}
+          {missing && (
+            <span className="collab-c-tag warn" title="This passage is no longer in the document; the agent will be told the location wasn't found.">
+              not found
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          {variant === "draft" && (
+            <button className="collab-c-x" title="Remove comment" onClick={(e) => { e.stopPropagation(); remove(c.id); }}>{Icon.x()}</button>
+          )}
+        </div>
+        <div className="collab-quote">{c.quote}</div>
+        <div className="collab-c-body">{c.body}</div>
+      </div>
+    );
+  };
 
   return (
     <Modal
@@ -287,14 +414,14 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
           {edited && (
             <label className="collab-mode" title={running ? "The agent is working, so the worktree is its to write; your edits go as a patch until the turn ends." : "How your edits reach the file"}>
               <span>Edits</span>
-              <select value={effectiveMode} onChange={(e) => pickMode(e.target.value as CollabEditMode)} disabled={sending}>
+              <select value={effectiveMode} onChange={(e) => pickMode(e.target.value as CollabEditMode)} disabled={busy}>
                 <option value="direct" disabled={!!running}>{running ? "Write to file (agent is working)" : "Write to file"}</option>
                 <option value="patch">Send as patch for the agent to apply</option>
               </select>
             </label>
           )}
-          <button className="btn btn-line" onClick={close} disabled={sending}>Cancel</button>
-          <button className="btn btn-accent" onClick={send} disabled={!packet || sending}>{Icon.send()} {sending ? "Writing…" : "Send to agent"}</button>
+          <button className="btn btn-line" onClick={close} disabled={busy}>Cancel</button>
+          <button className="btn btn-accent" onClick={send} disabled={!packet || busy}>{Icon.send()} {busy ? "Sending…" : "Send to agent"}</button>
         </>
       }
     >
@@ -335,6 +462,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
               )}
             </div>
             <div className="collab-pane collab-side">
+              {commentErr && <ErrNote>{commentErr}</ErrNote>}
               {composing && (
                 <div className="collab-compose">
                   <div className="collab-quote">{composing.quote}</div>
@@ -348,25 +476,29 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
                   />
                   <div className="collab-compose-a">
                     <button className="tc-btn" onClick={() => setComposing(null)}>Cancel</button>
-                    <button className="tc-btn primary" onClick={addComment} disabled={!draft.trim()}>Add</button>
+                    <button className="tc-btn primary" onClick={addComment} disabled={busy || !draft.trim()}>Add</button>
                   </div>
                 </div>
               )}
-              {comments.length === 0 && !composing && (
+              {comments.length === 0 && !composing && !commentErr && (
                 <div className="collab-empty">No passage comments yet. Highlight text on the left and press <b>Add comment</b>.</div>
               )}
-              {comments.map((c, i) => (
-                <div key={c.id} className={`collab-c ${active === c.id ? "on" : ""}`} onMouseEnter={() => setActive(c.id)} onMouseLeave={() => setActive(null)} onClick={() => jumpTo(c)}>
-                  <div className="collab-c-h">
-                    <span className="collab-c-n">{i + 1}</span>
-                    {c.heading && <span className="collab-c-where">{c.heading}</span>}
-                    <span style={{ flex: 1 }} />
-                    <button className="collab-c-x" title="Remove comment" onClick={(e) => { e.stopPropagation(); remove(c.id); }}>{Icon.x()}</button>
-                  </div>
-                  <div className="collab-quote">{c.quote}</div>
-                  <div className="collab-c-body">{c.comment}</div>
+              {drafts.map((c, i) => card(c, i, "draft"))}
+              {sentCurrent.length > 0 && <div className="collab-group">Sent to agent</div>}
+              {sentCurrent.map((c) => card(c, null, "sent"))}
+              {outdated.length > 0 && (
+                <div className="collab-outdated">
+                  <button className="tc-btn" onClick={() => setShowOutdated((v) => !v)}>
+                    {showOutdated ? "Hide" : "Show"} {outdated.length} outdated comment{outdated.length === 1 ? "" : "s"}
+                  </button>
+                  {showOutdated && (
+                    <>
+                      <div className="collab-empty">Sent against an earlier version of this document; the passages may have moved or gone.</div>
+                      {outdated.map((c) => card(c, null, "outdated"))}
+                    </>
+                  )}
                 </div>
-              ))}
+              )}
               <div className="collab-general">
                 <div className="lab">General comments</div>
                 <textarea value={general} onChange={(e) => setGeneral(e.target.value)} placeholder="Feedback on the document as a whole…" rows={4} />

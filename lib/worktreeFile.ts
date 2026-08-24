@@ -2,6 +2,7 @@
 // (GET /api/tasks/[id]/file). Split from lib/collab.ts because that module is
 // bundled for the client and this one needs fs.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -38,4 +39,14 @@ export function resolveWorktreeFile(worktree: string, rel: string): string | nul
   }
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return null;
   return real;
+}
+
+// git's blob id for a file's bytes — what `git hash-object <file>` prints —
+// computed in-process (no subprocess, and it's exact for an uncommitted
+// file, which HEAD is not). The file route stamps it on every read and a
+// document comment records it as its anchor_sha, so "the document has changed
+// since this was written" is a string comparison the client can make against
+// whatever it just loaded (tests/collab.test.ts pins it against real git).
+export function blobSha(buf: Buffer): string {
+  return createHash("sha1").update(`blob ${buf.length}\0`).update(buf).digest("hex");
 }

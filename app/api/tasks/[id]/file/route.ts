@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { NextResponse } from "next/server";
 import { getTask } from "@/lib/store";
 import { hasTurn } from "@/lib/abort";
-import { resolveWorktreeFile, MAX_COLLAB_BYTES } from "@/lib/worktreeFile";
+import { resolveWorktreeFile, blobSha, MAX_COLLAB_BYTES } from "@/lib/worktreeFile";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +39,8 @@ function locate(taskId: string, rel: string): { abs: string; worktree: string } 
 // The path is repo-relative and confined to the worktree by
 // resolveWorktreeFile — symlinks included. Size-capped and text-only: the
 // whole content rides back in the collaboration POST, and a binary would
-// never render as a document anyway.
+// never render as a document anyway. `sha` is the content's git blob id — the
+// anchor a document comment is stamped with (see TaskDocComment).
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const rel = new URL(req.url).searchParams.get("path") ?? "";
@@ -47,7 +48,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (hit instanceof NextResponse) return hit;
   const buf = fs.readFileSync(hit.abs);
   if (buf.subarray(0, 8192).includes(0)) return NextResponse.json({ error: "binary file" }, { status: 415 });
-  return NextResponse.json({ path: rel, content: buf.toString("utf8"), size: fs.statSync(hit.abs).size });
+  return NextResponse.json({ path: rel, content: buf.toString("utf8"), size: buf.length, sha: blobSha(buf) });
 }
 
 // Write the modal's edited text straight into the worktree — the "direct"

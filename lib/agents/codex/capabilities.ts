@@ -117,6 +117,10 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // and costIsEstimated=true has the UI show the figure with an ~.
   reportsCostUsd: false,
   costIsEstimated: true,
+  // turn.completed reports the THREAD's running totals and nothing per
+  // request (see lib/agents/types.ts), so the context gauge is the usage
+  // heuristic, labelled as such.
+  reportsContext: false,
   supportsResume: true,
   apiKeyHint: codexApiKey.hint,
   loginStyle: "device_code",

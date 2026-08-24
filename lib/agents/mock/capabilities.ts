@@ -20,6 +20,7 @@ export const MOCK_CAPABILITIES: AgentCapabilities = {
   backgroundTasksLinger: false,
   reportsCostUsd: false,
   costIsEstimated: false,
+  reportsContext: true,
   supportsResume: true,
   apiKeyHint: null,
   loginStyle: "paste_code",
