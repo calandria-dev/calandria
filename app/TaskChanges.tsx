@@ -960,7 +960,7 @@ export default function TaskChanges({
         </div>
       )}
       {collab && onSend && (
-        <CollabDoc taskId={taskId} file={collab} onClose={() => setCollab(null)} onSend={onSend} />
+        <CollabDoc taskId={taskId} file={collab} running={running} onClose={() => setCollab(null)} onSend={onSend} onWritten={load} />
       )}
     </div>
   );

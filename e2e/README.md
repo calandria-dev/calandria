@@ -108,7 +108,7 @@ skips the build when the tag already exists.
 | `08-move-started-task.spec.ts` | re-filing a task that has RUN: the worktree it must discard is named, confirmed twice, reclaimed — and its next turn lands in the destination repo |
 | `09-permissions.spec.ts` | the tool-permission gate: a turn parks on a card, Allow once resumes it, Decline feeds the reason back, "Always allow" stores a project rule that skips the next prompt and is revocable in Settings |
 | `13-notifications.spec.ts` | browser notifications: a parked task notifies a tab looking elsewhere, stays silent when you're watching that very task, and a failed turn notifies |
-| `15-collab-doc.spec.ts` | document collaboration mode: a markdown file in the diff opens as a document, a selected passage takes a comment, the source is edited, and Send lands ONE message in the transcript — the edit as a patch, the comment with its located line; plus the worktree file route's path guard |
+| `15-collab-doc.spec.ts` | document collaboration mode: a markdown file in the diff opens as a document, a selected passage takes a comment, the source is edited, and Send lands ONE message in the transcript — the edit as a patch (agent applies it) or written straight into the worktree (the default; the diff rides along as context), the comment with its located line; plus the worktree file route's path guard and the write route's two refusals (live turn, file changed since load) |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named

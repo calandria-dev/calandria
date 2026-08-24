@@ -22,12 +22,21 @@ export interface PassageComment {
   heading?: string | null;
 }
 
+// How the user's edits reach the file. "direct": the modal has already
+// written `edited` into the worktree (POST /api/tasks/[id]/file) and the diff
+// in the packet is context only. "patch": the agent is asked to apply the
+// diff itself, which keeps its session the only writer of the worktree — at
+// the cost of trusting a model to apply a patch verbatim.
+export type CollabEditMode = "direct" | "patch";
+export const DEFAULT_COLLAB_EDIT_MODE: CollabEditMode = "direct";
+
 export interface CollabSubmission {
   file: string;
   original: string; // the file as the modal loaded it
   edited: string; //   the file after the user's edits (=== original when untouched)
   comments: PassageComment[];
   general: string; // the free-form box under the comment list
+  mode?: CollabEditMode; // defaults to "patch" — the packet is only ever told "direct" by a caller that has written the file
 }
 
 export const MARKDOWN_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown", ".mkd"]);
@@ -113,12 +122,14 @@ function quoteBlock(text: string): string {
 
 // Compose the message the agent receives. Line numbers refer to the EDITED
 // text, since that's what the comment view rendered and what the agent holds
-// once it applies the patch. Returns null when there is nothing to send.
+// once it applies the patch (or, in direct mode, what is already on disk).
+// Returns null when there is nothing to send.
 export function buildCollabPacket(s: CollabSubmission): string | null {
   const patch = collabPatch(s.file, s.original, s.edited);
   const comments = s.comments.filter((c) => c.comment.trim() && c.quote.trim());
   const general = s.general.trim();
   if (!patch && comments.length === 0 && !general) return null;
+  const direct = s.mode === "direct";
 
   const out: string[] = [];
   out.push(`Document review of \`${s.file}\` — I read it in collaboration mode and have feedback.`);
@@ -127,7 +138,9 @@ export function buildCollabPacket(s: CollabSubmission): string | null {
   if (patch) {
     out.push("## My edits");
     out.push(
-      "I edited the document directly. Apply this patch to the file exactly as written — the wording is final, don't rephrase it — before working on the comments below."
+      direct
+        ? `I edited \`${s.file}\` directly in the worktree — the file on disk already has these changes, so re-read it before touching it and do NOT apply this diff again. It's here so you can see what changed; the wording is final, don't rephrase it.`
+        : "I edited the document directly. Apply this patch to the file exactly as written — the wording is final, don't rephrase it — before working on the comments below."
     );
     out.push("");
     out.push("```diff");
@@ -138,7 +151,7 @@ export function buildCollabPacket(s: CollabSubmission): string | null {
 
   if (comments.length) {
     out.push("## Comments on passages");
-    out.push(patch ? "Line numbers refer to the file AFTER my patch is applied." : "Line numbers refer to the current file.");
+    out.push(patch && !direct ? "Line numbers refer to the file AFTER my patch is applied." : "Line numbers refer to the current file.");
     out.push("");
     comments.forEach((c, i) => {
       const loc = locateQuote(s.edited, c.quote);

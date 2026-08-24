@@ -6,7 +6,7 @@ import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { Modal } from "./Modal";
 import { Skel, ErrNote } from "./shared";
-import { buildCollabPacket, locateQuote } from "@/lib/collab";
+import { buildCollabPacket, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
 import type { TaskDocComment } from "@/lib/types";
 
 // Document collaboration mode — a Word-style review of one markdown file the
@@ -26,6 +26,26 @@ import type { TaskDocComment } from "@/lib/types";
 // drafts stay live either way (the user decides whether they still apply) and
 // are what Send folds into the packet. Edits and the general box are still
 // modal-only.
+//
+// Edits reach the file one of two ways (`CollabEditMode`). "direct" — the
+// default — writes the edited text into the worktree first (POST
+// /api/tasks/[id]/file) and the message carries the diff as context; it's the
+// reliable route, since a model asked to apply a patch verbatim sometimes
+// doesn't. "patch" sends only the diff and asks the agent to apply it, which
+// keeps the agent's session the worktree's only writer. Direct is refused by
+// the server while a turn is running (the agent owns the worktree) and when
+// the file changed since the modal loaded it; the picker greys the option out
+// for the first case client-side, the second shows up as an error on Send.
+
+const EDIT_MODE_KEY = "collab-edit-mode";
+function loadEditMode(): CollabEditMode {
+  try {
+    const v = localStorage.getItem(EDIT_MODE_KEY);
+    return v === "patch" || v === "direct" ? v : DEFAULT_COLLAB_EDIT_MODE;
+  } catch {
+    return DEFAULT_COLLAB_EDIT_MODE;
+  }
+}
 
 const MarkdownEditor = dynamic(() => import("./MarkdownEditor"), { ssr: false, loading: () => <Skel w="100%" h={200} /> });
 
@@ -112,11 +132,13 @@ async function readJson<T>(r: Response): Promise<T & { error?: string }> {
   return j;
 }
 
-export function CollabDoc({ taskId, file, onClose, onSend }: {
+export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
   taskId: string;
   file: string;
+  running?: boolean; // a turn is live — direct writes are refused server-side, so the picker says so up front
   onClose: () => void;
   onSend: (text: string) => void;
+  onWritten?: () => void; // the file on disk changed under the Changes tab — refetch the diff
 }) {
   const [original, setOriginal] = useState<string | null>(null);
   const [sha, setSha] = useState<string | null>(null); // blob sha of `original` — the anchor new comments get
@@ -132,6 +154,12 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const [showOutdated, setShowOutdated] = useState(false);
+  const [mode, setMode] = useState<CollabEditMode>(loadEditMode);
+  const [sendError, setSendError] = useState<string | null>(null);
+  // The text a direct write already landed on disk, so a retry after a later
+  // step failed (marking drafts sent) doesn't write again — the second write
+  // would be refused as stale, since `original` is still what the modal loaded.
+  const [written, setWritten] = useState<string | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
   const dark = typeof document !== "undefined" && document.documentElement.dataset.mode !== "light";
 
@@ -162,16 +190,24 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
   const outdated = useMemo(() => comments.filter((c) => c.sent_to_agent && !(sha !== null && c.anchor_sha === sha)), [comments, sha]);
 
   const edited = original !== null && text !== original;
+  // The mode that will actually be used: a running turn makes direct
+  // impossible, and the server would refuse it anyway.
+  const effectiveMode: CollabEditMode = mode === "direct" && running ? "patch" : mode;
   const packet = useMemo(
     () =>
       original === null
         ? null
         : buildCollabPacket({
-            file, original, edited: text, general,
+            file, original, edited: text, general, mode: effectiveMode,
             comments: drafts.map((c) => ({ quote: c.quote, comment: c.body, heading: c.heading })),
           }),
-    [file, original, text, drafts, general]
+    [file, original, text, drafts, general, effectiveMode]
   );
+  const pickMode = (m: CollabEditMode) => {
+    setMode(m);
+    setSendError(null);
+    try { localStorage.setItem(EDIT_MODE_KEY, m); } catch { /* private browsing, etc. */ }
+  };
   // Comments are saved as they're added, so only the modal-local halves —
   // edits and the general box — can be lost by closing.
   const dirty = edited || general.trim().length > 0;
@@ -277,15 +313,38 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
-  // Send: flip every draft to sent FIRST, then hand the packet to chat. The
-  // order matters — if the mark fails the packet isn't sent and the drafts
-  // stay drafts, so nothing reaches the agent that the record doesn't show;
-  // the reverse order could send a review and then leave it re-sendable.
+  // Send, in three steps whose order matters. (1) In direct mode, write the
+  // edited text into the worktree — the server can refuse (live turn, file
+  // changed since load), and a refusal must leave the review exactly as it
+  // was: nothing marked, nothing sent. (2) Flip every draft to sent BEFORE
+  // handing the packet to chat: if the mark fails the packet isn't sent and
+  // the drafts stay drafts, so nothing reaches the agent that the record
+  // doesn't show; the reverse order could send a review and then leave it
+  // re-sendable. (3) The packet itself.
   const send = async () => {
-    if (!packet || busy) return;
+    if (!packet || busy || original === null) return;
     setBusy(true);
     setCommentErr(null);
+    setSendError(null);
     try {
+      if (edited && effectiveMode === "direct" && written !== text) {
+        const r = await fetch(`/api/tasks/${taskId}/file`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: file, original, content: text }),
+        });
+        if (!r.ok) {
+          const j = (await r.json().catch(() => ({}))) as { error?: string; current?: string };
+          const why = j.error || `HTTP ${r.status}`;
+          throw new Error(
+            typeof j.current === "string"
+              ? `${why}. Your edits were made against text that is no longer on disk — send them as a patch so the agent can reconcile, or cancel and reopen the document.`
+              : why
+          );
+        }
+        setWritten(text);
+        onWritten?.();
+      }
       if (drafts.length) {
         const r = await fetch(`${api}/sent`, {
           method: "POST",
@@ -297,7 +356,7 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
       onSend(packet);
       onClose();
     } catch (e) {
-      setCommentErr(`Couldn't send: ${e instanceof Error ? e.message : String(e)}`);
+      setSendError(`Couldn't send: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -350,10 +409,19 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
       width={1180}
       footer={
         <>
-          <span className="collab-status">{status || "No changes yet — edit the text or select a passage to comment."}</span>
+          <span className="collab-status">{sendError ? <span className="collab-send-err">{sendError}</span> : status || "No changes yet — edit the text or select a passage to comment."}</span>
           <span className="spacer" />
-          <button className="btn btn-line" onClick={close}>Cancel</button>
-          <button className="btn btn-accent" onClick={send} disabled={!packet || busy}>{Icon.send()} Send to agent</button>
+          {edited && (
+            <label className="collab-mode" title={running ? "The agent is working, so the worktree is its to write; your edits go as a patch until the turn ends." : "How your edits reach the file"}>
+              <span>Edits</span>
+              <select value={effectiveMode} onChange={(e) => pickMode(e.target.value as CollabEditMode)} disabled={busy}>
+                <option value="direct" disabled={!!running}>{running ? "Write to file (agent is working)" : "Write to file"}</option>
+                <option value="patch">Send as patch for the agent to apply</option>
+              </select>
+            </label>
+          )}
+          <button className="btn btn-line" onClick={close} disabled={busy}>Cancel</button>
+          <button className="btn btn-accent" onClick={send} disabled={!packet || busy}>{Icon.send()} {busy ? "Sending…" : "Send to agent"}</button>
         </>
       }
     >
@@ -363,7 +431,9 @@ export function CollabDoc({ taskId, file, onClose, onSend }: {
           <button className={`rail-tab ${tab === "comment" ? "on" : ""}`} onClick={() => setTab("comment")}>{Icon.doc()} COMMENT</button>
           <span className="collab-hint">
             {tab === "edit"
-              ? "Edit the markdown source; your exact wording is sent as a patch."
+              ? effectiveMode === "direct"
+                ? "Edit the markdown source; it's written to the file as-is when you send."
+                : "Edit the markdown source; your exact wording is sent as a patch."
               : "Select text in the document to attach a comment to it."}
           </span>
         </div>
