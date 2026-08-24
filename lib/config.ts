@@ -82,6 +82,23 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMP
 export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDED_MS, 45_000);
 
 /**
+ * How long a Claude turn may linger after the model stops, keeping the CLI
+ * process alive while run_in_background tasks it started are still running.
+ * Each turn is one SDK query whose CLI process owns those children AND the
+ * in-memory task registry that promises "you'll be notified when it
+ * completes" — so ending the query at result time kills the work silently.
+ * Instead the driver holds the session open (streaming-input mode) until the
+ * tasks settle and their notifications wake the model, bounded by this
+ * deadline measured from the first moment the turn starts lingering (wake
+ * turns don't reset it). On expiry the work is stopped and a transcript
+ * notice says so. The task stays `running` (Stop works, the SIGTERM drain
+ * covers it, follow-up messages queue) and shows "working in background".
+ * Set to 0 to disable lingering entirely — turns then end at result time and
+ * background tasks die with the CLI, the pre-feature behavior.
+ */
+export const BACKGROUND_LINGER_MS = ms(process.env.ORCH_BACKGROUND_LINGER_MS, 30 * 60 * 1000);
+
+/**
  * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by
  * server.js's SIGTERM/SIGINT handler before it exits) waits for in-flight
  * turns to abort and unwind before giving up and letting the process exit

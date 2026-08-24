@@ -44,7 +44,10 @@ when needed → you review and merge.**
 Project context is written once and carried into each task. Server-owned
 turns and persisted transcripts survive browser reloads and laptop sleep,
 and `/clear` starts a fresh context window while preserving the task's
-lineage.
+lineage. When a Claude turn starts background shell work, the session
+lingers after the model stops — the task shows "working in background",
+the work runs to completion, and its finish wakes the agent to continue
+(bounded by `ORCH_BACKGROUND_LINGER_MS`, 30 minutes by default).
 
 ## What makes it different
 

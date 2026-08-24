@@ -62,6 +62,7 @@ export interface Task {
   withdrawn_reason: string; // why an agent retracted this suggestion ("" = not withdrawn); only meaningful with status "cancelled" + suggested 1
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
+  background_pending: number; // 1 while the turn lingers on background work (model turn ended, run_in_background tasks still running; the session wakes itself when they settle) — running stays 1 the whole time
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
@@ -380,6 +381,19 @@ export type StreamEvent =
   | { type: "suggested"; title: string; projectId: string }
   | { type: "usage"; usage: TurnUsage }
   | { type: "notice"; content: string } // a quiet, non-error system note (e.g. "caught up to main")
+  // The model's turn ended but run_in_background work is still running, and the
+  // driver is holding the session open for it (bounded by BACKGROUND_LINGER_MS).
+  // The runner flips tasks.background_pending on so the UI can say "working in
+  // background" instead of a generic spinner — and instead of the lie this
+  // feature exists to kill, where the turn ended, the work died with the CLI
+  // process, and the row said "needs your input" about a notification that was
+  // never coming.
+  | { type: "background_pending"; tasks: { id: string; kind: string; description: string }[] }
+  // A lingered-on background task settled and its notification woke the model:
+  // a fresh turn is about to stream with NO user message behind it. `summary`
+  // is the CLI's own account of what settled, persisted so the transcript
+  // explains the unprompted continuation.
+  | { type: "background_resumed"; status: "completed" | "failed" | "stopped"; summary: string }
   | { type: "error"; content: string }
   | { type: "done"; sessionId: string | null };
 
@@ -427,11 +441,13 @@ export type AgentAuthEvent = {
 // and the "N need you" pill live for tasks whose transcript stream isn't open.
 export type GlobalTaskEvent = {
   type: "task";
-  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end";
+  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end" | "background";
   taskId: string;
   projectId: string;
   running: boolean;
   awaiting_input: boolean;
+  /** Turn lingering on run_in_background work (running stays true) — the "working in background" indicator. */
+  background_pending: boolean;
   status: Status;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;

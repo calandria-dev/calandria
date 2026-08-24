@@ -67,6 +67,16 @@ export interface AgentCapabilities {
    * UI — same reason the flag is. null = the verdict says everything.
    */
   userMcpServersNote: string | null;
+  /**
+   * run_in_background work survives the model's turn: the driver holds the
+   * session open (bounded by BACKGROUND_LINGER_MS) until the tasks settle and
+   * their completion notifications wake the model into a continuation turn.
+   * False = background tasks die with the turn's CLI process, and
+   * buildProjectContext (lib/agents/shared.ts) warns the model off them —
+   * without the warning the shell tool's own docs promise a notification that
+   * never comes.
+   */
+  backgroundTasksLinger: boolean;
   /** Usage events carry a real dollar cost (not just token counts). */
   reportsCostUsd: boolean;
   /**
