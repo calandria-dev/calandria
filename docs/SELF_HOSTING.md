@@ -122,6 +122,11 @@ The container publishes its port on the **host's loopback only**. To reach it fr
 elsewhere, put an authenticated tunnel or reverse proxy in front — this app hands out a
 full shell and a `bypassPermissions` agent, so **never expose the port raw**.
 
+An HTTPS front has a second payoff beyond safety: browsers only offer **PWA install**
+(Add to Home Screen / standalone window) and the **Notification permission** in a secure
+context — HTTPS or `localhost`. A plain-HTTP LAN IP gets neither, so if the phone is one
+of your surfaces, reach the instance through the tunnel hostname rather than `http://192.168.x.x`.
+
 The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted code, and
 the setup wizard drives that flow from the browser.
 

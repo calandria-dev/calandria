@@ -11,6 +11,16 @@ export const metadata: Metadata = {
   metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
   title: "Calandria — build, verify & host every app with agents",
   description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
+  applicationName: "Calandria",
+  // iOS has no manifest-driven install; these metas are what make "Add to Home
+  // Screen" open a standalone window. black-translucent lets the page extend
+  // under the status bar, which the titlebar already handles via
+  // viewport-fit=cover + safe-area-inset padding (globals.css).
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Calandria",
+  },
 };
 
 // viewport-fit=cover lets the app paint under the notch / home indicator so the
@@ -20,6 +30,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Colors the standalone window frame / Android status bar. Static on the
+  // cherenkov-dark default (globals.css --bg): the theme picker is client
+  // state, and a mismatched frame beats a flash of the wrong one on launch.
+  themeColor: "#081217",
 };
 
 // Render per request so PUBLIC_BASE_URL is read from the runtime environment,
@@ -37,6 +51,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             the full-height body once and flash a document scrollbar that vanishes the
             moment the real CSS lands. */}
         <style dangerouslySetInnerHTML={{ __html: "html,body{height:100%;margin:0;overflow:hidden}" }} />
+        {/* PWA manifest. Manual link, NOT the app/manifest.ts convention: the
+            manifest fetch only carries cookies when the link says use-credentials
+            (which Next's auto-injected link can't be told to say), and middleware
+            gates every route — so under Cloudflare Access a bare link 403s and
+            the app is not installable. Served by app/site.webmanifest/route.ts. */}
+        <link rel="manifest" href="/site.webmanifest" crossOrigin="use-credentials" />
         {/* Hand the instance's public origin to client code (Terminal builds its
             ws(s):// URL from it). Empty = same-origin via window.location. */}
         <script
