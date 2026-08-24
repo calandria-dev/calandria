@@ -81,9 +81,10 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   own timezone, with nobody logged in. Each firing mints a fresh task you
   review like any other, and can fire a runbook so one recipe serves both
   the clock and the button.
-- **Notifications:** a browser notification when a task stops and waits for
-  you, when a turn fails, or when a scheduled run fails. Off-tab by design:
-  quiet only when you're already looking at the task in question.
+- **Notifications:** when a task stops and waits for you, when a turn fails,
+  or when a scheduled run fails — as a browser notification in any open tab,
+  and as a push to your phone with the app closed. Quiet only when you're
+  already looking at the task in question.
 - **Installable app:** a PWA with its own icon and standalone window — install
   from Chrome/Edge or iOS Add to Home Screen and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS, works behind Cloudflare Access).

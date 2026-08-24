@@ -266,6 +266,30 @@ export const GIT_FETCH_COOLDOWN_MS = num(
 export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 
 /**
+ * Web Push (lib/push/). VAPID is how this instance identifies itself to the
+ * browsers' push services (RFC 8292); the subject is the contact they may use
+ * about the traffic — a `mailto:` or `https:` URL. Defaults to PUBLIC_BASE_URL
+ * when that is https (the instance's own address is a truthful contact), else
+ * a placeholder the services accept. Set it to a real mailbox on an instance
+ * you care about hearing from.
+ */
+export const VAPID_SUBJECT =
+  process.env.VAPID_SUBJECT || (PUBLIC_BASE_URL.startsWith("https://") ? PUBLIC_BASE_URL : "mailto:admin@localhost");
+
+/**
+ * The VAPID private key: a base64url-encoded raw P-256 scalar (32 bytes) — the
+ * format `npx web-push generate-vapid-keys` prints, so a key made elsewhere can
+ * be pinned here. Empty (the default) means the instance mints one on first
+ * use and keeps it at `<ORCH_DB_DIR>/vapid.json`, beside the database it
+ * belongs with: every push subscription is bound to the key it was created
+ * under, so a key that travels separately from the subscriptions strands all
+ * of them. Set this only to hold one key across instances that share a
+ * database, or to survive a wiped data dir with the subscriptions restored
+ * from a backup.
+ */
+export const VAPID_PRIVATE_KEY = (process.env.VAPID_PRIVATE_KEY || "").trim();
+
+/**
  * How often the schedule ticker wakes to adjudicate due firings
  * (lib/scheduler.ts). Firings are minute-granular, so this bounds how late one
  * can be. Short enough to be punctual, long enough to be free.

@@ -9,10 +9,12 @@
 // covered here — `ask`, `permission` and `turn_end` — and the ROW decides in
 // every case, because the emitter re-reads it through taskNeedsYou().
 //
-// Started from GET /api/events (idempotent, so every tab calls it). A boot ping
-// like the scheduler's buys nothing while the only channel is a browser tab:
-// the stream is a live tail, so a payload published with no tab open is
-// discarded either way. The webhook task adds one.
+// Started from GET /api/events (idempotent, so every tab calls it) AND from the
+// scheduler's boot ping (app/api/instance/scheduler/route.ts). The second one
+// matters since Web Push shipped: a scheduled run that parks at 08:30 with no
+// tab open anywhere publishes onto a bus nobody is reading unless this
+// subscriber was attached at boot, and the push channel hangs off the emitter
+// this subscriber feeds.
 
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { emitAwaitingInput, emitTurnFailed } from "./notify";

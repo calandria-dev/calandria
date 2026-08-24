@@ -13,6 +13,9 @@ import { AgentConnect } from "./AgentConnect";
 import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
+import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
+import { relTime } from "./format";
+import type { PushDevice } from "@/lib/push/types";
 import type { AgentInfoT, AgentsResponseT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
@@ -305,6 +308,58 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "off" | "failed" | "error">("idle");
   useEffect(() => { setPerm(notificationPermission()); }, []);
 
+  // Web Push: the device list is server state (every subscribed browser),
+  // "this device" is whichever row this browser's own subscription maps to.
+  const [push, setPush] = useState<PushSupportState>("unsupported");
+  const [devices, setDevices] = useState<PushDevice[] | null>(null);
+  const [thisDevice, setThisDevice] = useState<string | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushErr, setPushErr] = useState<string | null>(null);
+  const loadDevices = async () => {
+    const r = await jget<{ subscriptions: PushDevice[] }>("/api/notifications/push");
+    setDevices(r.subscriptions);
+  };
+  useEffect(() => {
+    setPush(pushSupport());
+    loadDevices().catch((e) => setPushErr(e instanceof Error ? e.message : String(e)));
+    // The re-sync also answers "is this browser subscribed?" — it returns the
+    // row the browser's subscription upserted into, or null.
+    syncPushSubscription().then((d) => { setThisDevice(d?.id ?? null); if (d) void loadDevices(); }).catch(() => {});
+  }, []);
+  async function togglePush() {
+    setPushBusy(true); setPushErr(null);
+    try {
+      if (thisDevice) { await disablePush(); setThisDevice(null); }
+      else { const d = await enablePush(); setThisDevice(d.id); }
+      setPerm(notificationPermission());
+      await loadDevices();
+    } catch (e) {
+      setPushErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPushBusy(false);
+    }
+  }
+  async function removeDevice(id: string) {
+    setPushErr(null);
+    try {
+      if (id === thisDevice) await disablePush();
+      else await jsend(`/api/notifications/push/${id}`, "DELETE");
+      if (id === thisDevice) setThisDevice(null);
+      await loadDevices();
+    } catch (e) {
+      setPushErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  const pushHelp = push === "insecure"
+    ? "Push needs a secure origin, like every notification does — reach the instance over https or as localhost."
+    : push === "needs_install"
+      ? "On iPhone and iPad, push only works for an app on the Home Screen: Share → Add to Home Screen, open Calandria from there, and enable it here."
+      : push === "unsupported"
+        ? "This browser can't receive push notifications."
+        : thisDevice
+          ? "This device is subscribed. It hears every notification even with Calandria closed."
+          : "Subscribe this device to hear about a task that stopped even when Calandria isn't open — the notification arrives through the OS, like any app's.";
+
   const on = appDefaults.notifications !== "off";
   const kinds: [string, string, string][] = [
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands — either way the task has stopped until you pick it up."],
@@ -365,14 +420,48 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
               {Icon.bell()} Enable browser notifications
             </button>
           )}
-          <button className="btn btn-line btn-sm" onClick={sendTest} disabled={perm !== "granted" || testState === "sending"}>
+          <button className="btn btn-line btn-sm" onClick={sendTest} disabled={(perm !== "granted" && !(devices && devices.length > 0)) || testState === "sending"}>
             {Icon.send()} {testState === "sending" ? "Sending…" : "Send test notification"}
           </button>
         </div>
-        {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent — it went through the same path a real notification takes.</div>}
+        {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent — it went through the same path a real notification takes{devices && devices.length > 0 ? `, including the push to ${devices.length === 1 ? "the subscribed device" : `all ${devices.length} subscribed devices`}` : ""}.</div>}
         {testState === "off" && <div className="hlp" style={{ marginTop: 8 }}>Nothing sent: notifications are switched off above.</div>}
         {testState === "failed" && <div className="hlp" style={{ marginTop: 8 }}>Notifications are on, but the server couldn&apos;t publish it — check the server log.</div>}
         {testState === "error" && <div className="hlp" style={{ marginTop: 8 }}>Couldn&apos;t reach the server to send it.</div>}
+      </div>
+
+      <div className="field">
+        <div className="lab">{Icon.send()} Push notifications</div>
+        <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>{pushHelp}</div>
+        {push === "ready" && (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="btn btn-line btn-sm" onClick={() => void togglePush()} disabled={pushBusy}>
+              {Icon.bell()} {pushBusy ? "Working…" : thisDevice ? "Stop push on this device" : "Enable push on this device"}
+            </button>
+          </div>
+        )}
+        {pushErr && <ErrNote>{pushErr}</ErrNote>}
+        {devices && devices.length > 0 && (
+          <div className="perm-rules" style={{ marginTop: 10 }}>
+            {devices.map((d) => (
+              <div className="perm-rule" key={d.id}>
+                <code>{d.label || "Unnamed device"}{d.id === thisDevice ? " — this device" : ""}</code>
+                <span className="opt" title={d.last_error || undefined}>
+                  {d.last_status === 0
+                    ? `added ${relTime(d.created_at)}`
+                    : d.last_status >= 200 && d.last_status < 300
+                      ? `delivered ${relTime(d.last_sent_at)}`
+                      : `failing (${d.last_status || "no reply"})`}
+                  {d.service ? ` · ${d.service}` : ""}
+                </span>
+                <button className="btn btn-sm" onClick={() => void removeDevice(d.id)} title="Stop sending to this device">Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {devices && devices.length === 0 && push !== "ready" && (
+          <div className="hlp" style={{ marginTop: 8 }}>No device is subscribed yet. Open Settings on the phone (or any browser that supports push) to add it.</div>
+        )}
       </div>
 
       <div className="field">

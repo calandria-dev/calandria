@@ -4,10 +4,12 @@
 // which rows stay quiet, how a repeat is collapsed, and how the text reads.
 //
 // Published onto the same in-process bus the transcript uses
-// (publishGlobal → GET /api/events → every open tab). SDK-free: store + bus
+// (publishGlobal → GET /api/events → every open tab) and, from the same exit,
+// pushed to every subscribed browser (lib/push). SDK-free: store + bus + fetch
 // only, pinned by tests/importGraph.test.ts.
 
 import { publishGlobal } from "@/lib/events";
+import { pushNotificationDetached } from "@/lib/push/send";
 import { interactionDenied } from "@/lib/runContext";
 import { getProject, getSetting, getTask, taskNeedsYou } from "@/lib/store";
 import type { NotificationKind, NotificationPayload } from "./types";
@@ -85,6 +87,13 @@ function deliver(payload: NotificationPayload, dedupe = true): NotificationPaylo
     console.error("[notifications] publish failed:", err);
     return null;
   }
+  // The second channel: Web Push to every subscribed browser (lib/push/send.ts),
+  // the SAME payload the tabs just received. Detached — this runs inside the
+  // turn that stopped, and the push services are on the far side of the
+  // internet. A device that also has a tab open gets the toast twice on paper
+  // and once on screen: the worker uses the payload id as the notification
+  // tag, exactly as useNotifications.ts does, so the two collapse.
+  pushNotificationDetached(payload);
   return payload;
 }
 
