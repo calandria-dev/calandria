@@ -53,6 +53,13 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // and the send button is the one visible affordance for sending. Enter-to-send
   // stays a hardware-keyboard behavior.
   const coarse = useCoarsePointer();
+  // Tapping a button steals focus from the textarea, and on iOS that dismisses
+  // the keyboard BEFORE the click lands — the layout shifts under the finger
+  // and the tap is spent closing the keyboard, so send needed a second tap.
+  // Cancelling mousedown (the compat event iOS fires on tap) keeps focus put:
+  // the keyboard stays up, the click fires on a stable layout, and the box is
+  // ready for the follow-up without a re-tap.
+  const keepFocus = (e: React.MouseEvent) => e.preventDefault();
   const [slash, setSlash] = useState(false);
   // The agent's own slash commands, fetched once per task the first time the
   // user types "/". Lazy because a task the user only reads should never spawn
@@ -271,6 +278,10 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // intent is stated explicitly: nothing to autofill, but this IS
               // prose — autocorrect, sentence caps and spellcheck on.
               autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
+              // Named so the heuristic has a prose word to read instead of
+              // nothing — an unnamed field is where the one-time-code guess
+              // keeps creeping back in.
+              name="message"
               placeholder={disabled ? "Start the session to reply…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
                 const v = e.target.value;
@@ -315,11 +326,11 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // Mid-turn: queue the typed follow-up (when there's text), and keep
               // Stop available to interrupt the current turn.
               <div className="send-group">
-                {canSend && <button className="send queue" onClick={submit} title="Queue this follow-up — it'll send when the current turn ends">{Icon.send()}</button>}
-                <button className="send stop" onClick={() => { setStopping(true); onStop(); }} disabled={stopping} title={stopping ? "Stopping…" : "Stop the current turn"}>{Icon.stop()}</button>
+                {canSend && <button className="send queue" onMouseDown={keepFocus} onClick={submit} title="Queue this follow-up — it'll send when the current turn ends">{Icon.send()}</button>}
+                <button className="send stop" onMouseDown={keepFocus} onClick={() => { setStopping(true); onStop(); }} disabled={stopping} title={stopping ? "Stopping…" : "Stop the current turn"}>{Icon.stop()}</button>
               </div>
             ) : (
-              <button className="send" disabled={!canSend || disabled} onClick={submit}>{Icon.send()}</button>
+              <button className="send" disabled={!canSend || disabled} onMouseDown={keepFocus} onClick={submit}>{Icon.send()}</button>
             )}
           </div>
           <div className="comp-foot">
