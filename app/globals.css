@@ -138,6 +138,12 @@ a:hover{text-decoration:underline;text-underline-offset:2px;}
    instead of the app surface. */
 html,body{margin:0;height:100%;}
 html{background:var(--bg);}
+/* color-scheme drives the iOS keyboard's appearance (and form-control chrome):
+   without it the keyboard follows the OS setting, so a light app theme on a
+   dark phone gets a black keyboard slab under a pale composer. Keyed off the
+   resolved data-mode usePrefs writes, so it tracks the theme picker. */
+html[data-mode="dark"]{color-scheme:dark;}
+html[data-mode="light"]{color-scheme:light;}
 body{
   background:var(--bg);
   color:var(--ink);
@@ -453,8 +459,18 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* Visible on hover (pickable rows only — a mid-turn row keeps its live dot),
    once picked, or anywhere in a list that has a selection going — so the
    affordance is discoverable without making the list a form. */
-.task-row:hover .pick-slot:not(.no-pick) .pickbox,.task-row.picked .pickbox,.sug:hover .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
-.task-row:hover .pick-slot:not(.no-pick) .sdot,.task-row.picked .pick-slot .sdot,.col-tasks:has(.pick-bar) .pick-slot .sdot{opacity:0;}
+.task-row.picked .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
+.task-row.picked .pick-slot .sdot,.col-tasks:has(.pick-bar) .pick-slot .sdot{opacity:0;}
+/* The hover half lives behind (hover:hover): on a touch screen the first tap
+   IS the hover, and iOS withholds the click when that hover reveals content —
+   which turned "tap a task" into "tap it twice" (the checkbox appearing under
+   the finger ate the first tap). Picked / selection-in-progress states above
+   stay unconditional; on a phone the checkbox is still there to tap at the
+   dot, just not summoned by a hover it can't have. */
+@media (hover:hover){
+  .task-row:hover .pick-slot:not(.no-pick) .pickbox,.sug:hover .pickbox{opacity:1;}
+  .task-row:hover .pick-slot:not(.no-pick) .sdot{opacity:0;}
+}
 .task-row.picked .task,.sug.picked{background:var(--accent-soft);}
 .sug .pickbox{height:22px;flex:0 0 18px;}
 /* Docked action bar for the current selection. */
@@ -487,9 +503,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    dot → checkbox swap in the left corner: hover swaps pill → snooze; a parked
    row's always-visible wake button owns the corner outright. */
 .task .task-top .pri{transition:opacity .12s;}
-.task-row:hover .task-top .pri,.task-row.snoozed .task-top .pri{opacity:0;}
+.task-row.snoozed .task-top .pri{opacity:0;}
+@media (hover:hover){.task-row:hover .task-top .pri{opacity:0;}}
 .snz-set{opacity:0;transition:opacity .12s,color .12s;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--ink-4);display:grid;place-items:center;}
-.task-row:hover .snz-set,.bcard:hover .snz-set,.snz-set:focus-visible{opacity:1;}
+.snz-set:focus-visible{opacity:1;}
+/* Same reasoning as the pickbox: a hover-summoned snooze corner ate the first
+   tap on board cards. Phones snooze from the session rail (More → Snooze). */
+@media (hover:hover){.task-row:hover .snz-set,.bcard:hover .snz-set{opacity:1;}}
 .snz-set:hover{color:var(--ink-2);}
 .snz-set svg{width:14px;height:14px;}
 /* Waking stays visible — it's the whole reason a parked row is on screen. */
@@ -1660,10 +1680,18 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      The center omni-search is desktop-only, so nothing needs the middle track.
      The wordmark goes too — the glyph carries the brand and the freed width is
      what the usage pill + needs-you pill actually need. */
-  .app.mobile .titlebar{display:flex;justify-content:space-between;padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  .app.mobile .titlebar{display:flex;justify-content:space-between;gap:10px;padding-top:env(safe-area-inset-top);height:calc(56px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
   .app.mobile .tb-word{display:none;}
+  .app.mobile .tb-logo svg{height:22px;width:auto;}
   .app.mobile .tb-left{flex:0 1 auto;}
-  .app.mobile .tb-right{flex:0 1 auto;}
+  .app.mobile .tb-right{flex:0 1 auto;gap:8px;}
+  /* The plan-usage pill reads as two clean lines — "5h 65% (57m)" over
+     "wk 57%" — instead of one cramped run with the divider dot orphaned
+     wherever the wrap happened to fall. The taller bar above is what gives
+     it (and the 34px needs-you pill) room. */
+  .app.mobile .plan-pill{height:auto;min-height:36px;padding:4px 11px;flex-wrap:wrap;justify-content:center;line-height:1.35;text-align:center;}
+  .app.mobile .plan-pill .pp-seg{flex:1 1 100%;white-space:nowrap;}
+  .app.mobile .plan-pill .pp-div{display:none;}
   /* Installed to the home screen, iOS 26 paints its own "scroll edge effect" —
      a progressive blur over the status-bar strip — on top of the page. Its fade
      reaches a little past env(safe-area-inset-top), so titlebar icons sitting
@@ -1671,7 +1699,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      interactive row below the fade; only the titlebar's background extends into
      it, which is exactly what black-translucent + viewport-fit=cover intend. */
   @media (display-mode: standalone){
-    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 16px);height:calc(62px + env(safe-area-inset-top));}
+    .app.mobile .titlebar{padding-top:calc(env(safe-area-inset-top) + 22px);height:calc(78px + env(safe-area-inset-top));}
   }
   .app.mobile .tb-user,
   .app.mobile .tb-actions{display:none;}
