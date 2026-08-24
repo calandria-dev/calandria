@@ -9,7 +9,8 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { BackgroundTaskSummary, CanUseTool, PermissionMode, PermissionResult, SDKUserMessage, SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import type { BackgroundTaskSummary, CanUseTool, PermissionMode, PermissionResult, SDKUserMessage, SessionCronSummary, SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { planSessionCrons, cronThatWoke, lingerNote, describeCron, cancelledCronsNotice, wakeTimeLabel, type PlannedCron } from "./sessionCrons";
 import { z } from "zod";
 import type {
   Project,
@@ -680,9 +681,20 @@ async function* runTurn(
   // `background_tasks_changed` system message with the same array, but that
   // subtype exists nowhere in sdk.d.ts — an undocumented passthrough that can
   // drift with CLI releases, so it is deliberately not load-bearing here.)
-  // `session_crons` (ScheduleWakeup / CronCreate) is deliberately NOT a linger
-  // trigger: a cron can be hours out, far past any sane linger bound, and
-  // holding a CLI process open for it is not this feature.
+  // `session_crons` (ScheduleWakeup / CronCreate / /loop) rides the same Stop
+  // payload and is the second linger trigger (measured separately, on the same
+  // CLI — see sessionCrons.ts for the record): a cron fires ONLY while the CLI
+  // is alive, and closing the input exits it within ~300ms with the wake simply
+  // gone — the same broken promise, in the class the first cut excluded. Held
+  // open, the wake arrives as a bare second `init` (same session id, no user
+  // message, no task_notification), so it gets its own wake accounting below.
+  // Which crons are honored is planSessionCrons()'s decision, stated there:
+  // everything under the unbounded default (a recurring /loop cron holds the
+  // session open until the user stops it — by design, and visible on the row),
+  // only what fits the window on a bounded instance. Whatever is NOT honored is
+  // named in a transcript notice when the input closes (endTurn), so neither
+  // the user nor the model's next turn waits on a wake that died with the
+  // process.
   //
   // Closing the held-open iterable is the whole teardown: the CLI gives still-
   // running tasks a ~5s grace, kills them (task_updated status:"killed"), and
@@ -697,9 +709,27 @@ async function* runTurn(
   // cleared on wake would hang the query if a notification ever arrives
   // without a wake turn behind it (skip_transcript housekeeping tasks).
   let pendingBg: BackgroundTaskSummary[] = [];
+  let pendingCrons: SessionCronSummary[] = [];
+  // The crons the current linger is holding the session open for (a subset of
+  // pendingCrons on a bounded instance), so a wake init can say which fired.
+  let lingerCrons: PlannedCron[] = [];
   let lingering = false;
   let closing = false;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  // First linger entry — the anchor the deadline (and the window-fit check for
+  // crons) is measured from; 0 until the turn first lingers.
+  let lingerSince = 0;
+  const lingerDeadline = () => (BACKGROUND_LINGER_MS > 0 ? (lingerSince || Date.now()) + BACKGROUND_LINGER_MS : null);
+  // Cron ids already named in a cancellation notice this turn: a doomed wakeup
+  // stays in every later Stop payload (it's still registered, still doomed),
+  // and one notice per wakeup is honest — one per Stop is noise.
+  const noticedCrons = new Set<string>();
+  const cancelNotice = (crons: SessionCronSummary[], reason: string, now: number) => {
+    const fresh = planSessionCrons(crons, { now, enabled: false, deadline: null }).cancelled.filter((c) => !noticedCrons.has(c.id));
+    if (!fresh.length) return null;
+    for (const c of fresh) noticedCrons.add(c.id);
+    return cancelledCronsNotice(fresh, reason, now);
+  };
   // Cumulative-cost baseline: in streaming-input mode each result message's
   // token counts cover only its own turn segment, but total_cost_usd is the
   // running SESSION total (measured: wake turn reported the first result's
@@ -714,9 +744,18 @@ async function* runTurn(
   let lastContext = 0;
   let closeInput!: () => void;
   const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
-  const endTurn = () => {
+  // Close the held-open input and let the CLI exit. `reason` is why any wakeup
+  // the last Stop hook reported is about to die with the process — the honesty
+  // fallback: whichever path closes (nothing honored at result time, the
+  // deadline, Stop, a transport error), a cron still pending at that moment
+  // will never fire, and the notice says so once. A caller that has already
+  // named the crons in its own notice passes `null`.
+  const endTurn = (reason: string | null = "the session closed before it fired") => {
+    if (closing) return;
     closing = true;
     if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+    const notice = reason ? cancelNotice(pendingCrons, reason, Date.now()) : null;
+    if (notice) queue.push({ type: "notice", content: notice });
     closeInput();
   };
   async function* promptStream(): AsyncGenerator<SDKUserMessage> {
@@ -731,14 +770,20 @@ async function* runTurn(
       lingerTimer = null;
       if (closing) return;
       const cut = pendingBg.map((t) => t.command || t.description).filter(Boolean).join("; ");
+      const now = Date.now();
+      // Everything the last Stop reported dies here — background work AND any
+      // wakeup, honored or not — so one notice names all of it.
+      const crons = planSessionCrons(pendingCrons, { now, enabled: false, deadline: null }).cancelled.filter((c) => !noticedCrons.has(c.id));
+      for (const c of crons) noticedCrons.add(c.id);
       queue.push({
         type: "notice",
         content:
           `⏱ Background work exceeded the linger window (${Math.round(BACKGROUND_LINGER_MS / 60000)}m) and was stopped` +
           (cut ? `: ${clip(cut, 500)}` : "") +
-          `. Don't assume it finished.`,
+          `. Don't assume it finished.` +
+          (crons.length ? ` Scheduled wakeup${crons.length > 1 ? "s" : ""} cancelled with it: ${crons.map((c) => describeCron(c, now)).join("; ")}.` : ""),
       });
-      endTurn();
+      endTurn(null);
     }, BACKGROUND_LINGER_MS);
     // Let the process exit if something else tears the turn down first.
     lingerTimer.unref?.();
@@ -869,7 +914,9 @@ async function* runTurn(
           {
             hooks: [
               async (input) => {
-                pendingBg = (input as { background_tasks?: BackgroundTaskSummary[] }).background_tasks ?? [];
+                const i = input as { background_tasks?: BackgroundTaskSummary[]; session_crons?: SessionCronSummary[] };
+                pendingBg = i.background_tasks ?? [];
+                pendingCrons = i.session_crons ?? [];
                 return {};
               },
             ],
@@ -885,6 +932,25 @@ async function* runTurn(
     try {
       for await (const message of response) {
         if (message.type === "system" && message.subtype === "init") {
+          // A wakeup firing mid-linger arrives as exactly this — a second
+          // init on the same session, with no user message and no
+          // task_notification (measured) — so this is the cron wake signal.
+          // Only claimed when crons were being waited on: a background task's
+          // wake is its notification, which precedes its init (measured, and
+          // pinned by the linger test), so that path has already left the
+          // lingering state by the time its init streams.
+          if (lingering && !closing && lingerCrons.length > 0) {
+            lingering = false;
+            const now = Date.now();
+            const woke = cronThatWoke(lingerCrons, now);
+            queue.push({
+              type: "background_resumed",
+              status: "woke",
+              summary: woke
+                ? `Scheduled wakeup fired${woke.recurring ? ` (\`${woke.schedule}\`)` : ` (${wakeTimeLabel(woke.fireAt, now)})`}: ${clip(woke.prompt, 300)}`
+                : "Scheduled wakeup fired",
+            });
+          }
           sessionId = message.session_id;
           queue.push({ type: "session", sessionId });
           // The init message reports the model the SDK actually resolved (e.g. when
@@ -1002,20 +1068,40 @@ async function* runTurn(
             queue.push({ type: "error", content: withResetTime(`Run ended: ${message.subtype}`) });
           }
           // The linger decision. The Stop hook has already fired for this turn
-          // (verified ordering), so pendingBg is current: empty → the session
-          // is done, close the input and let the CLI exit; populated → hold
-          // the query open so the work survives, tell the runner, and start
-          // the bounded wait for the task_notification wake.
+          // (verified ordering), so pendingBg/pendingCrons are current: nothing
+          // to honor → the session is done, close the input and let the CLI
+          // exit (naming any wakeup that dies with it); something to honor →
+          // hold the query open so the work survives, tell the runner what the
+          // session is waiting on, and start the (optional) bounded wait for
+          // the task_notification / wake-init.
           if (!closing) {
-            if (pendingBg.length > 0 && BACKGROUND_LINGER_ENABLED) {
+            const now = Date.now();
+            const bg = BACKGROUND_LINGER_ENABLED ? pendingBg : [];
+            const plan = planSessionCrons(pendingCrons, { now, enabled: BACKGROUND_LINGER_ENABLED, deadline: lingerDeadline() });
+            if (bg.length > 0 || plan.linger.length > 0) {
               lingering = true;
+              lingerSince ||= now;
+              lingerCrons = plan.linger;
+              // A wakeup that won't be waited for is dead the moment this
+              // linger ends, and nothing later will re-plan it (the deadline
+              // is fixed from first entry) — say so now, beside the wait.
+              const notice = cancelNotice(plan.cancelled, `beyond this instance's ${Math.round(BACKGROUND_LINGER_MS / 60000)}-minute linger window`, now);
+              if (notice) queue.push({ type: "notice", content: notice });
               queue.push({
                 type: "background_pending",
-                tasks: pendingBg.map((t) => ({ id: t.id, kind: t.type, description: clip(t.command || t.description, 300) })),
+                tasks: [
+                  ...bg.map((t) => ({ id: t.id, kind: t.type, description: clip(t.command || t.description, 300) })),
+                  ...plan.linger.map((c) => ({ id: c.id, kind: c.recurring ? "cron" : "wakeup", description: clip(c.prompt, 300), ...(c.fireAt !== null ? { wakeAt: c.fireAt } : {}) })),
+                ],
+                note: lingerNote(bg.length, plan.linger, now),
               });
               armLingerDeadline();
             } else {
-              endTurn();
+              endTurn(
+                !BACKGROUND_LINGER_ENABLED
+                  ? "lingering is off on this instance (ORCH_BACKGROUND_LINGER), so the session closed at the end of the turn"
+                  : `beyond this instance's ${Math.round(BACKGROUND_LINGER_MS / 60000)}-minute linger window`,
+              );
             }
           }
         }

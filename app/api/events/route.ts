@@ -151,6 +151,7 @@ export async function GET(req: Request) {
           running: !!t.running,
           awaiting_input: !!t.awaiting_input,
           background_pending: !!t.background_pending,
+          background_note: t.background_note ?? "",
           status: t.status,
           awaiting_count: countAwaiting(t.project_id),
           // A suggestion can be filed into a project other than the one the

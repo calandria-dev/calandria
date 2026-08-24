@@ -43,8 +43,9 @@ type QueryArgs = {
   options: { hooks?: { Stop?: { hooks: StopHook[] }[] } };
 };
 type CliIo = {
-  /** Fire the driver's Stop hook — the CLI does this before every result. */
-  stop: (tasks?: unknown[]) => Promise<void>;
+  /** Fire the driver's Stop hook — the CLI does this before every result,
+   *  carrying both the in-flight background tasks and the session crons. */
+  stop: (tasks?: unknown[], crons?: unknown[]) => Promise<void>;
   /** Read the streaming prompt. The second read resolves `{done: true}` only
    *  when the driver releases the held-open iterable — the close signal. */
   nextInput: () => Promise<IteratorResult<unknown>>;
@@ -55,12 +56,22 @@ function mockCli(run: (io: CliIo) => AsyncGenerator<unknown>): void {
     const it = (args.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
     const hooks = args.options.hooks?.Stop?.[0]?.hooks ?? [];
     return run({
-      stop: async (tasks = []) => {
-        for (const h of hooks) await h({ background_tasks: tasks });
+      stop: async (tasks = [], crons = []) => {
+        for (const h of hooks) await h({ background_tasks: tasks, session_crons: crons });
       },
       nextInput: () => it.next(),
     });
   });
+}
+
+// A one-shot ScheduleWakeup as the Stop hook reports it (measured): only the
+// wall-clock minute is encoded, local time, so it fires at a minute boundary
+// — which on this file's 500ms-bounded instance is ALWAYS beyond the window.
+// That makes this suite the "won't be honored" half of the cron policy; the
+// wake path needs the unbounded default and lives in claudeCronLinger.test.ts.
+function oneShotIn(minutes: number) {
+  const d = new Date(Date.now() + minutes * 60_000);
+  return { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" };
 }
 
 const BG = [{ id: "bg1", type: "shell", status: "running", description: "sleep 5", command: "sleep 5" }];
@@ -117,6 +128,7 @@ describe("claude driver background linger", () => {
     expect(pending).toEqual({
       type: "background_pending",
       tasks: [{ id: "bg1", kind: "shell", description: "sleep 5" }],
+      note: "working in background",
     });
     const resumed = events.find((e) => e.type === "background_resumed");
     expect(resumed).toEqual({
@@ -179,6 +191,58 @@ describe("claude driver background linger", () => {
     expect(events.some((e) => e.type === "background_resumed")).toBe(false);
     expect(events[events.length - 1]?.type).toBe("done");
   }, 10_000);
+});
+
+describe("session crons on a bounded instance (won't be honored)", () => {
+  // Measured: a cron fires only while the CLI is alive, and closing the input
+  // exits it within ~300ms with the wake simply gone. So a wakeup the driver
+  // won't wait for must be NAMED when the input closes, or the model's next
+  // turn and the user both sit waiting on a wake that died with the process.
+  it("closes at result time and appends a notice naming the cancelled wakeup", async () => {
+    mockCli(async function* ({ stop, nextInput }) {
+      await nextInput();
+      yield init;
+      yield text("SCHEDULED");
+      await stop([], [oneShotIn(2)]); // nothing in flight, one wakeup two minutes out
+      yield result(0.01, { input_tokens: 1, output_tokens: 2 });
+      const end = await nextInput();
+      expect(end.done).toBe(true);
+    });
+    const events = await drain();
+    expect(events.some((e) => e.type === "background_pending")).toBe(false);
+    const notice = events.find((e) => e.type === "notice");
+    const content = notice && "content" in notice ? notice.content : "";
+    expect(content).toMatch(/^⏰ Scheduled wakeup cancelled — beyond this instance's 0-minute linger window: at \d\d:\d\d — "WAKE: check the build"\. It will not fire/);
+    expect(events[events.length - 1]?.type).toBe("done");
+  });
+
+  it("still lingers for background work, naming the out-of-window wakeup beside the wait", async () => {
+    mockCli(async function* ({ stop, nextInput }) {
+      await nextInput();
+      yield init;
+      yield text("started");
+      await stop(BG, [oneShotIn(2)]);
+      yield result(0.05, { input_tokens: 4, output_tokens: 9 });
+      yield notification("completed", "Background command completed (exit code 0)");
+      yield init;
+      yield text("bg done");
+      await stop([], [oneShotIn(2)]); // the wake is still registered on the wake turn
+      yield result(0.06, { input_tokens: 2, output_tokens: 11 });
+      const end = await nextInput();
+      expect(end.done).toBe(true);
+    });
+    const events = await drain();
+    const pending = events.find((e): e is Extract<StreamEvent, { type: "background_pending" }> => e.type === "background_pending");
+    // The wait is for the shell task only — the cron isn't in the pending set.
+    expect(pending?.tasks.map((t) => t.kind)).toEqual(["shell"]);
+    expect(pending?.note).toBe("working in background");
+    // Named ONCE, at linger entry (nothing later re-plans it) — the wake turn's
+    // Stop reports the same doomed cron again and its close must not repeat
+    // the notice.
+    const notices = events.filter((e) => e.type === "notice").map((e) => ("content" in e ? e.content : ""));
+    expect(notices.filter((n) => n.includes("Scheduled wakeup cancelled"))).toHaveLength(1);
+    expect(events.find((e) => e.type === "background_resumed")).toMatchObject({ status: "completed" });
+  });
 });
 
 describe("runner + driver background linger (persisted state)", () => {
