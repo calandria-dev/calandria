@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ensureNotifier } from "@/lib/notifications/dispatcher";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,10 @@ export const dynamic = "force-dynamic";
 // compiles as async modules, and a static namespace import can be read back
 // before the async factory resolves.
 export async function POST() {
+  // The notification bus subscriber rides the same boot ping: Web Push has to
+  // reach a phone when NO tab is open, and until now the subscriber was only
+  // attached by the first GET /api/events — i.e. by a tab. Idempotent too.
+  ensureNotifier();
   const { startScheduler, schedulerHealth } = await import("@/lib/scheduler");
   startScheduler();
   return NextResponse.json({ ok: true, ...schedulerHealth() });

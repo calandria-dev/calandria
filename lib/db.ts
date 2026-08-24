@@ -324,6 +324,29 @@ export function init(db: Database.Database) {
       value TEXT NOT NULL
     );
 
+    -- Web Push subscriptions (lib/push/store.ts), one row per BROWSER that
+    -- enabled push in Settings → Notifications. endpoint is the push service's
+    -- per-subscription URL and is the identity: a browser re-subscribing
+    -- (page load re-sync, pushsubscriptionchange) upserts on it. Not tied to a
+    -- user: an instance is single-user, so every row hears every notification.
+    -- last_status/last_error are the most recent delivery's answer, kept so the
+    -- device list can show a subscription that is failing rather than silently
+    -- keeping a dead one; a 404/410 (the push service says it's gone) deletes
+    -- the row outright.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id              TEXT PRIMARY KEY,
+      endpoint        TEXT NOT NULL UNIQUE,
+      p256dh          TEXT NOT NULL,
+      auth            TEXT NOT NULL,
+      expiration_time INTEGER,
+      label           TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      last_seen_at    INTEGER NOT NULL,
+      last_sent_at    INTEGER NOT NULL DEFAULT 0,
+      last_status     INTEGER NOT NULL DEFAULT 0,
+      last_error      TEXT NOT NULL DEFAULT ''
+    );
+
     -- Persisted service registry (lib/services.ts writes through to this).
     -- Processes never survive a restart; these rows do — so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL
