@@ -4,7 +4,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote } from "./orchestrator/shared";
 import { CollabDoc } from "./orchestrator/CollabDoc";
 import { Icon } from "./icons";
-import { isMarkdownPath } from "@/lib/collab";
 import type { TaskComment } from "@/lib/types";
 
 interface DiffFile {
@@ -295,7 +294,7 @@ const FileDiff = memo(function FileDiff({
   onSend: () => void;
   onCommentOnly: () => void;
   onCancel: () => void;
-  onCollaborate?: (path: string) => void; // opens the document collaboration modal (markdown only)
+  onCollaborate?: (path: string) => void; // opens the document collaboration modal (any text file)
 }) {
   const lines = useMemo(() => (f.binary ? [] : numberedLines(f.patch)), [f]);
   const rows = useMemo(() => (f.binary || viewMode === "unified" ? [] : splitLines(f.patch)), [f, viewMode]);
@@ -365,10 +364,12 @@ const FileDiff = memo(function FileDiff({
             <b className="add">+{f.additions}</b> <b className="del">−{f.deletions}</b>
           </span>
         </button>
-        {/* A markdown document the agent wrote or changed can be reviewed as a
-            document — edited and commented on — rather than hunk by hunk. */}
-        {onCollaborate && !f.binary && f.status !== "D" && isMarkdownPath(f.path) && (
-          <button className="tc-fact" title="Open in collaboration mode: edit the document and attach comments" onClick={() => onCollaborate(f.path)}>
+        {/* A text file the agent wrote or changed can be reviewed as a document
+            — edited and commented on — rather than hunk by hunk. The transcript's
+            Write/Edit card offers the same for files this list can't see
+            (gitignored ones). */}
+        {onCollaborate && !f.binary && f.status !== "D" && (
+          <button className="tc-fact" title="Open in collaboration mode: edit the file and attach comments" onClick={() => onCollaborate(f.path)}>
             {Icon.edit()} Collaborate
           </button>
         )}
@@ -535,7 +536,7 @@ export default function TaskChanges({
   });
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
-  const [collab, setCollab] = useState<string | null>(null); // markdown path open in collaboration mode
+  const [collab, setCollab] = useState<string | null>(null); // file path open in collaboration mode
   const [draft, setDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);

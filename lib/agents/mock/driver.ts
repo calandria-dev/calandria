@@ -203,7 +203,17 @@ export const mockDriver: AgentDriver = {
     for (const w of writes) {
       const abs = safeJoin(cwd, w.rel);
       const id = `mock-tool-${++toolN}`;
-      yield { type: "tool", id, title: "Write", detail: w.rel, peek: { kind: "count", text: "1 file" } };
+      // The same shape the Claude driver's describeToolUse() yields for a
+      // Write — absolute path in `detail` and `file` — so the runner's
+      // worktree-relative resolution and the transcript's Collaborate button
+      // are exercised on the real contract, not a mock-only one.
+      yield {
+        type: "tool", id,
+        title: `✎ Write ${path.basename(w.rel)}`,
+        detail: abs ?? w.rel,
+        file: abs ?? w.rel,
+        peek: { kind: "count", text: "1 file" },
+      };
       if (!abs) {
         yield { type: "tool_result", id, content: `refused path outside worktree: ${w.rel}`, isError: true };
         continue;

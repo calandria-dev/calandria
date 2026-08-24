@@ -1,13 +1,26 @@
 # Document collaboration mode
 
-When an agent writes or edits a markdown file, its section in the Changes tab
-carries a **Collaborate** button. It opens the file as a document — not hunk by
-hunk — so you can work on it the way you'd proofread in a word processor:
+When an agent writes or edits a text file, its section in the Changes tab
+carries a **Collaborate** button, and so does the **Write**/**Edit** tool card in
+the transcript. The two differ in what they can see: the Changes tab follows the
+diff, which lists tracked changes plus untracked files *minus* anything
+gitignored, so notes the agent keeps under an ignored `scratch/` or `.local/`
+never appear there. The tool card is keyed on the path the agent actually wrote
+(the runner stores it worktree-relative on the tool message, and only when it
+resolves inside the task's worktree), so those files open the moment the Write
+lands — and any document opens without switching to the diff. Either way the
+file is read by `GET /api/tasks/[id]/file`, which confines reads to the worktree
+and knows nothing about git status.
 
-- **Edit** — a markdown source editor beside a live render. Your wording is sent
-  to the agent as a unified diff, so untouched lines never change.
-- **Comment** — the rendered document. Select a passage and press **Add
-  comment** to attach a note to it; a **General comments** box takes feedback
+It opens the file as a document — not hunk by hunk — so you can work on it the
+way you'd proofread in a word processor:
+
+- **Edit** — a source editor beside a live render (markdown), or the editor
+  alone with syntax picked from the filename (any other text file). Your
+  wording is sent to the agent as a unified diff, so untouched lines never
+  change.
+- **Comment** — the rendered document (the verbatim text, for a non-markdown
+  file). Select a passage and press **Add comment** to attach a note to it; a **General comments** box takes feedback
   that isn't tied to any passage. Commented passages stay tinted while the
   modal is open, and clicking a comment scrolls to its passage.
 

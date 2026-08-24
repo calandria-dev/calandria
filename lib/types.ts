@@ -361,7 +361,12 @@ export type StreamEvent =
   | { type: "session"; sessionId: string }
   | { type: "model"; model: string }
   | { type: "assistant"; content: string }
-  | { type: "tool"; id: string; title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[] }
+  // `file` is the path a file-WRITING call touched (Write/Edit, a Codex
+  // single-file patch), as the agent spelled it — absolute in practice. The
+  // runner resolves it against the task's worktree before persisting, so the
+  // transcript card can open the file in collaboration mode without asking git
+  // whether it's tracked (an ignored scratch doc never reaches the diff).
+  | { type: "tool"; id: string; title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[]; file?: string }
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
@@ -479,6 +484,11 @@ export interface ToolData {
   // shows a capped slice of the same lines). Absent on older persisted messages,
   // which fall back to the plaintext `detail`.
   diff?: DiffLine[];
+  // Worktree-relative path of the file this call wrote or edited — set only
+  // when the runner could place the agent's path INSIDE the task's worktree,
+  // so the transcript's Collaborate button never points the file route at
+  // something it would refuse. Absent on older rows and on non-file tools.
+  file?: string;
   // Present when this "tool" message is an AskUserQuestion prompt. `id` is the
   // tool_use id (stored here so it survives a reload — there's no DB column for
   // it). `answers` is absent while awaiting the user, set once answered.
