@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Message, PendingMessage, TaskComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
+import type { Project, Task, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -1004,6 +1004,61 @@ export function addTaskComment(
     id, task_id: taskId, file, side, line_start: lineStart, line_end: lineEnd, body,
     sent_to_agent: sentToAgent ? 1 : 0, anchor_sha: anchorSha, created_at: now,
   };
+}
+
+// ---------- document comments (collaboration modal passage comments) ----------
+
+export function listTaskDocComments(taskId: string, file?: string): TaskDocComment[] {
+  const db = getDb();
+  return (
+    file === undefined
+      ? db.prepare("SELECT * FROM task_doc_comments WHERE task_id = ? ORDER BY created_at ASC, rowid ASC").all(taskId)
+      : db.prepare("SELECT * FROM task_doc_comments WHERE task_id = ? AND file = ? ORDER BY created_at ASC, rowid ASC").all(taskId, file)
+  ) as TaskDocComment[];
+}
+
+export function addTaskDocComment(
+  taskId: string,
+  file: string,
+  quote: string,
+  heading: string | null,
+  body: string,
+  anchorSha: string | null
+): TaskDocComment {
+  const id = nanoid();
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO task_doc_comments (id, task_id, file, quote, heading, body, sent_to_agent, anchor_sha, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    )
+    .run(id, taskId, file, quote, heading, body, anchorSha, now);
+  return { id, task_id: taskId, file, quote, heading, body, sent_to_agent: 0, anchor_sha: anchorSha, created_at: now };
+}
+
+// Flip the given comments to sent, in one transaction — Send is one action
+// over the whole draft list, so it lands whole or not at all. Scoped to the
+// task and to unsent rows: returns how many actually changed, so a caller
+// naming another task's comment (or one already sent) sees fewer than it
+// asked for rather than a silent success.
+export function markTaskDocCommentsSent(taskId: string, ids: string[]): number {
+  if (!ids.length) return 0;
+  const db = getDb();
+  const stmt = db.prepare("UPDATE task_doc_comments SET sent_to_agent = 1 WHERE task_id = ? AND id = ? AND sent_to_agent = 0");
+  return db.transaction(() => ids.reduce((n, id) => n + stmt.run(taskId, id).changes, 0))();
+}
+
+// Delete an UNSENT comment. A sent one is part of the record of what the agent
+// was told and is refused rather than removed — the caller reports "sent".
+export function deleteTaskDocComment(taskId: string, id: string): "deleted" | "sent" | "missing" {
+  const db = getDb();
+  const row = db.prepare("SELECT sent_to_agent FROM task_doc_comments WHERE task_id = ? AND id = ?").get(taskId, id) as
+    | { sent_to_agent: number }
+    | undefined;
+  if (!row) return "missing";
+  if (row.sent_to_agent) return "sent";
+  db.prepare("DELETE FROM task_doc_comments WHERE task_id = ? AND id = ?").run(taskId, id);
+  return "deleted";
 }
 
 // ---------- summaries ----------
