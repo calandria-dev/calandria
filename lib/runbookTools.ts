@@ -42,7 +42,7 @@ function knownPermissionModes(): Set<string> {
 
 /**
  * The one field these tools must never pass through unchecked. bypassPermissions
- * ("Auto-run") skips every permission card, and the ⌘K palette dispatches a
+ * (the never-asks mode) skips every permission card, and the ⌘K palette dispatches a
  * runbook with no preview step — so a model that can write this value into a
  * saved runbook (e.g. steered by injected instructions in something it read)
  * has planted unattended, full-auto execution for whenever a human next clicks

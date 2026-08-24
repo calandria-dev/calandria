@@ -162,8 +162,9 @@ per turn with a ~1-day `tool_timeout_sec` so a parked ask survives),
 only, so `pricing.ts` estimates the dollar cost per turn (tokens × published API prices
 for the resolved model) and the UI renders those figures with a `~`. The one upstream
 limitation not papered over: the non-interactive CLI cannot pause a turn for **command
-approval**, so on-request approval modes aren't offered — permission modes are Auto-run
-(workspace-write, approvals never) and Plan (read-only). Auth (`auth.ts`) drives
+approval**, so on-request approval modes aren't offered — permission modes are
+**workspace-write** (approvals never) and **read-only** (plan), labeled with codex's own
+sandbox-mode names. Auth (`auth.ts`) drives
 `codex login --device-auth` + `codex login status`. The one-shot helpers run as
 `codex exec` one-shots in a **read-only sandbox** (no writes, no approvals, no network),
 bounded by an item cap — the codex analog of the Claude helpers' `maxTurns` — so a

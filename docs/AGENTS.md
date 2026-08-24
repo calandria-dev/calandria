@@ -34,15 +34,19 @@ context, diff workflows, and usage reporting.
 Task sessions run inside isolated worktrees under one of five permission modes, ordered
 here from most autonomous to least:
 
+The modes are named exactly what Claude Code calls them — the same strings
+`--permission-mode` takes — so nothing has to be translated between Calandria and the
+agent's own docs:
+
 | Mode | What it does |
 |-|-|
-| **Auto-run** | Never asks — bypasses every permission check. The only mode that never consults the gate. |
-| **Guarded auto** | *(the default)* A model classifier screens each call, silently approving what it judges safe and escalating the rest to a permission card. |
-| **Accept edits** | File edits auto-apply; commands and everything else prompt. |
-| **Ask when needed** | Claude Code's standard prompting — anything not already approved asks. |
-| **Plan mode** | Propose a plan without editing; leaving the plan asks. |
+| **bypassPermissions** | Never asks — bypasses every permission check. The only mode that never consults the gate. |
+| **auto** | *(the default)* A model classifier screens each call, silently approving what it judges safe and escalating the rest to a permission card. |
+| **acceptEdits** | File edits auto-apply; commands and everything else prompt. |
+| **default** | Claude Code's standard prompting — anything not already approved asks. |
+| **plan** | Propose a plan without editing; leaving the plan asks. |
 
-Every mode except Auto-run is a real gate: whatever it doesn't auto-approve parks the turn
+Every mode except bypassPermissions is a real gate: whatever it doesn't auto-approve parks the turn
 on a permission card in the transcript. Read-only tools never prompt. "Always allow"
 remembers a command for that project only, and every remembered approval is listed and
 revocable in Settings → Run defaults — where you can also add one up front, without
@@ -53,10 +57,10 @@ prefix describes — a wrapper like `sudo`, an env assignment, or anything the s
 reinterpret. A prompt nobody answers declines itself, so an
 auto-started task can't sit wedged waiting for someone who isn't there — which is the
 trade-off of the default: unattended work that trips the classifier stops and says so
-rather than pressing on. Set the app default to Auto-run for fleets that must never stop.
+rather than pressing on. Set the app default to bypassPermissions for fleets that must never stop.
 
-Claude Code can also refuse a call by itself, without asking Calandria first — the Guarded
-auto classifier vetoing something, or a deny rule in your own `~/.claude` settings. That
+Claude Code can also refuse a call by itself, without asking Calandria first — the auto
+classifier vetoing something, or a deny rule in your own `~/.claude` settings. That
 shows up in the transcript as a permission card that arrives already decided, sitting on
 the call it stopped: what the agent was about to run, who refused it, and why. There are no
 buttons, because the decision is already made; if it should have been allowed, change the
@@ -66,7 +70,7 @@ The SDK also has a `dontAsk` mode ("deny anything not pre-approved, don't prompt
 doesn't offer it. Under `dontAsk` the CLI decides everything itself and never asks Calandria
 at all, so none of the above applies: not the read-only allowlist, not your remembered
 approvals, not the cards. "Pre-approved" would mean allow rules in your own Claude Code
-settings file. "Ask when needed" plus **Always allow** already gives you deny-unless-allowed,
+settings file. `default` plus **Always allow** already gives you deny-unless-allowed,
 with a prompt when you want one and a revocable record of everything you granted.
 
 Calandria is a control layer, not an additional security sandbox; review
@@ -98,7 +102,8 @@ Three upstream differences are visible:
 - ChatGPT-plan authentication reports tokens but not dollar cost, so Calandria estimates
   the API-price equivalent and marks it with `~`.
 - The non-interactive CLI cannot pause an active turn for a command-approval prompt.
-  Calandria therefore offers Auto-run and read-only Plan modes for Codex rather than a
+  Calandria therefore offers Codex's own **workspace-write** (writable sandbox, never
+  asks) and **read-only** (plan) modes rather than a
   mid-turn approval mode, and asks Codex not to require approvals
   (`approval_policy=never`). If an enterprise-managed Codex configuration disallows
   that, Calandria detects the CLI's downgrade warning on the first affected turn and

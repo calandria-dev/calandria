@@ -87,7 +87,7 @@ function withCommand(prompt: string, command: string): string {
 // answer. Codex's descriptor has no "acceptEdits" at all (its driver treats
 // anything but "plan" as full workspace-write), so filtering from the REAL
 // per-agent list — rather than a fixed three-item list — is what stops a
-// Codex schedule from offering a mode that quietly behaves like Auto-run.
+// Codex schedule from offering a mode that quietly behaves like bypassPermissions.
 function scheduleModesFor(agents: AgentsBundle, agent: string): AgentPickerOption[] {
   return (capsFor(agents, agent)?.permissionModes ?? []).filter((p) => p.value !== "auto" && p.value !== "default");
 }
@@ -101,7 +101,11 @@ function permissionConsequence(mode: string, modes: AgentPickerOption[], label: 
     return `${label} doesn't expose a configurable permission mode for a scheduled run — it runs using whatever this agent falls back to with nobody watching.`;
   }
   if (!modes.some((m) => m.value !== "bypassPermissions")) {
-    return `${label} offers no mode that declines instead of running — Auto-run is the only choice here, and it does whatever the prompt needs without asking.`;
+    // Name the mode the way this agent's descriptor does — labels are
+    // provider-native now, so "the only choice" must match the word on the
+    // select right above this line.
+    const only = modes.find((m) => m.value === "bypassPermissions")?.label ?? "bypassPermissions";
+    return `${label} offers no mode that declines instead of running — ${only} is the only choice here, and it does whatever the prompt needs without asking.`;
   }
   return mode === "bypassPermissions"
     ? "This run does whatever the prompt needs without asking. Nobody is around when it fires to approve anything."
@@ -166,7 +170,7 @@ function ScheduleForm({
   // whenever the agent changes, and the value is clamped to stay inside it —
   // e.g. switching from Claude (which has acceptEdits) to Codex (which
   // doesn't) must not leave `acceptEdits` selected-but-invalid, silently
-  // saving a value the target driver would treat as Auto-run.
+  // saving a value the target driver would treat as its never-asks mode.
   const modeCaps = useMemo(() => scheduleModesFor(agents, agent), [agents, agent]);
   useEffect(() => {
     if (modeCaps.length && !modeCaps.some((m) => m.value === permissionMode)) setPermissionMode(modeCaps[0].value);

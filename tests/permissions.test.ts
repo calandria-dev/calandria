@@ -1,7 +1,7 @@
 // The tool-permission gate's policy layer (lib/permissions.ts) — what the
 // canUseTool callback consults before it decides to allow silently, prompt, or
-// deny. The rules here are the difference between "Accept edits" meaning
-// something and being Auto-run with a different label, so they're pinned
+// deny. The rules here are the difference between acceptEdits meaning
+// something and being bypassPermissions with a different label, so they're pinned
 // directly: the allowlist and its blockedPath escape hatch, what a Bash command
 // may be remembered as, what a remembered rule then covers, and every way a
 // prompt can end WITHOUT an answer (all of which must deny).

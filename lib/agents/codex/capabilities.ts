@@ -42,17 +42,21 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
     { value: "gpt-5.4", label: "GPT-5.4", sub: "strong model for everyday coding", contextWindow: CTX, group: "Previous versions" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", sub: "small, fast, and cost-efficient", contextWindow: CTX, group: "Previous versions" },
   ],
-  // Off/Think/Think hard/Ultrathink → codex's model_reasoning_effort scale
-  // (low/medium/high/xhigh — see EFFORT in ./driver.ts). Codex can't disable
-  // reasoning ("minimal" 400s the turn), so "Off" is its floor, "low"; the
-  // subs name the actual effort each preset sends so the picker stays honest.
-  // The 5.6 family also accepts "max" and "ultra" above xhigh; the shared
-  // preset vocabulary tops out at ultrathink, so those aren't reachable yet.
+  // Labeled with codex's own model_reasoning_effort scale (low/medium/high/
+  // xhigh — exactly what EFFORT in ./driver.ts sends), not Claude's think/
+  // think hard/ultrathink vocabulary: a Codex user knows these names from
+  // ~/.codex/config.toml and the CLI's /model picker. The VALUES stay the
+  // cross-agent preset keys ("off"/"think"/…) because that's what tasks,
+  // schedules and app defaults persist — only the words shown are OpenAI's.
+  // Codex can't disable reasoning ("minimal" 400s an agentic turn), so "low"
+  // is its floor and there is no off entry to fake. The 5.6 family also
+  // accepts "max" and "ultra" above xhigh; the shared preset vocabulary tops
+  // out at ultrathink, so those aren't reachable yet.
   reasoningOptions: [
-    { value: "off", label: "Off", sub: "low effort — codex's minimum" },
-    { value: "think", label: "Think", sub: "medium effort" },
-    { value: "think_hard", label: "Think hard", sub: "high effort" },
-    { value: "ultrathink", label: "Ultrathink", sub: "extra-high effort" },
+    { value: "off", label: "low", sub: "codex's minimum — reasoning can't be turned off" },
+    { value: "think", label: "medium", sub: "codex's default effort" },
+    { value: "think_hard", label: "high", sub: "deeper reasoning" },
+    { value: "ultrathink", label: "xhigh", sub: "extra-high — the most this picker can send" },
   ],
   // Only the modes with a real codex analog are declared. bypassPermissions maps
   // to workspace-write + approvals-never (auto-run); plan maps to a read-only
@@ -69,9 +73,16 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // and /answer route, and a permission prompt is the same park-and-resume shape.
   // What's missing is the CLI side: something that routes an approval request to
   // an MCP tool call instead of a terminal prompt. Until then, leave this alone.
+  //
+  // Labels are codex's own sandbox-mode names (sandbox_mode in
+  // ~/.codex/config.toml): what distinguishes the two offered modes IS the
+  // sandbox, and the approval-policy half is named in the sub with OpenAI's
+  // spelling ("never" — on-request/on-failure/untrusted are the unreachable
+  // ones per the note above). The values stay the cross-agent keys tasks and
+  // schedules persist.
   permissionModes: [
-    { value: "bypassPermissions", label: "Auto-run", sub: "workspace write, no approvals (default)" },
-    { value: "plan", label: "Plan mode", sub: "read-only, propose without editing" },
+    { value: "bypassPermissions", label: "workspace-write", sub: "writable sandbox, approval policy never — runs without asking (default)" },
+    { value: "plan", label: "read-only", sub: "read-only sandbox — propose without editing" },
   ],
   // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
   // /answer route are shared with Claude's AskUserQuestion flow).

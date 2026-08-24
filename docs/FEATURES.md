@@ -270,8 +270,9 @@ previous firing's turn is still running when the next one comes due, the new slo
 
 **Permission mode is a required, explicit choice** — not inherited from some other default —
 because a scheduled run cannot answer a permission prompt: nobody is there. Anything other
-than **Auto-run** still declines every prompt automatically rather than parking, which means
-the turn can stop early with the job half done. Auto-run is the only mode that runs a
+than the agent's never-asks mode (Claude's **bypassPermissions**, Codex's
+**workspace-write**) still declines every prompt automatically rather than parking, which
+means the turn can stop early with the job half done. That mode is the only one that runs a
 schedule all the way through unattended; pick it deliberately, not by default.
 
 When that happens the run is recorded as **failed**, not as a quiet green "ran", and says so:

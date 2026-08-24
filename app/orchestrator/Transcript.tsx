@@ -167,7 +167,7 @@ const BLOCKED_BY: Record<string, string> = {
 const blockedHead = (by?: string): string =>
   (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
 
-// Tool-permission card — the canUseTool gate under "Accept edits" and "Plan
+// Tool-permission card — the canUseTool gate under acceptEdits and plan
 // mode" (lib/permissions.ts). Unlike a question card this isn't a multiple
 // choice: the user needs the ACTION, so the request's detail (the full Bash
 // command, the file path, the plan) is shown verbatim, with the diff when the

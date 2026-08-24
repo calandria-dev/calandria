@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // canUseTool is short-circuited under bypassPermissions (which is what a
 // schedule uses by default and what the docs recommend), but the driver's
 // AskUserQuestion hook fires in EVERY mode. So the one interactive path an
-// Auto-run schedule cannot dodge was also the one with no deadline — it parked
+// bypassPermissions schedule cannot dodge was also the one with no deadline — it parked
 // on lib/asks.ts forever, holding the turn slot, the CLI child and the
 // schedule's overlap lock, which turns every future occurrence of that schedule
 // into `skipped_overlap`. The schedule goes quiet, permanently, and the only
