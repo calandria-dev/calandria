@@ -221,6 +221,16 @@ export default function Orchestrator() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMobile, o.navEpoch]);
   const selectMobileTab = (t: MobileTabId) => {
+    // Re-tapping the ACTIVE Board tab from inside a task pops back to the
+    // board root — the project's task list — the way a native tab bar pops
+    // its stack. It was a dead tap before: the tab was already "board", so
+    // nothing changed and the session stayed on screen. Deselecting is
+    // enough (mobile skips the desktop auto-pick-first-task landing in
+    // useRecaps); the URL/history trap re-mirrors off the new selection.
+    if (t === "board" && mobileTab === "board" && o.view === "workspace" && mobilePane === "session") {
+      o.setSelTask(null);
+      return;
+    }
     setMobileTab(t);
     if (t === "insights") o.setView("insights");
     else if (o.view === "insights" || o.view === "settings") o.setView("workspace");
