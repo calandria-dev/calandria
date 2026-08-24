@@ -339,6 +339,18 @@ describe("the service worker", () => {
     expect(sw).toContain('credentials: "include"');
     expect(sw).toContain('"/api/notifications/push"');
   });
+
+  it("steers a focused client to the deep link by navigating, not only by postMessage", () => {
+    // A warm PWA foregrounded by the tap keeps its previous view; postMessage
+    // races page state (and is often undelivered on iOS), so the click handler
+    // must navigate the client to ?project/&task. postMessage stays only as the
+    // no-navigate fallback.
+    expect(sw).toMatch(/\.navigate\(url\)/);
+    const click = sw.slice(sw.indexOf('addEventListener("notificationclick"'));
+    // The navigate() call comes before the postMessage() call site (its
+    // fallback). Match the actual call, not the word in the comment above it.
+    expect(click.indexOf(".navigate(url)")).toBeLessThan(click.indexOf("page.postMessage("));
+  });
 });
 
 describe("the browser half", () => {
