@@ -72,6 +72,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const next = updateTask(id, {
     generation: gen + 1,
     session_id: null,
+    // The measured occupancy described the window this clear is discarding;
+    // the fresh session reports its own on its first request.
+    context_measured: null,
     started: 0,
     running: 0,
     awaiting_input: 0,

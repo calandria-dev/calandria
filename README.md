@@ -68,7 +68,8 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   conflicts, merge, or create a GitHub PR from the same screen.
 - **Collaborate on documents:** open a markdown file the agent wrote as a
   document — edit the text, select passages and attach comments — and send
-  the lot back as one message: your edits as a diff, your comments in place.
+  the lot back as one message: your edits as a diff, your comments in place,
+  with comments saved as you go.
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.

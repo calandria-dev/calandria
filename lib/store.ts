@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Message, PendingMessage, TaskComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
+import type { Project, Task, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -253,7 +253,9 @@ export function setProjectRefresh(
 // every turn, billed at ~10% of the input rate), so the UI splits the total into
 // fresh work vs cached re-reads rather than showing one scary number.
 // `context_tokens`/`context_pct` are the LIVE context-window gauge — the
-// latest turn's input-side tokens, NOT a cumulative sum (see getTaskContext).
+// agent's own report of the latest request's context size, NOT a cumulative
+// sum, with `context_estimated` flagging the rows where it's only derived from
+// a usage report (see getTaskContext for both).
 // `depends_on` lists the task ids this task is blocked by (see task_dependencies).
 export type TaskWithUsage = Task & {
   cost_usd: number;
@@ -262,8 +264,24 @@ export type TaskWithUsage = Task & {
   cache_creation_tokens: number;
   context_tokens: number;
   context_pct: number;
+  context_estimated: boolean;
   depends_on: string[];
 };
+
+// The two halves of the context gauge as SQL, shared by listTasks (aliased on
+// `t`) and getTaskContext. The measured column wins; the fallback is the
+// CURRENT generation's latest usage row, input side only — a row from a
+// previous generation describes a window /clear already threw away, which is
+// why the gauge reads 0 right after a clear rather than the old figure.
+// `context_estimated` is 1 only when that fallback actually produced a number:
+// a task that has never run has an exact 0, nothing to hedge.
+const CONTEXT_FALLBACK_SQL = (t: string) =>
+  `(SELECT u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
+      FROM task_usage u WHERE u.task_id = ${t}.id AND u.generation = ${t}.generation
+     ORDER BY u.created_at DESC, u.rowid DESC LIMIT 1)`;
+const CONTEXT_TOKENS_SQL = (t: string) => `COALESCE(${t}.context_measured, ${CONTEXT_FALLBACK_SQL(t)}, 0)`;
+const CONTEXT_ESTIMATED_SQL = (t: string) =>
+  `CASE WHEN ${t}.context_measured IS NULL AND ${CONTEXT_FALLBACK_SQL(t)} IS NOT NULL THEN 1 ELSE 0 END`;
 
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
@@ -275,9 +293,8 @@ export function listTasks(projectId: string): TaskWithUsage[] {
                    FROM task_usage u WHERE u.task_id = t.id), 0) AS total_tokens,
          COALESCE((SELECT SUM(u.cache_read_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_read_tokens,
          COALESCE((SELECT SUM(u.cache_creation_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_creation_tokens,
-         COALESCE((SELECT u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
-                   FROM task_usage u WHERE u.task_id = t.id
-                   ORDER BY u.created_at DESC, u.rowid DESC LIMIT 1), 0) AS context_tokens
+         ${CONTEXT_TOKENS_SQL("t")} AS context_tokens,
+         ${CONTEXT_ESTIMATED_SQL("t")} AS context_estimated
        FROM tasks t WHERE t.project_id = ?
        ORDER BY t.suggested ASC, t.position ASC, t.created_at ASC`
     )
@@ -287,6 +304,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     cache_read_tokens: number;
     cache_creation_tokens: number;
     context_tokens: number;
+    context_estimated: number;
   })[];
   // Attach each task's dependency edges in one query (project-scoped via join).
   const edges = db
@@ -301,7 +319,12 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     if (list) list.push(e.depends_on_id);
     else byTask.set(e.task_id, [e.depends_on_id]);
   }
-  return rows.map((r) => ({ ...r, context_pct: contextPct(r.context_tokens, r.agent, r.model), depends_on: byTask.get(r.id) ?? [] }));
+  return rows.map((r) => ({
+    ...r,
+    context_pct: contextPct(r.context_tokens, r.agent, r.model),
+    context_estimated: r.context_estimated === 1,
+    depends_on: byTask.get(r.id) ?? [],
+  }));
 }
 
 // The task ids a given task is blocked by.
@@ -681,9 +704,11 @@ export function moveTasks(
     //     and is re-pointed at the destination below.
     // `started` and `generation` are deliberately untouched — the task really
     // did start and its transcript is still here, so it stays a resume.
+    // context_measured goes with session_id: it described the session being
+    // thrown away, and the next turn opens a fresh one that reports its own.
     const clearCheckout = db.prepare(
       `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
-        session_id = NULL WHERE id = ?`
+        session_id = NULL, context_measured = NULL WHERE id = ?`
     );
     // Project-keyed child rows follow their task. These are the tables that
     // denormalize project ownership for per-project rollups (spend, session
@@ -773,9 +798,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, schedule_id=?, snoozed_until=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, schedule_id=?, snoozed_until=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.schedule_id ?? null, n.snoozed_until ?? 0, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.schedule_id ?? null, n.snoozed_until ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -1006,6 +1031,61 @@ export function addTaskComment(
   };
 }
 
+// ---------- document comments (collaboration modal passage comments) ----------
+
+export function listTaskDocComments(taskId: string, file?: string): TaskDocComment[] {
+  const db = getDb();
+  return (
+    file === undefined
+      ? db.prepare("SELECT * FROM task_doc_comments WHERE task_id = ? ORDER BY created_at ASC, rowid ASC").all(taskId)
+      : db.prepare("SELECT * FROM task_doc_comments WHERE task_id = ? AND file = ? ORDER BY created_at ASC, rowid ASC").all(taskId, file)
+  ) as TaskDocComment[];
+}
+
+export function addTaskDocComment(
+  taskId: string,
+  file: string,
+  quote: string,
+  heading: string | null,
+  body: string,
+  anchorSha: string | null
+): TaskDocComment {
+  const id = nanoid();
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO task_doc_comments (id, task_id, file, quote, heading, body, sent_to_agent, anchor_sha, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    )
+    .run(id, taskId, file, quote, heading, body, anchorSha, now);
+  return { id, task_id: taskId, file, quote, heading, body, sent_to_agent: 0, anchor_sha: anchorSha, created_at: now };
+}
+
+// Flip the given comments to sent, in one transaction — Send is one action
+// over the whole draft list, so it lands whole or not at all. Scoped to the
+// task and to unsent rows: returns how many actually changed, so a caller
+// naming another task's comment (or one already sent) sees fewer than it
+// asked for rather than a silent success.
+export function markTaskDocCommentsSent(taskId: string, ids: string[]): number {
+  if (!ids.length) return 0;
+  const db = getDb();
+  const stmt = db.prepare("UPDATE task_doc_comments SET sent_to_agent = 1 WHERE task_id = ? AND id = ? AND sent_to_agent = 0");
+  return db.transaction(() => ids.reduce((n, id) => n + stmt.run(taskId, id).changes, 0))();
+}
+
+// Delete an UNSENT comment. A sent one is part of the record of what the agent
+// was told and is refused rather than removed — the caller reports "sent".
+export function deleteTaskDocComment(taskId: string, id: string): "deleted" | "sent" | "missing" {
+  const db = getDb();
+  const row = db.prepare("SELECT sent_to_agent FROM task_doc_comments WHERE task_id = ? AND id = ?").get(taskId, id) as
+    | { sent_to_agent: number }
+    | undefined;
+  if (!row) return "missing";
+  if (row.sent_to_agent) return "sent";
+  db.prepare("DELETE FROM task_doc_comments WHERE task_id = ? AND id = ?").run(taskId, id);
+  return "deleted";
+}
+
 // ---------- summaries ----------
 
 export function listSummaries(taskId: string): Summary[] {
@@ -1177,30 +1257,48 @@ function contextPct(tokens: number, agent: string | null | undefined, model: str
 }
 
 export interface TaskContext {
-  context_tokens: number; // latest turn's input-side tokens ≈ context sent to the model
+  context_tokens: number; // input-side tokens of the latest main-session request ≈ context sent to the model
   context_window: number; // the model's window (tokens)
   context_pct: number; // context_tokens as a percent (0–100) of the window
+  context_estimated: boolean; // true when derived from a usage report rather than measured (see below)
 }
 
-// The live "how full is the context window" gauge for a task: the most recent
-// turn's input-side tokens (input + cache_read + cache_creation), which ≈ the
-// size of the context being sent on that turn. Distinct from cumulative spend —
-// it reflects the CURRENT occupancy and drops back to ~0 after a /clear. 0 when
-// the task has never run a turn.
+// The live "how full is the context window" gauge for a task. Two sources, in
+// order:
+//
+//   1. tasks.context_measured — what the agent's own stream reported for the
+//      latest main-session model request (input + cache_read + cache_creation).
+//      The Claude driver emits it from each assistant message's usage, skipping
+//      subagent sidechains; the runner persists it as `context` events arrive,
+//      so it moves mid-turn and survives a Stop.
+//   2. The current generation's latest task_usage row, same three buckets. This
+//      was the whole gauge before context_measured existed and is kept for
+//      rows that predate it and for drivers that don't report occupancy (Codex:
+//      its exec stream carries only the thread's running totals, though the
+//      binary does compute a `last_token_usage` for its app-server protocol).
+//      It is an ESTIMATE, and an inflated one on tool-heavy turns: a turn is
+//      one query spanning many API requests plus any subagents, and a usage
+//      report SUMS them — every tool round-trip re-reads the whole context, so
+//      a long turn's sum is a multiple of the real window ("7.6M tokens" on a
+//      200k model). `context_estimated` tells the UI to say so.
+//
+// Distinct from cumulative spend either way — it reflects CURRENT occupancy and
+// drops back to 0 after a /clear (the measurement is reset, and the fallback
+// only reads the new generation). 0 when the task has never run a turn.
 export function getTaskContext(taskId: string): TaskContext {
   const task = getTask(taskId);
   const row = getDb()
     .prepare(
-      `SELECT input_tokens + cache_read_tokens + cache_creation_tokens AS context_tokens
-       FROM task_usage WHERE task_id = ?
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`
+      `SELECT ${CONTEXT_TOKENS_SQL("t")} AS context_tokens, ${CONTEXT_ESTIMATED_SQL("t")} AS context_estimated
+       FROM tasks t WHERE t.id = ?`
     )
-    .get(taskId) as { context_tokens: number } | undefined;
+    .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
   return {
     context_tokens,
     context_window: modelContextWindow(task?.agent, task?.model),
     context_pct: contextPct(context_tokens, task?.agent, task?.model),
+    context_estimated: row?.context_estimated === 1,
   };
 }
 
