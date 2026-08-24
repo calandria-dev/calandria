@@ -6,16 +6,19 @@ import type { Priority, Status } from "@/lib/types";
 import { Icon, AgentMark } from "../icons";
 import { SCLS, SLABEL, AWAIT_LABEL } from "./types";
 
-export function StatusDot({ status, running, awaiting, lg }: { status: Status; running?: boolean; awaiting?: boolean; lg?: boolean }) {
+export function StatusDot({ status, running, awaiting, background, lg }: { status: Status; running?: boolean; awaiting?: boolean; background?: boolean; lg?: boolean }) {
   // Signal language (mission-control): "needs your input" is an alert coral, a
   // *live* working session is blue (both pulse to draw the eye), and an idle
   // status falls back to its base color. Awaiting wins over running — a turn
   // parked on a question is technically live but it's really waiting on you.
-  const cls = awaiting ? "c" : running ? "b" : SCLS[status];
+  // Background (a hollow blue ring) sits between: the session is live and held
+  // open for run_in_background work, but the model isn't talking — nothing
+  // needs the user, so it must NOT read as either "waiting" or plain "working".
+  const cls = awaiting ? "c" : background ? "bg" : running ? "b" : SCLS[status];
   return (
     <span
-      className={`sdot ${cls} ${lg ? "lg" : ""} ${awaiting || running ? "pulse" : ""}`}
-      title={awaiting ? AWAIT_LABEL : running ? "Live" : SLABEL[status]}
+      className={`sdot ${cls} ${lg ? "lg" : ""} ${awaiting || running || background ? "pulse" : ""}`}
+      title={awaiting ? AWAIT_LABEL : background ? "Working in background" : running ? "Live" : SLABEL[status]}
     />
   );
 }

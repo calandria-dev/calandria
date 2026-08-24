@@ -50,6 +50,7 @@ export interface TaskRow {
   started: number;
   running: number;
   awaiting_input: number;
+  background_pending: number; // 1 while a live turn lingers on run_in_background work — "working in background", never "needs you"
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns

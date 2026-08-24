@@ -110,6 +110,10 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
   // cost the driver emits is an estimate (tokens × published API prices for
   // the resolved model). The descriptor stays honest: reportsCostUsd=false,
+  // Each turn is a `codex exec` process with no held-open input channel and no
+  // task-notification wake, so backgrounded shell commands die with it —
+  // buildProjectContext warns Codex turns off them (lib/agents/shared.ts).
+  backgroundTasksLinger: false,
   // and costIsEstimated=true has the UI show the figure with an ~.
   reportsCostUsd: false,
   costIsEstimated: true,

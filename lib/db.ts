@@ -83,6 +83,10 @@ export function init(db: Database.Database) {
       started     INTEGER NOT NULL DEFAULT 0,
       running     INTEGER NOT NULL DEFAULT 0,
       awaiting_input INTEGER NOT NULL DEFAULT 0,
+      -- 1 while a live turn lingers on run_in_background work (model turn
+      -- ended, session held open for the tasks to settle). Always alongside
+      -- running=1; reset with it on crash recovery.
+      background_pending INTEGER NOT NULL DEFAULT 0,
       -- Opt-in pipeline behavior: 1 = start this task's first turn automatically
       -- the moment its last unfinished blocker is marked done (lib/autoStart.ts).
       auto_start  INTEGER NOT NULL DEFAULT 0,
@@ -420,8 +424,11 @@ export function init(db: Database.Database) {
  */
 function recoverFromCrash(db: Database.Database) {
   db.transaction(() => {
-    // Reset any stale "running" flags left over from a crash/restart.
-    db.prepare("UPDATE tasks SET running = 0 WHERE running = 1").run();
+    // Reset any stale "running" flags left over from a crash/restart. A linger
+    // (background_pending) is in-memory state of the dead process's CLI child
+    // exactly like running is, so it resets in the same breath — the work it
+    // described died with that process.
+    db.prepare("UPDATE tasks SET running = 0, background_pending = 0 WHERE running = 1 OR background_pending = 1").run();
     // Drop any queued follow-ups: the turns they were lined up behind died with
     // the previous process, so there's nothing left to dequeue them.
     db.prepare("DELETE FROM pending_messages").run();
@@ -573,6 +580,8 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("base_sha")) db.exec("ALTER TABLE tasks ADD COLUMN base_sha TEXT NOT NULL DEFAULT ''");
   if (!taskCols.includes("merged_at")) db.exec("ALTER TABLE tasks ADD COLUMN merged_at INTEGER NOT NULL DEFAULT 0");
   if (!taskCols.includes("awaiting_input")) db.exec("ALTER TABLE tasks ADD COLUMN awaiting_input INTEGER NOT NULL DEFAULT 0");
+  // Background-linger state (see BACKGROUND_LINGER_MS in lib/config.ts).
+  if (!taskCols.includes("background_pending")) db.exec("ALTER TABLE tasks ADD COLUMN background_pending INTEGER NOT NULL DEFAULT 0");
   // Per-task model selection (NULL = inherit Claude's default) and the model the
   // SDK actually resolved for the last turn (shown as a badge in the chat).
   if (!taskCols.includes("model")) db.exec("ALTER TABLE tasks ADD COLUMN model TEXT");

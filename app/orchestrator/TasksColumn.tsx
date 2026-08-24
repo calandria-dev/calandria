@@ -42,10 +42,14 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // a question is that it stops reading as "waiting on you" until it's back.
   const awaiting = !snoozed && isAwaiting(task);
   const blocked = !!blockedBy?.length && !task.started;
+  // The model's turn ended but the session is held open for run_in_background
+  // work — live, but nothing to watch and nothing needed from the user.
+  const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
   // Awaiting wins over running: a turn parked on a question is live but really
   // waiting on you, so it should read "waiting", not "working".
   const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
+    : inBackground ? "live · working in background"
     : running ? "live · working"
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
@@ -65,7 +69,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         {/* The status dot doubles as the pick affordance: a pickable row swaps
             it for the checkbox on hover (or whenever a selection is going). */}
         <span className={`pick-slot${pickable ? "" : " no-pick"}`}>
-          <StatusDot status={task.status} running={running} awaiting={awaiting} />
+          <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
           <PickBox picked={picked} pickable={pickable} onPick={(range) => onPick(task.id, range)} />
         </span>
         <span className="ttitle">{task.title}</span>

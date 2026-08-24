@@ -9,7 +9,7 @@
 // lib/claude-auth.ts) round out the interface.
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { CanUseTool, PermissionMode, PermissionResult, SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import type { BackgroundTaskSummary, CanUseTool, PermissionMode, PermissionResult, SDKUserMessage, SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
   Project,
@@ -58,6 +58,7 @@ import {
   DENIED_UNATTENDED,
 } from "../../permissions";
 import {
+  BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
@@ -659,8 +660,83 @@ async function* runTurn(
       : allow();
   };
 
+  // --- Background linger (measured against CLI 2.1.240 / SDK 0.3.159; the
+  // spike record lives in this feature's commit message) ---
+  //
+  // In single-prompt mode the CLI exits ~5s after the result message and KILLS
+  // every run_in_background child with it — "you will be notified when it
+  // completes" never happens. Streaming-input mode fixes both halves: with the
+  // prompt iterable held open the CLI stays alive after the result, background
+  // tasks run to completion, and their task_notification re-invokes the model
+  // into a fresh turn with NO user message — which streams through this same
+  // pump as a continuation of the generation.
+  //
+  // The turn-end signal is the Stop hook's `background_tasks` payload: the
+  // SDK-documented field whose stated purpose is distinguishing "session is
+  // done" from "session is paused waiting for background work to wake it". It
+  // fires before every result message (verified), so by the time the pump sees
+  // a result it already knows whether work is pending. (The CLI also emits a
+  // `background_tasks_changed` system message with the same array, but that
+  // subtype exists nowhere in sdk.d.ts — an undocumented passthrough that can
+  // drift with CLI releases, so it is deliberately not load-bearing here.)
+  // `session_crons` (ScheduleWakeup / CronCreate) is deliberately NOT a linger
+  // trigger: a cron can be hours out, far past any sane linger bound, and
+  // holding a CLI process open for it is not this feature.
+  //
+  // Closing the held-open iterable is the whole teardown: the CLI gives still-
+  // running tasks a ~5s grace, kills them (task_updated status:"killed"), and
+  // exits — so Stop, the SIGTERM drain, and the linger deadline all converge on
+  // closeInput(). BACKGROUND_LINGER_MS bounds the WHOLE linger phase from its
+  // first entry (one deadline, never reset by wake turns): a deadline reset per
+  // wake would let a task chain 29-minute sleeps forever, and a deadline
+  // cleared on wake would hang the query if a notification ever arrives
+  // without a wake turn behind it (skip_transcript housekeeping tasks).
+  let pendingBg: BackgroundTaskSummary[] = [];
+  let lingering = false;
+  let closing = false;
+  let lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  // Cumulative-cost baseline: in streaming-input mode each result message's
+  // token counts cover only its own turn segment, but total_cost_usd is the
+  // running SESSION total (measured: wake turn reported the first result's
+  // cost plus its own marginal spend). Report the delta or every wake turn
+  // re-bills the whole session. A total below the baseline would mean the
+  // report is per-turn after all — taken at face value, codex-style, rather
+  // than clamped into a lie.
+  let costBaseline = 0;
+  let closeInput!: () => void;
+  const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
+  const endTurn = () => {
+    closing = true;
+    if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+    closeInput();
+  };
+  async function* promptStream(): AsyncGenerator<SDKUserMessage> {
+    yield { type: "user", parent_tool_use_id: null, message: { role: "user", content: prompt } } as SDKUserMessage;
+    // Held open past the result so background tasks survive it; endTurn()
+    // releases this (no pending work / Stop / deadline) and the CLI exits.
+    await inputClosed;
+  }
+  const armLingerDeadline = () => {
+    if (lingerTimer || BACKGROUND_LINGER_MS <= 0) return;
+    lingerTimer = setTimeout(() => {
+      lingerTimer = null;
+      if (closing) return;
+      const cut = pendingBg.map((t) => t.command || t.description).filter(Boolean).join("; ");
+      queue.push({
+        type: "notice",
+        content:
+          `⏱ Background work exceeded the linger window (${Math.round(BACKGROUND_LINGER_MS / 60000)}m) and was stopped` +
+          (cut ? `: ${clip(cut, 500)}` : "") +
+          `. Don't assume it finished.`,
+      });
+      endTurn();
+    }, BACKGROUND_LINGER_MS);
+    // Let the process exit if something else tears the turn down first.
+    lingerTimer.unref?.();
+  };
+
   const response = query({
-    prompt,
+    prompt: promptStream(),
     options: {
       cwd: sessionCwd(task, project),
       resume: task.session_id ?? undefined,
@@ -776,6 +852,20 @@ async function* runTurn(
             ],
           },
         ],
+        // The linger signal (see the block above): fires before every result
+        // message with the authoritative in-flight background-task list —
+        // empty when the session is genuinely done, populated when it is
+        // paused waiting for background work to wake it.
+        Stop: [
+          {
+            hooks: [
+              async (input) => {
+                pendingBg = (input as { background_tasks?: BackgroundTaskSummary[] }).background_tasks ?? [];
+                return {};
+              },
+            ],
+          },
+        ],
       },
     },
   });
@@ -845,6 +935,22 @@ async function* runTurn(
               }
             }
           }
+        } else if (message.type === "system" && message.subtype === "task_notification") {
+          // A background task settled. While lingering this is the wake signal:
+          // the CLI re-invokes the model with no user message and the new turn
+          // streams through this same pump — surface the transition so the
+          // runner can drop the background_pending state and record WHY fresh
+          // content is streaming. Mid-turn (not lingering) it's just context; a
+          // notice keeps the transcript honest. After endTurn() it's the CLI
+          // killing what we asked it to kill — silence, not news.
+          if (!closing) {
+            if (lingering) {
+              lingering = false;
+              queue.push({ type: "background_resumed", status: message.status, summary: message.summary });
+            } else {
+              queue.push({ type: "notice", content: message.summary });
+            }
+          }
         } else if (message.type === "rate_limit_event") {
           // Subscription rate-limit telemetry (status/utilization/resetsAt).
           // Not surfaced as a transcript event — it feeds the instance-wide
@@ -855,14 +961,35 @@ async function* runTurn(
           const resetsAt = message.rate_limit_info?.resetsAt;
           if (typeof resetsAt === "number") limitResetsAt = resetsAt;
         } else if (message.type === "result") {
-          // Per-turn spend: the result message carries this turn's dollar cost
-          // and token counts. Persisted by the consumer for cumulative totals.
-          queue.push({
-            type: "usage",
-            usage: claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> }),
-          });
+          // Per-turn spend: the result message carries this turn segment's
+          // token counts, but a cumulative session dollar total — delta it
+          // against the previous result (see costBaseline above).
+          const usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+          if (usage.cost_usd >= costBaseline) {
+            const total = usage.cost_usd;
+            usage.cost_usd = total - costBaseline;
+            costBaseline = total;
+          }
+          queue.push({ type: "usage", usage });
           if (message.subtype !== "success" && "result" in message === false) {
             queue.push({ type: "error", content: withResetTime(`Run ended: ${message.subtype}`) });
+          }
+          // The linger decision. The Stop hook has already fired for this turn
+          // (verified ordering), so pendingBg is current: empty → the session
+          // is done, close the input and let the CLI exit; populated → hold
+          // the query open so the work survives, tell the runner, and start
+          // the bounded wait for the task_notification wake.
+          if (!closing) {
+            if (pendingBg.length > 0 && BACKGROUND_LINGER_MS > 0) {
+              lingering = true;
+              queue.push({
+                type: "background_pending",
+                tasks: pendingBg.map((t) => ({ id: t.id, kind: t.type, description: clip(t.command || t.description, 300) })),
+              });
+              armLingerDeadline();
+            } else {
+              endTurn();
+            }
           }
         }
       }
@@ -873,6 +1000,10 @@ async function* runTurn(
         queue.push({ type: "error", content: withResetTime(err instanceof Error ? err.message : String(err)) });
       }
     } finally {
+      // However the stream ended (clean close, Stop, a thrown transport
+      // error), release the held-open prompt generator and the linger timer —
+      // a parked generator would otherwise pin this turn's closure forever.
+      endTurn();
       queue.close();
     }
   })();
