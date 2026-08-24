@@ -30,6 +30,12 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
       return "ask_answered";
     case "suggested":
       return "suggested";
+    // The linger boundary, both directions: entering "working in background"
+    // and waking from it. One coarse name — the payload is a snapshot and
+    // background_pending on the re-read row says which side this is.
+    case "background_pending":
+    case "background_resumed":
+      return "background";
     case "turn_end":
       return "turn_end";
     case "task_updated":
@@ -144,6 +150,7 @@ export async function GET(req: Request) {
           projectId: t.project_id,
           running: !!t.running,
           awaiting_input: !!t.awaiting_input,
+          background_pending: !!t.background_pending,
           status: t.status,
           awaiting_count: countAwaiting(t.project_id),
           // A suggestion can be filed into a project other than the one the

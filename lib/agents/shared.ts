@@ -6,6 +6,7 @@
 
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
+import { getCapabilities } from "./capabilities";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
 // already supplied by buildProjectContext(). Keep this prompt deliberately
@@ -41,17 +42,29 @@ export function buildProjectContext(project: Project, task: Task): string {
     lines.push(`\nContinue this task from where the previous session left off.`);
   }
 
-  // STOPGAP until background tasks linger past turn end (linger-until-quiet):
-  // both drivers run each turn as its own CLI process (Claude SDK query(),
-  // codex exec), killed with its process group at result time — so the shell
-  // tool's own "keeps running across turns" promise is false here. Remove this
-  // block when the linger feature ships.
-  lines.push(
-    `\n---\nBackground shell tasks do NOT survive the end of your turn: each turn runs in its ` +
-      `own process, and backgrounded commands are killed with it when the turn completes — ` +
-      `regardless of what your shell tool's documentation promises. Run long commands in the ` +
-      `foreground, and split a run longer than the foreground timeout into stages.`
-  );
+  // Per-driver truth about backgrounded work. A lingering driver (Claude, via
+  // streaming-input mode — see BACKGROUND_LINGER_MS) keeps the CLI alive after
+  // the turn so run_in_background tasks finish and their notifications wake
+  // the model; there the shell tool's own docs are finally accurate and the
+  // model only needs the bound. Everywhere else (Codex's `codex exec`, or
+  // Claude with the linger disabled) each turn's process is killed at result
+  // time, backgrounded commands with it — so the model is warned off a promise
+  // ("you'll be notified when it completes") its harness cannot keep.
+  if (getCapabilities(task.agent).backgroundTasksLinger) {
+    lines.push(
+      `\n---\nBackground shell tasks keep running after your turn ends: the session stays open ` +
+        `until they settle and their completion notifications re-invoke you. The wait is bounded ` +
+        `(about 30 minutes by default; a transcript notice tells you if work was cut off), so ` +
+        `prefer the foreground for anything that must not be interrupted.`
+    );
+  } else {
+    lines.push(
+      `\n---\nBackground shell tasks do NOT survive the end of your turn: each turn runs in its ` +
+        `own process, and backgrounded commands are killed with it when the turn completes — ` +
+        `regardless of what your shell tool's documentation promises. Run long commands in the ` +
+        `foreground, and split a run longer than the foreground timeout into stages.`
+    );
+  }
 
   lines.push(
     `\n---\nYou have an "orchestrator" MCP tool \`suggest_task\` that creates a task. By ` +

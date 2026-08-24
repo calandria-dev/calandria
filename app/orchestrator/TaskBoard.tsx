@@ -149,8 +149,11 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   // A suggestion the filing agent retracted. It reads "withdrawn", not
   // "cancelled": nothing was ever started, so nothing was called off.
   const withdrawn = isWithdrawn(task);
+  // Held open for run_in_background work — live, but the model isn't talking.
+  const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
   const activity = snoozed ? `wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
+    : inBackground ? "live · working in background"
     : running ? "live · working"
     : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
@@ -171,7 +174,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
       title={canDrag ? "Drag to move / reorder" : undefined}
     >
       <div className="bc-top">
-        <StatusDot status={task.status} running={running} awaiting={awaiting} />
+        <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
         <h3 className="bc-title">{task.title}</h3>
         {!mini && <PriPill p={task.priority} />}
       </div>

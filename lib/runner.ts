@@ -91,7 +91,7 @@ export function startTurn(
       if (!hasTurn(task.id)) {
         const current = getTask(task.id);
         if (current && current.generation === task.generation && current.running) {
-          updateTask(task.id, { running: 0 });
+          updateTask(task.id, { running: 0, background_pending: 0 });
         }
         publish(task.id, { type: "turn_end" });
       }
@@ -218,7 +218,7 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
       }
     }
     const userMsg = addMessage(id, gen, "user", userText);
-    updateTask(id, { running: 1, suggested: 0, awaiting_input: 0 });
+    updateTask(id, { running: 1, suggested: 0, awaiting_input: 0, background_pending: 0 });
     publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
     startTurn(task, project, userText, syncNote, abortController);
   } catch (err) {
@@ -542,6 +542,28 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           toolMsgs[ev.id] = { dbId: m.id, data };
           publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
         }
+      } else if (ev.type === "background_pending") {
+        // The model's turn ended but its run_in_background work is still
+        // going, and the driver is holding the session open for it (bounded —
+        // see BACKGROUND_LINGER_MS). The turn is NOT over: running stays 1,
+        // the slot stays claimed (so Stop, the SIGTERM drain, and message
+        // queueing all keep working), and awaiting_input stays 0 — nothing
+        // here needs the user, so this state is excluded from the "N need you"
+        // pill by construction. The flag is what lets the UI say "working in
+        // background" instead of a generic live spinner. Persisted before
+        // publishing, like every state the global stream re-reads.
+        updateTask(id, { background_pending: 1 });
+        publish(id, ev);
+      } else if (ev.type === "background_resumed") {
+        // A lingered-on task settled and its notification woke the model — a
+        // continuation turn is about to stream with no user message behind it.
+        // Persist the CLI's own summary as the system line that explains the
+        // unprompted output; without it the transcript shows the model talking
+        // to nobody.
+        updateTask(id, { background_pending: 0 });
+        const note = `⏵ ${ev.summary || `Background task ${ev.status}`}`;
+        const m = addMessage(id, gen, "system", note);
+        publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
         publish(id, ev);
@@ -634,7 +656,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // exists to make impossible, so it raises its hand like any other failure.
     const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
     if (!generationAdvanced && !superseded) {
-      updateTask(id, { running: 0, session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
+      // background_pending settles with running: however the linger ended (all
+      // work done, expiry, Stop), the session that owned the work is gone.
+      updateTask(id, { running: 0, background_pending: 0, session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
     }
 
     // Settle the schedule run from HERE, because this is the only place that
@@ -777,7 +801,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
             // while we waited on the lock) and, thrown from inside this .catch,
             // become an unhandled rejection that crashes the server.
             publishTurnError(id, gen, err instanceof Error ? err.message : String(err));
-            updateTask(id, { running: 0, awaiting_input: opened ? 1 : 0 });
+            updateTask(id, { running: 0, background_pending: 0, awaiting_input: opened ? 1 : 0 });
             publish(id, { type: "turn_end" });
           });
         } else {

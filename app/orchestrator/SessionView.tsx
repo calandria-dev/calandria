@@ -310,7 +310,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             </div>
           ))}
           {running && !awaitingAnswer && (
-            <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
+            // A lingering turn isn't "typing": the model stopped talking and
+            // the session is held open for run_in_background work — say so, or
+            // the dots promise imminent output that may be minutes away.
+            task.background_pending ? (
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>Working in background — the session stays open and continues when the task finishes.</span></div></div>
+            ) : (
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
+            )
           )}
           {/* Follow-ups queued mid-turn, pinned below the live turn — they
               send in order once it ends. */}
@@ -434,7 +441,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             </div>
             <div style={{ position: "relative" }}>
               <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
-                <StatusDot status={task.status} running={running} awaiting={awaiting} />
+                <StatusDot status={task.status} running={running} awaiting={awaiting} background={!awaiting && running && !!task.background_pending} />
                 <span className="cv">{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
                 {Icon.chevDown()}
               </button>

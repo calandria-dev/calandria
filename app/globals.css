@@ -539,6 +539,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sdot.h{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 55%,transparent);}  /* on hold — paused */
 .sdot.x{background:transparent;border:1.5px solid var(--ink-4);box-sizing:border-box;}  /* cancelled — hollow */
 .sdot.b{background:var(--accent);box-shadow:var(--glow-blue);}       /* live / working */
+.sdot.bg{background:transparent;border:1.5px solid var(--accent);box-shadow:var(--glow-blue);box-sizing:border-box;}  /* live, lingering on background work — hollow so it reads "held open", not "talking" */
 .sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you — waiting/review, not error */
 .sdot.lg{width:12px;height:12px;}
 .sdot.z{background:var(--dim);}  /* snoozed group header — parked, not a real status */
