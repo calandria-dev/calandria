@@ -93,7 +93,12 @@ describe("which permission modes the driver offers", () => {
     ]);
   });
 
-  it("labels every mode distinctly, and never 'Default' — the picker's inherit head owns that word", () => {
+  it("labels every mode with Anthropic's own spelling, and never 'Default' — the picker's inherit head owns that word", () => {
+    // Provider-native labels: the picker shows exactly the strings
+    // `--permission-mode` takes, so label === value for every entry. The mode
+    // spelled "default" (lowercase) is Anthropic's; the capital-D "Default" is
+    // Calandria's synthetic inherit head, and the subs carry the distinction.
+    for (const p of CLAUDE_CAPABILITIES.permissionModes) expect(p.label).toBe(p.value);
     const labels = CLAUDE_CAPABILITIES.permissionModes.map((p) => p.label);
     expect(new Set(labels).size).toBe(labels.length);
     expect(labels).not.toContain("Default");
@@ -182,7 +187,7 @@ describe("what each mode does to the gate", () => {
     return { result, events };
   }
 
-  it("blanket-allows under Auto-run — the gate is never consulted", async () => {
+  it("blanket-allows under bypassPermissions — the gate is never consulted", async () => {
     // Not just "allows": bypassPermissions must short-circuit BEFORE any card,
     // because the SDK never calls the callback in that mode anyway.
     const { result, events } = await gate("bypassPermissions", "Bash", { command: "rm -rf /tmp/x" });
@@ -193,7 +198,7 @@ describe("what each mode does to the gate", () => {
   for (const mode of ["auto", "default"] as const) {
     it(`raises a real permission card under ${mode}, and the user's allow lets the call run`, async () => {
       // The regression this pins: before the gate was real, every mode behaved
-      // like Auto-run. A command in a prompting mode has to reach the user, and
+      // like bypassPermissions. A command in a prompting mode has to reach the user, and
       // their answer has to be what decides it.
       const { result, events } = await gate(mode, "Bash", { command: "curl -s https://example.com" }, [["allow_once"]]);
       const card = events.find((e) => e.type === "permission");

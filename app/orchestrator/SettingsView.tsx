@@ -546,6 +546,11 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
+  // What the agent being edited calls its never-asks mode — the labels are the
+  // provider's own vocabulary (Claude: "bypassPermissions", Codex:
+  // "workspace-write"), so the help copy resolves the name per agent instead of
+  // hardcoding one.
+  const bypassLabel = caps?.permissionModes.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   const multiAgent = agents.agents.length > 1;
   const backgroundJobs = appDefaults.background_jobs !== "off";
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -748,9 +753,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to the default. Every mode except <strong>Auto-run</strong>
+                    How tasks run when their own picker is set to the default. Every mode except <strong>{bypassLabel}</strong>
                     {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
-                    away, where an unanswered card declines itself. Pick <strong>Auto-run</strong> for work that must never stop to ask.
+                    away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg" style={{ flexWrap: "wrap", maxWidth: 520 }}>
                     {permissionOptions(caps).map((p) => (
