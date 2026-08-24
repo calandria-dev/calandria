@@ -66,6 +66,9 @@ optional auto-cut; `ORCH_BACKGROUND_LINGER=off` disables lingering).
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
   conflicts, merge, or create a GitHub PR from the same screen.
+- **Collaborate on documents:** open a markdown file the agent wrote as a
+  document — edit the text, select passages and attach comments — and send
+  the lot back as one message: your edits as a diff, your comments in place.
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.
@@ -155,6 +158,7 @@ belongs.
 - [Managed services](docs/SERVICES.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Windows compatibility assessment](docs/WINDOWS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
 

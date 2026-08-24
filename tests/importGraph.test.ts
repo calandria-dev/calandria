@@ -43,6 +43,8 @@ const PINNED = [
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "lib/notifications/notify.ts", //   composes notifications; store + bus only, no driving
   "lib/notifications/dispatcher.ts", // the bus subscriber behind /api/events
+  "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
+  "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
