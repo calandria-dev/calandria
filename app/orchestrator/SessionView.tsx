@@ -163,6 +163,9 @@ export function SessionView({ project, task, agents, messages, running, blockedB
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
+  // Mobile: the header rail shows only the essentials (Chat/Changes, status)
+  // until "More" expands it into wrapped rows with the full control set.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [priOpen, setPriOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -364,6 +367,31 @@ export function SessionView({ project, task, agents, messages, running, blockedB
     </>
   );
 
+  // The status picker, extracted because the two layouts place it differently:
+  // desktop keeps it inline between priority and snooze; mobile promotes it to
+  // the rail's always-visible row (it's the control that answers "what state is
+  // this task in" and flips it — the one thing a phone glance needs).
+  const statusCtl = (
+    <div style={{ position: "relative" }}>
+      <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
+        <StatusDot status={task.status} running={running} awaiting={awaiting} background={!awaiting && running && !!task.background_pending} />
+        <span className="cv">{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
+        {Icon.chevDown()}
+      </button>
+      {statusOpen && (
+        <Popover onClose={() => setStatusOpen(false)}>
+          {STATUSES.map((s) => (
+            <div key={s} className="pop-item" onClick={() => { onSetStatus(s); setStatusOpen(false); }}>
+              <StatusDot status={s} />
+              <div><div>{SLABEL[s]}</div><div className="pi-sub">{SSUB[s]}</div></div>
+              {task.status === s && <span className="pi-check">{Icon.check()}</span>}
+            </div>
+          ))}
+        </Popover>
+      )}
+    </div>
+  );
+
   return (
       <div className="session">
         <div className="sess-head">
@@ -375,12 +403,12 @@ export function SessionView({ project, task, agents, messages, running, blockedB
             </div>
             <div className="sh-title">{task.title}</div>
           </div>
-          {/* On a phone this rail is one horizontal scroll, so ORDER is
-              priority: the Chat/Changes toggle leads, the interactive controls
-              follow, and the read-only chips (PR link, agent, usage) trail at
-              the far end — see infoChips at the close of the rail. On desktop
-              everything fits, so the chips keep their leading spot. */}
-          <div className="sh-tools">
+          {/* Desktop: one row, everything inline, chips leading. Mobile: the
+              rail defaults to the essentials — Chat/Changes, status, "More" —
+              and More expands it into wrapped rows carrying the full control
+              set with the read-only chips (PR link, agent, usage) last. One
+              endless horizontal scroll of every control buried the core ones. */}
+          <div className={`sh-tools${mobile && toolsOpen ? " open" : ""}`}>
             {mobile && hasSession && (
               <div className="viewseg">
                 <button className={`viewseg-btn ${view === "chat" ? "on" : ""}`} onClick={() => setView("chat")}>Chat</button>
@@ -388,6 +416,14 @@ export function SessionView({ project, task, agents, messages, running, blockedB
               </div>
             )}
             {!mobile && infoChips}
+            {mobile && statusCtl}
+            {mobile && (
+              <button className={`status-ctl${toolsOpen ? " on" : ""}`} aria-expanded={toolsOpen} title={toolsOpen ? "Hide extra task controls" : "Model, reasoning, priority, snooze & more"}
+                onClick={() => setToolsOpen((o) => !o)}>
+                {Icon.dots()} <span className="cv">{toolsOpen ? "Less" : "More"}</span>
+              </button>
+            )}
+            {(!mobile || toolsOpen) && <>
             <div style={{ position: "relative" }}>
               <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
                 {Icon.spark()}
@@ -452,24 +488,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
                 </Popover>
               )}
             </div>
-            <div style={{ position: "relative" }}>
-              <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
-                <StatusDot status={task.status} running={running} awaiting={awaiting} background={!awaiting && running && !!task.background_pending} />
-                <span className="cv">{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
-                {Icon.chevDown()}
-              </button>
-              {statusOpen && (
-                <Popover onClose={() => setStatusOpen(false)}>
-                  {STATUSES.map((s) => (
-                    <div key={s} className="pop-item" onClick={() => { onSetStatus(s); setStatusOpen(false); }}>
-                      <StatusDot status={s} />
-                      <div><div>{SLABEL[s]}</div><div className="pi-sub">{SSUB[s]}</div></div>
-                      {task.status === s && <span className="pi-check">{Icon.check()}</span>}
-                    </div>
-                  ))}
-                </Popover>
-              )}
-            </div>
+            {!mobile && statusCtl}
             {/* Snoozing, beside the status it deliberately does NOT change —
                 the status is the category this task drops back into when the
                 deadline passes. While parked, the control becomes the wake
@@ -505,6 +524,7 @@ export function SessionView({ project, task, agents, messages, running, blockedB
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
             )}
             {mobile && infoChips}
+            </>}
           </div>
         </div>
 
