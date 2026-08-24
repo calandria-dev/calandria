@@ -1262,6 +1262,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    failure (agent exited, etc.), not "a rebase away from clean". */
 .sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
 .sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
+.sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
 
