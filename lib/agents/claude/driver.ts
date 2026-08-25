@@ -803,6 +803,11 @@ async function* runTurn(
   // Synchronous, because lib/runner.ts persists + publishes the message in the
   // same tick: nothing may interleave between the CLI accepting it and the
   // transcript recording it.
+  // Re-lingering after this is what keeps the injected turn from costing the
+  // user the work they were waiting on, and it is measured, not assumed: the
+  // injected turn's own Stop hook reports the still-running background task
+  // (and a pending wakeup) exactly as the previous one did, so the result
+  // handler below re-enters the linger and the work runs to completion.
   const sendMidTurn = (text: string): boolean => {
     if (closing || !lingering) return false;
     // A real model turn starts now, so the session is no longer "working in
