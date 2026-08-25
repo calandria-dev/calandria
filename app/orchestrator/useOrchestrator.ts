@@ -727,13 +727,13 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null; group_id: string | null }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; group_id: string | null }) => {
     if (!project) return;
-    // permission_mode goes in the CREATE, not a follow-up PATCH: `startNow`
-    // below launches the first turn, and a mode applied after that would miss
-    // the very turn the user picked it for. The group rides the create too, so
-    // the first turn's context (phase 2 of the groups spec) sees it.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), ...(input.group_id ? { group_id: input.group_id } : {}) });
+    // model and permission_mode go in the CREATE, not a follow-up PATCH:
+    // `startNow` below launches the first turn, and either applied after that
+    // would miss the very turn the user picked it for. The group rides the
+    // create too, so the first turn's context (phase 2 of the groups spec) sees it.
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), ...(input.group_id ? { group_id: input.group_id } : {}) });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -803,7 +803,7 @@ export function useOrchestrator() {
   // clears a withdrawal (reason + cancelled status) for free.
   const saveTask = async (
     id: string,
-    patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean; group_id: string | null },
+    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; group_id: string | null },
     action?: SaveAction,
   ) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {

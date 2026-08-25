@@ -442,6 +442,13 @@ export function createTask(input: {
    * every other creation path relies on.
    */
   permission_mode?: string | null;
+  /**
+   * The model the task's sessions run on, settable at creation for the same
+   * reason as permission_mode: the New-task dialog can start the first turn in
+   * the same gesture, so a later PATCH would be too late. null/undefined keeps
+   * the inherit-the-default behavior (agent's Settings default, then the CLI's).
+   */
+  model?: string | null;
   /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
@@ -464,12 +471,12 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, runbook_id, group_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, group_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
+      agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
       input.group_id ?? null, position, now, now
     );
   return getTask(id)!;

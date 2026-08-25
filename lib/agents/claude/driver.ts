@@ -546,12 +546,16 @@ async function* runTurn(
 
   // Resolve the run controls with a two-level fallback: the task's own choice wins;
   // when it's null ("Default"), inherit the app-level default set in Settings; when
-  // that's also unset, fall through to Claude Code's built-in (no thinking override,
-  // bypassPermissions).
+  // that's also unset, fall through to Claude Code's built-in (its own default
+  // model, no thinking override, bypassPermissions).
   // App defaults are agent-scoped ("default_reasoning:<agent>"), falling back to
   // the legacy un-suffixed key so pre-existing settings still apply.
   const reasoning = task.reasoning ?? getSetting(`default_reasoning:${task.agent}`) ?? getSetting("default_reasoning");
   const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`) ?? getSetting("default_permission_mode");
+  // The model default is agent-scoped ONLY — no legacy un-suffixed key to read,
+  // and none worth minting: a model id names one provider's catalog, so an
+  // instance-wide "opus" would be a value Codex could never run.
+  const model = task.model ?? getSetting(`default_model:${task.agent}`);
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (a large text paste diverted to a file) marker
@@ -805,9 +809,9 @@ async function* runTurn(
     options: {
       cwd: sessionCwd(task, project),
       resume: task.session_id ?? undefined,
-      // Per-task model selection ("opus"/"sonnet"/"haiku" alias). Omit to inherit
-      // Claude Code's default model.
-      ...(task.model ? { model: task.model } : {}),
+      // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
+      // else this agent's Settings default. Omit to inherit Claude Code's own.
+      ...(model ? { model } : {}),
       // Reasoning preset → thinking budget + effort (Off/Think/Think hard/Ultrathink).
       // Omitted keys leave Claude Code's default thinking.
       ...reasoningOptions(reasoning),

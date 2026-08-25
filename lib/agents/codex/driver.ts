@@ -164,14 +164,18 @@ async function* runTurn(
   abortController?: AbortController
 ): AsyncGenerator<StreamEvent> {
   let sessionId: string | null = task.session_id;
-  // The model the turn effectively runs: the task's choice, else the CLI's
-  // default (codex emits no model event of its own, so this resolved value is
-  // the best truth available). It prices the cost estimate and is reported as
-  // a `model` event so the badge + Insights provider panel populate. When the
-  // task didn't choose, we still OMIT the model override below — a user's
-  // ~/.codex/config.toml default keeps winning — so the resolved value is an
-  // assumption in that edge case, consistent with the estimated-cost framing.
-  const model = resolveCodexModel(task.model);
+  // What the turn asks for: the task's own choice, else this agent's Settings
+  // default ("default_model:<agent>"; agent-scoped only, since a model id names
+  // one provider's catalog). Null = ask for nothing.
+  const chosen = task.model ?? getSetting(`default_model:${task.agent}`);
+  // The model the turn effectively runs: that choice, else the CLI's default
+  // (codex emits no model event of its own, so this resolved value is the best
+  // truth available). It prices the cost estimate and is reported as a `model`
+  // event so the badge + Insights provider panel populate. When nothing chose,
+  // we still OMIT the model override below — a user's ~/.codex/config.toml
+  // default keeps winning — so the resolved value is an assumption in that edge
+  // case, consistent with the estimated-cost framing.
+  const model = resolveCodexModel(chosen);
   // Codex reports the thread's CUMULATIVE token counts on every turn.completed,
   // so a resumed thread starts from the baseline the last turn stored (see
   // events.ts). A fresh thread starts from zero.
@@ -192,7 +196,7 @@ async function* runTurn(
     sandboxMode: controls.sandboxMode,
     ...approvalOverride(),
     networkAccessEnabled: controls.networkAccessEnabled,
-    ...(task.model ? { model: task.model } : {}),
+    ...(chosen ? { model: chosen } : {}),
     ...reasoningEffort(reasoning),
   };
 

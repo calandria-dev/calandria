@@ -17,6 +17,25 @@ Connecting either agent completes first-run setup and makes it the initial defau
 app never requires Claude when only Codex is connected, or vice versa. Project recaps,
 context drafts, and other utility jobs prefer a connected agent automatically.
 
+## Choosing a model
+
+Each driver publishes its own model catalog, and Calandria offers it in four places: the
+**New task** and **Edit task** dialogs, the session rail's picker (which changes a running
+task's model for its next turn), and **Settings → Run defaults → Default model**. The list
+is the agent's, not Calandria's — a Vertex-routed instance sees the corrected context
+windows its aliases really resolve to, and a new driver's models appear with no UI change.
+
+Every picker's **Default** entry means *inherit*, and the chain is the same one reasoning
+level and permission mode follow: the task's own pick wins; failing that, the agent's
+default from Settings; failing that, nothing is sent at all and the CLI's own configured
+model runs. That last step is why an instance which has never opened Settings keeps
+honoring a model set in `~/.claude/settings.json` or `~/.codex/config.toml`.
+
+The Settings default is **per agent** — there is no instance-wide one, because a model id
+names one provider's catalog and `opus` is not a value Codex could ever run. Switching an
+unstarted task's agent therefore drops its model back to Default rather than carrying an id
+the new driver would silently ignore.
+
 ## Authentication and billing
 
 The recommended path is the subscription login offered by the first-run wizard or

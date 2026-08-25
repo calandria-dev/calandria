@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
 import {
-  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, MONO_FONTS, PROMPT_FONTS,
+  DEFAULT_SETTINGS, modelOptions, reasoningOptions, permissionOptions, MONO_FONTS, PROMPT_FONTS,
   type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
 } from "./types";
 import { capsFor, agentLabel } from "./agents";
+import { ModelField } from "./Modal";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
@@ -637,6 +638,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
+  // The model default has no legacy un-suffixed key to fall back to: it shipped
+  // agent-scoped, and a model id names one provider's catalog anyway.
+  const modelVal = appDefaults[`default_model:${editAgent}`] ?? null;
   // What the agent being edited calls its never-asks mode — the labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
   // "workspace-write"), so the help copy resolves the name per agent instead of
@@ -814,7 +818,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="field">
                     <div className="lab">Run defaults for</div>
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Each agent carries its own reasoning &amp; permission defaults — pick which to edit.
+                      Each agent carries its own model, reasoning &amp; permission defaults — pick which to edit.
                     </div>
                     <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
@@ -823,6 +827,18 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   </div>
                 )}
+                <ModelField
+                  label="Default model"
+                  options={modelOptions(caps)}
+                  value={modelVal}
+                  onChange={(m) => setAppDefault(`default_model:${editAgent}`, m)}
+                  note={
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      The model a task runs on when its own picker is set to <strong>Default</strong>. Per-task choices
+                      always override this, and <strong>Default</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
+                    </div>
+                  }
+                />
                 <div className="field">
                   <div className="lab">{Icon.spark()} Default reasoning level</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
