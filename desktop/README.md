@@ -41,7 +41,7 @@ inherited unchanged.
 | `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 16 assertions over `supervisor.js`, against stub sidecars. No deps, no display. |
+| `test-supervisor.js` | 18 assertions over `supervisor.js`, against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). |
 

@@ -52,7 +52,7 @@ bridge, while a bridge would hand any XSS in the transcript renderer the whole
 Node API. External links open in the user's real browser.
 
 `supervisor.js` contains no `require("electron")`. That is not tidiness: it makes
-the risky half testable on a headless box (16 assertions, `node
+the risky half testable on a headless box (18 assertions, `node
 test-supervisor.js`, ~9 s, no display), and it means a later swap to Tauri or a
 tray-only launcher reuses it whole.
 
@@ -95,7 +95,7 @@ Electron's runtime flags.
 
 ## 4. What the prototype does — and what is unverified
 
-Working and tested (`desktop/test-supervisor.js`, 16 assertions; `desktop/test-real-boot.js`, 8):
+Working and tested (`desktop/test-supervisor.js`, 18 assertions; `desktop/test-real-boot.js`, 8):
 
 - Node resolution — `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH, with an actionable error naming everything it tried.
 - macOS launchd-PATH detection and repair from the login shell, fenced against rc-file chatter, `null` rather than a throw on failure.
