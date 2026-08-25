@@ -987,16 +987,35 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-fact svg{width:12px;height:12px;}
 .tc-chev{transition:transform .12s;color:var(--ink-3);display:inline-block;font-size:10px;}
 .tc-chev.open{transform:rotate(90deg);}
-.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);}
+/* The file's diff is ONE horizontal scrollport. Everything inside it is laid
+   out against the widest line (.tc-rows/.tc-split are max-content), so a long
+   line widens the whole file rather than growing a scrollbar of its own on
+   every row — and row highlights stay full-width across the scrolled area.
+   container-type is what lets a review comment stay the width of the VISIBLE
+   pane (100cqi) instead of stretching to that max-content width. */
+.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
+.tc-rows,.tc-split{width:max-content;min-width:100%;}
 .dl{padding:0 12px;white-space:pre;color:var(--ink);}
 .dl.add{background:var(--diff-add-bg);color:var(--run);}
 .dl.del{background:var(--diff-del-bg);color:var(--err);}
 .dl.ctx{color:var(--dim);}
 /* dual line-number gutters — the full-file diff viewer only (tc-hunks). Tool-
    call/peek diffs elsewhere reuse .dl as a single text row and stay untouched. */
-.tc-hunks .dl{display:grid;grid-template-columns:42px 42px 1fr;padding:0;}
-.dl-no{color:var(--dim);opacity:.5;text-align:right;padding-right:8px;font-size:10.5px;user-select:none;}
-.dl-c{padding:0 12px;overflow-x:auto;}
+.tc-hunks .dl{display:flex;padding:0;}
+/* Dimmed via the text colour, NOT opacity: the gutter is sticky, and opacity
+   would fade its background too, letting the line it's pinned over show
+   through as it scrolls under. */
+.dl-no{color:color-mix(in oklab, var(--dim) 50%, transparent);text-align:right;padding-right:8px;font-size:10.5px;user-select:none;}
+/* Flex, not grid, so the gutters can be sticky: a sticky grid item is clamped
+   to its own grid area and would scroll away with the text. Their background
+   has to be opaque (the diff tints are translucent) or the line they're
+   pinned over shows through. */
+.tc-hunks .dl>.dl-no{position:sticky;left:0;z-index:1;flex:0 0 42px;background:var(--surface);}
+.tc-hunks .dl>.dl-no+.dl-no{left:42px;}
+.tc-hunks .dl.add>.dl-no{background:linear-gradient(var(--diff-add-bg),var(--diff-add-bg)),var(--surface);}
+.tc-hunks .dl.del>.dl-no{background:linear-gradient(var(--diff-del-bg),var(--diff-del-bg)),var(--surface);}
+.tc-hunks .dl.spacer>.dl-no{background:var(--panel);}
+.dl-c{padding:0 12px;}
 .tc-hunks .dl.hunk{display:block;padding:2px 14px;background:var(--panel);color:var(--dim);font-size:11px;}
 .tc-empty{padding:10px 12px;color:var(--ink-3);font-size:12px;font-family:var(--sans);}
 .tc-bigdiff{display:block;width:100%;padding:10px 12px;border:none;border-radius:0 0 var(--r) var(--r);background:var(--surface);color:var(--ink-3);font-size:12px;font-family:var(--sans);text-align:left;cursor:pointer;}
@@ -1012,13 +1031,16 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-split{display:flex;flex-direction:column;}
 .tc-split-pair{display:grid;grid-template-columns:1fr 1fr;}
 .tc-split-pair>.dl:first-child{border-right:1px solid var(--line);}
-.tc-hunks .tc-split-pair .dl{grid-template-columns:42px 1fr;}
 .dl.spacer{background:var(--panel);}
 .dl-no.click{cursor:pointer;}
-.dl-no.click:hover{opacity:1;color:var(--accent-ink);}
+.dl-no.click:hover{color:var(--accent-ink);}
 /* Review comment box (composing) / thread (posted) — anchored under the diff
    row it targets, in both view modes. */
 .cmt{margin:6px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-family:var(--sans);}
+/* Prose in a scrollport sized to the longest line of code: hold it to the
+   visible width and pin it there, so a wide file doesn't push comments off
+   the right edge or wrap them at 2000px. */
+.tc-hunks .cmt{position:sticky;left:0;width:calc(100cqi - 28px);}
 .cmt-who{font-size:11.5px;color:var(--dim);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
 .cmt-sent{color:var(--green);font-weight:600;}
 .cmt-cancel{margin-left:auto;background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:0;}
