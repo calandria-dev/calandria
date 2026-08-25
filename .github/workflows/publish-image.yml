@@ -671,3 +671,11 @@ jobs:
       issues: write
     steps:
       - uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b # v1.2.0
+        with:
+          # Required, and the action has no default for it: without this it
+          # throws "Parameter token or opts.auth is required" before making any
+          # API call, so the `issues: write` above granted a token that nothing
+          # was handing to the action. Observed on run 32868492794 (issue #26).
+          # The input is `github-token` — a plain `token:` is an unrecognized
+          # input that GitHub only warns about, leaving the same throw.
+          github-token: ${{ github.token }}

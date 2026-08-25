@@ -15,9 +15,9 @@
 
 # :latest is the newest tagged release (issue #12) — correct for an example
 # meant to stay current with no upkeep. A real overlay that cares about
-# reproducible builds should pin a specific `vX.Y.Z` instead once a release
-# exists, and re-pin deliberately on upgrade; see docs/SELF_HOSTING.md,
-# "Pinning a version".
+# reproducible builds should pin a specific version instead (`:0.2.0` — note
+# the registry tag carries no leading `v`, unlike the git tag) and re-pin
+# deliberately on upgrade; see docs/SELF_HOSTING.md, "Pinning a version".
 FROM ghcr.io/calandria-dev/calandria:latest
 
 USER root
