@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { createProject, createTask, deleteTask, getTask, getTaskDeps, setTaskDeps, updateTask } from "@/lib/store";
+import { createGroup, createProject, createTask, deleteTask, getTask, getTaskDeps, listGroups, setTaskDeps, updateTask } from "@/lib/store";
 import {
   createSuggestedTask,
   getTaskForAgent,
+  listGroupsForAgent,
   listTasksForAgent,
   registerExposedService,
   resolveTitleRefs,
@@ -18,6 +19,7 @@ import { POST as listTasksEp } from "@/app/api/internal/agent-tools/list-tasks/r
 import { POST as getTaskEp } from "@/app/api/internal/agent-tools/get-task/route";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { POST as withdrawEp } from "@/app/api/internal/agent-tools/withdraw-suggestion/route";
+import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups/route";
 import { instanceServiceTokenOk } from "@/lib/cf-access.mjs";
 
 function post(handler: (req: NextRequest) => Promise<Response>, url: string, body: unknown) {
@@ -610,5 +612,237 @@ describe("instance service token gate", () => {
       process.env.SERVICE_TOKEN = prev;
       process.env.ORCH_FLEET_TOKEN = prevFleet;
     }
+  });
+});
+
+// ── Groups on the agent tools ────────────────────────────────────────────────
+// The half of docs/superpowers/specs/2026-08-24-task-grouping-design.md that
+// lets a PLANNING TURN file a named plan instead of N unrelated rows. The
+// asymmetry between the two writers is the thing under test: suggest_task
+// creates a group it doesn't recognize (a plan being born names itself once),
+// update_task refuses one (the task exists, so a typo would split a feature the
+// user is already filtering by in two).
+describe("group on the agent tools", () => {
+  it("suggest_task creates the named group in the TARGET project, tagged with the caller", () => {
+    const project = createProject({ name: "G-Suggest" });
+    const planner = createTask({ project_id: project.id, title: "Plan it", description: "" });
+
+    const first = createSuggestedTask(project, {
+      title: "Step one",
+      description: "",
+      group: "Auth migration",
+      origin_task_id: planner.id,
+    });
+    expect(first.text).toContain('Created group "Auth migration" in G-Suggest.');
+    const group = listGroups(project.id)[0];
+    expect(group.name).toBe("Auth migration");
+    // Provenance: the group links back to the session that planned it, which is
+    // what lib/groupContext.ts turns into "Planned in task …" for every member.
+    expect(group.origin_task_id).toBe(planner.id);
+    expect(getTask(first.task!.id)!.group_id).toBe(group.id);
+
+    // The rest of the batch REUSES it rather than minting a near-duplicate, and
+    // says so — an exact-match-or-create verb is only safe if the result
+    // distinguishes the two outcomes while the agent can still fix its spelling.
+    const second = createSuggestedTask(project, { title: "Step two", description: "", group: "Auth migration", origin_task_id: planner.id });
+    expect(second.text).toContain('Filed under group "Auth migration".');
+    expect(second.text).not.toContain("Created group");
+    expect(listGroups(project.id)).toHaveLength(1);
+    expect(getTask(second.task!.id)!.group_id).toBe(group.id);
+
+    // An id resolves too, and is not mistaken for a name to create.
+    const byId = createSuggestedTask(project, { title: "Step three", description: "", group: group.id });
+    expect(getTask(byId.task!.id)!.group_id).toBe(group.id);
+    expect(listGroups(project.id)).toHaveLength(1);
+  });
+
+  it("suggest_task groups a cross-project suggestion in the project it LANDS in", () => {
+    // The group is resolved after the target project, so a session planning
+    // into another repo names a group there — never one in its own, which the
+    // task could not legally belong to.
+    const here = createProject({ name: "G-Here" });
+    const there = createProject({ name: "G-There" });
+    createGroup({ project_id: here.id, name: "Shared name" });
+
+    const filed = createSuggestedTask(there, { title: "Elsewhere", description: "", group: "Shared name" });
+    expect(filed.text).toContain('Created group "Shared name" in G-There.');
+    const mine = listGroups(there.id);
+    expect(mine).toHaveLength(1);
+    expect(getTask(filed.task!.id)!.group_id).toBe(mine[0].id);
+    // …and the same-named group in the other project is untouched.
+    expect(listGroups(here.id)).toHaveLength(1);
+    expect(listGroups(here.id)[0].id).not.toBe(mine[0].id);
+  });
+
+  it("update_task moves a task between groups by id or exact name, and ungroups on \"\"", () => {
+    const project = createProject({ name: "G-Update" });
+    const task = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const a = createGroup({ project_id: project.id, name: "Auth migration" });
+    const b = createGroup({ project_id: project.id, name: "Mobile PWA" });
+
+    const named = updateTaskForAgent(task, undefined, { group: "Auth migration" });
+    expect(named.text).toContain('group → "Auth migration"');
+    expect(getTask(task.id)!.group_id).toBe(a.id);
+
+    expect(updateTaskForAgent(task, undefined, { group: b.id }).task).toBeTruthy();
+    expect(getTask(task.id)!.group_id).toBe(b.id);
+
+    // Re-stating the same group is a no-op, not a spurious write — and the
+    // no-change text names the group, or it would read as if `group` had been
+    // ignored (the same rider `blocked_by` gets).
+    const noop = updateTaskForAgent(task, undefined, { group: b.id });
+    expect(noop.text).toContain("No change");
+    expect(noop.text).toContain('in group "Mobile PWA"');
+
+    const cleared = updateTaskForAgent(task, undefined, { group: "" });
+    expect(cleared.text).toContain("no longer in a group");
+    expect(getTask(task.id)!.group_id).toBeNull();
+  });
+
+  it("update_task refuses an unknown group and lands NOTHING else in the call", () => {
+    const project = createProject({ name: "G-Strict" });
+    const task = createTask({ project_id: project.id, title: "Original", description: "" });
+    createGroup({ project_id: project.id, name: "Auth migration" });
+
+    // Same fail-closed rule as an unusable blocked_by ref: wiring the half we
+    // recognized would rename the task under a refusal claiming nothing changed.
+    const miss = updateTaskForAgent(task, undefined, { title: "Renamed", group: "auth migration" });
+    expect(miss.task).toBeNull();
+    expect(miss.text).toContain("Nothing was changed");
+    // The refusal names the groups that DO exist, so the agent can retry.
+    expect(miss.text).toContain('"Auth migration"');
+    expect(getTask(task.id)).toMatchObject({ title: "Original", group_id: null });
+
+    // Never creates, however plausible the name: that's suggest_task's verb.
+    expect(listGroups(project.id)).toHaveLength(1);
+  });
+
+  it("update_task refuses a group from another project — a group can't span repos", () => {
+    const here = createProject({ name: "G-Own" });
+    const there = createProject({ name: "G-Foreign" });
+    const task = createTask({ project_id: here.id, title: "Mine", description: "" });
+    const foreign = createGroup({ project_id: there.id, name: "Elsewhere" });
+
+    const res = updateTaskForAgent(task, undefined, { group: foreign.id });
+    expect(res.task).toBeNull();
+    expect(getTask(task.id)!.group_id).toBeNull();
+  });
+
+  it("update_task resolves the group in the TARGET's project, not the caller's", () => {
+    // The tool writes inert tray suggestions in any project; the group has to be
+    // looked up where the task lives, or a planning session could never group a
+    // suggestion it just filed into another repo.
+    const here = createProject({ name: "G-Caller" });
+    const there = createProject({ name: "G-Target" });
+    const caller = createTask({ project_id: here.id, title: "Caller", description: "" });
+    const target = createSuggestedTask(there, { title: "Filed there", description: "" }).task!;
+    const group = createGroup({ project_id: there.id, name: "Their feature" });
+
+    const res = updateTaskForAgent(caller, target.id, { group: "Their feature" });
+    expect(res.task).toBeTruthy();
+    expect(getTask(target.id)!.group_id).toBe(group.id);
+  });
+
+  it("list_tasks carries every row's group and filters by one", () => {
+    const project = createProject({ name: "G-List" });
+    const group = createGroup({ project_id: project.id, name: "Auth migration" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "", group_id: group.id });
+    createTask({ project_id: project.id, title: "Sibling", description: "", group_id: group.id });
+    createTask({ project_id: project.id, title: "Unrelated", description: "" });
+
+    const all = listTasksForAgent(project, mine.id);
+    expect(all.map((t) => t.title).sort()).toEqual(["Mine", "Sibling", "Unrelated"]);
+    // Name as well as id, on every row — an id alone would need a list_groups
+    // call to mean anything.
+    expect(all.find((t) => t.id === mine.id)!.group).toEqual({ id: group.id, name: "Auth migration" });
+    expect(all.find((t) => t.title === "Unrelated")!.group).toBeNull();
+
+    const filtered = listTasksForAgent(project, mine.id, false, group.id);
+    expect(filtered.map((t) => t.title).sort()).toEqual(["Mine", "Sibling"]);
+    // The caller's own row is exempt from the STATUS filter but not this one: a
+    // filtered list that always contained the caller would misreport membership.
+    const other = listTasksForAgent(project, mine.id, false, group.id).filter((t) => t.title === "Unrelated");
+    expect(other).toEqual([]);
+  });
+
+  it("list_groups answers \"how is it going\" in one call", () => {
+    const project = createProject({ name: "G-Groups" });
+    const planner = createTask({ project_id: project.id, title: "Planner", description: "" });
+    const live = createGroup({ project_id: project.id, name: "Auth migration", description: "behind AuthService", origin_task_id: planner.id });
+    const shipped = createGroup({ project_id: project.id, name: "Mobile PWA" });
+    const a = createTask({ project_id: project.id, title: "Step one", description: "", group_id: live.id });
+    createTask({ project_id: project.id, title: "Step two", description: "", group_id: live.id });
+    const closed = createTask({ project_id: project.id, title: "Shipped", description: "", group_id: shipped.id });
+    updateTask(a.id, { status: "done" });
+    updateTask(closed.id, { status: "done" });
+    createGroup({ project_id: createProject({ name: "G-Elsewhere" }).id, name: "Not mine" });
+
+    const groups = listGroupsForAgent(project);
+    expect(groups.map((g) => g.name)).toEqual(["Auth migration", "Mobile PWA"]);
+    const auth = groups[0];
+    expect(auth).toMatchObject({ description: "behind AuthService", origin_task_id: planner.id, done: false });
+    expect(auth.counts).toMatchObject({ total: 2, done: 1 });
+    // Members with titles, so the answer needs no follow-up get_task per row.
+    expect(auth.tasks).toEqual([
+      { id: a.id, title: "Step one", status: "done" },
+      { id: auth.tasks[1].id, title: "Step two", status: "not_started" },
+    ]);
+    // Derived, never stored: every member terminal = the group is done.
+    expect(groups[1].done).toBe(true);
+  });
+
+  it("endpoints carry the same group policy over the wire", async () => {
+    const project = createProject({ name: "EP-Group" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+
+    // suggest-task: creates the group and records the CALLER as its origin —
+    // taskId is the trusted, env-injected id, never a model-set field.
+    const made = await post(suggestTask, "/api/internal/agent-tools/suggest-task", {
+      projectId: project.id,
+      taskId: caller.id,
+      title: "Grouped",
+      description: "",
+      group: "Auth migration",
+    });
+    const madeJson = (await made.json()) as { id: string; text: string };
+    expect(madeJson.text).toContain('Created group "Auth migration" in EP-Group.');
+    const group = listGroups(project.id)[0];
+    expect(group.origin_task_id).toBe(caller.id);
+    expect(getTask(madeJson.id)!.group_id).toBe(group.id);
+
+    // list-tasks: filters, and refuses an unknown filter rather than quietly
+    // handing back the whole board as if that were the feature's membership.
+    const filtered = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", {
+      projectId: project.id,
+      taskId: caller.id,
+      group: "Auth migration",
+    });
+    const filteredJson = (await filtered.json()) as { tasks: { title: string; group: { name: string } | null }[] };
+    expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Grouped"]);
+    expect(filteredJson.tasks[0].group!.name).toBe("Auth migration");
+    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, group: "ghost" });
+    expect(badFilter.status).toBe(400);
+
+    // update-task: strict, and a refusal writes nothing.
+    const refused = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
+      taskId: caller.id,
+      title: "Renamed",
+      group: "ghost",
+    });
+    expect(refused.status).toBe(400);
+    expect(getTask(caller.id)).toMatchObject({ title: "Caller", group_id: null });
+
+    const moved = await post(updateTaskEp, "/api/internal/agent-tools/update-task", { taskId: caller.id, group: "Auth migration" });
+    expect(moved.status).toBe(200);
+    expect(getTask(caller.id)!.group_id).toBe(group.id);
+
+    // list-groups: the read behind "how is the migration going".
+    const listed = await post(listGroupsEp, "/api/internal/agent-tools/list-groups", { projectId: project.id, taskId: caller.id });
+    const listedJson = (await listed.json()) as { project: string; groups: { name: string; counts: { total: number } }[] };
+    expect(listedJson.project).toBe("EP-Group");
+    expect(listedJson.groups.map((g) => g.name)).toEqual(["Auth migration"]);
+    expect(listedJson.groups[0].counts.total).toBe(2);
+    const badProject = await post(listGroupsEp, "/api/internal/agent-tools/list-groups", { projectId: project.id, project: "nope" });
+    expect(badProject.status).toBe(400);
   });
 });

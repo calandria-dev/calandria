@@ -1,6 +1,6 @@
 // Shared implementations of the orchestrator's agent-facing tools
 // (suggest_task / list_tasks / get_task / update_task / withdraw_suggestion /
-//  expose_service / ask_user).
+//  list_groups / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
@@ -12,19 +12,22 @@
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
-import { PRIORITIES } from "./types";
-import type { Project, Task, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData } from "./types";
+import { PRIORITIES, groupIsDone } from "./types";
+import type { Project, Task, TaskGroup, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData } from "./types";
 import {
   createTask,
   setTaskDeps,
   addMessage,
   updateMessage,
   updateTask,
+  getGroup,
   getProject,
   getTask,
   getTaskDeps,
+  listGroups,
   listProjectsPlain,
   listTasks,
+  resolveGroup,
   sameDepSet,
 } from "./store";
 import { exposeService } from "./services";
@@ -100,6 +103,93 @@ export function resolveTargetProject(current: Project, ref?: string): { project:
 }
 
 /**
+ * Resolve a `group` parameter INSIDE one project — the group half of
+ * resolveTargetProject, with the same posture: the container the model named is
+ * checked before anything is written, and a miss is an error the agent can act
+ * on rather than a quiet default.
+ *
+ * Two policies behind `create`, and the split is the whole design (store's
+ * resolveGroup owns the mechanics; this owns the wording and the project the
+ * lookup happens in):
+ *   - `create: true` for suggest_task, the planning verb. The common case IS
+ *     "this group doesn't exist yet", and demanding a create_group round trip
+ *     first would repeat the two-phase dance blocked_by already forces on
+ *     ordering. A near-miss minting a second group is bounded by
+ *     UNIQUE(project_id, name) plus the tool result naming what happened.
+ *   - strict for update_task, where the task already exists and a typo would
+ *     mint a near-duplicate of a group the user is actively filtering by.
+ *
+ * The `project` is the TARGET (already resolved), never the calling session's —
+ * a cross-project suggestion groups within the project it lands in, because a
+ * group may not span repositories.
+ *
+ * The error is a FRAGMENT, not a sentence: the three callers frame a refusal
+ * differently ("could not update…, nothing was changed" vs a read that changed
+ * nothing by definition), and only they know which tail is true.
+ */
+export function resolveGroupRef(
+  project: Project,
+  ref: string,
+  opts: { create?: boolean; originTaskId?: string | null } = {}
+): { group: TaskGroup | null; created: boolean } | { error: string } {
+  const wanted = ref.trim();
+  // "" is not a miss: on update_task it is the documented way to UNGROUP, and
+  // on the other two it means the parameter was left out.
+  if (!wanted) return { group: null, created: false };
+  try {
+    const hit = resolveGroup(project.id, wanted, opts);
+    if (hit) return hit;
+  } catch (e) {
+    // resolveGroup looked the name up before creating, so the only throw left
+    // is the UNIQUE constraint losing a race with another session's create.
+    return { error: `could not use group "${wanted}" in ${project.name}: ${(e as Error).message}` };
+  }
+  const names = listGroups(project.id).map((g) => `"${g.name}"`).join(", ") || "(none yet)";
+  return {
+    error:
+      `no group in ${project.name} matches "${wanted}" — pass an existing group id or its exact name, from: ${names}. ` +
+      `Call list_groups for them, or file the task with suggest_task's \`group\`, which creates a group that doesn't exist yet`,
+  };
+}
+
+/** One row of `list_groups`: the feature, how far along it is, and what's in it. */
+export interface AgentGroupInfo {
+  id: string;
+  name: string;
+  description: string;
+  /** Derived, never stored: every member terminal (and at least one member). */
+  done: boolean;
+  counts: TaskGroup["counts"];
+  /** The session that planned this group, when an agent filed it. */
+  origin_task_id: string | null;
+  /** Its members. Titles ride along so "how's the migration going" needs no second call. */
+  tasks: { id: string; title: string; status: Status }[];
+}
+
+/**
+ * The `list_groups` tool. `project` is the TARGET board (already resolved), so
+ * an agent can read another project's plans the way list_tasks reads its board.
+ *
+ * Members are listed with their titles rather than as bare ids: the question
+ * this tool exists to answer in ONE call is "how is the auth migration going",
+ * and a list of ids answers it only after N get_task calls — which is exactly
+ * the paging the group noun was meant to end. Descriptions stay out, for the
+ * same context reason lib/groupContext.ts leaves sibling briefs out.
+ */
+export function listGroupsForAgent(project: Project): AgentGroupInfo[] {
+  const tasks = listTasks(project.id);
+  return listGroups(project.id).map((g) => ({
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    done: groupIsDone(g),
+    counts: g.counts,
+    origin_task_id: g.origin_task_id,
+    tasks: tasks.filter((t) => t.group_id === g.id).map((t) => ({ id: t.id, title: t.title, status: t.status })),
+  }));
+}
+
+/**
  * Key for the per-session title→id map. Scoped by project because dependencies
  * are: the same title suggested into two different projects is two unrelated
  * tasks, and only one of them can ever be a legal `blocked_by` ref for a given
@@ -144,6 +234,10 @@ export interface SuggestTaskInput {
   priority?: Priority;
   /** Already resolved to task ids (see resolveTitleRefs) — id passes through to setTaskDeps. */
   blocked_by?: string[];
+  /** Group ref (id or exact name) as the MODEL typed it — resolved in the target project, created on a miss. */
+  group?: string;
+  /** The CALLING session's task, recorded as the new group's origin. Never the model's word for it. */
+  origin_task_id?: string | null;
 }
 
 /**
@@ -166,6 +260,19 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   if (!getProject(project.id)) {
     return { task: null, text: `Could not add "${input.title}": the project no longer exists.` };
   }
+  // The group is resolved in the TARGET project, before the insert — so a
+  // cross-project suggestion groups within the project it lands in, and a task
+  // is never created against a group that turned out to be unusable. Missing
+  // names are created here (`create: true`); see resolveGroupRef for why this
+  // verb creates where update_task refuses to.
+  let group: TaskGroup | null = null;
+  let groupCreated = false;
+  if (input.group?.trim()) {
+    const hit = resolveGroupRef(project, input.group, { create: true, originTaskId: input.origin_task_id ?? null });
+    if ("error" in hit) return { task: null, text: `Could not add "${input.title}": ${hit.error}. Nothing was created.` };
+    group = hit.group;
+    groupCreated = hit.created;
+  }
   const task = createTask({
     project_id: project.id,
     title: input.title,
@@ -179,8 +286,17 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     // (nothing connected) leaves createTask's own default in place. The default
     // read here is the TARGET project's, not the calling session's.
     agent: resolveConnectedAgent([project.default_agent]) ?? undefined,
+    group_id: group?.id ?? null,
   });
-  return { task, text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}` };
+  // Say which of the two things happened to the group, always. "Created" is the
+  // half that matters most — exact-match-or-create is only safe if a near-miss
+  // that minted a SECOND group says so in the same breath, while the agent can
+  // still reuse the right spelling for the rest of the batch.
+  const groupNote = group ? (groupCreated ? ` Created group "${group.name}" in ${project.name}.` : ` Filed under group "${group.name}".`) : "";
+  return {
+    task,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${groupNote}`,
+  };
 }
 
 /**
@@ -246,6 +362,8 @@ export interface AgentTaskInfo {
   running: boolean;
   /** Ids this task is blocked by (edges never leave the project). */
   blocked_by: string[];
+  /** The feature this is a step of, or null when ungrouped. Carried on every row, filtered or not. */
+  group: { id: string; name: string } | null;
   /** True for the task the calling session is running in. */
   current: boolean;
 }
@@ -281,7 +399,7 @@ export interface AgentTaskDetail extends Omit<AgentTaskInfo, "blocked_by"> {
 // lived board doesn't bury the open work under everything ever finished.
 const TERMINAL: Status[] = ["done", "cancelled"];
 
-function taskInfo(t: Task, deps: string[], currentTaskId: string): AgentTaskInfo {
+function taskInfo(t: Task, deps: string[], currentTaskId: string, groups: Map<string, string>): AgentTaskInfo {
   return {
     id: t.id,
     title: t.title,
@@ -291,8 +409,16 @@ function taskInfo(t: Task, deps: string[], currentTaskId: string): AgentTaskInfo
     agent: t.agent,
     running: t.running === 1,
     blocked_by: deps,
+    // Name as well as id: an id alone would force a list_groups call to make
+    // sense of any row, and the name is what the user calls the feature.
+    group: t.group_id && groups.has(t.group_id) ? { id: t.group_id, name: groups.get(t.group_id)! } : null,
     current: t.id === currentTaskId,
   };
+}
+
+/** id → name for one project's groups, so a board listing costs one extra query. */
+function groupNames(projectId: string): Map<string, string> {
+  return new Map(listGroups(projectId).map((g) => [g.id, g.name]));
 }
 
 /**
@@ -303,11 +429,19 @@ function taskInfo(t: Task, deps: string[], currentTaskId: string): AgentTaskInfo
  *
  * The caller's own row is exempt from the terminal-status filter: a session that
  * has just marked itself done should still see itself in the list it gets back.
+ *
+ * `groupId` is an already-resolved filter (resolveGroupRef, so an unknown ref is
+ * the caller's refusal rather than a silently unfiltered board). null lists
+ * everything — every row carries its own group either way, filtered or not.
+ * The caller's own row is NOT exempt from this one: a filter that always
+ * included a task from another feature would misreport the group.
  */
-export function listTasksForAgent(project: Project, currentTaskId: string, includeDone = false): AgentTaskInfo[] {
+export function listTasksForAgent(project: Project, currentTaskId: string, includeDone = false, groupId: string | null = null): AgentTaskInfo[] {
+  const groups = groupNames(project.id);
   return listTasks(project.id)
     .filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId)
-    .map((t) => taskInfo(t, t.depends_on, currentTaskId));
+    .filter((t) => !groupId || t.group_id === groupId)
+    .map((t) => taskInfo(t, t.depends_on, currentTaskId, groups));
 }
 
 /**
@@ -326,7 +460,7 @@ export function getTaskForAgent(taskId: string, currentTaskId: string): AgentTas
     return dep ? [{ id: dep.id, title: dep.title, status: dep.status, cleared: TERMINAL.includes(dep.status) }] : [];
   });
   return {
-    ...taskInfo(t, [], currentTaskId),
+    ...taskInfo(t, [], currentTaskId, groupNames(t.project_id)),
     blocked_by,
     description: t.description,
     project_id: t.project_id,
@@ -357,6 +491,13 @@ export interface UpdateTaskInput {
    * two tools depending on what the process happened to have created.
    */
   blocked_by?: string[];
+  /**
+   * The group this task belongs to: an existing id or exact name in the task's
+   * OWN project, or "" to ungroup. Omitted leaves it alone. STRICT, unlike
+   * suggest_task's version — see the block in the body for why this one won't
+   * create.
+   */
+  group?: string;
 }
 
 // "cancelled" is deliberately absent, for a reason that holds whichever row is
@@ -500,6 +641,37 @@ export function updateTaskForAgent(
     }
   }
 
+  // Group membership. Resolved STRICTLY, where suggest_task's version of this
+  // parameter creates on a miss, and the asymmetry is the point: there, a group
+  // that doesn't exist yet is the normal case (a plan being born, named once);
+  // here the task already exists, the group probably does too, and a typo would
+  // mint a near-duplicate of the very group the user is filtering their board
+  // by — silently splitting a feature in two. So an unknown ref fails the WHOLE
+  // call with the reason, exactly like an unusable `blocked_by` ref, and the
+  // rename that shared the call doesn't land under a refusal saying nothing did.
+  let nextGroupName = "";
+  if (input.group !== undefined) {
+    // "" is the documented way to take a task OUT of its group — the only
+    // "clear it" spelling on this tool, since a JSON null can't reach the enum-
+    // free string param the same way [] clears blocked_by.
+    const wanted = typeof input.group === "string" ? input.group.trim() : "";
+    let nextGroupId: string | null = null;
+    if (wanted) {
+      // The task's OWN project, never the caller's: this tool writes tray
+      // suggestions in any project, and a group may not span repositories.
+      const owner = getProject(cur.project_id);
+      if (!owner) return fail(`Could not update ${what}: its project no longer exists.`);
+      const hit = resolveGroupRef(owner, wanted);
+      if ("error" in hit) return fail(`Could not update ${what}: ${hit.error}. Nothing was changed.`);
+      nextGroupId = hit.group?.id ?? null;
+      nextGroupName = hit.group?.name ?? "";
+    }
+    if (nextGroupId !== (cur.group_id ?? null)) {
+      patch.group_id = nextGroupId;
+      changed.push(nextGroupId ? `group → "${nextGroupName}"` : "no longer in a group");
+    }
+  }
+
   // Dependencies. This is the parameter that makes an ordered plan expressible
   // at all: suggest_task can only take blockers in the call that invents the
   // task, i.e. before any of them has an id, so a planning turn that files its
@@ -554,13 +726,15 @@ export function updateTaskForAgent(
   if (!changed.length) {
     return {
       task: cur,
-      // The dep count rides along only when deps were part of the call — edges
-      // have no order, so resubmitting the same set in a different order lands
-      // here, and "status not_started, priority med" alone would read as if the
-      // tool had ignored the blockers.
+      // The dep count and the group ride along only when they were part of the
+      // call. Edges have no order, so resubmitting the same set in a different
+      // order lands here; re-stating the group a task is already in lands here
+      // too — and "status not_started, priority med" alone would read as if the
+      // tool had ignored the half the agent actually cared about.
       text:
         `No change: "${cur.title}" already matches what you passed (status ${cur.status}, priority ${cur.priority}` +
-        `${input.blocked_by !== undefined ? `, blocked by ${getTaskDeps(cur.id).length} task(s)` : ""}).`,
+        `${input.blocked_by !== undefined ? `, blocked by ${getTaskDeps(cur.id).length} task(s)` : ""}` +
+        `${input.group !== undefined ? (cur.group_id ? `, in group "${getGroup(cur.group_id)?.name ?? cur.group_id}"` : ", not in a group") : ""}).`,
       autoStartDependents: false,
     };
   }
