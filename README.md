@@ -130,7 +130,8 @@ login; API keys remain an optional explicit choice.
 
 ## Run locally
 
-You need Node 20.9+, macOS or Linux, and at least one supported agent CLI.
+You need Node 20.9+, macOS or Linux (or Windows via WSL2), and at least one
+supported agent CLI.
 
 ```bash
 npm install
@@ -140,6 +141,11 @@ npm start
 
 Open <http://localhost:3000>. The first-run wizard connects Claude Code or
 Codex and takes you through a short hands-on tutorial.
+
+On Windows, run Calandria inside WSL2 — the Linux build, unchanged. Native
+Windows is not supported yet; see
+[Windows (WSL2)](docs/INSTALLATION.md#windows-wsl2) for the setup and its
+three caveats.
 
 Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is published
 publicly: `latest` is the newest tagged release, `edge` tracks nightly builds of `main`.
@@ -184,7 +190,7 @@ belongs.
 - [Managed services](docs/SERVICES.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Windows compatibility assessment](docs/WINDOWS.md)
+- [Windows: WSL2 setup](docs/INSTALLATION.md#windows-wsl2) · [compatibility assessment](docs/WINDOWS.md)
 - [Desktop app spike](docs/DESKTOP_APP.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
