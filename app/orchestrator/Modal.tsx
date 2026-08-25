@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { SLABEL, type FsListing, type TaskRow } from "./types";
+import { SLABEL, type FsListing, type PickerOption, type TaskRow } from "./types";
 import { StatusDot, Skel, ErrNote } from "./shared";
 
 // Tracks open modals so Escape only dismisses the topmost one when modals stack
@@ -117,6 +117,57 @@ export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick:
       <button type="button" className="btn btn-line" style={{ flex: "none" }} disabled={busy} onClick={browse} title="Browse for a folder">{Icon.folder()} {busy ? "Browse…" : "Browse"}</button>
       {browsing && <FolderPicker initial={initial} onClose={() => setBrowsing(false)} onPick={(p) => { onPick(p); setBrowsing(false); }} />}
     </>
+  );
+}
+
+/**
+ * The Model field, shared by both task dialogs and Settings → Run defaults.
+ * The list is the driver's own catalog (modelOptions over the capability
+ * descriptor — the same one the session rail's picker reads), so a Vertex
+ * instance's corrected windows and a new driver's models arrive here with no
+ * edit. A <select> rather than the `seg wrap` its neighbours use because Claude
+ * Code offers a dozen-plus entries across three groups; consecutive options
+ * sharing a `group` render under one <optgroup>, matching the rail's headers.
+ *
+ * Renders nothing when the agent contributes no models — that's the
+ * capabilities bundle not having loaded, and the synthetic "Default" head alone
+ * is not a choice.
+ */
+export function ModelField({ options, value, onChange, help, label = "Model", note }: {
+  options: PickerOption[]; value: string | null; onChange: (v: string | null) => void;
+  help?: string; label?: string; note?: React.ReactNode;
+}) {
+  // Consecutive same-group runs, in catalog order. Built before the early
+  // return would skip it, so the hook order is stable across a bundle arriving.
+  const sections = useMemo(() => {
+    const out: { group?: string; items: PickerOption[] }[] = [];
+    for (const o of options) {
+      const last = out[out.length - 1];
+      if (last && last.group === o.group) last.items.push(o);
+      else out.push({ group: o.group, items: [o] });
+    }
+    return out;
+  }, [options]);
+  if (options.length <= 1) return null;
+  // A model the catalog no longer lists — an id pinned before the instance was
+  // pointed at Vertex, or carried in from another agent. Kept as an entry of its
+  // own so the select shows what the task will actually run instead of reading
+  // as blank, and so touching an unrelated field can't silently drop it.
+  const known = options.some((o) => o.value === value);
+  const sel = options.find((o) => o.value === value);
+  return (
+    <div className="field model-field">
+      <div className="lab">{Icon.spark()} {label}</div>
+      {note}
+      <select value={value ?? ""} aria-label={label} onChange={(e) => onChange(e.target.value || null)}>
+        {sections.map((s, i) => {
+          const opts = s.items.map((o) => <option key={o.label} value={o.value ?? ""}>{o.label}</option>);
+          return s.group ? <optgroup key={s.group} label={s.group}>{opts}</optgroup> : <Fragment key={i}>{opts}</Fragment>;
+        })}
+        {value && !known && <option value={value}>{value} (not in this agent’s list)</option>}
+      </select>
+      <div className="hlp">{known ? sel?.sub : "This id isn’t one this agent offers — it may not run."}{help}</div>
+    </div>
   );
 }
 

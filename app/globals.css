@@ -2086,8 +2086,12 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
 .sess-head .gbadge{max-width:200px;}
-/* The Group field in the task dialogs: a select over the project's groups plus an inline "New group…" row. */
-.group-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
-.group-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* Full-width <select> fields: Group and Model in the task dialogs, and the
+   default-model picker in Settings → Run defaults. Model is a select rather
+   than the segmented control its neighbours use because Claude Code's catalog
+   runs to a dozen-plus entries across three <optgroup>s. */
+.group-field select,.model-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
+.group-field select:focus,.model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.model-field select{max-width:520px;}
 .group-field .group-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
 .group-field .group-new input[type=text]{flex:1;min-width:0;}

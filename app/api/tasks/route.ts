@@ -41,6 +41,15 @@ export async function POST(req: Request) {
     // driver resolves anything it doesn't recognize (permissionModeFor), so a
     // stale or cross-agent value degrades to the default instead of 400ing.
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
+    // Settable up front for the same reason `startNow` exists: the New-task
+    // dialog can launch the first turn in the same gesture, and a follow-up
+    // PATCH would land after that turn already picked a model. Shape-checked
+    // like the PATCH route's copy (the catalog is instance config, so content
+    // stays the driver's problem) and length-capped so a runaway value can't
+    // reach the CLI's argv.
+    model: typeof body.model === "string" && body.model.trim() && body.model.length <= 2048 && !/[\0-\x1f\x7f]/.test(body.model)
+      ? body.model.trim()
+      : undefined,
     group_id: groupId,
   });
   return NextResponse.json(task, { status: 201 });
