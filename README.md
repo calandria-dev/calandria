@@ -67,6 +67,9 @@ silently dying with the process).
 - **Snooze a task:** park anything until an hour from now, tomorrow morning,
   or an exact date. It stops counting toward the inbox, then returns to the
   category it left, marked as having been snoozed.
+- **Start at the usage-window reset:** when a subscription limit stops your
+  turns, queue a task to start — or a stalled session to resume — a minute
+  after the reset the plan meter reports, server-side, with no tab open.
 - **Persistent context:** reuse project knowledge and continue long-running
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve

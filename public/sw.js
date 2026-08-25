@@ -65,12 +65,22 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil((async () => {
     const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     // Prefer a page that's already open — the installed app's standalone
-    // window, or a tab — and steer it in place: the app listens for this
-    // message and jumps to the task without a reload (usePush.ts). Opening a
-    // second window would leave two copies fighting over the same selection.
-    const page = pages.find((c) => c.focused) || pages[0];
+    // window, or a tab. Opening a second window would leave two copies
+    // fighting over the same selection.
+    const page = pages.find((c) => c.focused) || pages.find((c) => c.visibilityState === "visible") || pages[0];
     if (page) {
       if ("focus" in page) await page.focus().catch(() => {});
+      // Steer it to the task by NAVIGATING, not by postMessage. A warm PWA
+      // that's foregrounded by the tap stays on whatever view it was last on
+      // (Settings, say), and the in-page relay that would jump it races the
+      // focus and, on iOS, often never receives the message at all — so the
+      // app opened but didn't move. navigate() puts ?project/&task in the URL,
+      // which readUrlSel applies on load and which forces the default
+      // `workspace` view, so the task is what shows. postMessage stays as the
+      // no-reload fallback for a browser whose WindowClient can't navigate.
+      if (data.taskId && "navigate" in page) {
+        try { await page.navigate(url); return; } catch { /* fall through to the message */ }
+      }
       if (data.taskId) page.postMessage({ type: "goto-task", projectId: data.projectId, taskId: data.taskId });
       return;
     }

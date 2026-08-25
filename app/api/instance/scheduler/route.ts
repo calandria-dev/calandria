@@ -29,6 +29,11 @@ export async function POST() {
   ensureNotifier();
   const { startScheduler, schedulerHealth } = await import("@/lib/scheduler");
   startScheduler();
+  // The queued-start sweep (lib/deferredStart.ts) rides the same ping: a task
+  // queued for the 3am usage reset has to launch with the SERVER, no tab open.
+  // Not gated by ORCH_SCHEDULER — it isn't a schedule.
+  const { startDeferredStartTicker } = await import("@/lib/deferredStart");
+  startDeferredStartTicker();
   return NextResponse.json({ ok: true, ...schedulerHealth() });
 }
 

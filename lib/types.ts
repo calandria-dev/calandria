@@ -73,6 +73,12 @@ export interface Task {
   // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
   // what makes going back to the previous category free rather than restored.
   snoozed_until: number;
+  // Queued to start on its own at this instant (ms epoch; 0 = not queued) —
+  // "start at the usage-window reset" (lib/deferredStart.ts). For a never-
+  // started task the sweep launches its first turn; for a started one it
+  // resumes the session (the oldest queued follow-up, or a continue prompt).
+  // Consumed by ANY turn launch, so a task started by hand can't fire twice.
+  start_at: number;
   // Context-window occupancy as the agent's own stream last REPORTED it: the
   // input-side tokens (fresh + cache read + cache written) of the latest
   // main-session model request. Written by the runner from `context` events,

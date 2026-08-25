@@ -34,6 +34,7 @@ const PINNED = [
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
@@ -75,6 +76,7 @@ const PINNED = [
 // grow a STATIC path to an SDK, even though a dynamic one is expected and fine.
 const DYNAMIC_ONLY = [
   "lib/autoStart.ts", // in the driver's cycle; must not rely on async propagation
+  "lib/deferredStart.ts", // imports lib/autoStart statically and reaches the runner the same way
 ];
 
 // import/export/require specifiers, coarse but sufficient for this repo's

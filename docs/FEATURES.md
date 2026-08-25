@@ -80,8 +80,9 @@ suddenly want syncing. The sync banner names the reason: the base branch moved o
 anything about the task. When the sync conflicts, **Fix with AI** runs a resolution turn that
 edits the files marker-free but deliberately does not commit — the merge stays paused so
 you can read the result first. The banner tracks that: once the turn ends it switches to
-"conflicts resolved — review", and its button opens the Changes tab where **Accept & merge**
-lands the task or **Discard** returns the worktree to where it was; only then does it clear.
+"conflicts resolved", with **Accept & merge** right there (the same action as the Changes
+tab's button — it lands the task) and **Review** to open that tab first, where **Discard**
+returns the worktree to where it was. Only an accept or a discard clears the banner.
 If the agent left some files conflicted, the banner counts them and offers another pass.
 
 ## Planning and orchestration
@@ -139,6 +140,24 @@ to exactly the group it came from, marked **Was snoozed** so an unexpected reapp
 explains itself. Opening the task clears that marker. Nothing sweeps for due snoozes on a
 timer, so one that comes due while the app is closed is simply already awake next time you
 look, and a running turn is unaffected: a snoozed task still works, it just stops asking.
+
+### Starting at the usage-window reset
+
+A spent subscription limit — Claude's five-hour window, the weekly cap — stops every turn on
+the instance until it resets, usually at an hour nobody wants to sit up for. The titlebar
+plan meter already shows when that is; **Start at reset** hands the wait to the server. On a
+task that hasn't started, the button sits beside **Start session** and queues the first
+turn for a minute after the reset the meter reports. On a task whose turn died on the limit,
+the notice in the transcript offers **Resume when the limit resets**: at the reset, the
+session picks up with the oldest queued follow-up if you left one, otherwise with a
+"continue where you left off" prompt. The task's card says *Starts at 4:49 PM* (or
+*Resumes …*) until then, the session header carries a chip that cancels it, and the
+transcript records why the session moved on its own. Starting or messaging the task by hand
+in the meantime consumes the queued start — nothing fires twice — and a queued task that is
+still blocked by another, or whose turn is already live, when its time comes is skipped
+with a note rather than started. The button only appears for an agent whose plan reports a
+reset time (a Codex task, or an API-key login, has nothing to aim at). The sweep runs in
+the server, so a start queued from a phone at midnight fires with no tab open.
 
 A misfiled task can be moved to another project from **Edit task**, keeping its description
 and transcript. The move drops any blocked-by links it had, since dependencies can't span
@@ -395,7 +414,12 @@ Two channels carry them, both switched on from Settings → Notifications:
   two. The instance signs its pushes with a VAPID key it mints on first use and
   keeps beside the database (`<ORCH_DB_DIR>/vapid.json` — subscriptions are
   bound to it, so back it up with the database); `VAPID_SUBJECT` and
-  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs.
+  `VAPID_PRIVATE_KEY` in `.env.example` are the knobs. **For iPhone/iPad push,
+  set `VAPID_SUBJECT`** (or `PUBLIC_BASE_URL`) to a real `https:` origin or
+  `mailto:` address: Apple's push service rejects the default
+  `mailto:admin@localhost` with `403 BadJwtToken` (it validates the subject and
+  won't accept `localhost`), which the device list surfaces as *failing (403)*.
+  Chrome, Android and Firefox accept the default.
 
 A snoozed task never says it's waiting for input, and neither does an archived
 project's — but both still report a failure. Snoozing a question means "remind

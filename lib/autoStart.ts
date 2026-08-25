@@ -62,8 +62,10 @@ import type { Task } from "@/lib/types";
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
 // done AND cancelled are terminal — a cancelled blocker will never finish, so
 // waiting on it would deadlock the dependent forever. A dep whose row was
-// deleted doesn't block either (the edge cascades away with it).
-function blocks(depId: string): boolean {
+// deleted doesn't block either (the edge cascades away with it). Exported for
+// lib/deferredStart.ts, the other unattended launcher, so the two can't
+// disagree about what "blocked" means.
+export function blocks(depId: string): boolean {
   const dep = getTask(depId);
   return !!dep && dep.status !== "done" && dep.status !== "cancelled";
 }
@@ -90,31 +92,45 @@ export function readyAutoStartDependents(clearedTaskId: string): Task[] {
  */
 export function maybeAutoStartDependents(clearedTaskId: string): void {
   const cleared = getTask(clearedTaskId);
+  // The note rides the runner's syncNote slot: persisted + published at the
+  // top of the turn, so the transcript records WHY this session began — and
+  // "cancelled" reads very differently from "done" to an agent about to work
+  // on top of it, so the cause travels rather than being flattened.
+  const clearedWord = cleared?.status === "cancelled" ? "was cancelled" : "is done";
+  const note = cleared?.title ? `▶ Auto-started — "${cleared.title}" ${clearedWord}.` : `▶ Auto-started — last blocker ${clearedWord}.`;
   for (const t of readyAutoStartDependents(clearedTaskId)) {
-    launchInitialTurn(t.id, cleared?.title ?? "", cleared?.status === "cancelled").catch((err) => {
+    // Re-checked under the lock: the toggle can be flipped off, or the task
+    // parked on_hold, between the selection above and the launch.
+    launchInitialTurn(t.id, note, (fresh) => !!fresh.auto_start && fresh.status === "not_started").catch((err) => {
       console.error(`[autoStart] could not start task ${t.id}:`, err);
     });
   }
 }
 
-// Start a never-started task's first turn, exactly like the POST /messages
-// initial branch. Every non-launch exit releases the claim (or the task would
-// read "running" forever); every guard re-checks under the per-task lock,
-// because a user click can race this launch.
-async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCancelled = false): Promise<void> {
+/**
+ * Start a never-started task's first turn, exactly like the POST /messages
+ * initial branch. Every non-launch exit releases the claim (or the task would
+ * read "running" forever); every guard re-checks under the per-task lock,
+ * because a user click can race this launch. `admit` is the caller's own
+ * re-check on the freshly read row (the dependency toggle here, the queued
+ * deadline in lib/deferredStart.ts) — the guards every unattended launch
+ * shares (never started, not a suggestion, not blocked) are applied here and
+ * not left to the callers. Resolves true when a turn was handed to the runner.
+ */
+export async function launchInitialTurn(taskId: string, note: string, admit: (fresh: Task) => boolean): Promise<boolean> {
   const task = getTask(taskId);
-  if (!task) return;
+  if (!task) return false;
   const project = getProject(task.project_id);
   // No working directory — the same precondition the route enforces. Leave the
   // task blocked-but-startable; the user gets the route's error when they try.
-  if (!project || !project.repo_path.trim()) return;
+  if (!project || !project.repo_path.trim()) return false;
   // Atomically claim the turn slot. Occupied means a turn is already live
   // (e.g. the user pressed Start in the same instant) — nothing to do. Claimed
   // before the first await, deliberately: the claim is what makes a concurrent
   // launch a no-op rather than a double turn, and tests/autoStart.ts reads its
   // synchronous absence as proof that no launch is in flight at all.
   const controller = claimTurn(taskId);
-  if (!controller) return;
+  if (!controller) return false;
   let launched = false;
   // Set as soon as we have a generation to report a failure against — which is
   // BEFORE the row is marked `running`, so a throw from the worktree self-heal
@@ -135,7 +151,7 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
       // Re-read under the lock — the task may have been started, deleted,
       // re-statused, or had its deps changed while we waited.
       const fresh = getTask(taskId);
-      if (!fresh || fresh.started || fresh.suggested || fresh.status !== "not_started" || !fresh.auto_start) return;
+      if (!fresh || fresh.started || fresh.suggested || !admit(fresh)) return;
       if (getTaskDeps(taskId).some(blocks)) return;
       const userText = INITIAL_TASK_PROMPT;
       const gen = fresh.generation;
@@ -166,15 +182,10 @@ async function launchInitialTurn(taskId: string, blockerTitle: string, blockerCa
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });
       publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-      // The note rides the runner's syncNote slot: persisted + published at the
-      // top of the turn, so the transcript records WHY this session began — and
-      // "cancelled" reads very differently from "done" to an agent about to work
-      // on top of it, so the cause travels rather than being flattened.
-      const cleared = blockerCancelled ? "was cancelled" : "is done";
-      const note = blockerTitle ? `▶ Auto-started — "${blockerTitle}" ${cleared}.` : `▶ Auto-started — last blocker ${cleared}.`;
       startTurn(fresh, project, userText, note, controller);
       launched = true;
     });
+    return launched;
   } catch (err) {
     // Nobody is watching this launch — it's fire-and-forget behind a status
     // change — so a throw after the row was marked running would leave the task

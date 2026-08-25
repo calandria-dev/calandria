@@ -542,6 +542,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .hero-blocked{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);}
 .hero-blocked svg{flex:0 0 auto;}
 .hero-blocked.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
+.hero-blocked .btn{margin-left:auto;flex:0 0 auto;}
 /* dependency picker (modals) */
 .dep-list{display:flex;flex-direction:column;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);max-height:200px;overflow-y:auto;}
 .dep-row{display:flex;align-items:center;gap:9px;padding:8px 11px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink);cursor:pointer;}
@@ -1251,9 +1252,13 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    output, not just an alert banner. */
 .msg.system .msg-body{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--err);background:var(--term);border:1px solid color-mix(in oklab,var(--err) 30%,var(--line));border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
 .msg.system.info .msg-body{color:var(--run);border-color:color-mix(in oklab,var(--run) 30%,var(--line));}
+.msg.system.note .msg-body{color:var(--ink-3);border-color:var(--line-2);}
 /* context-overflow recovery — warning line + one-click /clear */
 .msg.system.overflow .overflow-actions{margin-top:9px;}
 .msg.system.overflow .overflow-actions .btn{font-family:var(--sans);}
+.msg.system.overflow .overflow-actions.queued{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.msg.system.overflow .overflow-actions .queued-note{display:inline-flex;align-items:center;gap:5px;color:var(--blue);font-weight:600;}
+.msg.system.overflow .overflow-actions .queued-note svg{width:12px;height:12px;}
 
 /* Reopened-task sync banner (behind base branch). Plain "needs a sync" is
    informational (--accent); an actual merge conflict is --warn, matching the
@@ -1264,6 +1269,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
+.sync-err{color:var(--err);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* session break (/clear) */
 .sbreak{display:flex;align-items:center;gap:14px;margin:30px 0;}
