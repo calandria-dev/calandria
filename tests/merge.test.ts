@@ -88,6 +88,119 @@ describe("mergeTask", () => {
     expect(read(repo, "file.txt")).toBe("local edit\n");
   });
 
+  it("names what is dirty in the main checkout so the refusal is actionable", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    writeFile(repo, "file.txt", "local edit\n"); // tracked, modified
+    writeFile(repo, ".gitattributes", "* text=auto\n"); // the tool-dropping case
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+    });
+
+    expect(res.ok).toBe(false);
+    // git's own order: tracked changes first, untracked after.
+    expect(res.dirty).toEqual([
+      { code: " M", path: "file.txt", untracked: false },
+      { code: "??", path: ".gitattributes", untracked: true },
+    ]);
+    expect(res.dirtyTruncated).toBeUndefined();
+    expect(res.stashed).toBeUndefined();
+  });
+
+  // `--porcelain -z` reverses the rename pair (destination first, origin in a
+  // second NUL field) — reading it as one entry per field would report the old
+  // path and then offer to stash a path that no longer exists.
+  it("reports the destination path of a staged rename", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    await git(repo, "mv", "file.txt", "renamed.txt");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.dirty).toEqual([{ code: "R ", path: "renamed.txt", untracked: false }]);
+  });
+
+  it("stashes acknowledged dirt, merges, and puts the dirt back", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    writeFile(repo, "file.txt", "local edit\n");
+    writeFile(repo, ".gitattributes", "* text=auto\n");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+      stashDirty: [".gitattributes", "file.txt"],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.stashed?.restored).toBe(true);
+    // The merge landed…
+    expect(await git(repo, "log", "-1", "--format=%s", "main")).toBe("land feature");
+    expect(read(repo, "feature.txt")).toBe("feature\n");
+    // …and the borrowed work is back, tracked and untracked alike, with the
+    // stash entry cleaned up rather than left on the user's stack.
+    expect(read(repo, "file.txt")).toBe("local edit\n");
+    expect(read(repo, ".gitattributes")).toBe("* text=auto\n");
+    expect(await git(repo, "stash", "list")).toBe("");
+  });
+
+  it("refuses to stash dirt the user never acknowledged", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    writeFile(repo, "file.txt", "local edit\n");
+    writeFile(repo, "secret.txt", "appeared after the card rendered\n");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+      stashDirty: ["file.txt"], // the list the user was actually shown
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/didn't agree to stash/);
+    expect(res.dirty?.map((d) => d.path)).toEqual(["file.txt", "secret.txt"]);
+    // Nothing was stashed, nothing was merged.
+    expect(await git(repo, "stash", "list")).toBe("");
+    expect(read(repo, "secret.txt")).toBe("appeared after the card rendered\n");
+    expect(await git(repo, "log", "-1", "--format=%s", "main")).toBe("initial commit");
+  });
+
+  it("restores the stash when the merge conflicts", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    writeFile(repo, "scratch.txt", "local scratch\n");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+      stashDirty: ["scratch.txt"],
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.conflicts).toEqual(["file.txt"]);
+    expect(res.stashed?.restored).toBe(true);
+    expect(read(repo, "scratch.txt")).toBe("local scratch\n");
+    expect(await git(repo, "stash", "list")).toBe("");
+  });
+
+  it("still reports 'already merged' when the main checkout is dirty", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+    });
+    writeFile(repo, "file.txt", "local edit\n"); // dirty AFTER the merge landed
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land feature",
+    });
+    expect(res.ok).toBe(true);
+    expect(res.alreadyMerged).toBe(true);
+    expect(res.dirty).toBeUndefined();
+  });
+
   it("aborts cleanly on conflicts, listing the conflicted files", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "file.txt", "task version\n", "task edit");
