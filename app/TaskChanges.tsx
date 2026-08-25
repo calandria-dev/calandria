@@ -404,22 +404,28 @@ const FileDiff = memo(function FileDiff({
           ) : lines.length === 0 ? (
             <div className="tc-empty">No textual changes (mode or rename).</div>
           ) : viewMode === "unified" ? (
-            lines.map((ln, i) => {
-              const side: "old" | "new" = ln.cls === "del" ? "old" : "new";
-              const anchor = side === "old" ? ln.oldNo : ln.newNo;
-              return ln.cls === "hunk" ? (
-                <div key={i} className="dl hunk">{ln.text}</div>
-              ) : (
-                <div key={i}>
-                  <div className={`dl ${ln.cls}`}>
-                    {gutter(ln.oldNo, "old", side)}
-                    {gutter(ln.newNo, "new", side)}
-                    <span className="dl-c">{ln.text || " "}</span>
+            // One max-content-wide block holds every row, so the longest line
+            // sets the width of all of them and the file scrolls as a whole
+            // (see .tc-rows) — rows sized individually would each need their
+            // own scrollbar and would stripe short.
+            <div className="tc-rows">
+              {lines.map((ln, i) => {
+                const side: "old" | "new" = ln.cls === "del" ? "old" : "new";
+                const anchor = side === "old" ? ln.oldNo : ln.newNo;
+                return ln.cls === "hunk" ? (
+                  <div key={i} className="dl hunk">{ln.text}</div>
+                ) : (
+                  <div key={i}>
+                    <div className={`dl ${ln.cls}`}>
+                      {gutter(ln.oldNo, "old", side)}
+                      {gutter(ln.newNo, "new", side)}
+                      <span className="dl-c">{ln.text || " "}</span>
+                    </div>
+                    {rowComments(side, anchor)}
                   </div>
-                  {rowComments(side, anchor)}
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           ) : (
             <div className="tc-split">
               {rows.map((row, i) => {
