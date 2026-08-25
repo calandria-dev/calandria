@@ -211,14 +211,14 @@ controls show their run count and API-price-equivalent cost without polling.
 ### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
-`list_projects` / `expose_service` / `ask_user` are the same orchestrator
+`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-projects,expose-service,ask-user}`,
+(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-groups,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort
@@ -289,6 +289,37 @@ straight through, while the bridge's endpoint takes the caller from the env-inje
 `ORCH_TASK_ID` and the target from the request body — model-supplied, and the reason
 `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
 asserts on the database rather than on the refusal text.
+
+**Groups** ride the same three tools plus one new read, and the create-vs-strict split is the
+whole policy (`resolveGroupRef()` in `lib/agentTools.ts`, over `resolveGroup()` in the store).
+`suggest_task`'s `group` is resolved AFTER `resolveTargetProject`, in the project the task is
+actually filed into — a group never spans repositories, so a cross-project suggestion must
+group where it lands — and a name that matches nothing is CREATED there with
+`origin_task_id` set to the calling task. That's right for the planning verb: the common case
+really is "this group doesn't exist yet", and a `create_group` round trip would repeat the
+two-phase dance `blocked_by` already forces; a near-miss minting a duplicate is bounded by
+`UNIQUE(project_id, name)` plus a result that names which of the two happened.
+`update_task`'s `group` is the opposite — an existing id or exact name, `""` to ungroup,
+never a create — because the task exists already and a typo would split a feature the user is
+filtering by; an unknown ref fails the WHOLE call, the same fail-closed rule an unusable
+`blocked_by` ref gets, so a rename sharing that call can't land under a refusal saying
+nothing did. It resolves in the TARGET's project, not the caller's, for the same reason the
+tool can write a tray suggestion anywhere. `list_tasks` gains a `group` filter (resolved
+strictly — an unrecognized one is an error, never a silently unfiltered board) and every row
+carries `group: {id, name}` either way, and **`list_groups(project?)`** returns each group's
+description, derived counts and members with titles and statuses, so "how is the migration
+going" is one call rather than N `get_task`s.
+
+The receiving end is **`lib/groupContext.ts`**: `groupContextBlock(task)`, called from
+`buildProjectContext()`, tells a member session which group it belongs to, what the group is
+for, which step of how many it is (a topological sort over `depends_on` restricted to the
+group, ties by `position` — the same order `GroupStrip.tsx` numbers, so the prompt and the
+screen agree), its siblings with status markers and `← this task`, and `Planned in task "…"`
+pointing at the session that filed the plan. Sibling DESCRIPTIONS are deliberately not
+inlined — a seven-task group would spend a fifth of the session's starting context on work
+this task isn't doing, and `get_task` is one call away. `send_context = 0` suppresses the
+block exactly as it suppresses project context. The module is pinned SDK-free
+(`tests/importGraph.test.ts`) because `lib/agents/shared.ts` reaches every driver.
 
 **`withdraw_suggestion(task, reason)`** is the retraction verb, and it exists because the
 nearest alternative was wrong twice over: an agent reaching for `status: "done"` to mean

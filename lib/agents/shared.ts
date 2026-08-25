@@ -6,6 +6,7 @@
 
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
+import { groupContextBlock } from "../groupContext";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS } from "../config";
 
@@ -34,6 +35,16 @@ export function buildProjectContext(project: Project, task: Task): string {
   if (project.branch) lines.push(`\nGit branch: ${project.branch}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
+
+  // Where this task sits in the feature it's a step of — the group's name and
+  // description, the siblings in dependency order, and the planning session
+  // that filed them. Empty for an ungrouped task, and suppressed by
+  // send_context = 0 exactly like the project context above (lib/groupContext.ts).
+  // Placed here, straight after the brief, because it is the FRAMING of that
+  // brief: "port the login route" reads differently once the session knows two
+  // earlier steps already landed AuthService.
+  const groupBlock = groupContextBlock(task);
+  if (groupBlock) lines.push(groupBlock);
 
   if (summaries.length > 0) {
     lines.push(`\n--- Carried context from previous sessions of this task ---`);

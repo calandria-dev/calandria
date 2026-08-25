@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 // project) along with field validation and the refusal to accept "cancelled",
 // and it is shared with the in-process server, so the two can't drift.
 export async function POST(req: NextRequest) {
-  let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[] };
+  let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[]; group?: string };
   try {
     body = await req.json();
   } catch {
@@ -42,6 +42,10 @@ export async function POST(req: NextRequest) {
     // edges alone" and `[]` means "clear them", so a malformed value must not
     // arrive as the second one.
     blocked_by: Array.isArray(body.blocked_by) ? body.blocked_by : undefined,
+    // Same shape rule as blocked_by: only a real string is forwarded, because
+    // `undefined` means "leave the group alone" and "" means "ungroup" — a
+    // malformed value must not arrive as the second one.
+    group: typeof body.group === "string" ? body.group : undefined,
   });
   // 400, not 404: the caller's row exists (we just read it), and the request
   // either named a value the tool won't write or aimed at a row it may not

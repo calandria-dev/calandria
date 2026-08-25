@@ -113,6 +113,7 @@ describe("orch-mcp stdio bridge", () => {
         "create_runbook",
         "expose_service",
         "get_task",
+        "list_groups",
         "list_projects",
         "list_runbooks",
         "list_tasks",
@@ -145,7 +146,7 @@ describe("orch-mcp stdio bridge", () => {
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
-      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["blocked_by", "description", "priority", "status", "task", "title"]);
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["blocked_by", "description", "group", "priority", "status", "task", "title"]);
       // Cancelling is the user's call: on the caller's own row it would abort
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
