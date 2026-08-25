@@ -17,6 +17,21 @@
 # the action falls back to GITHUB_TOKEN and releases degrade to that manual
 # dispatch — nothing breaks, it just gets slower. Agents may maintain this
 # wiring; they do not provision tokens (see .github/CLAUDE.md).
+#
+# TAG FORMAT is load-bearing, not cosmetic: publish-image.yml triggers on
+# `push: tags: ["v*"]` and derives its image tags with
+# `type=semver,pattern={{version}}`. Both need the tag to be exactly `vX.Y.Z`.
+# release-please's `include-component-in-tag` DEFAULTS TO TRUE, and in manifest
+# mode the node strategy takes the component from package.json's `name` — so
+# the default here is `calandria-v0.2.0`, which matches neither `v*` nor
+# semver. The first release PR was generated that way (its changelog compared
+# `calandria-v0.1.0...calandria-v0.2.0`); merging it as-is would have cut a tag
+# that fired no publish at all, and even a manual dispatch on that ref would
+# have produced no `latest`/`X.Y.Z`/`X.Y` tags. Hence
+# `"include-component-in-tag": false` in release-please-config.json. There is
+# one package at the repo root, so the component name buys nothing to begin
+# with. If a second package is ever added, that flag has to be reconsidered
+# together with publish-image.yml's trigger — they are one decision.
 name: release-please
 
 on:
