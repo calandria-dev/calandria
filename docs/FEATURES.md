@@ -85,6 +85,17 @@ tab's button — it lands the task) and **Review** to open that tab first, where
 returns the worktree to where it was. Only an accept or a discard clears the banner.
 If the agent left some files conflicted, the banner counts them and offers another pass.
 
+A merge into the branch your own checkout has open has to happen *in* that checkout, which
+git will only do on a clean tree. When it isn't clean the merge is refused — and the card
+now shows `git status` for that checkout, so you can see whether it is your work in the way
+or a tool dropping (a hook-written `.gitattributes`, an editor scratch file) you never knew
+was there. Clear it in a terminal and click Merge again, or press **Stash N files & merge**:
+exactly the files listed are stashed, the merge runs, and the stash is applied back on top.
+The list is the consent — dirt that appears after the card was drawn is refused rather than
+swept up with it — and if the apply back hits a conflict the stash is kept and the card
+prints the `git stash apply` line that recovers it. Merges into any other branch never
+touch your checkout at all, so they are unaffected.
+
 ## Planning and orchestration
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,

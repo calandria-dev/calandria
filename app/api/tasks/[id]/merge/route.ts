@@ -8,8 +8,18 @@ import { jsonGuard } from "@/lib/apiGuard";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Optional body: the paths of the main checkout's uncommitted changes the user
+  // was shown and agreed to have stashed for the duration of the merge. A LIST,
+  // never a flag — the merge re-checks it against the tree it actually finds, so
+  // dirt that appeared after the card was rendered is refused rather than swept
+  // up. A bodyless POST (the ordinary Merge click) parses to undefined.
+  const body = (await req.json().catch(() => null)) as { stashDirty?: unknown } | null;
+  const stashDirty =
+    Array.isArray(body?.stashDirty) && body.stashDirty.every((p) => typeof p === "string")
+      ? (body.stashDirty as string[])
+      : undefined;
   // The whole check-then-commit sequence runs under the per-task lock shared
   // with the turn-launch path (messages route + queue drain), making the
   // running check atomic with the git operation: a turn can't start writing
@@ -33,6 +43,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       // Lets the merge fast-forward the base past any remote commits the task
       // was cut from, so the merge commit holds only the task's own work.
       baseSha: task.base_sha,
+      stashDirty,
     });
 
     if (result.ok) {

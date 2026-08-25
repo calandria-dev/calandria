@@ -1026,6 +1026,121 @@ export interface MergeResult {
   mergedSha?: string; // the work-branch tip that was merged — the new diff base
   additions?: number; // line stats of what this merge landed on the target
   deletions?: number; // (absent when alreadyMerged / stats couldn't be read)
+  dirty?: DirtyEntry[]; // in-place merge refused: what's uncommitted in the MAIN checkout
+  dirtyTruncated?: boolean; // `dirty` was clipped at DIRTY_CAP
+  stashed?: StashRestore; // set when the merge ran after stashing that dirt aside
+}
+
+/** One `git status --porcelain` entry of a repo's main working tree. */
+export interface DirtyEntry {
+  code: string; // raw two-char XY status ("??" untracked, " M" modified, "A " added, …)
+  path: string;
+  untracked: boolean;
+}
+
+/** What became of the stash an acknowledged `stashDirty` merge set aside. */
+export interface StashRestore {
+  restored: boolean; // put back on top of the merged tree
+  sha: string; // the stash commit — how to get the work back if it wasn't
+  label: string;
+  error?: string;
+}
+
+// Enough to identify a tool dropping or a forgotten edit; a checkout with more
+// dirt than this is not one the merge card can usefully enumerate.
+const DIRTY_CAP = 100;
+
+/**
+ * What is uncommitted in the repo's main working tree, parsed rather than merely
+ * counted. An in-place merge refuses on ANY dirt, and a bare refusal leaves the
+ * user debugging blind — in practice the blocker is often a tool dropping (a
+ * hook-written .gitattributes, an editor scratch file) rather than their own
+ * work, which they can only find out by going to a terminal. `-z` so paths with
+ * spaces or quotes arrive literal instead of git-quoted.
+ */
+export async function repoDirtyEntries(repoPath: string): Promise<DirtyEntry[]> {
+  // Raw, not `git()`: the status code's first column is a SPACE for a file that
+  // is modified but unstaged, and trimming stdout would eat it — turning " M
+  // file.txt" into a path of "ile.txt", i.e. an offer to stash a file that
+  // doesn't exist.
+  const out = await run("git", ["-C", repoPath, "status", "--porcelain", "-z"], { maxBuffer: 64 * 1024 * 1024 })
+    .then((r) => r.stdout)
+    .catch(() => "");
+  const fields = out.split("\0").filter(Boolean);
+  const entries: DirtyEntry[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const code = fields[i].slice(0, 2);
+    const p = fields[i].slice(3); // read before skipping — the skipped field is a path too
+    // A rename/copy spends a second NUL-separated field on the source path.
+    if (code[0] === "R" || code[0] === "C") i++;
+    entries.push({ code, path: p, untracked: code === "??" });
+  }
+  return entries;
+}
+
+// A stash entry this app created, held by SHA: stash refs renumber under every
+// other push, and this stack is shared with the user's own shells.
+interface StashHandle {
+  sha: string;
+  label: string;
+}
+
+async function stashMainTree(repoPath: string, label: string): Promise<StashHandle> {
+  await git(repoPath, ["stash", "push", "--include-untracked", "-m", label]);
+  return { sha: await git(repoPath, ["rev-parse", "refs/stash"]), label };
+}
+
+/**
+ * Put stashed work back on top of the merged tree. `apply` then `drop`, never
+ * `pop`: the stash stack is shared with every linked worktree of the repo and
+ * with any shell the user has open, so the entry is re-found BY SHA before it's
+ * dropped rather than trusting `stash@{0}` to still be ours. A failed apply
+ * keeps the entry and says so — the work is recoverable from the sha, and
+ * silently dropping it would be the one unrecoverable outcome here.
+ */
+async function restoreStash(repoPath: string, stash: StashHandle): Promise<StashRestore> {
+  const { sha, label } = stash;
+  try {
+    // --index also restores what was staged; it fails on its own when the index
+    // can't be reconstructed, so fall back to a plain apply — but only while the
+    // tree is still untouched, so a partial apply can't be applied twice.
+    try {
+      await git(repoPath, ["stash", "apply", "--index", sha]);
+    } catch (e) {
+      if ((await repoDirtyEntries(repoPath)).length) throw e;
+      await git(repoPath, ["stash", "apply", sha]);
+    }
+  } catch (e) {
+    return { restored: false, sha, label, error: gitErrorLine(e, "could not restore your stashed changes") };
+  }
+  // Re-find the entry immediately before dropping it (see above). Best-effort:
+  // a leftover entry is duplicated work, never lost work.
+  const list = await git(repoPath, ["stash", "list", "--format=%H %gd"]).catch(() => "");
+  const ref = list.split("\n").find((l) => l.startsWith(`${sha} `))?.split(" ")[1];
+  if (ref) await git(repoPath, ["stash", "drop", ref]).catch(() => {});
+  return { restored: true, sha, label };
+}
+
+// The refusal an in-place merge gives a dirty main checkout, carrying the dirt
+// itself so the UI can show WHAT is in the way (and offer to set it aside).
+function dirtyRefusal(target: string, committed: boolean, dirty: DirtyEntry[]): MergeResult {
+  return {
+    ok: false,
+    targetBranch: target,
+    committed,
+    dirty: dirty.slice(0, DIRTY_CAP),
+    ...(dirty.length > DIRTY_CAP ? { dirtyTruncated: true } : {}),
+    error: `the repo's working tree has uncommitted changes in ${dirty.length} file(s) — commit or stash them before merging`,
+  };
+}
+
+// Paths that are dirty NOW but weren't in the list the user acknowledged. The
+// acknowledgement is by path, like the bulk-move discards: a user who agreed to
+// set three files aside must not have a fourth swept up because the tree moved
+// while the card sat on screen. Dirt that has since gone away needs no consent.
+function unacknowledgedDirt(ack: string[], dirty: DirtyEntry[]): string[] {
+  const acked = new Set(ack);
+  return dirty.map((d) => d.path).filter((p) => !acked.has(p));
 }
 
 // Line stats of the merge that just completed in `dir`: ORIG_HEAD (the target's
@@ -1195,6 +1310,11 @@ async function mergeIntoTargetWorktree(input: {
  * commit whose line counts credit the task with everything that arrived from the
  * remote. Given the base sha, the base branch is fast-forwarded to it first, so
  * what lands afterwards is only the task's own work.
+ *
+ * `stashDirty` is the user's answer to the dirty-main-tree refusal above: the
+ * exact paths they were shown and agreed to have set aside, which are stashed
+ * before the merge and restored after it. Absent (the default), a dirty tree is
+ * still just a refusal — now one that names the files.
  */
 export async function mergeTask(input: {
   repoPath: string;
@@ -1203,8 +1323,9 @@ export async function mergeTask(input: {
   baseBranch: string;
   message: string;
   baseSha?: string;
+  stashDirty?: string[];
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message, baseSha } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, baseSha, stashDirty } = input;
 
   let committed = false;
   try {
@@ -1231,60 +1352,97 @@ export async function mergeTask(input: {
     const current = await currentBranch(repoPath);
     const target = (await branchExists(repoPath, baseBranch)) ? baseBranch : current || baseBranch;
 
-    // Catch the target up to the commit the task was cut from, when that commit
-    // is already on the work branch and strictly ahead of the target — the shape
-    // a task cut from the remote tip leaves behind. Purely a tidy-up: it makes
-    // the merge below contain only the task's own work. Best-effort, because
-    // every reason it can fail (diverged branch, dirty checkout, a linked
-    // worktree holding the branch) is one the plain merge handles anyway.
-    if (baseSha) {
-      const onWorkBranch = await git(repoPath, ["merge-base", "--is-ancestor", baseSha, workBranch])
-        .then(() => true)
-        .catch(() => false);
-      if (onWorkBranch) await advanceBaseBranchLocked(repoPath, target, baseSha);
-    }
-
-    // Nothing to land?
+    // Nothing to land? Answered before anything mutates — a re-click on an
+    // already-merged task is "up to date" even when the checkout is dirty, and
+    // with nothing to merge the base advance below is provably a no-op (baseSha
+    // is an ancestor of the work branch, which the target already contains).
     try {
       const ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${target}..${workBranch}`]), 10) || 0;
       if (ahead === 0) return { ok: true, targetBranch: target, committed, alreadyMerged: true, mergedSha };
     } catch {}
 
-    // Base branch isn't the main checkout → merge in a throwaway worktree so the
-    // user's working tree (and its uncommitted edits) are never touched.
-    if (target !== current) {
-      return mergeIntoTargetWorktree({ repoPath, target, workBranch, message, committed, mergedSha });
+    // Merging in place needs a clean main tree — both for the merge itself and
+    // for the fast-forward below, which git refuses when it would overwrite an
+    // uncommitted file. Dirt is where this used to end, with the user told to
+    // "commit or stash" and no idea what the dirt was; now the refusal carries
+    // the file list, and a user who has SEEN that list can ask for it to be
+    // stashed aside for the merge (`stashDirty`) and put back afterwards.
+    let stash: StashHandle | null = null;
+    if (target === current) {
+      const dirty = await repoDirtyEntries(repoPath);
+      if (dirty.length) {
+        if (!stashDirty) return dirtyRefusal(target, committed, dirty);
+        const unacked = unacknowledgedDirt(stashDirty, dirty);
+        if (unacked.length)
+          return {
+            ...dirtyRefusal(target, committed, dirty),
+            error: `the working tree changed since you reviewed it — ${unacked.length} file(s) you didn't agree to stash are now uncommitted (${unacked
+              .slice(0, 3)
+              .join(", ")}); review them and try again`,
+          };
+        try {
+          stash = await stashMainTree(repoPath, `calandria: set aside to merge ${workBranch}`);
+        } catch (e) {
+          return {
+            ...dirtyRefusal(target, committed, dirty),
+            error: gitErrorLine(e, "could not stash the checkout's uncommitted changes"),
+          };
+        }
+      }
     }
 
-    // Base branch IS the main checkout → merge in place. This requires a clean
-    // tree, and a failed merge is aborted so we never leave the user mid-merge.
-    const dirty = (await git(repoPath, ["status", "--porcelain"]).catch(() => "")).trim().length > 0;
-    if (dirty)
-      return {
-        ok: false,
-        targetBranch: target,
-        committed,
-        error: "the repo's working tree has uncommitted changes — commit or stash them before merging",
-      };
+    const merge = async (): Promise<MergeResult> => {
+      // Catch the target up to the commit the task was cut from, when that commit
+      // is already on the work branch and strictly ahead of the target — the shape
+      // a task cut from the remote tip leaves behind. Purely a tidy-up: it makes
+      // the merge below contain only the task's own work. Best-effort, because
+      // every reason it can fail (diverged branch, dirty checkout, a linked
+      // worktree holding the branch) is one the plain merge handles anyway.
+      if (baseSha) {
+        const onWorkBranch = await git(repoPath, ["merge-base", "--is-ancestor", baseSha, workBranch])
+          .then(() => true)
+          .catch(() => false);
+        if (onWorkBranch) await advanceBaseBranchLocked(repoPath, target, baseSha);
+      }
 
-    try {
-      await git(repoPath, ["merge", "--no-ff", "-m", message, workBranch]);
-    } catch (e) {
-      const conflicts = (await git(repoPath, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
-        .split("\n")
-        .filter(Boolean);
-      await git(repoPath, ["merge", "--abort"]).catch(() => {});
-      return {
-        ok: false,
-        targetBranch: target,
-        committed,
-        conflicts: conflicts.length ? conflicts : undefined,
-        error: conflicts.length ? `merge conflicts in ${conflicts.length} file(s)` : `merge failed: ${msgOf(e)}`,
-      };
-    }
+      // Base branch isn't the main checkout → merge in a throwaway worktree so the
+      // user's working tree (and its uncommitted edits) are never touched.
+      if (target !== current) {
+        return mergeIntoTargetWorktree({ repoPath, target, workBranch, message, committed, mergedSha });
+      }
 
-    const stats = await mergeLineStats(repoPath);
-    return { ok: true, targetBranch: target, committed, mergedSha, ...(stats ?? {}) };
+      // Base branch IS the main checkout → merge in place, in a tree the gate
+      // above guaranteed clean. A failed merge is aborted so we never leave the
+      // user mid-merge (and so a stash can be restored onto a sane tree).
+      try {
+        await git(repoPath, ["merge", "--no-ff", "-m", message, workBranch]);
+      } catch (e) {
+        const conflicts = (await git(repoPath, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
+          .split("\n")
+          .filter(Boolean);
+        await git(repoPath, ["merge", "--abort"]).catch(() => {});
+        return {
+          ok: false,
+          targetBranch: target,
+          committed,
+          conflicts: conflicts.length ? conflicts : undefined,
+          error: conflicts.length ? `merge conflicts in ${conflicts.length} file(s)` : `merge failed: ${msgOf(e)}`,
+        };
+      }
+
+      const stats = await mergeLineStats(repoPath);
+      return { ok: true, targetBranch: target, committed, mergedSha, ...(stats ?? {}) };
+    };
+
+    // Whatever the merge did, the borrowed work goes back — a failed merge
+    // must leave the checkout exactly as dirty as it found it.
+    const res = await merge().catch((e): MergeResult => ({
+      ok: false,
+      targetBranch: target,
+      committed,
+      error: `merge failed: ${msgOf(e)}`,
+    }));
+    return stash ? { ...res, stashed: await restoreStash(repoPath, stash) } : res;
   });
 }
 
@@ -1626,8 +1784,9 @@ export async function completeWorktreeMerge(input: {
   workBranch: string;
   baseBranch: string;
   message: string;
+  stashDirty?: string[]; // acknowledged main-checkout dirt — see `mergeTask`
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, stashDirty } = input;
   const { mergeInProgress } = await worktreeMergeStatus(worktreePath);
 
   // Editing a conflicted file leaves it "unmerged" until staged; stage first so a
@@ -1653,7 +1812,7 @@ export async function completeWorktreeMerge(input: {
     }
   }
 
-  const result = await mergeTask({ repoPath, worktreePath, workBranch, baseBranch, message });
+  const result = await mergeTask({ repoPath, worktreePath, workBranch, baseBranch, message, stashDirty });
   // The resolution merge has landed — its pre-merge marker is spent. Drop it so a
   // subsequent "discard merge" doesn't try to unwind an already-merged commit.
   if (result.ok) await clearMergeAbortMarker(worktreePath);
