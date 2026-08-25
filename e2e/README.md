@@ -32,10 +32,10 @@ npm run test:docker -- tests/merge.test.ts   # args pass through
 ```
 
 Nothing is baked into the image: the checkout is bind-mounted at `/work` and
-`node_modules` is a **named volume** (`orch-test-node-modules`), so the install
+`node_modules` is a **named volume** (`calandria-test-node-modules`), so the install
 is a one-time cost the next run — and every other worktree — inherits. The
 container's entrypoint reinstalls only when `package-lock.json` changes; wipe
-the volume (`docker volume rm orch-test-node-modules`) to force a clean tree.
+the volume (`docker volume rm calandria-test-node-modules`) to force a clean tree.
 
 The four `*:docker` scripts invoke `bash scripts/docker-test.sh` rather than the
 file directly, so they also run from a Windows shell with Git Bash on PATH
@@ -67,17 +67,20 @@ command run at `/work` prints `fatal: not a git repository`. Neither suite cares
 — both build their own fixture repos under a temp root with a pinned gitconfig
 — but don't read it as a broken checkout. Run git on the host.
 
-Knobs (all optional): `ORCH_TEST_VOLUME` to use a different node_modules volume,
-`ORCH_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does *not* remap bind
+Knobs (all optional): `CALANDRIA_TEST_VOLUME` to use a different node_modules volume,
+`CALANDRIA_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does *not* remap bind
 mounts (otherwise `.next/` and `test-results/` come back root-owned; OrbStack
 and Docker Desktop remap, so the default root user is fine there), and
-`ORCH_TEST_REBUILD=1` after editing anything under `docker/test/` — the wrapper
-skips the build when the tag already exists.
+`CALANDRIA_TEST_REBUILD=1` after editing anything under `docker/test/` — the wrapper
+skips the build when the tag already exists. These are a hard rename from the old
+`ORCH_TEST_*` spellings — there is no fallback, so a stale export just means the
+default is used; the old `orch-test-node-modules` volume and `orch-test:*` images
+can be removed to reclaim disk.
 
 ## How it stays hermetic and deterministic
 
 - **Fresh instance per run** — `e2e/env.ts` creates a temp root (DB, worktrees,
-  projects, fixture repos, pinned gitconfig) and points every `ORCH_*` dir at it.
+  projects, fixture repos, pinned gitconfig) and points every `CALANDRIA_*` dir at it.
   Nothing touches `~/.zen-orchestrator` or your real projects; the app listens on
   port 4711 (`CALANDRIA_E2E_PORT` to move it).
 - **No real agent needed** — the suite sets `CALANDRIA_E2E_MOCK_AGENT=1`, which

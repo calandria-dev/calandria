@@ -9,14 +9,21 @@
 #   npm run test:docker -- tests/merge.test.ts
 #
 # Env knobs:
-#   ORCH_TEST_VOLUME   named volume holding node_modules (default below).
-#                      Shared by every worktree; `docker volume rm` it to reset.
-#   ORCH_TEST_USER     "uid:gid" to run as. Unset (root) is right on a host
-#                      whose bind mounts remap ownership — OrbStack/Docker
-#                      Desktop do; a plain Linux daemon does not, and there
-#                      root leaves you root-owned .next/ and test-results/.
-#   ORCH_TEST_REBUILD  =1 to rebuild the image even though the tag exists
-#                      (needed after editing docker/test/*).
+#   CALANDRIA_TEST_VOLUME   named volume holding node_modules (default below).
+#                           Shared by every worktree; `docker volume rm` it to
+#                           reset.
+#   CALANDRIA_TEST_USER     "uid:gid" to run as. Unset (root) is right on a host
+#                           whose bind mounts remap ownership — OrbStack/Docker
+#                           Desktop do; a plain Linux daemon does not, and there
+#                           root leaves you root-owned .next/ and test-results/.
+#   CALANDRIA_TEST_REBUILD  =1 to rebuild the image even though the tag exists
+#                           (needed after editing docker/test/*).
+#
+# These three are a hard rename from ORCH_TEST_* with no fallback — they are
+# test-only, so a stale export just means the default is used. The image tag
+# and default node_modules volume moved to calandria-test* in the same pass:
+# `docker volume rm orch-test-node-modules` and `docker image rm` the old
+# `orch-test:*` tags to reclaim the space, at the cost of one cold `npm ci`.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -34,10 +41,10 @@ fi
 # a dependency bump changes the image tag (and forces a rebuild) instead of
 # silently desyncing the two.
 pw=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
-image="orch-test:${target}-pw${pw}"
-volume=${ORCH_TEST_VOLUME:-orch-test-node-modules}
+image="calandria-test:${target}-pw${pw}"
+volume=${CALANDRIA_TEST_VOLUME:-calandria-test-node-modules}
 
-if [ "${ORCH_TEST_REBUILD:-}" = "1" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
+if [ "${CALANDRIA_TEST_REBUILD:-}" = "1" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "[docker-test] building $image (once; ~a few minutes for the e2e target)" >&2
   docker build --target "$target" --build-arg "PLAYWRIGHT_VERSION=$pw" -t "$image" docker/test
 fi
@@ -52,7 +59,7 @@ run=(docker run --rm --init)
 if [ -t 0 ] && [ -t 1 ]; then run+=(-it); fi
 # HOME as well as --user: an arbitrary uid has no passwd entry, so npm falls
 # back to writing its cache at /.npm and dies with EACCES before a test runs.
-if [ -n "${ORCH_TEST_USER:-}" ]; then run+=(--user "$ORCH_TEST_USER" -e HOME=/tmp); fi
+if [ -n "${CALANDRIA_TEST_USER:-}" ]; then run+=(--user "$CALANDRIA_TEST_USER" -e HOME=/tmp); fi
 run+=(-v "$PWD":/work -v "$volume":/work/node_modules -w /work "$image")
 
 exec "${run[@]}" "$@"

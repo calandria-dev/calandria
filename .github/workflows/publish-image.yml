@@ -563,7 +563,7 @@ jobs:
             set -e
             for f in lib/cf-access.mjs lib/service-router.mjs lib/service-host.mjs \
                      lib/env-keys.mjs lib/resolveHostname.js lib/auth/origin.mjs \
-                     lib/auth/local-origin.mjs scripts/orch-mcp.mjs lib/agentToolDefs.mjs; do
+                     lib/auth/local-origin.mjs scripts/calandria-mcp.mjs lib/agentToolDefs.mjs; do
               test -f "$f" || { echo "MISSING $f"; exit 1; }
             done
             echo "runtime .mjs files present"
@@ -576,7 +576,7 @@ jobs:
           set -euo pipefail
           token=$(openssl rand -hex 16)
           echo "::add-mask::$token"
-          docker run -d --name orch \
+          docker run -d --name calandria \
             -e "SERVICE_TOKEN=$token" \
             -p 127.0.0.1:3000:3000 \
             "$REF"
@@ -584,17 +584,17 @@ jobs:
           # HEALTHCHECK has a 20s start period and a 30s interval, so `healthy`
           # legitimately takes up to ~50s on a cold SQLite init.
           for _ in $(seq 1 60); do
-            status=$(docker inspect -f '{{.State.Health.Status}}' orch)
+            status=$(docker inspect -f '{{.State.Health.Status}}' calandria)
             case "$status" in
               healthy) break ;;
               unhealthy) echo "container reported unhealthy"; exit 1 ;;
             esac
-            if [ "$(docker inspect -f '{{.State.Running}}' orch)" != "true" ]; then
+            if [ "$(docker inspect -f '{{.State.Running}}' calandria)" != "true" ]; then
               echo "container exited before becoming healthy"; exit 1
             fi
             sleep 3
           done
-          [ "$(docker inspect -f '{{.State.Health.Status}}' orch)" = healthy ] \
+          [ "$(docker inspect -f '{{.State.Health.Status}}' calandria)" = healthy ] \
             || { echo "timed out waiting for healthy"; exit 1; }
 
           # The healthcheck runs inside the container; confirm the port is
@@ -616,27 +616,27 @@ jobs:
       - name: Boot under Cloudflare Access with no SERVICE_TOKEN and wait for HEALTHCHECK
         run: |
           set -euo pipefail
-          docker run -d --name orch-access \
+          docker run -d --name calandria-access \
             -e "CF_ACCESS_TEAM_DOMAIN=example-team.cloudflareaccess.com" \
             -e "CF_ACCESS_AUD=ci-smoke-aud" \
             "$REF"
 
           for _ in $(seq 1 60); do
-            status=$(docker inspect -f '{{.State.Health.Status}}' orch-access)
+            status=$(docker inspect -f '{{.State.Health.Status}}' calandria-access)
             case "$status" in
               healthy) break ;;
               unhealthy) echo "container reported unhealthy under Access with no SERVICE_TOKEN"; exit 1 ;;
             esac
-            if [ "$(docker inspect -f '{{.State.Running}}' orch-access)" != "true" ]; then
+            if [ "$(docker inspect -f '{{.State.Running}}' calandria-access)" != "true" ]; then
               echo "container exited before becoming healthy"; exit 1
             fi
             sleep 3
           done
-          [ "$(docker inspect -f '{{.State.Health.Status}}' orch-access)" = healthy ] \
+          [ "$(docker inspect -f '{{.State.Health.Status}}' calandria-access)" = healthy ] \
             || { echo "timed out waiting for healthy under Access"; exit 1; }
 
           # And the gate is genuinely on: an unauthenticated app route must 403.
-          docker exec orch-access node -e "
+          docker exec calandria-access node -e "
             fetch('http://127.0.0.1:3000/api/projects')
               .then(r => { console.log('status', r.status); process.exit(r.status === 403 ? 0 : 1) },
                     e => { console.error(e); process.exit(1) })
@@ -645,8 +645,8 @@ jobs:
       - name: Container logs
         if: always()
         run: |
-          docker logs orch 2>&1 | tail -100 || true
-          docker logs orch-access 2>&1 | tail -50 || true
+          docker logs calandria 2>&1 | tail -100 || true
+          docker logs calandria-access 2>&1 | tail -50 || true
 
   # Self-announcing failure: comments on the open `build failed`-labeled issue
   # (creating one if none is open) so a red pipeline surfaces without anyone

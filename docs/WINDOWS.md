@@ -184,7 +184,7 @@ root. That belongs in the WSL2 docs (task 1).
 | `test:docker`, `typecheck:docker`, `test:e2e:docker`, `preflight:docker` | Bare `scripts/docker-test.sh` — no shebang interpreter under `cmd.exe`. `bash scripts/docker-test.sh` works with Git Bash on PATH; the Docker Desktop side additionally needs Linux-container mode |
 | `dev`, `dev:next`, `pty`, `typecheck`, `test`, `test:e2e*`, `preflight`, `postinstall` | Portable as written; `concurrently`'s nested quotes survive npm's `cmd.exe /d /s /c` wrapper |
 | `next.config.mjs`, `server.js`, `pty-server.js` | Plain Node, no POSIX assumptions beyond the shell default in §1 |
-| `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `ORCH_RUNTIME=runc` override documented (no gVisor) |
+| `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `CALANDRIA_RUNTIME=runc` override documented (no gVisor) |
 
 Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
 `start` breakage — fixing the scripts is the prerequisite for everything else.

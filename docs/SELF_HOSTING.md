@@ -10,7 +10,7 @@ corruption, disk fill, headless re-auth, boot failures).
 The [`Dockerfile`](../Dockerfile) builds a single-user image: a **production** Next.js
 build (a stopped container starts in seconds) bundling Node 22, git, and the `claude`
 CLI, with [`docker/entrypoint.sh`](../docker/entrypoint.sh) running both processes (app
-server + pty sidecar) under tini. All state lives under `/home/orch` — one named volume
+server + pty sidecar) under tini. All state lives under `/home/calandria` — one named volume
 captures the SQLite db, worktrees, project repos, and claude login.
 
 You don't have to build it yourself: the same image is published on every push to `main`.
@@ -81,7 +81,7 @@ Note the image tag carries **no leading `v`**, even though the git tag does:
 
 Pick one of:
 
-| You want | Set `ORCH_IMAGE` to |
+| You want | Set `CALANDRIA_IMAGE` to |
 |-|-|
 | A specific release, never changes | `ghcr.io/calandria-dev/calandria:X.Y.Z` |
 | The newest patch on a minor line, moves forward within it | `ghcr.io/calandria-dev/calandria:X.Y` |
@@ -93,7 +93,7 @@ both moving targets by design (see the tag table above). Pin `X.Y.Z` for anythin
 don't want to babysit; use `latest` only if you're fine re-reading the changelog after
 every unattended upgrade.
 
-**Rollback** is re-pinning: set `ORCH_IMAGE` back to the previous `X.Y.Z` and
+**Rollback** is re-pinning: set `CALANDRIA_IMAGE` back to the previous `X.Y.Z` and
 `docker compose pull && up -d --no-build` again. There's no separate rollback mechanism —
 every past release tag stays pullable indefinitely, so "roll back" and "pin an older
 version" are the same operation.
@@ -101,21 +101,21 @@ version" are the same operation.
 ### Running it
 
 [`docker-compose.yml`](../docker-compose.yml) is the parameterized runner. It builds from
-this checkout by default; set `ORCH_IMAGE` to run the published image instead.
+this checkout by default; set `CALANDRIA_IMAGE` to run the published image instead.
 
 ```bash
-export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
+export CALANDRIA_USER=alice CALANDRIA_PORT=10001 CALANDRIA_RUNTIME=runc
 
 # A) build from this checkout (the default)
 docker build -t calandria .
-docker compose -p orch-alice up -d
+docker compose -p calandria-alice up -d
 
 # B) or run the published image, nothing to build. :latest is the newest
 # release; pin :0.2.0 (no leading v) to hold one; :edge is nightly main.
 # See "Pinning a version" above.
-export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest
-docker compose -p orch-alice pull
-docker compose -p orch-alice up -d --no-build
+export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:latest
+docker compose -p calandria-alice pull
+docker compose -p calandria-alice up -d --no-build
 
 # open http://127.0.0.1:10001
 ```
@@ -183,7 +183,7 @@ mode something has to present one — it is also how the three callers that live
 box authenticate, none of which has an Access JWT: the image's `HEALTHCHECK`, the boot
 restore of managed services, and the stdio MCP bridge the non-Claude agents' tool calls go
 through. So [`docker/entrypoint.sh`](../docker/entrypoint.sh) mints a per-boot token into
-`/tmp/orch-service-token` when `CF_ACCESS_*` is set and you supplied none; the
+`/tmp/calandria-service-token` when `CF_ACCESS_*` is set and you supplied none; the
 `HEALTHCHECK` reads env-or-file (a healthcheck runs as a separate exec with the *image's*
 environment, so the file is the only way a generated token reaches it). Supply your own
 when a monitor outside the container needs to poll. Running bare Node behind Access with
@@ -209,13 +209,64 @@ boot-time warning naming whichever old names are still in use — that warning i
 upgrade signal to move a self-hosted `.env`/systemd unit/compose file over on your own
 schedule.
 
+### Upgrading from `ORCH_*` names
+
+Three groups, and only one of them can break you.
+
+**App variables — nothing to do.** Everything in the table below reads `CALANDRIA_X` first
+and falls back to `ORCH_X`, so an existing `.env`, systemd unit or `docker run -e` keeps
+working untouched. An empty value counts as unset on both sides, so a blank
+`CALANDRIA_X` never shadows a real `ORCH_X`. The boot line naming the old names still in
+use is a nudge, not a deadline.
+
+**Compose variables — a hard rename.** `ORCH_USER`, `ORCH_PORT`, `ORCH_CPUS`, `ORCH_MEM`,
+`ORCH_IMAGE` and `ORCH_RUNTIME` are interpolated by `docker compose` itself, which has no
+aliasing mechanism, so there is nowhere to put a fallback. Rename them in your shell or
+`.env`:
+
+```bash
+sed -i 's/^ORCH_\(USER\|PORT\|CPUS\|MEM\|IMAGE\|RUNTIME\)=/CALANDRIA_\1=/' .env
+```
+
+The two required ones fail loudly if you miss them (`set CALANDRIA_USER (e.g. alice)`)
+rather than starting a second, empty instance. The `-p` project name is your own label,
+not something the app reads — an existing stack can stay on `-p orch-alice` (its
+`container_name` is pinned either way); the docs just show `-p calandria-alice` for new
+ones.
+
+**Docker resource names — unchanged on purpose.** The home volume is still
+`orch-u-<user>-home` and the network still `orch-u-<user>-net`. Those are storage ids, not
+branding: renaming the volume would strand every existing instance's database, cloned
+repos and agent logins behind a name nothing mounts any more. Only the mount *path* moved,
+`/home/orch` -> `/home/calandria`, and a named volume follows its mount.
+
+That path move is invisible to a fresh instance and handled for an existing one: absolute
+`/home/orch/...` strings are baked into rows the app cannot re-derive (`projects.repo_path`,
+`tasks.worktree_path`) and into each repo's git worktree metadata, so the image keeps
+`/home/orch` as a symlink to the new home. Old paths keep resolving; new ones are written
+under `/home/calandria`.
+
+If you would rather have the volume named for the product, do it deliberately while the
+container is down — Docker has no rename, so it is a copy:
+
+```bash
+docker compose -p calandria-alice down
+docker volume create calandria-u-alice-home
+docker run --rm -v orch-u-alice-home:/from -v calandria-u-alice-home:/to alpine \
+  sh -c 'cd /from && cp -a . /to'
+# then point the compose `volumes:` stanza at the new name and bring it back up
+```
+
+Verify the copy (the database and `projects/` are there) before `docker volume rm` on the
+old one. There is no undo.
+
 | Variable | Default | What it does |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
 | `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
-| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
+| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://calandria.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
 | `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that is https, else `mailto:admin@localhost`. **iOS push needs a real one** — Apple rejects `localhost` with `403 BadJwtToken`; set your https origin or a real `mailto:` |
 | `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
@@ -240,7 +291,7 @@ Example — relocate an instance entirely via env:
 
 ```bash
 PORT=8080 PTY_PORT=8081 \
-PUBLIC_BASE_URL=https://orch.example.com \
+PUBLIC_BASE_URL=https://calandria.example.com \
 CALANDRIA_DB_DIR=/data/orchestrator \
 CALANDRIA_WORKTREES_DIR=/data/worktrees \
 CLAUDE_CLI_PATH=/usr/local/bin/claude \

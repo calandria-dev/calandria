@@ -32,7 +32,7 @@ FROM ${NODE_IMAGE} AS base
 
 # The volume is mounted over this path, and Docker seeds a fresh named volume
 # from the image directory it covers — including its mode. 0777 so the install
-# works whether the container runs as root (default) or as ORCH_TEST_USER.
+# works whether the container runs as root (default) or as CALANDRIA_TEST_USER.
 RUN mkdir -p /work/node_modules && chmod 0777 /work/node_modules
 WORKDIR /work
 

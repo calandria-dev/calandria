@@ -1,7 +1,7 @@
 # Example compose file for the overlay image built from this directory.
 #
 #   cd examples/overlay
-#   docker compose -p orch-example up -d --build
+#   docker compose -p calandria-example up -d --build
 #   open http://127.0.0.1:10001
 #
 # This only shows the overlay-specific parts: build context, image name, and
@@ -10,15 +10,15 @@
 # hardening flags (cap_drop, read_only, runsc, resource limits) a real
 # deployment should also carry.
 services:
-  orchestrator:
+  calandria:
     build:
       context: .
       dockerfile: Dockerfile
-    image: orch-example-overlay:latest
+    image: calandria-example-overlay:latest
     container_name: orch-u-example
     restart: unless-stopped
     environment:
-      PUBLIC_BASE_URL: https://orch.example.com
+      PUBLIC_BASE_URL: https://calandria.example.com
       GIT_USER_NAME: Example User
       GIT_USER_EMAIL: user@example.com
       # Front the instance with your own auth before setting these — see
@@ -28,7 +28,7 @@ services:
     ports:
       - "127.0.0.1:10001:3000"
     volumes:
-      - home:/home/orch
+      - home:/home/calandria
 
 volumes:
   home:
