@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 
-// The linger kill-switch: ORCH_BACKGROUND_LINGER=off restores the pre-feature
-// behavior — the turn closes at result time even with background work pending,
-// and the capability flag flips so buildProjectContext re-warns the model that
-// backgrounded commands die at turn end. Its own file because the env is read
-// at module load (lib/config.ts), so the main linger suite can't flip it.
+// The linger kill-switch: CALANDRIA_BACKGROUND_LINGER=off restores the
+// pre-feature behavior — the turn closes at result time even with background
+// work pending, and the capability flag flips so buildProjectContext re-warns
+// the model that backgrounded commands die at turn end. Its own file because
+// the env is read at module load (lib/config.ts), so the main linger suite
+// can't flip it.
 const { queryMock } = vi.hoisted(() => {
-  process.env.ORCH_BACKGROUND_LINGER = "off";
+  process.env.CALANDRIA_BACKGROUND_LINGER = "off";
   return { queryMock: vi.fn() };
 });
 
@@ -23,7 +24,7 @@ import type { Project, Task, StreamEvent } from "@/lib/types";
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: "", generation: 1 } as unknown as Task;
 
-describe("ORCH_BACKGROUND_LINGER=off", () => {
+describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
   it("closes at result time even with background work pending", async () => {
     queryMock.mockImplementation((args: { prompt: AsyncIterable<unknown>; options: { hooks?: { Stop?: { hooks: ((i: unknown) => Promise<unknown>)[] }[] } } }) => {
       const it2 = args.prompt[Symbol.asyncIterator]();
@@ -76,7 +77,7 @@ describe("ORCH_BACKGROUND_LINGER=off", () => {
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
     expect(notice && "content" in notice ? notice.content : "").toMatch(
-      /^⏰ Scheduled wakeup cancelled — lingering is off on this instance \(ORCH_BACKGROUND_LINGER\), so the session closed at the end of the turn: at \d\d:\d\d — "WAKE: re-check"\. It will not fire/,
+      /^⏰ Scheduled wakeup cancelled — lingering is off on this instance \(CALANDRIA_BACKGROUND_LINGER\), so the session closed at the end of the turn: at \d\d:\d\d — "WAKE: re-check"\. It will not fire/,
     );
   });
 });

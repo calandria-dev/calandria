@@ -599,9 +599,9 @@ describe("internal agent-tool endpoints", () => {
 describe("instance service token gate", () => {
   it("accepts the exact SERVICE_TOKEN and rejects the fleet token / empties", () => {
     const prev = process.env.SERVICE_TOKEN;
-    const prevFleet = process.env.ORCH_FLEET_TOKEN;
+    const prevFleet = process.env.CALANDRIA_FLEET_TOKEN;
     process.env.SERVICE_TOKEN = "secret-instance";
-    process.env.ORCH_FLEET_TOKEN = "fleet-wide";
+    process.env.CALANDRIA_FLEET_TOKEN = "fleet-wide";
     try {
       expect(instanceServiceTokenOk("secret-instance")).toBe(true);
       // The read-only fleet token must NOT open the mutating endpoints.
@@ -610,7 +610,7 @@ describe("instance service token gate", () => {
       expect(instanceServiceTokenOk(null)).toBe(false);
     } finally {
       process.env.SERVICE_TOKEN = prev;
-      process.env.ORCH_FLEET_TOKEN = prevFleet;
+      process.env.CALANDRIA_FLEET_TOKEN = prevFleet;
     }
   });
 });

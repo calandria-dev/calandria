@@ -81,7 +81,7 @@ describe("local origin boundary", () => {
 
   it("supports explicit comma-separated origins for intentional LAN access", () => {
     const env = {
-      ORCH_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://operator.internal",
+      CALANDRIA_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://operator.internal",
     };
     expect(localWebSocketRequestAllowed(
       { host: "192.168.1.50:3000", origin: "http://192.168.1.50:3000" },
@@ -99,7 +99,7 @@ describe("local origin boundary", () => {
 
   it("ignores malformed or path-bearing allowlist entries", () => {
     const env = {
-      ORCH_ALLOWED_ORIGINS: "not-a-url, https://operator.example.com/path",
+      CALANDRIA_ALLOWED_ORIGINS: "not-a-url, https://operator.example.com/path",
     };
     expect(localHttpRequestAllowed(
       { host: "operator.example.com", origin: "https://operator.example.com", secFetchSite: "same-origin" },
@@ -311,7 +311,7 @@ describe("isLoopbackPeer", () => {
   });
 
   it("can be opted out of for a deliberately split deployment", () => {
-    expect(isLoopbackPeer("192.168.1.20", { ORCH_PTY_ALLOW_REMOTE: "1" })).toBe(true);
+    expect(isLoopbackPeer("192.168.1.20", { CALANDRIA_PTY_ALLOW_REMOTE: "1" })).toBe(true);
   });
 });
 

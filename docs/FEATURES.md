@@ -72,7 +72,7 @@ Your own checkout is never moved behind your back. When local `main` is behind, 
 header says so and offers a one-click fast-forward; when it is ahead, it offers a push; when
 the two have diverged, it says that and leaves the resolution to you. After a merge lands,
 the same push is offered inline, so the app-side loop and the GitHub-side loop stop drifting
-apart. Set `ORCH_GIT_FETCH=off` to keep an instance entirely offline.
+apart. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
 
 Advancing the base branch is what turns an in-flight task's pending merge from a
 fast-forward into a sync-then-merge, so a task that read "up to date" a moment ago can
@@ -333,7 +333,7 @@ Other things the card does:
   reason (see the slash-command gotcha below). It never blocks saving.
 - **⌘K** offers every runbook in the current project as its own row (`Run: Push & babysit
   CI`), dispatching immediately rather than opening the sheet. The palette is behind the
-  `omniSearch` feature flag, which ships **off** — set `ORCH_FEATURE_OMNI_SEARCH=1` to
+  `omniSearch` feature flag, which ships **off** — set `CALANDRIA_FEATURE_OMNI_SEARCH=1` to
   enable it. The card works either way.
 
 ### Schedules that fire a runbook
@@ -470,7 +470,7 @@ Two channels carry them, both switched on from Settings → Notifications:
   Home Screen ([Install as an app](#install-as-an-app)), and the subscribe
   button says so. A device that has both channels sees one notification, not
   two. The instance signs its pushes with a VAPID key it mints on first use and
-  keeps beside the database (`<ORCH_DB_DIR>/vapid.json` — subscriptions are
+  keeps beside the database (`<CALANDRIA_DB_DIR>/vapid.json` — subscriptions are
   bound to it, so back it up with the database); `VAPID_SUBJECT` and
   `VAPID_PRIVATE_KEY` in `.env.example` are the knobs. **For iPhone/iPad push,
   set `VAPID_SUBJECT`** (or `PUBLIC_BASE_URL`) to a real `https:` origin or

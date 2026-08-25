@@ -74,15 +74,15 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-/** Spawn the real bridge with `callerId` as its env-injected ORCH_TASK_ID. */
+/** Spawn the real bridge with `callerId` as its env-injected CALANDRIA_TASK_ID. */
 async function connectBridge(callerId: string, projectId: string) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SCRIPT],
     env: {
-      ORCH_TASK_ID: callerId,
-      ORCH_PROJECT_ID: projectId,
-      ORCH_BASE_URL: baseUrl,
+      CALANDRIA_TASK_ID: callerId,
+      CALANDRIA_PROJECT_ID: projectId,
+      CALANDRIA_BASE_URL: baseUrl,
       SERVICE_TOKEN: "policy-token",
       PATH: process.env.PATH || "",
     },
@@ -275,7 +275,7 @@ describe("group, end to end over the Codex bridge", () => {
       expect(landed.group_id).toBe(made[0].id);
       expect(landed.group_id).not.toBe(decoy.id);
       // Provenance is the CALLER's task id, which the model never sends — the
-      // bridge only forwards ORCH_TASK_ID.
+      // bridge only forwards CALANDRIA_TASK_ID.
       expect(made[0].origin_task_id).toBe(caller.id);
 
       // The second step of the plan reuses it rather than minting a twin.

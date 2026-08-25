@@ -72,9 +72,9 @@ export function orchestratorMcpConfig(
         // raise it to ~1 day (mirrors the Claude driver's PreToolUse hook cap).
         tool_timeout_sec: 86_400,
         env: {
-          ORCH_TASK_ID: task.id,
-          ORCH_PROJECT_ID: project.id,
-          ORCH_BASE_URL: INTERNAL_BASE_URL,
+          CALANDRIA_TASK_ID: task.id,
+          CALANDRIA_PROJECT_ID: project.id,
+          CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
         },
       },

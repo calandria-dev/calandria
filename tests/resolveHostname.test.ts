@@ -28,15 +28,15 @@ describe("resolveHostname", () => {
     expect(resolveHostname({ HOSTNAME: "0.0.0.0" })).toBe("127.0.0.1");
   });
 
-  it("honours ORCH_HOSTNAME, and it wins over an ambient HOSTNAME", () => {
-    expect(resolveHostname({ ORCH_HOSTNAME: "0.0.0.0" })).toBe("0.0.0.0");
-    expect(resolveHostname({ ORCH_HOSTNAME: "0.0.0.0", HOSTNAME: "my-laptop" })).toBe("0.0.0.0");
-    expect(resolveHostname({ ORCH_HOSTNAME: "192.168.1.5", HOSTNAME: "my-laptop" })).toBe("192.168.1.5");
+  it("honours CALANDRIA_HOSTNAME, and it wins over an ambient HOSTNAME", () => {
+    expect(resolveHostname({ CALANDRIA_HOSTNAME: "0.0.0.0" })).toBe("0.0.0.0");
+    expect(resolveHostname({ CALANDRIA_HOSTNAME: "0.0.0.0", HOSTNAME: "my-laptop" })).toBe("0.0.0.0");
+    expect(resolveHostname({ CALANDRIA_HOSTNAME: "192.168.1.5", HOSTNAME: "my-laptop" })).toBe("192.168.1.5");
   });
 
-  it("treats an empty or whitespace ORCH_HOSTNAME as unset", () => {
-    expect(resolveHostname({ ORCH_HOSTNAME: "" })).toBe("127.0.0.1");
-    expect(resolveHostname({ ORCH_HOSTNAME: "   " })).toBe("127.0.0.1");
+  it("treats an empty or whitespace CALANDRIA_HOSTNAME as unset", () => {
+    expect(resolveHostname({ CALANDRIA_HOSTNAME: "" })).toBe("127.0.0.1");
+    expect(resolveHostname({ CALANDRIA_HOSTNAME: "   " })).toBe("127.0.0.1");
   });
 
   it("falls back to process.env when called with no argument", () => {
@@ -47,7 +47,7 @@ describe("resolveHostname", () => {
 describe("hostnameMigrationWarning", () => {
   it("warns the deployment that deliberately set HOSTNAME to a bind address", () => {
     const w = hostnameMigrationWarning({ HOSTNAME: "0.0.0.0" });
-    expect(w).toContain("ORCH_HOSTNAME=0.0.0.0");
+    expect(w).toContain("CALANDRIA_HOSTNAME=0.0.0.0");
   });
 
   it("stays silent for an injected machine name — that would fire on every Fedora boot", () => {
@@ -55,8 +55,8 @@ describe("hostnameMigrationWarning", () => {
     expect(hostnameMigrationWarning({ HOSTNAME: "3f2a1b9c4d5e" })).toBeNull();
   });
 
-  it("stays silent once ORCH_HOSTNAME is set, and when HOSTNAME is absent", () => {
-    expect(hostnameMigrationWarning({ ORCH_HOSTNAME: "0.0.0.0", HOSTNAME: "0.0.0.0" })).toBeNull();
+  it("stays silent once CALANDRIA_HOSTNAME is set, and when HOSTNAME is absent", () => {
+    expect(hostnameMigrationWarning({ CALANDRIA_HOSTNAME: "0.0.0.0", HOSTNAME: "0.0.0.0" })).toBeNull();
     expect(hostnameMigrationWarning({})).toBeNull();
   });
 });

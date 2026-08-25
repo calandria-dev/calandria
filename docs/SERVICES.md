@@ -9,33 +9,36 @@ and their state and logs are available when you reconnect.
 Open the project's context editor and set its `dev`, `setup`, or `test` commands. The
 Services drawer can then start, stop, and restart them and display live logs.
 
-Each project receives a stable port derived from `ORCH_SERVICE_PORT_BASE`. Calandria injects
+Each project receives a stable port derived from `CALANDRIA_SERVICE_PORT_BASE`. Calandria injects
 that value as `PORT` into managed services and the project's terminal. A service that was
 running is restarted when Calandria boots.
 
 If Calandria previously stopped unexpectedly, startup checks for and reaps the orphaned
 process group before relaunching the service. Port conflicts with unmanaged processes are
 shown as readable errors rather than crash loops. Log retention is bounded by
-`ORCH_SERVICE_LOG_LINES` (1,500 lines by default).
+`CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by default).
 
-Managed services are enabled by default. Set `ORCH_FEATURE_SERVICES=0` to remove the
+Managed services are enabled by default. Set `CALANDRIA_FEATURE_SERVICES=0` to remove the
 feature.
 
 ## Framework host checks
 
 When public service hostnames are enabled, frameworks that validate hostnames must allow
-the value Calandria supplies in `ORCH_PUBLIC_HOST`:
+the value Calandria supplies in `CALANDRIA_PUBLIC_HOST`:
 
-- Vite: `server.allowedHosts: [process.env.ORCH_PUBLIC_HOST]`
-- Next.js development server: `allowedDevOrigins: [process.env.ORCH_PUBLIC_HOST]`
+- Vite: `server.allowedHosts: [process.env.CALANDRIA_PUBLIC_HOST]`
+- Next.js development server: `allowedDevOrigins: [process.env.CALANDRIA_PUBLIC_HOST]`
 - Create React App / webpack-dev-server is configured through the injected environment.
+
+`ORCH_PUBLIC_HOST` is also still injected into every managed service indefinitely, so an
+existing config referencing the old name keeps working unchanged.
 
 ## Public URLs are opt-in
 
 Running a managed service does not expose it publicly. Public service hostnames require all
 of the following:
 
-1. `ORCH_SERVICE_HOSTS=1`;
+1. `CALANDRIA_SERVICE_HOSTS=1`;
 2. a configured `PUBLIC_BASE_URL`; and
 3. wildcard DNS and TLS for `*--<operator-host>`.
 

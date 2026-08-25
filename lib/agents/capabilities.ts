@@ -36,7 +36,7 @@ const CAPABILITIES: Record<string, () => AgentCapabilities> = {
 // firstConnectedAgent() skips it, and completeOnboarding() then finds nothing to
 // adopt on a mock-only first run. Read at import time like the rest of this
 // module; the env is set before the server boots (e2e/env.ts).
-if (process.env.ORCH_E2E_MOCK_AGENT === "1") CAPABILITIES.mock = () => MOCK_CAPABILITIES;
+if (process.env.CALANDRIA_E2E_MOCK_AGENT === "1") CAPABILITIES.mock = () => MOCK_CAPABILITIES;
 
 /** Every registered agent id, in registry order — the SDK-free half of
  * listDrivers(), for callers that only need to enumerate/validate ids

@@ -129,7 +129,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
         CF_ACCESS_AUD: "test-aud",
         // Deliberately empty — the documented default, and the whole point.
         PUBLIC_BASE_URL: "",
-        ORCH_ALLOWED_ORIGINS: "",
+        CALANDRIA_ALLOWED_ORIGINS: "",
       },
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,

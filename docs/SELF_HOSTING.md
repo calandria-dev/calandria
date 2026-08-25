@@ -171,7 +171,7 @@ boundary: loopback hosts are accepted, cross-site requests are rejected, and `/p
 WebSocket upgrades require a matching browser `Origin`. This prevents an unrelated
 website from driving the local shell and blocks DNS-rebinding hostnames. `PUBLIC_BASE_URL`
 is accepted automatically; intentional LAN access must list its exact origin in
-`ORCH_ALLOWED_ORIGINS`. This remains a single-user mode, not authentication — never expose
+`CALANDRIA_ALLOWED_ORIGINS`. This remains a single-user mode, not authentication — never expose
 it raw to the internet.
 
 The one Access-mode exception is `SERVICE_TOKEN`: a shared secret letting health probes
@@ -189,7 +189,7 @@ environment, so the file is the only way a generated token reaches it). Supply y
 when a monitor outside the container needs to poll. Running bare Node behind Access with
 no token, `server.js` warns loudly at startup instead.
 
-`ORCH_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
+`CALANDRIA_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
 shared fleet-wide so one dashboard can poll many boxes without learning each one's private
 `SERVICE_TOKEN`. It is deliberately **not** accepted on the mutating internal agent-tool
 endpoints. Unset — the default — it grants nothing.
@@ -201,42 +201,48 @@ relocates an instance (fresh container, different user, different ports) with **
 code edits**. [`.env.example`](../.env.example) is the same list in copyable form.
 Export the variables in the environment that launches `npm run dev` / `npm start` —
 `server.js` and `pty-server.js` are plain Node and read them before Next boots, so a
-`.env` file alone doesn't cover `PORT`/`ORCH_HOSTNAME`/`PTY_*`.
+`.env` file alone doesn't cover `PORT`/`CALANDRIA_HOSTNAME`/`PTY_*`.
+
+Variables below were renamed from an earlier `ORCH_*` naming; every old name still works
+as a fallback (a `CALANDRIA_*` value wins if both are set), and the server prints one
+boot-time warning naming whichever old names are still in use — that warning is your
+upgrade signal to move a self-hosted `.env`/systemd unit/compose file over on your own
+schedule.
 
 | Variable | Default | What it does |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
-| `ORCH_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `ORCH_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
+| `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
 | `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
-| `ORCH_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
+| `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that is https, else `mailto:admin@localhost`. **iOS push needs a real one** — Apple rejects `localhost` with `403 BadJwtToken`; set your https origin or a real `mailto:` |
-| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<ORCH_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
-| `ORCH_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
+| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
+| `CALANDRIA_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
-| `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
-| `ORCH_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
-| `ORCH_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
-| `ORCH_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
-| `ORCH_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
-| `ORCH_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
-| `ORCH_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
-| `ORCH_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
-| `ORCH_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
-| `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
+| `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
+| `CALANDRIA_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
+| `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
+| `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
+| `CALANDRIA_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
+| `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
+| `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
+| `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
+| `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
+| `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
-| `ORCH_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
+| `CALANDRIA_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
 
 Example — relocate an instance entirely via env:
 
 ```bash
 PORT=8080 PTY_PORT=8081 \
 PUBLIC_BASE_URL=https://orch.example.com \
-ORCH_DB_DIR=/data/orchestrator \
-ORCH_WORKTREES_DIR=/data/worktrees \
+CALANDRIA_DB_DIR=/data/orchestrator \
+CALANDRIA_WORKTREES_DIR=/data/worktrees \
 CLAUDE_CLI_PATH=/usr/local/bin/claude \
 npm start
 ```
@@ -256,8 +262,8 @@ npm start
   Settings → Run defaults → Remembered approvals — which also takes a rule typed
   in ahead of time, through the same Bash-only, prefix-checked policy, so an
   unattended task doesn't have to trip a card you'll never see. A prompt nobody answers denies
-  itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
-  `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
+  itself (`CALANDRIA_PERMISSION_UNATTENDED_MS` when no tab is open,
+  `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
   wedge a turn overnight. Calandria is a control layer, not a sandbox — the
   isolated worktree is still the real boundary.
 - **One process per database:** Calandria is single-process by design — turns run detached
@@ -270,7 +276,7 @@ npm start
   `orchestrator.lock.db`, so a killed instance releases it immediately and the next boot
   takes over with no waiting — and a read-only `sqlite3 orchestrator.db` inspection is
   unaffected, since the real database is never exclusively locked. Two instances need two
-  `ORCH_DB_DIR`s. `ORCH_DB_LOCK=off` disables the check; it is unsupported.
+  `CALANDRIA_DB_DIR`s. `CALANDRIA_DB_LOCK=off` disables the check; it is unsupported.
   One limit worth stating: the lock coordinates processes that share a kernel. Two
   *containers* mounting one volume may not see each other's locks (a sandboxed runtime like
   gVisor need not share a lock table), but that configuration is already unsafe — SQLite's

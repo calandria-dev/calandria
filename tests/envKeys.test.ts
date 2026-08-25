@@ -10,7 +10,7 @@ import { hasOpenAiKey } from "../lib/openai-key";
 
 afterEach(() => {
   for (const v of AGENT_KEY_VARS) delete process.env[v];
-  delete process.env.ORCH_ALLOW_API_KEY_ENV;
+  delete process.env.CALANDRIA_ALLOW_API_KEY_ENV;
 });
 
 describe("stripInheritedAgentKeys", () => {
@@ -30,7 +30,7 @@ describe("stripInheritedAgentKeys", () => {
   it("keeps keys when the opt-in is set on the env itself", () => {
     const env: Record<string, string | undefined> = {
       ANTHROPIC_API_KEY: "sk-ant-deliberate",
-      ORCH_ALLOW_API_KEY_ENV: "1",
+      CALANDRIA_ALLOW_API_KEY_ENV: "1",
     };
     expect(stripInheritedAgentKeys(env)).toEqual([]);
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-deliberate");
@@ -51,10 +51,10 @@ describe("stripInheritedAgentKeys", () => {
 describe("allowApiKeyEnv", () => {
   it("accepts 1/true/on, rejects everything else", () => {
     for (const v of ["1", "true", "on", "TRUE", "On"]) {
-      expect(allowApiKeyEnv({ ORCH_ALLOW_API_KEY_ENV: v })).toBe(true);
+      expect(allowApiKeyEnv({ CALANDRIA_ALLOW_API_KEY_ENV: v })).toBe(true);
     }
     for (const v of ["", "0", "false", "off", "yes"]) {
-      expect(allowApiKeyEnv({ ORCH_ALLOW_API_KEY_ENV: v })).toBe(false);
+      expect(allowApiKeyEnv({ CALANDRIA_ALLOW_API_KEY_ENV: v })).toBe(false);
     }
   });
 });

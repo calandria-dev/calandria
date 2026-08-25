@@ -29,7 +29,7 @@ day to day.
 
 Local mode has no login and binds to loopback by default. It rejects cross-site HTTP and
 WebSocket access to the app and terminal. If you intentionally use it over a LAN, configure
-the exact origin with `ORCH_ALLOWED_ORIGINS`. Use real origin authentication for anything
+the exact origin with `CALANDRIA_ALLOWED_ORIGINS`. Use real origin authentication for anything
 internet-facing; see [Self-hosting](SELF_HOSTING.md).
 
 Every setting is an environment variable with a documented default in
@@ -70,7 +70,7 @@ Windows browser with nothing further to configure.
 
 Three caveats:
 
-**Keep everything on the ext4 root.** `ORCH_DB_DIR`, `ORCH_WORKTREES_DIR`, and your
+**Keep everything on the ext4 root.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and your
 project repos must live under the Linux home (`/home/you/...`), never on `/mnt/c` or
 `\\wsl$`. Those cross-boundary filesystems do not implement file locking, which breaks
 the SQLite mutex in `lib/db-lock.mjs` — two processes can then open the same database and
@@ -83,7 +83,7 @@ directly) from the Ubuntu shell and complete the browser login there; the creden
 under the WSL2 `$HOME`.
 
 **Managed-service hostnames need the same DNS story as Linux.** Public service URLs
-(`<slug>--<host>`, see [Managed services](SERVICES.md)) require `ORCH_SERVICE_HOSTS=1`,
+(`<slug>--<host>`, see [Managed services](SERVICES.md)) require `CALANDRIA_SERVICE_HOSTS=1`,
 `PUBLIC_BASE_URL`, and wildcard DNS. WSL2 changes none of that — and subdomains of
 `localhost` do not resolve from the Windows browser, so testing locally needs a
 `C:\Windows\System32\drivers\etc\hosts` entry per service hostname.

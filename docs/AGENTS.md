@@ -45,7 +45,7 @@ launch environment by default so an inherited shell variable cannot silently swi
 session to API billing.
 
 If you intentionally want API-key billing, connect a key in the app or set
-`ORCH_ALLOW_API_KEY_ENV=1` for a deliberately configured headless environment.
+`CALANDRIA_ALLOW_API_KEY_ENV=1` for a deliberately configured headless environment.
 
 ## Claude Code
 

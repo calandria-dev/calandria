@@ -36,7 +36,7 @@ const SCHEDULER_PATH = "/api/instance/scheduler";
 // drains in-flight turns before the process exits.
 const DRAIN_PATH = "/api/instance/drain";
 
-// Read-only: the fleet-wide ORCH_FLEET_TOKEN is honored here (see cf-access.mjs)
+// Read-only: the fleet-wide CALANDRIA_FLEET_TOKEN is honored here (see cf-access.mjs)
 // because nothing reachable this way can mutate instance state.
 function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
   if (pathname === VERSION_PATH || pathname === USAGE_PATH) {

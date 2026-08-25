@@ -28,7 +28,7 @@ export async function GET() {
       const conn = getAgentConnection(d.id);
       // Effective-credential overlay (issue #4): the settings record says how
       // the user CONNECTED, but a live API key (persisted 0600 file, or env via
-      // the ORCH_ALLOW_API_KEY_ENV opt-in) is what turns actually bill — it
+      // the CALANDRIA_ALLOW_API_KEY_ENV opt-in) is what turns actually bill — it
       // outranks a stored subscription login, so report it, not the record.
       const keyed = !!d.apiKey?.has();
       return {

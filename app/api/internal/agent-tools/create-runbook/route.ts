@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 //
 // The same trust split every tool here makes:
 //
-//   body.taskId  the CALLER. ORCH_TASK_ID, injected into the bridge's env by
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
 //                lib/agents/codex/driver.ts — never a field the model can set.
 //   body.project the TARGET the MODEL named, and therefore untrusted;
 //                resolveTargetProject is strict about it.

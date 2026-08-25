@@ -33,9 +33,9 @@ describe("codex orchestrator MCP bridge config", () => {
   });
 
   it("scopes the bridge to this task/project and authenticates it", () => {
-    expect(server.env.ORCH_TASK_ID).toBe("t1");
-    expect(server.env.ORCH_PROJECT_ID).toBe("p1");
-    expect(server.env.ORCH_BASE_URL).toBeTruthy();
+    expect(server.env.CALANDRIA_TASK_ID).toBe("t1");
+    expect(server.env.CALANDRIA_PROJECT_ID).toBe("p1");
+    expect(server.env.CALANDRIA_BASE_URL).toBeTruthy();
     expect(server.env).toHaveProperty("SERVICE_TOKEN");
   });
 

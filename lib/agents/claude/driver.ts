@@ -1220,7 +1220,7 @@ async function* runTurn(
             } else {
               endTurn(
                 !BACKGROUND_LINGER_ENABLED
-                  ? "lingering is off on this instance (ORCH_BACKGROUND_LINGER), so the session closed at the end of the turn"
+                  ? "lingering is off on this instance (CALANDRIA_BACKGROUND_LINGER), so the session closed at the end of the turn"
                   : `beyond this instance's ${Math.round(BACKGROUND_LINGER_MS / 60000)}-minute linger window`,
               );
             }
@@ -1330,7 +1330,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `Do not invent features that aren't there.\n\n` +
       `If the project has a dev server, note how it starts and that it must bind the PORT env var the ` +
       `orchestrator injects, and (when the framework enforces host checks) the one-liner that allows the ` +
-      `orchestrator's proxied hostname: Vite → server.allowedHosts including process.env.ORCH_PUBLIC_HOST, ` +
+      `orchestrator's proxied hostname: Vite → server.allowedHosts including process.env.CALANDRIA_PUBLIC_HOST, ` +
       `Next → allowedDevOrigins in next.config; CRA/webpack-dev-server needs nothing (pre-cleared via env).\n\n` +
       `Write the context as plain markdown (no code fences around the whole thing), tight and ` +
       `information-dense, ~200–500 words. Wrap ONLY the final document between a line containing ` +
