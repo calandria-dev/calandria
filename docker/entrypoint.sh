@@ -7,8 +7,12 @@ set -euo pipefail
 # Recreate the per-user state layout. Named volumes copy the image's /home/calandria
 # skeleton on first mount, but an empty bind mount (or a pre-created volume)
 # starts blank — this makes either work.
+# Only ever the NEW layout: an image that predates the rename left its database
+# at $HOME/.zen-orchestrator/orchestrator.db, and lib/storage.mjs keeps using it
+# wherever it exists. Pre-creating an empty $HOME/.calandria can't strand it —
+# that fallback tests for the database FILE, not the directory.
 mkdir -p \
-  "$HOME/.zen-orchestrator" \
+  "$HOME/.calandria" \
   "${CALANDRIA_WORKTREES_DIR:-${ORCH_WORKTREES_DIR:-$HOME/worktrees}}" \
   "$HOME/projects" \
   "$HOME/.claude"

@@ -15,7 +15,7 @@ const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "orch-git-te
 process.env.CALANDRIA_TEST_TMP = root;
 process.env.CALANDRIA_WORKTREES_DIR = path.join(root, "worktrees");
 // Point the SQLite store at a throwaway dir so store-backed tests get a fresh,
-// isolated orchestrator.db instead of the user's real one. Read at import time
+// isolated calandria.db instead of the user's real one. Read at import time
 // by lib/config.ts, so it must be set here (before the module graph loads).
 process.env.CALANDRIA_DB_DIR = path.join(root, "db");
 

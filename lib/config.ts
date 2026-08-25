@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { readEnv } from "./env.mjs";
+import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 
 /**
  * Per-instance configuration, driven entirely by environment variables so an
@@ -12,12 +13,23 @@ import { readEnv } from "./env.mjs";
  * can't import TS, so they read the same env vars directly — keep names in sync.
  */
 
-/** App-data dir for the SQLite database. */
-export const DB_DIR = readEnv("CALANDRIA_DB_DIR") || path.join(os.homedir(), ".zen-orchestrator");
+/*
+ * The two on-disk locations resolve through lib/storage.mjs rather than a bare
+ * `env || default`, because an install that predates the Calandria rename still
+ * has its data under the old names and nothing here ever moves it. See that
+ * file for the rules; the boot warning is printed once by server.js.
+ */
+
+const dbLocation = resolveDbLocation();
+
+/** App-data dir for the SQLite database (default `~/.calandria`). */
+export const DB_DIR = dbLocation.dir;
+
+/** The database itself — `calandria.db`, or a pre-rename `orchestrator.db` still in place. */
+export const DB_PATH = dbLocation.path;
 
 /** Where per-task git worktrees are created (must be outside any project repo). */
-export const WORKTREES_DIR =
-  readEnv("CALANDRIA_WORKTREES_DIR") || path.join(os.homedir(), ".agent-orchestrator", "worktrees");
+export const WORKTREES_DIR = resolveWorktreesDir().dir;
 
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
 export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");

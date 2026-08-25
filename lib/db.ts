@@ -2,14 +2,15 @@ import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 import path from "node:path";
 import fs from "node:fs";
-import { DB_DIR, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
+import { DB_DIR, DB_PATH, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
 import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
 
 // Single shared connection. Stored outside the repo (CALANDRIA_DB_DIR, default
-// ~/.zen-orchestrator) so `git clean`/re-clone can't wipe it.
-const DB_PATH = path.join(DB_DIR, "orchestrator.db");
+// ~/.calandria) so `git clean`/re-clone can't wipe it. The file is calandria.db
+// on a fresh install and a pre-rename orchestrator.db wherever one already
+// exists — resolved once in lib/storage.mjs, never moved. See lib/config.ts.
 
 declare global {
   // eslint-disable-next-line no-var
@@ -587,7 +588,7 @@ function ensureOnboardingFlag(db: Database.Database) {
   if (inUse) db.prepare("INSERT INTO settings (key, value) VALUES ('onboarding_complete', '1')").run();
 }
 
-// Add columns introduced after a DB was first created (older orchestrator.db files).
+// Add columns introduced after a DB was first created (older database files).
 export function migrate(db: Database.Database) {
   const cols = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
   const add = (name: string, def: string) => {

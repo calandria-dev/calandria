@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { init, migrate } from "../lib/db";
 
-// Build a legacy-shaped orchestrator.db. The schema still carries the legacy
+// Build a legacy-shaped database. The schema still carries the legacy
 // building/conventions columns, so init() alone gives us the shape we need to
 // exercise the one-shot fold that folds them into the unified `context` field.
 // init() runs migrate once, but with no legacy data present it neither folds nor

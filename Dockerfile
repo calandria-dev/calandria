@@ -7,7 +7,7 @@
 # container wakes in seconds, not a dev-mode cold compile.
 #
 # All per-user state lives under /home/calandria — mount one named volume there:
-#   .zen-orchestrator/  SQLite db        worktrees/  per-task git worktrees
+#   .calandria/         SQLite db        worktrees/  per-task git worktrees
 #   projects/           cloned repos     .claude/    claude CLI login (Max)
 #   .config/gh/         gh CLI login     .gitconfig  git credential helper
 #
@@ -128,7 +128,7 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # one inode; drop it only once old paths are known to be gone.
 RUN userdel -r node \
   && useradd --create-home --uid 1000 --home-dir /home/calandria --shell /bin/bash calandria \
-  && mkdir -p /home/calandria/.zen-orchestrator /home/calandria/worktrees /home/calandria/projects /home/calandria/.claude /home/calandria/.codex \
+  && mkdir -p /home/calandria/.calandria /home/calandria/worktrees /home/calandria/projects /home/calandria/.claude /home/calandria/.codex \
   && chown -R calandria:calandria /home/calandria \
   && ln -s /home/calandria /home/orch
 
@@ -151,8 +151,10 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # imports it un-bundled to claim the database before serving, and lib/db.ts
 # imports the bundled copy to decide whether crash recovery may run. Missing
 # here, the container would fail to boot. lib/env.mjs is the CALANDRIA_*/ORCH_*
-# alias reader db-lock.mjs, the auth .mjs files and server.js itself all import.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs ./lib/
+# alias reader db-lock.mjs, the auth .mjs files and server.js itself all import,
+# and lib/storage.mjs (which resolves the database/worktree locations, including
+# the pre-rename fallback) is imported by server.js and db-lock.mjs alike.
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/calandria-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so

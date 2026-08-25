@@ -76,10 +76,12 @@ equivalent — a real wildcard DNS record is the only way to avoid one entry per
 
 Everything the app knows — projects, tasks, transcripts, summaries, usage/cost history, merge
 records, schedules, runbooks, remembered permission rules, settings — lives in one SQLite
-database, `orchestrator.db` (+ its WAL-mode sidecars `orchestrator.db-wal` and
-`orchestrator.db-shm`) under `CALANDRIA_DB_DIR` (default `~/.zen-orchestrator`; see "Where data
+database, `calandria.db` (+ its WAL-mode sidecars `calandria.db-wal` and
+`calandria.db-shm`) under `CALANDRIA_DB_DIR` (default `~/.calandria`; see "Where data
 lives" in the top-level `CLAUDE.md`). `lib/db.ts` opens it in `journal_mode = WAL` with a 5s
-`busy_timeout`.
+`busy_timeout`. An install predating the rename still has `orchestrator.db` under
+`~/.zen-orchestrator`, and the app keeps using it there — substitute that name in the commands
+below if that's what you have.
 
 **Symptoms.** The app fails to boot with a SQLite error, a route 500s referencing
 `better-sqlite3`, or (more insidious) the app runs but a task's history looks wrong — missing
@@ -91,13 +93,13 @@ corrupting the main file outright.
 inspection. Then, against the volume/directory:
 
 ```bash
-sqlite3 orchestrator.db "PRAGMA integrity_check;"
+sqlite3 calandria.db "PRAGMA integrity_check;"
 ```
 
 `ok` means the b-tree structure is sound (this does not prove application-level consistency, just
 that SQLite can read every page). Anything else is a list of the specific corruption found.
 Concurrent read-only inspection while the app is running is explicitly supported (that's why the
-boot mutex lives in a *separate* `orchestrator.lock.db` rather than locking the real file — see
+boot mutex lives in a *separate* `calandria.lock.db` rather than locking the real file — see
 `lib/db-lock.mjs`), but do the integrity check with the app stopped so a WAL checkpoint mid-scan
 can't produce a false read.
 
@@ -124,23 +126,23 @@ runs after the file has already opened successfully.
 1. **Restore from a backup.** There's no built-in backup/restore tooling yet — full
    backup/restore/upgrade-safety story is tracked in
    [issue #13](https://github.com/calandria-dev/calandria/issues/13). Until then, back up by
-   stopping the app and copying `orchestrator.db*` (all three files together, so the WAL isn't
+   stopping the app and copying `calandria.db*` (all three files together, so the WAL isn't
    left behind).
 2. **Recover what SQLite can still read.** With the app stopped:
    ```bash
-   sqlite3 orchestrator.db ".recover" | sqlite3 orchestrator-recovered.db
-   sqlite3 orchestrator-recovered.db "PRAGMA integrity_check;"
+   sqlite3 calandria.db ".recover" | sqlite3 calandria-recovered.db
+   sqlite3 calandria-recovered.db "PRAGMA integrity_check;"
    ```
    `.recover` walks every page it can and reconstructs a fresh database from what's salvageable
    — rows in a damaged page are lost, everything else survives. Once the recovered file passes
-   `integrity_check`, stop the app, replace `orchestrator.db` with it (removing the stale
+   `integrity_check`, stop the app, replace `calandria.db` with it (removing the stale
    `-wal`/`-shm` sidecars alongside it), and restart.
 3. **Start clean.** If nothing is recoverable, see below for what that costs.
 
-**What's lost if you delete the DB.** Deleting `orchestrator.db*` (or pointing `CALANDRIA_DB_DIR` at
+**What's lost if you delete the DB.** Deleting `calandria.db*` (or pointing `CALANDRIA_DB_DIR` at
 an empty directory) does **not** touch your code: cloned repos (`CALANDRIA_PROJECTS_DIR`, default
 `~/projects`) and task worktrees (`CALANDRIA_WORKTREES_DIR`, default
-`~/.agent-orchestrator/worktrees`) live in separate directories and are untouched — but they
+`~/.calandria/worktrees`) live in separate directories and are untouched — but they
 become orphaned, since nothing in a fresh database points at them. Your `claude`/`codex` CLI
 logins also survive (they live under `~/.claude` / `~/.codex`, not the app's DB), so agents
 reconnect with "Verify connection" rather than a fresh OAuth flow. What does **not** survive:
@@ -157,15 +159,15 @@ automatically — find and remove them by hand (`git worktree list` in each proj
 
 Three things grow over the life of an instance, and only one of them is bounded automatically.
 
-**The database itself** (`orchestrator.db` + WAL) stays small in absolute terms — it holds text
-(transcripts, summaries, settings) and small numeric rows, no binaries. `orchestrator.db-wal`
+**The database itself** (`calandria.db` + WAL) stays small in absolute terms — it holds text
+(transcripts, summaries, settings) and small numeric rows, no binaries. `calandria.db-wal`
 grows between checkpoints; SQLite's default auto-checkpoint (~1000 pages) handles this on its
 own, with one caveat: a long-held read connection can defer a checkpoint, so a `sqlite3
-orchestrator.db` session left open for an inspection is worth closing when you're done. There's
+calandria.db` session left open for an inspection is worth closing when you're done. There's
 no scheduled `wal_checkpoint` or `VACUUM` in this app (tracked as part of
 [issue #13](https://github.com/calandria-dev/calandria/issues/13)).
 
-**Task worktrees** (`CALANDRIA_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees`) are the real
+**Task worktrees** (`CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees`) are the real
 disk cost, and they're the one thing that does **not** shrink on its own. Every task gets its own
 full git worktree — effectively a second checkout of the project repo — for the life of the task,
 even after it's merged. On a repo with a large working tree (node_modules, build artifacts,

@@ -1,4 +1,4 @@
-// The boot lock: one app process per orchestrator.db, enforced.
+// The boot lock: one app process per database, enforced.
 //
 // Two processes against one database quietly corrupt each other — init()'s
 // crash-recovery resets (running flags, the pending-message queue, open

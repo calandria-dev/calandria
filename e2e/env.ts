@@ -2,7 +2,7 @@
 // created by the first process that loads this module (Playwright's main
 // process) and shared with worker processes via CALANDRIA_E2E_ROOT, which children
 // inherit. Everything the app persists (SQLite, worktrees, cloned/seeded repos)
-// lands under this root, so an e2e run never touches ~/.zen-orchestrator or the
+// lands under this root, so an e2e run never touches ~/.calandria or the
 // developer's real projects, and every run starts from a truly fresh instance
 // (which is what makes the onboarding spec deterministic).
 

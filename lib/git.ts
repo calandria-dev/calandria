@@ -13,7 +13,7 @@ import { withRepoLock } from "./repoLock";
 const run = promisify(execFile);
 
 // Worktrees live OUTSIDE the orchestrator project (CALANDRIA_WORKTREES_DIR, default
-// ~/.agent-orchestrator/worktrees), keyed by task id. Each is a real git
+// ~/.calandria/worktrees), keyed by task id. Each is a real git
 // worktree of the *project's* repo, so a task gets an isolated checkout +
 // branch and parallel tasks never collide. Keeping them out of the project
 // root is essential: nested checkouts under the Next app would be swept up by

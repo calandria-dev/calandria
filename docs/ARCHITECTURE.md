@@ -418,12 +418,22 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 
 | What | Where |
 |-|-|
-| Projects, tasks, transcripts, summaries, session index | `orchestrator.db` (SQLite) in `CALANDRIA_DB_DIR`, default `~/.zen-orchestrator` |
-| The single-instance boot lock | `orchestrator.lock.db` beside it — a pure mutex holding no data (see below) |
-| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
+| Projects, tasks, transcripts, summaries, session index | `calandria.db` (SQLite) in `CALANDRIA_DB_DIR`, default `~/.calandria` |
+| The single-instance boot lock | `calandria.lock.db` beside it — a pure mutex holding no data (see below) |
+| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees` — deliberately outside every repo |
 | Cloned project repos | `CALANDRIA_PROJECTS_DIR`, default `~/projects` |
 | Your apps' actual code | each project's working directory — never inside Calandria's own tree |
 | Claude Code's raw session logs | `~/.claude/projects/...` (managed by Claude Code) |
+
+With the env unset, nothing is ever moved automatically: if `~/.calandria` holds
+no database but the pre-rename `~/.zen-orchestrator/orchestrator.db` exists, the
+old path keeps being used and boot prints one hint line. Inside an explicit
+`CALANDRIA_DB_DIR`, `calandria.db` wins and an existing `orchestrator.db` is the
+fallback. A populated legacy `~/.agent-orchestrator/worktrees` is kept where it
+is, because git registers each worktree by absolute path in the parent repo's
+`.git/worktrees/<id>/gitdir` — relocating would need `git worktree repair` per
+project; an empty one is abandoned. All of this resolves in one shared module,
+`lib/storage.mjs`; see `docs/SELF_HOSTING.md` for the manual migration recipe.
 
 ### One process per database
 
@@ -438,7 +448,7 @@ rows the second believes are idle.
 
 So **`server.js` claims the database before `app.prepare()`** (`lib/db-lock.mjs`) and
 exits with the holder's pid and host if it can't. The mutex is a kernel file lock — a
-`BEGIN IMMEDIATE` transaction opened on a dedicated `orchestrator.lock.db` and never
+`BEGIN IMMEDIATE` transaction opened on a dedicated `calandria.lock.db` and never
 committed, holding SQLite's RESERVED lock for the life of the connection. That's chosen
 over a pid+heartbeat lease file deliberately: there's no heartbeat to miss, no staleness
 window to tune, and no pid-liveness heuristic to get wrong (pids are small and reused
@@ -450,8 +460,8 @@ pointedly *not* layered on top: in that mode a connection retains its SHARED loc
 after a failed write, so two racing processes could deadlock each other out of the
 upgrade forever.
 
-A separate lock file, rather than locking `orchestrator.db` itself, keeps a concurrent
-read-only `sqlite3 orchestrator.db` inspection working and leaves WAL alone. Who holds
+A separate lock file, rather than locking `calandria.db` itself, keeps a concurrent
+read-only `sqlite3 calandria.db` inspection working and leaves WAL alone. Who holds
 it is a best-effort JSON sidecar read only to write a good error message — it never
 decides ownership, so one left by a hard kill can't wedge anything.
 

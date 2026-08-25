@@ -83,7 +83,7 @@ export function useOrchestrator() {
   const [servicesMounted, setServicesMounted] = useState(false);
   const [servicesHeight, setServicesHeight] = useState(300);
   // Server-backed app defaults (e.g. default reasoning / permission mode a task
-  // inherits). Stored in orchestrator.db, not localStorage, so runTurn can read them.
+  // inherits). Stored in the database, not localStorage, so runTurn can read them.
   const [appDefaults, setAppDefaults] = useState<Record<string, string>>({});
   const [appDefaultsReady, setAppDefaultsReady] = useState(false);
   // Agent capability descriptors (GET /api/agents): the model/reasoning/permission

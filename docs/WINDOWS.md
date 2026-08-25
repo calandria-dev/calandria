@@ -21,7 +21,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 3 | `CLAUDE_CLI_PATH` default has no `.exe`; bare `"codex"` spawned without a shell can't resolve npm's `.cmd` shim | Agent CLIs | S | Yes — no turns |
 | 4 | Six negative-PID process-group kills + a `ps`-based orphan guard in `lib/services.ts`; `detached: true` means "new console" on Windows | Process mgmt | M | Yes — services can't be stopped or reaped |
 | 5 | Path identity compared case-sensitively after `realpathSync` (`lib/git.ts:536`, `lib/repoLock.ts:73`) — NTFS is case-insensitive | Paths | S | Yes — can wrongly `rmSync` a linked worktree |
-| 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.agent-orchestrator\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
+| 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
 | 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
 | 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` on Windows kills via `taskkill /F` (unverified) | Process mgmt | S–M | Degradation, not a crash |
 | 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) | Files | S | Security downgrade |

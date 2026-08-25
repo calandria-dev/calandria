@@ -275,10 +275,10 @@ old one. There is no undo.
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
 | `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
-| `CALANDRIA_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
+| `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
 | `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
-| `CALANDRIA_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
+| `CALANDRIA_WORKTREES_DIR` | `~/.calandria/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
 | `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
@@ -297,6 +297,47 @@ CALANDRIA_WORKTREES_DIR=/data/worktrees \
 CLAUDE_CLI_PATH=/usr/local/bin/claude \
 npm start
 ```
+
+### Upgrading from the pre-rename default paths
+
+`CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` used to default to `~/.zen-orchestrator`
+and `~/.agent-orchestrator/worktrees`. Nothing is ever moved automatically — relocating a
+live instance's database behind its back is indistinguishable, from your side, from losing
+every project and task, and a worktree is registered by *absolute path* in its parent repo's
+`.git/worktrees/<id>/gitdir`, so relocating the directory needs a `git worktree repair` run
+inside every affected project repo, not a file move. So the resolver falls back instead:
+with `CALANDRIA_DB_DIR` unset, if `~/.calandria` holds no database but
+`~/.zen-orchestrator/orchestrator.db` exists, the old path keeps being used, and boot prints
+one hint line naming it and where to move it. Inside an explicit `CALANDRIA_DB_DIR`,
+`calandria.db` is preferred and an existing `orchestrator.db` there is the fallback —
+resolution never leaves a directory you named. The check is against the database *file*,
+not the directory, so a container entrypoint pre-creating an empty `~/.calandria` can never
+strand existing data. Worktrees follow their own, simpler rule: a populated legacy
+`~/.agent-orchestrator/worktrees` is kept as-is, and only an empty one is abandoned in
+favor of the new default.
+
+To migrate on your own schedule:
+
+```bash
+# Move a pre-rename install to the new default location. Stop the app first —
+# copying a live SQLite database mid-write gives you a corrupt one.
+mkdir -p ~/.calandria
+mv ~/.zen-orchestrator/orchestrator.db     ~/.calandria/calandria.db
+mv ~/.zen-orchestrator/orchestrator.db-wal ~/.calandria/calandria.db-wal 2>/dev/null || true
+mv ~/.zen-orchestrator/orchestrator.db-shm ~/.calandria/calandria.db-shm 2>/dev/null || true
+# The boot lock is a pure mutex holding no data — delete it rather than move it.
+rm -f ~/.zen-orchestrator/orchestrator.lock.*
+# Anything else the app keeps beside the database (API keys, VAPID keys, uploads):
+mv ~/.zen-orchestrator/* ~/.calandria/ 2>/dev/null || true
+# Then start the app. The boot hint line stops printing once nothing legacy is left.
+```
+
+The `-wal`/`-shm` files must move *together* with the database, or be checkpointed away
+first — a stale `-wal` left behind next to a moved `.db` loses the most recent writes. Note
+what this recipe deliberately leaves out: the per-task **worktrees** aren't part of it —
+either leave `CALANDRIA_WORKTREES_DIR` pointing at the old directory, or relocate it
+yourself and run `git worktree repair <new-path>/<task-id>` inside each affected project
+repo.
 
 ## Notes & caveats
 
@@ -320,14 +361,17 @@ npm start
 - **One process per database:** Calandria is single-process by design — turns run detached
   and owned by the server, and boot opens by clearing what a crash left behind (running
   flags, queued follow-ups, unanswered permission cards, in-flight schedule runs). Point a
-  second process at the same `orchestrator.db` and that recovery pass runs against a *live*
+  second process at the same `calandria.db` and that recovery pass runs against a *live*
   instance. So the app takes a lock on the database at boot and **refuses to start** if
   another process holds it, naming the holder's pid and host; crash recovery only ever runs
   for the process that owns the database. The lock is a kernel file lock on a separate
-  `orchestrator.lock.db`, so a killed instance releases it immediately and the next boot
-  takes over with no waiting — and a read-only `sqlite3 orchestrator.db` inspection is
-  unaffected, since the real database is never exclusively locked. Two instances need two
-  `CALANDRIA_DB_DIR`s. `CALANDRIA_DB_LOCK=off` disables the check; it is unsupported.
+  `calandria.lock.db`, so a killed instance releases it immediately and the next boot
+  takes over with no waiting — and a read-only `sqlite3 calandria.db` inspection is
+  unaffected, since the real database is never exclusively locked. The lock file is named
+  after the database it guards, so a pre-rename `orchestrator.db` is still guarded by
+  `orchestrator.lock.db` — that pairing is what keeps mutual exclusion working across an
+  upgrade from an older build. Two instances need two `CALANDRIA_DB_DIR`s.
+  `CALANDRIA_DB_LOCK=off` disables the check; it is unsupported.
   One limit worth stating: the lock coordinates processes that share a kernel. Two
   *containers* mounting one volume may not see each other's locks (a sandboxed runtime like
   gVisor need not share a lock table), but that configuration is already unsafe — SQLite's

@@ -80,7 +80,13 @@ const envKeysImport = import("./lib/env-keys.mjs");
 // SCHEDULER) and for the one-line deprecation notice printed below.
 const envImport = import("./lib/env.mjs");
 
-// One app process per orchestrator.db. Two processes against one database
+// Where the database and the per-task worktrees actually live — including the
+// pre-rename fallback, which is why this is a shared module and not an inline
+// `env || default` here (lib/config.ts and lib/db-lock.mjs read the same one).
+// Dynamic-imported like its siblings: plain CommonJS entrypoint, ES module.
+const storageImport = import("./lib/storage.mjs");
+
+// One app process per database. Two processes against one database
 // silently corrupt each other — the loser of the race is whichever one is
 // mid-turn when the other boots and runs its crash-recovery pass. Claimed HERE,
 // before app.prepare(), so nothing can open a turn, a service or a schedule
@@ -215,12 +221,19 @@ const prepared = dbLockImport
   })
   .then(() => app.prepare());
 
-Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env]) => {
+Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage]) => {
   // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still relied
   // on — the old spellings keep working, but this is the only heads-up an
   // operator gets, so print it before the app starts serving.
   const deprecation = env.deprecatedEnvWarning();
   if (deprecation) console.warn("[server] WARN: " + deprecation);
+
+  // Same deal for the on-disk locations: an install that predates the rename
+  // keeps running on ~/.zen-orchestrator / ~/.agent-orchestrator, because
+  // moving a live instance's data is the operator's call and never ours. This
+  // line is the only place that says so. See lib/storage.mjs.
+  const legacyStorage = storage.legacyStorageWarning();
+  if (legacyStorage) console.warn("[server] " + legacyStorage);
 
   // Resolved here (not at top-level) because it reads CALANDRIA_SHUTDOWN_GRACE_MS
   // through lib/env.mjs's readEnv, which needs envImport settled.

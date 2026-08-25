@@ -160,7 +160,7 @@ the [self-hosting guide](docs/SELF_HOSTING.md). Layering site-specific CLIs
 and config on top of the published image? Start from
 [`examples/overlay/`](examples/overlay/).
 
-One instance per database: Calandria locks `orchestrator.db` at boot and
+One instance per database: Calandria locks `calandria.db` at boot and
 refuses to start if another process already owns it, naming the holder. Two
 servers sharing one database overwrite each other's running tasks; give a
 second instance its own `CALANDRIA_DB_DIR`.
