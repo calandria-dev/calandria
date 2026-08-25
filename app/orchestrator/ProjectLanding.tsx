@@ -13,13 +13,22 @@ import { groupProgress, groupTint } from "./GroupChips";
 // Shown in the session pane when a project is open but no task is selected.
 // Surfaces the auto-generated "where you left off" recap when one exists / is
 // brewing; otherwise the plain create-a-task prompt.
-export function ProjectLanding({ project, projects, agents, recap, groups, onSelectGroup, onNewTask, onRefreshRecap, onOpenTask }: {
+export function ProjectLanding({ project, projects, agents, recap, groups, onSelectGroup, onNewTask, onRefreshRecap, onOpenTask, mobile }: {
   project: ProjectRow; projects: ProjectRow[]; agents: AgentsBundle; recap?: RecapInfo;
   /** This project's groups with their derived counts — the Groups card below. */
   groups: TaskGroupRow[];
   /** Select a group's chip on the task list/board (null = All). */
   onSelectGroup: (groupId: string | null) => void;
   onNewTask: () => void; onRefreshRecap: () => void; onOpenTask: (taskId: string) => void;
+  /**
+   * Mounted as the phone's project pane rather than in the session column. The
+   * "no task selected" placeholder below is dropped there: on desktop it
+   * explains an empty half of a split screen, but on a phone this pane was
+   * navigated TO on purpose and the placeholder just costs the first screenful
+   * — which on a 390px phone is the whole of Runbooks. The pane's own header
+   * carries New task, and the task list is one tap back.
+   */
+  mobile?: boolean;
 }) {
   const generating = recap?.generating && !recap?.recap;
   const hasRecap = !!recap?.recap;
@@ -100,16 +109,20 @@ export function ProjectLanding({ project, projects, agents, recap, groups, onSel
   // Schedules' own fetch resolves (it still renders nothing until then), or
   // the space above the card once the card has loaded (Task 12: the card
   // itself always renders now, even for a project with zero schedules, so
-  // there's somewhere to click "New schedule" from).
+  // there's somewhere to click "New schedule" from). With `mobile` there is no
+  // `.empty` to center, and the flex column simply stacks the cards from the
+  // top — which is what a pane navigated to on purpose should do.
   return (
     <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
       <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
-        <div className="empty void" style={{ margin: "auto" }}>
-          <div className="e-ic"><Logo size={40} /></div>
-          <div className="e-t">No task selected</div>
-          <div className="e-s">Create a task to start an agent session.</div>
-          <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
-        </div>
+        {!mobile && (
+          <div className="empty void" style={{ margin: "auto" }}>
+            <div className="e-ic"><Logo size={40} /></div>
+            <div className="e-t">No task selected</div>
+            <div className="e-s">Create a task to start an agent session.</div>
+            <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
+          </div>
+        )}
         <GroupsCard groups={groups} onSelect={onSelectGroup} />
         <Runbooks project={project} projects={projects} agents={agents} onOpenTask={onOpenTask} />
         <Schedules project={project} agents={agents} />

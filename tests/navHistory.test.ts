@@ -27,9 +27,10 @@ class FakeHistory implements HistoryLike {
 const PATH = "/app";
 const MOBILE = true;
 
-function paneOf(sel: NavSel): "projects" | "tasks" | "session" | "settings" {
+function paneOf(sel: NavSel): "projects" | "tasks" | "project" | "session" | "settings" {
   if (sel.view === "settings") return "settings";
   if (sel.proj && sel.task) return "session";
+  if (sel.proj && sel.home) return "project";  // the Runbooks/Schedules pane
   if (sel.proj) return "tasks";
   return "projects";
 }
@@ -50,7 +51,10 @@ function pressBack(h: FakeHistory, ref: { sel: NavSel }): string {
 }
 
 const sel = (proj: string | null, task: string | null, view: NavSel["view"] = "workspace"): NavSel =>
-  ({ proj, task, view });
+  ({ proj, task, home: false, view });
+
+/** The project-home pane: a project open, no task, the home intent held. */
+const home = (proj: string): NavSel => ({ proj, task: null, home: true, view: "workspace" });
 
 describe("navHistory — mobile Back via single trap entry", () => {
   it("deep-link to a task: Back steps session → tasks → projects → exit", () => {
@@ -125,10 +129,65 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(h.url).toBe("?project=P&task=T"); // URL still mirrored for refresh-restore
   });
 
+  // The project home is the only mount point for Runbooks and Schedules, and on
+  // a phone it is a pane of its own rather than "no task selected" — so it has
+  // to be a Back level, or the one press that should return to the task list
+  // would drop the whole project instead.
+  it("project home: Back steps project → tasks → projects → exit", () => {
+    const h = new FakeHistory("/app");
+    const ref = { sel: sel(null, null) };
+    settle(h, ref.sel);
+    settle(h, sel("P", null)); ref.sel = sel("P", null);   // tap project → tasks
+    settle(h, home("P")); ref.sel = home("P");             // tap the name → project home
+    expect(paneOf(ref.sel)).toBe("project");
+
+    expect(pressBack(h, ref)).toBe("tasks");
+    expect(pressBack(h, ref)).toBe("projects");
+    expect(pressBack(h, ref)).toBe("exit");
+  });
+
+  it("opening a task from the project home leaves no home level behind", () => {
+    // A runbook dispatch selects the task it minted, which drops the intent —
+    // one Back must then land on the task list, not back on the cards.
+    const h = new FakeHistory("/app");
+    const ref = { sel: sel(null, null) };
+    settle(h, ref.sel);
+    settle(h, home("P"));
+    ref.sel = sel("P", "T");   // dispatch selected the new task
+    settle(h, ref.sel);
+    expect(pressBack(h, ref)).toBe("tasks");
+    expect(pressBack(h, ref)).toBe("projects");
+  });
+
+  it("project home adds no history entries of its own (still one trap)", () => {
+    const h = new FakeHistory("/app");
+    settle(h, sel(null, null));
+    settle(h, sel("P", null));
+    settle(h, home("P"));
+    settle(h, sel("P", null));
+    settle(h, home("P"));
+    expect(h.stack.filter((e) => (e.state as { trap?: boolean })?.trap).length).toBe(1);
+  });
+
+  it("deep-link to ?home=1 restores the project home pane", () => {
+    const h = new FakeHistory("/app?project=P&home=1");
+    const ref = { sel: home("P") };
+    settle(h, sel(null, null)); // first effect run: selection still loading
+    settle(h, ref.sel);
+    expect(paneOf(ref.sel)).toBe("project");
+    expect(h.url).toBe("?project=P&home=1");
+    expect(pressBack(h, ref)).toBe("tasks");
+  });
+
   it("selectionUrl mirrors selection for refresh-restore", () => {
     expect(selectionUrl(sel(null, null), "/app")).toBe("/app");
     expect(selectionUrl(sel("P", null), "/app")).toBe("?project=P");
     expect(selectionUrl(sel("P", "T"), "/app")).toBe("?project=P&task=T");
     expect(selectionUrl(sel("P", null, "settings"), "/app")).toBe("?project=P&view=settings");
+    expect(selectionUrl(home("P"), "/app")).toBe("?project=P&home=1");
+    // home never travels without a project, and a selected task supersedes it
+    // (selecting one drops the intent) — so neither combination is mirrored.
+    expect(selectionUrl({ proj: null, task: null, home: true, view: "workspace" }, "/app")).toBe("/app");
+    expect(selectionUrl({ proj: "P", task: "T", home: true, view: "workspace" }, "/app")).toBe("?project=P&task=T");
   });
 });

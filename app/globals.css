@@ -222,6 +222,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .col-tasks{flex:0 0 var(--col-task);min-width:0;border-right:1px solid var(--line);}
 .col-session{flex:1;min-width:0;background:var(--surface);}
 .col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab — full-pane TaskChanges */
+/* mobile project pane — ProjectLanding (recap, Groups, Runbooks, Schedules)
+   with a header of its own. Column so the header sits above the scrolling body. */
+.col-project{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
 
 /* Welcome tutorial coach banner (seeded project only) */
 .wcoach{flex:0 0 auto;margin:10px 12px 0;padding:12px 14px;border:1px solid var(--accent-soft);border-left:3px solid var(--accent);border-radius:var(--r);background:var(--accent-soft);}
@@ -378,6 +381,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pb-row{display:flex;align-items:center;gap:10px;}
 .pb-home{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;border-radius:var(--r-sm);padding:3px;margin:-3px;cursor:pointer;}
 .pb-home:hover{background:var(--surface-2);}
+/* The project pane's own header shows the same identity chip, but there it is
+   the title of the screen you are already on — nothing to click. */
+.pb-home.static{cursor:default;}
+.pb-home.static:hover{background:none;}
 .pb-pic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:15px;color:#fff;flex:0 0 auto;}
 .pb-name{font-size:17px;font-weight:700;letter-spacing:-.02em;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pb-ctx{

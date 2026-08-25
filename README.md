@@ -108,6 +108,10 @@ straight in and starts the next turn.
 - **Installable app:** a PWA with its own icon and standalone window — install
   from Chrome/Edge or iOS Add to Home Screen and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS, works behind Cloudflare Access).
+- **Built for a phone, not just shrunk:** one pane at a time with a Board /
+  Diffs / Terminals / Insights tab bar, a full-screen terminal sheet, and a
+  project screen — recap, groups, runbooks, schedules — a tap away from the
+  task list, so a saved recipe is one tap from anywhere you happen to be.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   transparent token and usage insights stay together — including a live
   session/week plan-usage meter for a Claude Pro/Max login.
