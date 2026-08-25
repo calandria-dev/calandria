@@ -206,6 +206,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // footer says why) rather than sent.
   const blockedClear = running && val.trim() === "/clear" && ready.length === 0;
 
+  // A turn LINGERING on background work or a scheduled wakeup has no model
+  // running and still holds an open input into the agent session, so a message
+  // sent now isn't queued — the server pushes it straight in as the next turn.
+  // The composer says so rather than promising a wait that won't happen.
+  const lingering = running && !!task.background_pending;
+
   const submit = () => {
     const v = val.trim();
     if ((!v && ready.length === 0) || disabled || uploading || blockedClear) return;
@@ -282,7 +288,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // nothing — an unnamed field is where the one-time-code guess
               // keeps creeping back in.
               name="message"
-              placeholder={disabled ? "Start the session to reply…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
+              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now — the session is held open…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
                 const v = e.target.value;
                 setVal(v); autosize(e.target); setActive(0);
@@ -324,9 +330,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             />
             {running ? (
               // Mid-turn: queue the typed follow-up (when there's text), and keep
-              // Stop available to interrupt the current turn.
+              // Stop available to interrupt the current turn. Mid-LINGER it isn't
+              // queued at all — the model has stopped and the session's input is
+              // still open, so the server sends it straight in (see
+              // sendToLingeringTurn in lib/runner.ts). Same button, honest label.
               <div className="send-group">
-                {canSend && <button className="send queue" onMouseDown={keepFocus} onClick={submit} title="Queue this follow-up — it'll send when the current turn ends">{Icon.send()}</button>}
+                {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now — the session is held open and picks this up as its next turn" : "Queue this follow-up — it'll send when the current turn ends"}>{Icon.send()}</button>}
                 <button className="send stop" onMouseDown={keepFocus} onClick={() => { setStopping(true); onStop(); }} disabled={stopping} title={stopping ? "Stopping…" : "Stop the current turn"}>{Icon.stop()}</button>
               </div>
             ) : (

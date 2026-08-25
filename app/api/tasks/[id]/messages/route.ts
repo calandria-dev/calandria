@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { getTask, getProject, updateTask, addMessage, listMessages, listPendingMessages, addPendingMessage } from "@/lib/store";
-import { startTurn, startResumeTurn } from "@/lib/runner";
+import { startTurn, startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
 import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
@@ -47,6 +47,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const content = String(text ?? "").trim();
     if (!content) return new Response(JSON.stringify({ error: "empty message" }), { status: 400 });
     if (content.length > MAX_MESSAGE_CHARS) return new Response(JSON.stringify({ error: TOO_LARGE }), { status: 413 });
+    // "A turn is live" isn't one state. A turn LINGERING on background work (or
+    // a scheduled wakeup) has no model running and still holds an open input
+    // into the agent session, so the message can go in now and start the next
+    // turn rather than waiting behind a linger that is unbounded by default.
+    // Anything else — a turn mid-thought, an agent whose driver has no input
+    // channel — refuses, and falls through to the queue exactly as before.
+    if (sendToLingeringTurn(id, content)) {
+      return new Response(JSON.stringify({ ok: true, sent: true }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     const pm = addPendingMessage(id, task.generation, content);
     publish(id, { type: "queued", msgId: pm.id, content, generation: task.generation, ts: pm.created_at });
     return new Response(JSON.stringify({ ok: true, queued: true }), {

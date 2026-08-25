@@ -28,6 +28,7 @@ import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
+import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
 import {
   createSuggestedTask,
   getTaskForAgent,
@@ -546,12 +547,16 @@ async function* runTurn(
 
   // Resolve the run controls with a two-level fallback: the task's own choice wins;
   // when it's null ("Default"), inherit the app-level default set in Settings; when
-  // that's also unset, fall through to Claude Code's built-in (no thinking override,
-  // bypassPermissions).
+  // that's also unset, fall through to Claude Code's built-in (its own default
+  // model, no thinking override, bypassPermissions).
   // App defaults are agent-scoped ("default_reasoning:<agent>"), falling back to
   // the legacy un-suffixed key so pre-existing settings still apply.
   const reasoning = task.reasoning ?? getSetting(`default_reasoning:${task.agent}`) ?? getSetting("default_reasoning");
   const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`) ?? getSetting("default_permission_mode");
+  // The model default is agent-scoped ONLY — no legacy un-suffixed key to read,
+  // and none worth minting: a model id names one provider's catalog, so an
+  // instance-wide "opus" would be a value Codex could never run.
+  const model = task.model ?? getSetting(`default_model:${task.agent}`);
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (a large text paste diverted to a file) marker
@@ -753,8 +758,20 @@ async function* runTurn(
   // number does — the CLI splits one API response into several assistant
   // messages (one per content block) that all carry the same usage.
   let lastContext = 0;
-  let closeInput!: () => void;
-  const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
+  // The held-open input is a real message CHANNEL, not just a latch: the CLI
+  // reads stdin for the life of the query, so a message the user sends while
+  // the turn lingers can be yielded straight into the open session as a second
+  // SDKUserMessage instead of waiting in pending_messages for a linger that is
+  // unbounded by default. Measured (CLI 2.1.240 / SDK 0.3.159, live): a message
+  // pushed after the first result IS accepted and starts a fresh turn on the
+  // same session, announced by a bare second `init` — the same shape a cron
+  // wake takes, and with no user echo on the wire either, which is why the
+  // wake branch below must not read an injected turn's init as a wakeup.
+  // Closing the channel is what ends the query, exactly as the latch did.
+  const input = makeQueue<SDKUserMessage>();
+  const closeInput = () => input.close();
+  const userMessage = (text: string) =>
+    ({ type: "user", parent_tool_use_id: null, message: { role: "user", content: text } }) as SDKUserMessage;
   // Close the held-open input and let the CLI exit. `reason` is why any wakeup
   // the last Stop hook reported is about to die with the process — the honesty
   // fallback: whichever path closes (nothing honored at result time, the
@@ -770,11 +787,41 @@ async function* runTurn(
     closeInput();
   };
   async function* promptStream(): AsyncGenerator<SDKUserMessage> {
-    yield { type: "user", parent_tool_use_id: null, message: { role: "user", content: prompt } } as SDKUserMessage;
-    // Held open past the result so background tasks survive it; endTurn()
-    // releases this (no pending work / Stop / deadline) and the CLI exits.
-    await inputClosed;
+    yield userMessage(prompt);
+    // Held open past the result so background tasks survive it: this drains
+    // anything sendMidTurn() pushes (a message the user sent mid-linger) and
+    // returns only when endTurn() closes the channel (no pending work / Stop /
+    // deadline), upon which the CLI exits.
+    for await (const m of input.drain()) yield m;
   }
+  // Take a user message into the LIVE session, or refuse it. The only state
+  // that can take one is the linger: the model's turn is over, nothing is in
+  // flight, and the message simply opens the next turn — whereas mid-thought
+  // it would arrive in the middle of the model's reasoning, which is what
+  // pending_messages is for. Refusing (false) is the caller's cue to queue.
+  //
+  // Synchronous, because lib/runner.ts persists + publishes the message in the
+  // same tick: nothing may interleave between the CLI accepting it and the
+  // transcript recording it.
+  const sendMidTurn = (text: string): boolean => {
+    if (closing || !lingering) return false;
+    // A real model turn starts now, so the session is no longer "working in
+    // background" — the runner drops the flag on its side and this stops the
+    // pump reading the injected turn's `init` as a scheduled wakeup firing.
+    lingering = false;
+    // The user is demonstrably watching, so the deadline (bounded instances
+    // only) starts over rather than counting a wait the user just ended: clear
+    // the armed timer and drop the anchor so the NEXT linger re-anchors from
+    // its own entry. `noticedCrons` is cleared with it — a wakeup named as
+    // out-of-window belonged to the window that just closed, and the fresh
+    // linger re-plans it against the new deadline (it may now fit, and if it
+    // still doesn't it is named again beside the new wait).
+    if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+    lingerSince = 0;
+    noticedCrons.clear();
+    input.push(userMessage(text));
+    return true;
+  };
   const armLingerDeadline = () => {
     if (lingerTimer || BACKGROUND_LINGER_MS <= 0) return;
     lingerTimer = setTimeout(() => {
@@ -805,9 +852,9 @@ async function* runTurn(
     options: {
       cwd: sessionCwd(task, project),
       resume: task.session_id ?? undefined,
-      // Per-task model selection ("opus"/"sonnet"/"haiku" alias). Omit to inherit
-      // Claude Code's default model.
-      ...(task.model ? { model: task.model } : {}),
+      // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
+      // else this agent's Settings default. Omit to inherit Claude Code's own.
+      ...(model ? { model } : {}),
       // Reasoning preset → thinking budget + effort (Off/Think/Think hard/Ultrathink).
       // Omitted keys leave Claude Code's default thinking.
       ...reasoningOptions(reasoning),
@@ -937,6 +984,14 @@ async function* runTurn(
     },
   });
 
+  // Publish the input channel for the life of this turn, so POST /messages can
+  // reach it (lib/turnInput.ts → lib/runner.ts sendToLingeringTurn). Registered
+  // after query() so a throw from the spawn can't leave a handle pointing at a
+  // turn that never started; released in the pump's finally, which runs however
+  // the stream ends.
+  const inputHandle: TurnInputHandle = { send: sendMidTurn };
+  registerTurnInput(task.id, inputHandle);
+
   // Pump SDK messages into the queue. Runs concurrently with the hook (which
   // pushes ask events while this is parked awaiting the tool result).
   const pump = (async () => {
@@ -949,7 +1004,11 @@ async function* runTurn(
           // Only claimed when crons were being waited on: a background task's
           // wake is its notification, which precedes its init (measured, and
           // pinned by the linger test), so that path has already left the
-          // lingering state by the time its init streams.
+          // lingering state by the time its init streams. A message the user
+          // sent mid-linger produces an identical bare init (measured) and is
+          // excluded the same way — sendMidTurn() drops `lingering` in the same
+          // tick it accepts the message, so the wake it announces is the user's,
+          // not a wakeup's, and the transcript already shows their message.
           if (lingering && !closing && lingerCrons.length > 0) {
             lingering = false;
             const now = Date.now();
@@ -1142,7 +1201,10 @@ async function* runTurn(
     } finally {
       // However the stream ended (clean close, Stop, a thrown transport
       // error), release the held-open prompt generator and the linger timer —
-      // a parked generator would otherwise pin this turn's closure forever.
+      // a parked generator would otherwise pin this turn's closure forever —
+      // and take the input channel off the registry so a message arriving now
+      // is queued rather than pushed into a session that is gone.
+      unregisterTurnInput(task.id, inputHandle);
       endTurn();
       queue.close();
     }

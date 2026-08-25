@@ -5,11 +5,11 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow } from "./types";
+import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow } from "./types";
 import { groupProgress } from "./GroupChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
-import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
+import { Modal, BrowseDirButton, ModelField, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
@@ -120,7 +120,7 @@ export function GroupField({ groups, value, onChange, onCreate }: {
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate, onCreateGroup, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; groups: TaskGroupRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null; group_id: string | null }) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate, onCreateGroup, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; groups: TaskGroupRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; group_id: string | null }) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onOpenSetup?: () => void }) {
   const [groupId, setGroupId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -136,6 +136,11 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   // unattended permission prompt declines itself — so the one dialog that
   // schedules unattended work has to be able to say "don't stop to ask".
   const [permission, setPermission] = useState<string | null>(null);
+  // Same "Default" semantics for the model. Chosen here rather than only in the
+  // session rail because "Start session immediately" makes the first turn part
+  // of this dialog: a rail pick afterwards would land a model behind the turn
+  // that already ran on the default one.
+  const [model, setModel] = useState<string | null>(null);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
@@ -152,20 +157,25 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   const canStart = !blocked && agentReady;
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
-  // Permission modes are provider-specific (each driver labels its own — Claude
-  // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
-  // under one agent may not exist under the next: switching agents drops it back
-  // to Default rather than silently sending a value the new driver would coerce.
+  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
+  // Permission modes and models are both provider-specific (each driver labels
+  // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
+  // sandbox modes and GPT ids), so a choice made under one agent may not exist
+  // under the next: switching agents drops it back to Default rather than
+  // silently sending a value the new driver would coerce.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
   }, [permissionOpts, permission]);
+  useEffect(() => {
+    if (model && !modelOpts.some((m) => m.value === model)) setModel(null);
+  }, [modelOpts, model]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Default"
   // (null) can resolve to one that does, so it counts as unsafe-for-unattended
   // too — we deliberately don't guess what it resolves to and claim it's fine.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, permission_mode: permission, group_id: groupId });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, group_id: groupId });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -193,6 +203,8 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
         </label>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
+      <ModelField options={modelOpts} value={model} onChange={setModel}
+        help=" — changeable later from the session rail." />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -636,11 +648,15 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   );
 }
 
-export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, onSave, onDelete, onMove, onCreateGroup, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean; group_id: string | null }, action?: SaveAction) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, onSave, onDelete, onMove, onCreateGroup, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; group_id: string | null }, action?: SaveAction) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [agent, setAgent] = useState(task.agent);
+  // Not gated the way the agent picker below is: a session's model is chosen
+  // per turn, so this stays editable for a task's whole life (it's the same
+  // value the session rail's picker writes) and takes effect on the next turn.
+  const [model, setModel] = useState<string | null>(task.model);
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
   const [groupId, setGroupId] = useState<string | null>(task.group_id ?? null);
   const [autoStart, setAutoStart] = useState(!!task.auto_start);
@@ -650,7 +666,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
   const can = title.trim().length > 0;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, depends_on: deps, auto_start: autoStart && deps.length > 0, group_id: groupId }, action);
+  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, group_id: groupId }, action);
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
   // gesture, rather than saving, closing, and hunting for the row again.
@@ -663,6 +679,17 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
   // disconnected agent has no session to launch.
   const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
+  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
+  // Switching an unstarted task's agent invalidates a model chosen under the old
+  // one, same as the New-task dialog: drop to Default rather than save an id the
+  // new driver would never resolve. Gated on the agent actually having MOVED,
+  // unlike the New dialog's copy — merely being absent from the catalog is also
+  // what a not-yet-loaded bundle and a provider change look like, and rewriting
+  // the row's model just because the dialog was opened is the worse failure.
+  useEffect(() => {
+    if (!model || agent === task.agent) return;
+    if (!modelOpts.some((m) => m.value === model)) setModel(null);
+  }, [agent, task.agent, modelOpts, model]);
   const agentReady = selAgent ? selAgent.authenticated : true;
   const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks — clear them or drop the dependency first"
     : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
@@ -717,6 +744,8 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
         )}
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
+      <ModelField options={modelOpts} value={model} onChange={setModel}
+        help={task.started === 1 ? " — takes effect on this task's next turn." : undefined} />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />

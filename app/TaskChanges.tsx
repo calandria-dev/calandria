@@ -30,6 +30,11 @@ interface DiffResp {
   unresolved?: string[]; // files still flagged unmerged
   head?: string | null; // worktree HEAD when this diff was computed — stamped onto new comments as anchor_sha
 }
+interface DirtyEntry {
+  code: string; // raw porcelain XY status ("??" untracked, " M" modified, …)
+  path: string;
+  untracked: boolean;
+}
 interface MergeResp {
   ok: boolean;
   targetBranch: string;
@@ -37,6 +42,12 @@ interface MergeResp {
   alreadyMerged?: boolean;
   conflicts?: string[];
   error?: string;
+  // The merge ran in the project's MAIN checkout and it wasn't clean — these are
+  // the uncommitted files that blocked it (server-side list, so the card never
+  // has to string-match the message).
+  dirty?: DirtyEntry[];
+  dirtyTruncated?: boolean;
+  stashed?: { restored: boolean; sha: string; label: string; error?: string };
 }
 // Returned by the AI-resolution callback wired from the parent (it runs the
 // /prepare step + streams the resolution turn into the transcript).
@@ -540,6 +551,7 @@ export default function TaskChanges({
   const [prErr, setPrErr] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [dirtyHelp, setDirtyHelp] = useState(false);
   const [binaryConflicts, setBinaryConflicts] = useState<string[]>([]);
   const [mergeRes, setMergeRes] = useState<MergeResp | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -701,11 +713,17 @@ export default function TaskChanges({
     }
   };
 
-  const doMerge = async () => {
+  // `stashDirty` carries the exact paths shown in the dirty-checkout card — the
+  // user's by-name consent to have those set aside for the merge and put back
+  // after it. An ordinary Merge click sends no body and never stashes anything.
+  const doMerge = async (stashDirty?: string[]) => {
     setMerging(true);
     setMergeRes(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge`, { method: "POST" });
+      const r = await fetch(`/api/tasks/${taskId}/merge`, {
+        method: "POST",
+        ...(stashDirty ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ stashDirty }) } : {}),
+      });
       const res = await mergeJson(r);
       setMergeRes(res);
       if (res.ok) {
@@ -760,10 +778,15 @@ export default function TaskChanges({
   };
 
   // Accept a resolution: commit + land the (now clean) branch into the base.
-  const doComplete = async () => {
+  // Takes the same dirty-checkout acknowledgement as doMerge — this path lands
+  // through the same in-place merge and can be refused by the same dirt.
+  const doComplete = async (stashDirty?: string[]) => {
     setMerging(true);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, { method: "POST" });
+      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+        method: "POST",
+        ...(stashDirty ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ stashDirty }) } : {}),
+      });
       const res = await mergeJson(r);
       setMergeRes(res);
       if (res.ok) onMerged?.();
@@ -858,7 +881,7 @@ export default function TaskChanges({
             <button className="tc-btn" onClick={doAbort} disabled={merging || resolving}>
               Discard
             </button>
-            <button className="tc-btn primary" onClick={doComplete} disabled={merging || resolving}>
+            <button className="tc-btn primary" onClick={() => doComplete()} disabled={merging || resolving}>
               {merging ? "Merging…" : "Accept & merge"}
             </button>
           </>
@@ -883,7 +906,7 @@ export default function TaskChanges({
               </button>
             )}
             {pending && (
-              <button className="tc-btn primary" onClick={doMerge} disabled={merging || prBusy}>
+              <button className="tc-btn primary" onClick={() => doMerge()} disabled={merging || prBusy}>
                 {merging ? "Merging…" : merged ? "Merge new changes" : `Merge to ${data.baseLabel}`}
               </button>
             )}
@@ -918,6 +941,59 @@ export default function TaskChanges({
               : `Merged into ${mergeRes.targetBranch}.`
             : `⚠ ${mergeRes.error || "merge failed"}`}
           {mergeRes.ok && !mergeRes.alreadyMerged && <PushBaseBranch projectId={projectId} />}
+          {/* The merge had to run in the project's own checkout and found it
+              dirty. Show exactly what is in the way — usually a tool dropping,
+              not the user's work — and offer to set it aside for the merge. */}
+          {!mergeRes.ok && mergeRes.dirty && mergeRes.dirty.length > 0 && (
+            <>
+              <div className="tc-manual">
+                These are uncommitted in the project&apos;s checkout — <b>not</b> in this task&apos;s worktree. The merge lands on{" "}
+                <code>{mergeRes.targetBranch}</code>, which is the branch that checkout has open, so it has to be clean first.
+              </div>
+              <div className="tc-conflicts">
+                {mergeRes.dirty.map((d) => `${d.code} ${d.path}`).join("\n")}
+                {mergeRes.dirtyTruncated ? "\n… and more" : ""}
+              </div>
+              <div className="tc-conflict-actions">
+                <button className="tc-btn" onClick={() => setDirtyHelp((v) => !v)} disabled={merging}>
+                  Handle it myself
+                </button>
+                {!mergeRes.dirtyTruncated && (
+                  <button
+                    className="tc-btn primary"
+                    onClick={() => {
+                      const paths = mergeRes.dirty!.map((d) => d.path);
+                      // Retry through whichever path was refused, so accepting a
+                      // resolution still clears its abort marker on the way out.
+                      return reviewing ? doComplete(paths) : doMerge(paths);
+                    }}
+                    disabled={merging}
+                    title="git stash push --include-untracked, merge, then restore the stash"
+                  >
+                    {merging
+                      ? "Merging…"
+                      : `Stash ${mergeRes.dirty.length} file${mergeRes.dirty.length === 1 ? "" : "s"} & merge`}
+                  </button>
+                )}
+              </div>
+              {dirtyHelp && (
+                <div className="tc-manual">
+                  Open a terminal on <b>Project</b> scope and commit, revert or delete the files above, then click Merge again.
+                  Stashing does the same thing without leaving Calandria: exactly these files are stashed, the merge runs, and the
+                  stash is applied back on top — if that apply hits a conflict the stash is kept and its id shown here.
+                </div>
+              )}
+            </>
+          )}
+          {mergeRes.stashed && (
+            <div className="tc-manual">
+              {mergeRes.stashed.restored
+                ? "Your uncommitted changes were set aside for the merge and restored afterwards."
+                : `Your uncommitted changes are still stashed${
+                    mergeRes.stashed.error ? ` (${mergeRes.stashed.error})` : ""
+                  } — recover them with: git stash apply ${mergeRes.stashed.sha.slice(0, 10)}`}
+            </div>
+          )}
           {mergeRes.conflicts && mergeRes.conflicts.length > 0 && (
             <div className="tc-conflicts">{mergeRes.conflicts.join("\n")}</div>
           )}

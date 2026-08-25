@@ -1775,11 +1775,32 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   /* Diff review: let long code lines scroll rather than blow out the layout. */
   .app.mobile .tc-hunks{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 
-  /* Settings: stack the section nav above its content as a scrolling rail. */
-  .app.mobile .settings-nav{flex:0 0 auto !important;border-right:none;border-bottom:1px solid var(--line);}
-  .app.mobile .settings-nav-list{flex-direction:row;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-  .app.mobile .settings-nav-list .nav-item{flex:0 0 auto;}
+  /* Settings: stack the section nav above its content as a horizontal tab rail.
+     The nav item is `width:100%` because on desktop it's a stacked sidebar — in
+     a flex ROW that width is what `flex-basis:auto` resolves to, so every chip
+     was a full screen wide and exactly one section was ever visible. Nothing
+     hinted the other nine existed. `width:auto` shrinks each to its label so
+     3-4 fit at 390px with the next one clipped at the edge, which is the scroll
+     affordance; SettingsView scrolls the active chip into view so a deep-linked
+     section (or a tap near the edge) isn't left off-screen. The "Settings"
+     heading goes with the foot note — the content pane's own header already
+     names the active section, and the row it occupied is worth more here. */
+  .app.mobile .settings-nav{flex:0 0 auto !important;border-right:none;border-bottom:1px solid var(--line);padding:8px 0;gap:0;}
+  .app.mobile .settings-nav-h{display:none;}
+  .app.mobile .settings-nav-list{flex:0 0 auto;flex-direction:row;gap:6px;padding:0 12px 2px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .app.mobile .settings-nav-list::-webkit-scrollbar{display:none;}
+  .app.mobile .settings-nav-list .nav-item{flex:0 0 auto;width:auto;white-space:nowrap;padding:8px 12px;border:1px solid var(--line-strong);background:var(--surface);}
+  /* the desktop `.nav-item.active` tint is a weaker selector than the chip base
+     rule above, so the active fill has to be restated here or it loses. */
+  .app.mobile .settings-nav-list .nav-item.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
   .app.mobile .settings-nav-foot{display:none;}
+  /* The head's title + its two buttons don't fit a 390px row, so "Reset to
+     defaults" was wrapping mid-label. The title is the redundant one — the
+     active chip directly above already names the section, and the rail keeps it
+     scrolled into view — so drop it and let the buttons keep one line. */
+  .app.mobile .settings-head{padding:10px 14px;}
+  .app.mobile .settings-title{display:none;}
+  .app.mobile .settings-head .btn{white-space:nowrap;}
 
   /* Status-grouped list headers, sized to match the mockup's 10.5px label. */
   .app.mobile .task-group-h{font-size:10.5px;}
@@ -2065,8 +2086,12 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
 .sess-head .gbadge{max-width:200px;}
-/* The Group field in the task dialogs: a select over the project's groups plus an inline "New group…" row. */
-.group-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
-.group-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* Full-width <select> fields: Group and Model in the task dialogs, and the
+   default-model picker in Settings → Run defaults. Model is a select rather
+   than the segmented control its neighbours use because Claude Code's catalog
+   runs to a dozen-plus entries across three <optgroup>s. */
+.group-field select,.model-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
+.group-field select:focus,.model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.model-field select{max-width:520px;}
 .group-field .group-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
 .group-field .group-new input[type=text]{flex:1;min-width:0;}
