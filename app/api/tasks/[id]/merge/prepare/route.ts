@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
-import { prepareWorktreeMerge, completeWorktreeMerge } from "@/lib/git";
+import { prepareWorktreeMerge, completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { buildConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -27,7 +27,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
-    const message = `${task.title} (orchestrator task ${task.id})`;
+    const message = taskCommitMessage(task);
     const prep = await prepareWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,

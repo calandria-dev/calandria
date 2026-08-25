@@ -146,7 +146,7 @@ describe("worktreeSyncStatus", () => {
     const none = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
     expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: "", workBranch: wt.branch, baseBranch: "main" })).toEqual(none);
     expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: "", baseBranch: "main" })).toEqual(none);
-    expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: "orch/ghost", baseBranch: "main" })).toEqual(none);
+    expect(await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: "calandria/ghost", baseBranch: "main" })).toEqual(none);
   });
 });
 

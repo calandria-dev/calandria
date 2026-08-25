@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, listSummaries } from "@/lib/store";
-import { commitWorktree } from "@/lib/git";
+import { commitWorktree, taskCommitMessage } from "@/lib/git";
 import { createTaskPr, buildPrBody } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   // Commit whatever's still uncommitted first (same as merge does), so the PR
   // shows the same diff the Changes tab does.
   try {
-    await commitWorktree(task.worktree_path, `${task.title} (orchestrator task ${task.id})`);
+    await commitWorktree(task.worktree_path, taskCommitMessage(task));
   } catch (e) {
     return NextResponse.json({ ok: false, error: `commit failed: ${e instanceof Error ? e.message : String(e)}` }, { status: 409 });
   }

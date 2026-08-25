@@ -114,7 +114,7 @@ describe("moveTasks (store)", () => {
     // unacknowledged task would move with its columns cleared and its worktree
     // left orphaned in the repo it came from.
     const { from, to, ids } = batch("Reset set", 2);
-    ids.forEach((id) => updateTask(id, { started: 1, worktree_path: `/tmp/wt-${id}`, work_branch: `orch/${id}` }));
+    ids.forEach((id) => updateTask(id, { started: 1, worktree_path: `/tmp/wt-${id}`, work_branch: `calandria/${id}` }));
 
     const result = moveTasks(ids, to.id, { resetCheckout: new Set([ids[0]]) });
 

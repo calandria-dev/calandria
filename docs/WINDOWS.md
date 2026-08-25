@@ -121,7 +121,7 @@ own the pty sidecar as a child.
 - **Worktree paths are safe.** `path.join(WORKTREES_DIR, taskId)`
   (`lib/git.ts:552`) with a nanoid task id (`A-Za-z0-9_-`) — no NTFS-illegal
   characters, no reserved device names possible. The merge scratch path
-  (`lib/git.ts:1147`) is already scrubbed to `[A-Za-z0-9._-]`. Branch `orch/<id>`
+  (`lib/git.ts:1147`) is already scrubbed to `[A-Za-z0-9._-]`. Branch `calandria/<id>`
   is a git ref, which git for Windows nests as folders — fine.
 - **Git is invoked correctly.** Every call is `execFile("git", [argv])`
   (`lib/git.ts:22-27`); Windows `CreateProcess` resolves `git.exe` on PATH. All

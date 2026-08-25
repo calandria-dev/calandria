@@ -154,7 +154,7 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
   it("merge and sync 409 while a turn is live, even with running=0 in the DB", async () => {
     const project = createProject({ name: "Lock409", repo_path: await makeRepo() });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
-    updateTask(task.id, { worktree_path: "/nonexistent/wt", work_branch: "orch/x" });
+    updateTask(task.id, { worktree_path: "/nonexistent/wt", work_branch: "calandria/x" });
 
     // A live turn per the in-process registry (the DB flag stays 0 — the lock
     // path must consult liveness, not the possibly-stale row).

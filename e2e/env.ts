@@ -29,7 +29,7 @@ function ensureRoot(): string {
       gitconfig,
       [
         "[user]",
-        "\tname = Orchestrator E2E",
+        "\tname = Calandria E2E",
         "\temail = e2e@example.com",
         "[init]",
         "\tdefaultBranch = main",

@@ -394,7 +394,7 @@ export function buildPrBody(input: { description?: string; summary?: string; tas
   const parts: string[] = [];
   if (input.description?.trim()) parts.push(input.description.trim());
   if (input.summary?.trim()) parts.push(`## Session summary\n\n${input.summary.trim()}`);
-  parts.push(`---\n_Opened by Agent Orchestrator (task ${input.taskId})._`);
+  parts.push(`---\n_Opened by Calandria (task ${input.taskId})._`);
   return parts.join("\n\n");
 }
 

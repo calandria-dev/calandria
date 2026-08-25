@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
-import { worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge } from "@/lib/git";
+import { worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge, syncCommitMessage } from "@/lib/git";
 import { buildConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -70,7 +70,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // worktree — the same prepareWorktreeMerge used for conflict resolution, but
     // WITHOUT the auto-land step (a sync brings the worktree up to date; it does
     // not push the task's work into main).
-    const message = `Sync ${project.branch} into ${task.title} (orchestrator task ${task.id})`;
+    const message = syncCommitMessage(project, task);
     const prep = await prepareWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,

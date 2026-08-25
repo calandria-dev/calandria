@@ -51,7 +51,7 @@ export interface Task {
   permission_mode: string | null; // run permission ("acceptEdits"|"plan"); null = bypassPermissions (default)
   session_id: string | null; // the agent's opaque session/thread id for the current generation
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
-  work_branch: string; // the worktree's branch (e.g. "orch/<id>")
+  work_branch: string; // the worktree's branch (e.g. "calandria/<id>")
   base_sha: string; // commit the worktree branched from — the stable diff/merge base
   merged_at: number; // when this task's branch was merged back (0 = not merged)
   pr_url: string; // GitHub PR opened from this task's branch via "Create PR" ("" = none)

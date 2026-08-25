@@ -78,7 +78,7 @@ fs.writeFileSync(
   gitconfig,
   [
     "[user]",
-    "\tname = Orchestrator Test",
+    "\tname = Calandria Test",
     "\temail = test@orchestrator.local",
     "[init]",
     "\tdefaultBranch = main",

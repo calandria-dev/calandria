@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
-import { mergeTask } from "@/lib/git";
+import { mergeTask, taskCommitMessage } from "@/lib/git";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -39,7 +39,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
       baseBranch: project.branch,
-      message: `${task.title} (orchestrator task ${task.id})`,
+      message: taskCommitMessage(task),
       // Lets the merge fast-forward the base past any remote commits the task
       // was cut from, so the merge commit holds only the task's own work.
       baseSha: task.base_sha,
