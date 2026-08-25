@@ -23,6 +23,17 @@ HTTP request), persisting every event to SQLite and publishing it on **`lib/even
 events). Stopping is only ever explicit, via `lib/abort.ts`. If a turn is already running,
 the message parks in the `pending_messages` queue to run next.
 
+One exception, and it's the reason `pending_messages` isn't the whole story: a turn that
+is **lingering** (the model is done, the session is only held open so background work can
+finish or a wakeup can fire) has nothing in flight, and by default that wait has no
+deadline. The Claude driver keeps its prompt iterable open for the whole linger, so
+`sendToLingeringTurn()` hands the message straight to it through `lib/turnInput.ts` and it
+starts the next turn immediately, persisted and published as an ordinary user message.
+Order is kept at both ends: entering a linger first drains the oldest already-parked
+follow-up into the same open session (that's the "sent when this turn ends" the composer
+promised — the model's turn HAS ended), and a send is refused while anything is still
+queued, so the caller parks it behind what came before.
+
 `GET` on the same route is the SSE watch stream: a `snapshot` of the persisted transcript,
 then a live tail — reconnect-safe, any number of viewers, zero viewers fine.
 

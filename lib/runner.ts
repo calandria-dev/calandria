@@ -8,7 +8,7 @@
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
 import fs from "node:fs";
-import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -23,6 +23,7 @@ import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connecti
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
 import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
+import { sendTurnInput } from "@/lib/turnInput";
 import { settleRun } from "@/lib/schedule/store";
 import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
 
@@ -134,6 +135,71 @@ export function startTurn(
       }
     }
   });
+}
+
+/**
+ * Send a message straight into a turn that is LINGERING — the state where the
+ * model's output is done but the driver is holding the agent session open so
+ * run_in_background work survives, or a scheduled wakeup can still fire
+ * (lib/agents/claude/driver.ts). Returns true if the live turn took it.
+ *
+ * Without this the message parks in `pending_messages` and waits for the linger
+ * to end, which by default is not bounded at all (BACKGROUND_LINGER_MS = 0): a
+ * user watching a `sleep 600` or a `/loop` would be told "queued" and then hear
+ * nothing for ten minutes, while the session that could answer them sits idle
+ * with an open input. Nothing is in flight during a linger, so the message
+ * simply opens the next turn — the same thing the queue drain would eventually
+ * do, minus the wait.
+ *
+ * Only the driver can say whether its session can take a message (mid-thought
+ * it cannot; that is what the queue is for), so the offer goes through
+ * lib/turnInput.ts and a `false` means "queue it instead". Everything after the
+ * handoff is the ordinary user-message path — persisted to the transcript,
+ * published as a `user` event — so a reload, another tab, and the global
+ * lifecycle stream all see exactly what they see for a message that started a
+ * turn the normal way. The whole body is synchronous (better-sqlite3, in-memory
+ * pub/sub, a synchronous push into the driver's channel), so nothing can
+ * interleave between the CLI accepting the message and the transcript recording
+ * it.
+ */
+export function sendToLingeringTurn(taskId: string, text: string): boolean {
+  // Re-read: the caller's snapshot predates its own `await req.json()`, and a
+  // /clear could have bumped the generation since. A message persisted under a
+  // stale generation renders in the wrong session's transcript.
+  const task = getTask(taskId);
+  if (!task) return false;
+  // Anything already parked was promised the session FIRST (it was typed
+  // earlier and renders above this one as a queued bubble). Jumping it would
+  // deliver the user's own two messages out of the order they wrote them, so
+  // this one parks behind it — and the queue empties on its own, because
+  // entering a linger drains the oldest parked message into the same open
+  // session (see the background_pending branch in run()).
+  if (listPendingMessages(taskId).length > 0) return false;
+  if (!sendTurnInput(taskId, text)) return false;
+  recordSentMessage(taskId, task.generation, text);
+  return true;
+}
+
+/** Persist + publish a message the live turn just accepted, as the ordinary
+ *  user message it is. Shared by both ways one gets in: the user sending during
+ *  a linger, and the linger-entry drain of an already-parked follow-up. */
+function recordSentMessage(taskId: string, gen: number, text: string): void {
+  // The linger is over the instant the CLI takes the message: a real model turn
+  // is starting, so "working in background" would be a lie on every surface
+  // that reads the row (the activity line, the status dot, the global stream's
+  // re-read). Persisted BEFORE the publish, like every other state that stream
+  // re-reads. `running` deliberately stays 1 — it never dropped; this turn is
+  // the same turn, continuing.
+  updateTask(taskId, { background_pending: 0, background_note: "" });
+  try {
+    const m = addMessage(taskId, gen, "user", text);
+    publish(taskId, { type: "user", content: m.content, msgId: m.id, generation: gen, ts: m.created_at });
+  } catch (err) {
+    // The row went away between the two synchronous steps above (a delete
+    // racing this send) — the CLI has the message and the task doesn't exist to
+    // show it. Nothing left to do but say so; the turn dies with the task.
+    console.error(`[runner] sent a message into task ${taskId} but could not persist it:`, err);
+  }
 }
 
 /**
@@ -574,6 +640,27 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // global stream re-reads.
         updateTask(id, { background_pending: 1, background_note: ev.note });
         publish(id, ev);
+        // The composer told the user a follow-up parked mid-turn would be
+        // "sent when this turn ends" — and the model's turn HAS ended: a
+        // linger is the session holding its input open for work nobody is
+        // waiting on. So hand the oldest parked message to it now rather than
+        // leaving it until the linger closes, which by default has no deadline
+        // at all. One per linger entry, exactly as the end-of-turn drain pops
+        // one: if the work is still running when that turn ends, this fires
+        // again on the next entry and the queue empties in order.
+        //
+        // Deliberately NOT startResumeTurn's path: no worktree fast-forward,
+        // because the session is already open in that checkout and rewriting
+        // files under a running agent is the one thing the sync is careful
+        // never to do. Generation-guarded like every other write in this loop.
+        const parked = listPendingMessages(id)[0];
+        if (parked && parked.generation === gen && sendTurnInput(id, parked.content)) {
+          deletePendingMessage(parked.id, id);
+          // Drop its queued bubble — recordSentMessage re-echoes it as the
+          // ordinary user message it has now become.
+          publish(id, { type: "dequeued", msgId: parked.id });
+          recordSentMessage(id, gen, parked.content);
+        }
       } else if (ev.type === "background_resumed") {
         // A lingered-on task settled and its notification woke the model — a
         // continuation turn is about to stream with no user message behind it.
