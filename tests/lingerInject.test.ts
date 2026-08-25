@@ -9,12 +9,26 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // as long as the work ran. The driver already holds the prompt iterable open
 // for that whole window, so the message can just go in.
 //
-// Measured on claude CLI 2.1.240 / SDK 0.3.159 (record in the commit): a
-// second SDKUserMessage pushed into the held-open iterable after a result IS
-// accepted and starts a fresh turn on the same session, announced by a bare
-// second `init` — the same shape a cron wake takes, and with no user echo on
-// the wire. That last fact is why the cron-wake branch has to be excluded here,
-// and it's what the third test pins.
+// Measured on claude CLI 2.1.240 / SDK 0.3.159, live, in two rounds (the first
+// is recorded in this feature's commit; the second closed the gap that commit
+// declared, and is why the scripts below are a transcript rather than a guess):
+//
+// - A second SDKUserMessage pushed into the held-open iterable after a result
+//   IS accepted and starts a fresh turn on the same session, announced by a
+//   bare second `init`, with no user echo on the wire. That init is the same
+//   shape a cron wake takes — which is the one hazard this feature creates, and
+//   what the third test pins.
+// - The injected turn's OWN Stop hook still reports whatever the session was
+//   lingering on: a `sleep 25` started with run_in_background came back as
+//   `[{id, status:"running"}]` on the Stop before the injected turn's result,
+//   its task_notification arrived on schedule ~18s later, and the file it wrote
+//   existed. So the driver re-enters the linger rather than closing the input
+//   under work it is still holding open — the exact failure linger-until-quiet
+//   exists to prevent, checked rather than assumed.
+// - Same for a wakeup: a ScheduleWakeup one-shot was reported again on the
+//   injected turn's Stop, was NOT consumed by it, and fired ~100s later as its
+//   own bare init on the same session. Speaking to a lingering session does not
+//   cost you the wake you were waiting for.
 //
 // Unbounded linger (the default), so this file deletes the bounded override
 // claudeBackgroundLinger.test.ts sets — env leaks across files in a worker.
