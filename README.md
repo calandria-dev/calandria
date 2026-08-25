@@ -181,6 +181,7 @@ belongs.
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Windows compatibility assessment](docs/WINDOWS.md)
+- [Desktop app spike](docs/DESKTOP_APP.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
 
