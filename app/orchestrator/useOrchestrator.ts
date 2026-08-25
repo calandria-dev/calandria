@@ -371,8 +371,8 @@ export function useOrchestrator() {
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<string>).detail === selProjRef.current) void loadRunbooks((e as CustomEvent<string>).detail);
     };
-    window.addEventListener("orch:runbooks", onChanged);
-    return () => window.removeEventListener("orch:runbooks", onChanged);
+    window.addEventListener("calandria:runbooks", onChanged);
+    return () => window.removeEventListener("calandria:runbooks", onChanged);
   }, [loadRunbooks]);
 
   // A hidden tab gets throttled and its SSE streams may quietly die, so the
@@ -557,20 +557,20 @@ export function useOrchestrator() {
   };
 
   // Clicking a browser notification. A window event rather than a prop because
-  // the channel hook runs above this definition — same pattern as orch:runbooks.
+  // the channel hook runs above this definition — same pattern as calandria:runbooks.
   useEffect(() => {
     const onGoto = (e: Event) => {
       const { projectId, taskId } = (e as CustomEvent<{ projectId: string; taskId: string }>).detail;
       if (taskId) goToTask(projectId, taskId);
     };
-    window.addEventListener("orch:goto-task", onGoto);
-    return () => window.removeEventListener("orch:goto-task", onGoto);
+    window.addEventListener("calandria:goto-task", onGoto);
+    return () => window.removeEventListener("calandria:goto-task", onGoto);
     // goToTask is re-created each render but only calls setState, so binding
     // the first instance is safe and keeps the listener stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // A click on a PUSHED notification arrives from the service worker as a
-  // message, not a window event; this relays it onto orch:goto-task above and
+  // message, not a window event; this relays it onto calandria:goto-task above and
   // re-registers this browser's push subscription once per load (usePush.ts).
   usePushRelay();
 
@@ -738,7 +738,7 @@ export function useOrchestrator() {
       if (projectId) {
         setSelTask(null);
         setHomeProj(projectId);
-        window.dispatchEvent(new CustomEvent("orch:runbook-error", {
+        window.dispatchEvent(new CustomEvent("calandria:runbook-error", {
           detail: { projectId, message: e instanceof Error ? e.message : String(e) },
         }));
       }

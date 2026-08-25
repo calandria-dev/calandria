@@ -7,7 +7,8 @@ import { Modal } from "./Modal";
 import { AUTH_BANNER_HINT } from "@/lib/authFailure";
 import type { AgentInfo, AgentInfoT, AgentsResponseT, AgentLoginT, ClaudeVerifyT } from "./types";
 
-const NUDGE_DISMISSED = "orch_agent_nudge_dismissed";
+const NUDGE_DISMISSED = "calandria_agent_nudge_dismissed";
+const LEGACY_NUDGE_DISMISSED = "orch_agent_nudge_dismissed";
 
 // The instance-wide "your agent login died" strip, under the titlebar.
 //
@@ -50,7 +51,7 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
 
   useEffect(() => {
     if (!ready) return;
-    try { if (localStorage.getItem(NUDGE_DISMISSED) === "1") return; } catch {}
+    try { if (localStorage.getItem(NUDGE_DISMISSED) === "1" || localStorage.getItem(LEGACY_NUDGE_DISMISSED) === "1") return; } catch {}
     jget<AgentsResponseT>("/api/agents")
       .then((r) => {
         const unconnected = r.agents.filter((a) => !a.connected);

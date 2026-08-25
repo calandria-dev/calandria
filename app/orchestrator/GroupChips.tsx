@@ -29,16 +29,17 @@ export function groupProgress(g: Pick<TaskGroupRow, "counts">): { done: number; 
   return { done, of, label: total === 0 ? "no tasks yet" : `${done}/${of}`, detail: total === 0 ? "No tasks yet" : parts.join(" · ") };
 }
 
-const KEY = (projectId: string) => `orch_group_filter_${projectId}`;
+const KEY = (projectId: string) => `calandria_group_filter_${projectId}`;
+const LEGACY_KEY = (projectId: string) => `orch_group_filter_${projectId}`;
 // Fired when something OTHER than the chip bar picks a group — the badge in
 // the session header, a landing card later — so every mounted bar follows.
-const EVENT = "orch:group-filter";
+const EVENT = "calandria:group-filter";
 
 /** Select a group's chip from anywhere (null = All). Persists, then tells every bar. */
 export function selectGroupFilter(projectId: string, groupId: string | null) {
   try {
     if (groupId) localStorage.setItem(KEY(projectId), groupId);
-    else localStorage.removeItem(KEY(projectId));
+    else { localStorage.removeItem(KEY(projectId)); localStorage.removeItem(LEGACY_KEY(projectId)); }
   } catch {}
   window.dispatchEvent(new CustomEvent(EVENT, { detail: { projectId, groupId } }));
 }
@@ -53,7 +54,7 @@ export function selectGroupFilter(projectId: string, groupId: string | null) {
 export function useGroupFilter(projectId: string, groups: TaskGroupRow[]) {
   const [raw, setRaw] = useState<string | null>(null);
   useEffect(() => {
-    try { setRaw(localStorage.getItem(KEY(projectId))); } catch { setRaw(null); }
+    try { setRaw(localStorage.getItem(KEY(projectId)) ?? localStorage.getItem(LEGACY_KEY(projectId))); } catch { setRaw(null); }
     const onPick = (e: Event) => {
       const d = (e as CustomEvent<{ projectId: string; groupId: string | null }>).detail;
       if (d.projectId === projectId) setRaw(d.groupId);

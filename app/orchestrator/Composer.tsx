@@ -11,16 +11,31 @@ import type { TaskRow } from "./types";
 // Drafts persist per-task in localStorage so switching tasks, opening Settings,
 // or reloading the page doesn't throw away half-typed messages. (SessionView is
 // keyed by task.id, so the Composer remounts on every task switch.)
-const draftKey = (taskId: string) => `orch:draft:${taskId}`;
+// Per-key migration from the old `orch:draft:` name — see loadDraft/saveDraft.
+const draftKey = (taskId: string) => `calandria:draft:${taskId}`;
+const legacyDraftKey = (taskId: string) => `orch:draft:${taskId}`;
 const loadDraft = (taskId: string) => {
   if (typeof window === "undefined") return "";
-  try { return window.localStorage.getItem(draftKey(taskId)) ?? ""; } catch { return ""; }
+  try {
+    const v = window.localStorage.getItem(draftKey(taskId));
+    if (v !== null) return v;
+    const legacy = window.localStorage.getItem(legacyDraftKey(taskId));
+    if (legacy !== null) {
+      window.localStorage.setItem(draftKey(taskId), legacy);
+      window.localStorage.removeItem(legacyDraftKey(taskId));
+      return legacy;
+    }
+    return "";
+  } catch { return ""; }
 };
 const saveDraft = (taskId: string, v: string) => {
   if (typeof window === "undefined") return;
   try {
     if (v) window.localStorage.setItem(draftKey(taskId), v);
-    else window.localStorage.removeItem(draftKey(taskId));
+    else {
+      window.localStorage.removeItem(draftKey(taskId));
+      window.localStorage.removeItem(legacyDraftKey(taskId));
+    }
   } catch { /* private mode / quota — drafts just won't persist */ }
 };
 

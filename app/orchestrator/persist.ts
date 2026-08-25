@@ -1,7 +1,10 @@
 // localStorage + URL persistence for the open project/task, layout and prefs.
 import type { Appearance, Layout, Settings, TaskView } from "./types";
 
-export const LS = "orchestrator_ui_v2";
+export const LS = "calandria_ui_v1";
+// Renamed from the orchestrator-era key; an existing install's old value is
+// adopted once (and the old key deleted) so it keeps its layout/selection.
+const LEGACY_LS = "orchestrator_ui_v2";
 
 type Persisted = { selProj?: string; selTask?: string; appearance?: Partial<Appearance>; layout?: Layout; settings?: Settings; taskView?: TaskView };
 
@@ -11,7 +14,16 @@ export function loadPersist(): Persisted {
     // `appearance` used to be called `tweaks` — read the legacy key so an existing
     // install keeps its theme/density across the rename (dropped fields are ignored
     // by the DEFAULT_APPEARANCE spread at the call site).
-    const raw = JSON.parse(localStorage.getItem(LS) || "{}") as Persisted & { tweaks?: Partial<Appearance> };
+    let stored = localStorage.getItem(LS);
+    if (stored === null) {
+      const legacy = localStorage.getItem(LEGACY_LS);
+      if (legacy !== null) {
+        localStorage.setItem(LS, legacy);
+        localStorage.removeItem(LEGACY_LS);
+        stored = legacy;
+      }
+    }
+    const raw = JSON.parse(stored || "{}") as Persisted & { tweaks?: Partial<Appearance> };
     if (!raw.appearance && raw.tweaks) raw.appearance = raw.tweaks;
     return raw;
   } catch { return {}; }

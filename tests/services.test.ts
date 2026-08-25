@@ -403,14 +403,14 @@ describe("host-header router", () => {
     expect(api.status).toBe(401);
   });
 
-  it("private: a valid gate cookie admits; /__orch/auth sets it from a grant token", async () => {
+  it("private: a valid gate cookie admits; /__calandria/auth sets it from a grant token", async () => {
     const project = createProject({ name: "Priv2" });
     exposeService(project, "priv2", upstreamPort);
     const secret = getGateSecret();
 
     // The hop from /api/services/grant: token -> cookie -> redirect to next.
     const hop = mintGateToken(secret, "priv2", 60_000);
-    const auth = await request(`priv2--${APP_HOST}`, `/__orch/auth?t=${encodeURIComponent(hop)}&next=%2Fafter`);
+    const auth = await request(`priv2--${APP_HOST}`, `/__calandria/auth?t=${encodeURIComponent(hop)}&next=%2Fafter`);
     expect(auth.status).toBe(302);
     expect(auth.headers.location).toBe("/after");
     const cookie = String(auth.headers["set-cookie"]?.[0]);
