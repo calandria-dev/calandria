@@ -130,7 +130,7 @@ export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick:
  * sharing a `group` render under one <optgroup>, matching the rail's headers.
  *
  * Renders nothing when the agent contributes no models — that's the
- * capabilities bundle not having loaded, and the synthetic "Default" head alone
+ * capabilities bundle not having loaded, and the synthetic "Inherit" head alone
  * is not a choice.
  */
 export function ModelField({ options, value, onChange, help, label = "Model", note }: {

@@ -7,7 +7,7 @@ import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
-  modelOptions, reasoningOptions, permissionOptions, RAIL_W,
+  modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W,
   type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow,
 } from "./types";
 import { GroupBadge, selectGroupFilter } from "./GroupChips";
@@ -585,7 +585,9 @@ export function SessionView({ project, task, group, agents, messages, running, b
             <div style={{ position: "relative" }}>
               <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
                 {Icon.spark()}
-                <span className="cv">{models.find((m) => m.value === task.model)?.label ?? "Default"}</span>
+                {/* The chip says INHERIT_LABEL, never "Default" — the same word the
+                    picker's head uses, so the two can't read as different states. */}
+                <span className="cv">{models.find((m) => m.value === task.model)?.label ?? INHERIT_LABEL}</span>
                 {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
                 {Icon.chevDown()}
               </button>
@@ -600,6 +602,9 @@ export function SessionView({ project, task, group, agents, messages, running, b
                         <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
                         {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
                       </div>
+                      {/* Rule under the inherit head: everything below it is the
+                          provider's own catalog, spelled the provider's way. */}
+                      {m.value === null && <div className="divider" />}
                     </Fragment>
                   ))}
                 </Popover>
@@ -608,25 +613,33 @@ export function SessionView({ project, task, group, agents, messages, running, b
             <div style={{ position: "relative" }}>
               <button className="status-ctl" title="Reasoning level & permission mode for this task" onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
                 {Icon.gear()}
-                <span className="cv">{reasoningOpts.find((r) => r.value === task.reasoning)?.label ?? "Default"}</span>
+                <span className="cv">{reasoningOpts.find((r) => r.value === task.reasoning)?.label ?? INHERIT_LABEL}</span>
                 {Icon.chevDown()}
               </button>
               {settingsOpen && (
                 <Popover onClose={() => setSettingsOpen(false)}>
                   <div className="pop-sec">Reasoning</div>
                   {reasoningOpts.map((r) => (
-                    <div key={r.label} className="pop-item" onClick={() => { onSetReasoning(r.value); setSettingsOpen(false); }}>
-                      <div><div>{r.label}</div><div className="pi-sub">{r.sub}</div></div>
-                      {(task.reasoning ?? null) === r.value && <span className="pi-check">{Icon.check()}</span>}
-                    </div>
+                    <Fragment key={r.label}>
+                      <div className="pop-item" onClick={() => { onSetReasoning(r.value); setSettingsOpen(false); }}>
+                        <div><div>{r.label}</div><div className="pi-sub">{r.sub}</div></div>
+                        {(task.reasoning ?? null) === r.value && <span className="pi-check">{Icon.check()}</span>}
+                      </div>
+                      {r.value === null && <div className="divider" />}
+                    </Fragment>
                   ))}
                   <div className="divider" />
                   <div className="pop-sec">Permission</div>
                   {permissionOpts.map((p) => (
-                    <div key={p.label} className="pop-item" onClick={() => { onSetPermission(p.value); setSettingsOpen(false); }}>
-                      <div><div>{p.label}</div><div className="pi-sub">{p.sub}</div></div>
-                      {(task.permission_mode ?? null) === p.value && <span className="pi-check">{Icon.check()}</span>}
-                    </div>
+                    <Fragment key={p.label}>
+                      <div className="pop-item" onClick={() => { onSetPermission(p.value); setSettingsOpen(false); }}>
+                        <div><div>{p.label}</div><div className="pi-sub">{p.sub}</div></div>
+                        {(task.permission_mode ?? null) === p.value && <span className="pi-check">{Icon.check()}</span>}
+                      </div>
+                      {/* Claude's own mode is spelled "default"; the rule keeps it
+                          from reading as a second copy of the inherit head. */}
+                      {p.value === null && <div className="divider" />}
+                    </Fragment>
                   ))}
                 </Popover>
               )}
