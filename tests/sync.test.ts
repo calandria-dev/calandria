@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { abortWorktreeMerge, ensureWorktree, fastForwardWorktree, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
+import { abortWorktreeMerge, completeWorktreeMerge, ensureWorktree, fastForwardWorktree, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
 import { commitFile, git, makeRepoWithWorktree, tmpDir, writeFile } from "./helpers";
 
 describe("worktreeSyncStatus", () => {
@@ -17,6 +17,35 @@ describe("worktreeSyncStatus", () => {
       mergeInProgress: false,
       unresolved: [],
     });
+  });
+
+  // A landed task must not be reported as still needing the base. mergeTask
+  // lands with --no-ff, so the base gets a merge commit the task branch itself
+  // doesn't carry: `behind` is 1 forever after a successful Accept & merge. What
+  // says "nothing is waiting to land" is ahead === 0 — the banner's hide rule.
+  // Without it the banner reappeared over a just-merged task as "1 commit to
+  // pick up / Sync" whenever the worktree was dirty (a clean one was hidden by
+  // canFastForward), and that Sync just re-merged the task's own merge commit.
+  it("reports a landed task as having nothing of its own left, not as needing a sync", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    const args = { repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main" };
+
+    await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
+    writeFile(wt.path, "file.txt", "merged version\n");
+    const landed = await completeWorktreeMerge({ ...args, message: "land it" });
+    expect(landed).toMatchObject({ ok: true });
+
+    // Clean tree: hidden the old way too (a plain fast-forward of the merge commit).
+    let s = await worktreeSyncStatus(args);
+    expect(s).toMatchObject({ ahead: 0, behind: 1, canFastForward: true, mergeInProgress: false });
+
+    // Dirty tree: canFastForward goes false and only `ahead: 0` still says the
+    // task has nothing outstanding — this is the case that showed the banner.
+    writeFile(wt.path, "scratch.txt", "uncommitted\n");
+    s = await worktreeSyncStatus(args);
+    expect(s).toMatchObject({ ahead: 0, behind: 1, isDirty: true, canFastForward: false, mergeInProgress: false, conflicts: [] });
   });
 
   // The "main moved on / Fix with AI" banner reads this. A resolution turn edits

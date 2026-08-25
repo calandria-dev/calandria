@@ -82,7 +82,8 @@ edits the files marker-free but deliberately does not commit — the merge stays
 you can read the result first. The banner tracks that: once the turn ends it switches to
 "conflicts resolved", with **Accept & merge** right there (the same action as the Changes
 tab's button — it lands the task) and **Review** to open that tab first, where **Discard**
-returns the worktree to where it was. Only an accept or a discard clears the banner.
+returns the worktree to where it was. Only an accept or a discard clears the banner, and
+every button reports why it refused rather than sitting there looking inert.
 If the agent left some files conflicted, the banner counts them and offers another pass.
 
 ## Planning and orchestration
