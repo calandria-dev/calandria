@@ -1,4 +1,4 @@
-/* Orchestrator — custom Next.js server.
+/* Calandria — custom Next.js server.
  *
  * Why this exists: the integrated terminal is a WebSocket to the node-pty
  * sidecar (pty-server.js, bound to 127.0.0.1). Behind a Cloudflare Tunnel only
@@ -363,7 +363,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       : "origin auth OFF — set CF_ACCESS_*" +
         (dev ? " (fine for local dev)" : "; DO NOT expose this origin unauthenticated");
     console.log(
-      `[server] orchestrator ready on http://${hostname}:${port} ` +
+      `[server] calandria ready on http://${hostname}:${port} ` +
         `(${dev ? "dev" : "production"}); /pty -> ws://${ptyHost}:${ptyPort}; ${auth}`,
     );
     // One-line boot summary (issue #18 item 4): "is it configured the way I

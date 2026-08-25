@@ -40,10 +40,10 @@ of the following:
 
 1. `CALANDRIA_SERVICE_HOSTS=1`;
 2. a configured `PUBLIC_BASE_URL`; and
-3. wildcard DNS and TLS for `*--<operator-host>`.
+3. wildcard DNS and TLS for `*--<calandria-host>`.
 
 Each exposed service can then be **private** (your session), **shared** (tokenized link), or
-**public**. The hostname is stable: `<project-slug>--<operator-host>`.
+**public**. The hostname is stable: `<project-slug>--<calandria-host>`.
 
 Calandria provides a terminal and unattended coding agents. Put authentication in front of
 any internet-facing instance and read the [self-hosting security guidance](SELF_HOSTING.md).

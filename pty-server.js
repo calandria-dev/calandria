@@ -1,4 +1,4 @@
-/* Orchestrator — terminal sidecar.
+/* Calandria — terminal sidecar.
  * A tiny WebSocket server that bridges xterm.js (browser) to a real PTY
  * (node-pty) so the UI gets a full interactive shell. Bound to localhost only.
  *
@@ -50,7 +50,7 @@ process.on("uncaughtException", (err) => {
 
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
-  res.end("orchestrator pty-server");
+  res.end("calandria pty-server");
 });
 
 // The sidecar's gate mirrors the app's, mode for mode. It must not simply
@@ -119,7 +119,7 @@ wss.on("connection", (ws, req) => {
   const shell = process.env.SHELL || "/bin/zsh";
   // The project's deterministic port (projects.port), injected as PORT so a dev
   // server the user launches by hand in this shell binds the same address the
-  // orchestrator's managed services + future subdomain routing expect.
+  // Calandria's managed services + future subdomain routing expect.
   const port = Number(url.searchParams.get("port"));
   const env = { ...process.env, TERM: "xterm-256color" };
   if (port > 0) env.PORT = String(port);

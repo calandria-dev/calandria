@@ -179,7 +179,7 @@ export const CODEX_APPROVAL_POLICY = (() => {
 
 /**
  * Whether Codex tasks inherit the MCP servers configured in the user's
- * ~/.codex/config.toml, alongside the orchestrator's own bridge. Off by default,
+ * ~/.codex/config.toml, alongside Calandria's own bridge. Off by default,
  * and deliberately asymmetric with the Claude driver (which inherits ~/.claude
  * MCP servers) — see "Agent MCP inheritance" in CLAUDE.md.
  *
@@ -275,7 +275,7 @@ export const GIT_FETCH_COOLDOWN_MS = num(
 );
 
 /**
- * The public origin the app is served from (e.g. https://orch.example.com when
+ * The public origin the app is served from (e.g. https://calandria.example.com when
  * behind a tunnel/reverse proxy). Used by the client to build absolute
  * ws(s):// URLs. Empty = same-origin via window.location, which is correct for
  * any single-hostname deployment.

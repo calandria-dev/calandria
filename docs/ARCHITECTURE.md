@@ -165,7 +165,7 @@ usage → tokens plus an **estimated** `cost_usd`) into the `StreamEvent` contra
 Run controls map our permission modes to codex's sandbox/approval policy
 (bypassPermissions → workspace-write + approvals-never; plan → read-only); reasoning
 presets map to `model_reasoning_effort`. Capabilities declare `supportsMcpTools: true` (the
-orchestrator's tools reach codex through the portable stdio MCP bridge below, registered
+Calandria's tools reach codex through the portable stdio MCP bridge below, registered
 per turn with a ~1-day `tool_timeout_sec` so a parked ask survives),
 `supportsAsks: true` (codex has no native interactive-ask hook, but the bridge's
 `ask_user` tool surfaces the same question card and blocks until the user answers) and
@@ -211,7 +211,7 @@ controls show their run count and API-price-equivalent cost without polling.
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
-`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
+`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same Calandria
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/calandria-mcp.mjs`**, a plain-Node stdio MCP server

@@ -292,7 +292,7 @@ Example — relocate an instance entirely via env:
 ```bash
 PORT=8080 PTY_PORT=8081 \
 PUBLIC_BASE_URL=https://calandria.example.com \
-CALANDRIA_DB_DIR=/data/orchestrator \
+CALANDRIA_DB_DIR=/data/calandria \
 CALANDRIA_WORKTREES_DIR=/data/worktrees \
 CLAUDE_CLI_PATH=/usr/local/bin/claude \
 npm start

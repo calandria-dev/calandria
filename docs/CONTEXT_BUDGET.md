@@ -88,7 +88,7 @@ The dividing line is **not** "important vs. unimportant" — all of it is load-b
 why none of it gets deleted. It is **when you need it**:
 
 - **Root `CLAUDE.md` keeps what you need _before_ you know where you're going** — the commands
-  (tests run in Docker), the conventions and gotchas, the turn lifecycle, the repo split.
+  (tests run in Docker), the conventions and gotchas, the turn lifecycle, the scope note.
   Critically this includes the Turbopack async-import rule and the `lib/autoStart.ts`
   `await import()` case: you need those while editing `lib/services.ts` or `lib/autoStart.ts`,
   neither of which is under `lib/agents/`, so a nested file would never load in time.
