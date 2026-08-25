@@ -12,13 +12,14 @@ import { TasksColumn } from "./orchestrator/TasksColumn";
 import { BoardWorkspace } from "./orchestrator/TaskBoard";
 import { SessionView } from "./orchestrator/SessionView";
 import { ProjectLanding } from "./orchestrator/ProjectLanding";
+import { selectGroupFilter } from "./orchestrator/GroupChips";
 import { SettingsView } from "./orchestrator/SettingsView";
 import { InsightsView } from "./orchestrator/InsightsView";
 import { AppearancePanel } from "./orchestrator/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./orchestrator/Layout";
 import { ServicesDrawer } from "./orchestrator/Services";
 import { clientFeatures } from "@/lib/features";
-import { NewTaskModal, EditTaskModal, MoveTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./orchestrator/modals";
+import { NewTaskModal, EditTaskModal, MoveTasksModal, GroupTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./orchestrator/modals";
 import { OnboardingWizard } from "./orchestrator/OnboardingWizard";
 import { AgentNudge, AgentAuthBanner } from "./orchestrator/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./orchestrator/Welcome";
@@ -136,6 +137,9 @@ export default function Orchestrator() {
   // by the shell; the column keeps owning the selection itself, so a task the
   // server refuses stays picked when the modal closes.
   const [bulkMoveIds, setBulkMoveIds] = useState<string[] | null>(null);
+  // The same shape for the selection bar's other verb — one group over a whole
+  // selection (app/orchestrator/modals GroupTasksModal).
+  const [bulkGroupIds, setBulkGroupIds] = useState<string[] | null>(null);
   const [clearRequest, setClearRequest] = useState<string | null>(null);
   useEffect(() => setClearRequest(null), [selTask]);
   const requestClear = (taskId: string) => setClearRequest(taskId);
@@ -266,6 +270,7 @@ export default function Orchestrator() {
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
       onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask}
       onBulkMove={setBulkMoveIds}
+      onBulkGroup={setBulkGroupIds}
       baseBranchTick={o.baseBranchTick}
     />
   );
@@ -309,6 +314,8 @@ export default function Orchestrator() {
             projects={o.activeProjects}
             agents={o.agents}
             recap={o.recaps[project.id]}
+            groups={o.groups}
+            onSelectGroup={(id) => selectGroupFilter(project.id, id)}
             onNewTask={() => o.setModal("task")}
             onRefreshRecap={() => o.fetchRecap(project.id, true)}
             onOpenTask={o.setSelTask}
@@ -663,6 +670,17 @@ export default function Orchestrator() {
           tasks={o.tasks} projects={o.activeProjects} agents={o.agents} sourceProjectId={project.id}
           onClose={() => setBulkMoveIds(null)} onMove={o.moveTasksToProject}
           onMoved={(moved) => setBulkMoveIds((ids) => (ids ?? []).filter((id) => !moved.includes(id)))}
+        />
+      )}
+      {bulkGroupIds && bulkGroupIds.length > 0 && project && (
+        <GroupTasksModal
+          // Resolved from the live rows, like the move modal's: a task that
+          // vanished under the selection simply isn't in it.
+          selected={o.tasks.filter((t) => bulkGroupIds.includes(t.id))}
+          groups={o.groups}
+          onClose={() => setBulkGroupIds(null)}
+          onApply={o.groupTasks}
+          onCreateGroup={o.createGroup}
         />
       )}
       {o.modal === "context" && project && <ContextModal project={project} agents={o.agents} onSetDefaultAgent={o.setProjectDefaultAgent} onClose={() => o.setModal(null)} onSave={o.saveContext} onDelete={() => o.removeProject(project.id)} onDeprecate={() => o.setDeprecated(project.id, true)} />}

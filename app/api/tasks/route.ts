@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { createTask, getProject, listAllTasksLite, getGroup } from "@/lib/store";
+import { createTask, getProject, listAllTasksLite, listAllGroupsLite, getGroup } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-// Powers the ⌘K palette's session search: every real task across all active
-// projects, labeled with its project. Fetched fresh each time the palette opens.
+// Powers the ⌘K palette's search: every real task across all active projects,
+// labeled with its project and (since groups) the feature it's a step of, plus
+// the groups themselves — which are jumpable targets in their own right, not
+// just badges. Both fetched fresh each time the palette opens.
 export async function GET() {
-  return NextResponse.json({ tasks: listAllTasksLite() });
+  return NextResponse.json({ tasks: listAllTasksLite(), groups: listAllGroupsLite() });
 }
 
 export async function POST(req: Request) {

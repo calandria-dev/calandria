@@ -3,7 +3,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { getDb } from "@/lib/db";
 import {
-  createProject, createTask, updateTask, deleteTask, moveTasks,
+  createProject, createTask, getTask, updateTask, deleteTask, moveTasks,
   listGroups, getGroup, createGroup, updateGroup, deleteGroup, resolveGroup, setTaskGroup,
   GroupNameConflictError,
 } from "@/lib/store";
@@ -173,14 +173,98 @@ describe("task groups store", () => {
     expect(groupIsDone(getGroup(g.id)!)).toBe(false);
   });
 
-  it("moving a task to another project clears its group", () => {
+  // ---- moveTasks: the group follows its whole contents, or not at all ----
+  // The same both-ends rule dependency edges get, and for the same reason: a
+  // group is project-scoped, so half a group in each project isn't a state
+  // this app has.
+
+  it("a partly-selected group stays put, and the rows that left report it", () => {
+    const g = createGroup({ project_id: pid, name: "G" });
+    const a = createTask({ project_id: pid, title: "a", group_id: g.id });
+    const b = createTask({ project_id: pid, title: "b", group_id: g.id });
+    const dest = project();
+    const res = moveTasks([a.id], dest, { resetCheckout: new Set() });
+    expect(res.moved.map((m) => m.id)).toEqual([a.id]);
+    // Reported beside the dropped edges — the name, so the caller can say WHICH
+    // feature the task just stepped out of.
+    expect(res.ungrouped).toEqual([{ id: a.id, group_id: g.id, group_name: "G" }]);
+    expect(res.carried).toEqual([]);
+    expect(getTask(a.id)!.group_id).toBeNull();
+    // The group and its remaining member are untouched.
+    expect(getTask(b.id)!.group_id).toBe(g.id);
+    expect(getGroup(g.id)!.project_id).toBe(pid);
+    expect(getGroup(g.id)!.counts.total).toBe(1);
+  });
+
+  it("a group whose every member moves is re-keyed to the destination, badges intact", () => {
+    const g = createGroup({ project_id: pid, name: "G", description: "d" });
+    const a = createTask({ project_id: pid, title: "a", group_id: g.id });
+    const b = createTask({ project_id: pid, title: "b", group_id: g.id });
+    // An ungrouped task in the same selection changes nothing about the rule.
+    const loose = createTask({ project_id: pid, title: "loose" });
+    const dest = project();
+    const res = moveTasks([a.id, b.id, loose.id], dest, { resetCheckout: new Set() });
+    expect(res.carried).toEqual([{ id: g.id, name: "G", renamed_from: null }]);
+    expect(res.ungrouped).toEqual([]);
+    expect(getTask(a.id)!.group_id).toBe(g.id);
+    expect(getTask(b.id)!.group_id).toBe(g.id);
+    const moved = getGroup(g.id)!;
+    expect(moved.project_id).toBe(dest);
+    expect(moved.description).toBe("d");
+    expect(moved.counts.total).toBe(2);
+    // It left the source's chip bar and joined the destination's.
+    expect(listGroups(pid)).toHaveLength(0);
+    expect(listGroups(dest).map((x) => x.id)).toEqual([g.id]);
+  });
+
+  it("a carried group is suffixed when the destination already has that name", () => {
+    const dest = project();
+    createGroup({ project_id: dest, name: "G" });
+    createGroup({ project_id: dest, name: "G (moved)" });
     const g = createGroup({ project_id: pid, name: "G" });
     const t = createTask({ project_id: pid, title: "t", group_id: g.id });
-    const dest = project();
     const res = moveTasks([t.id], dest, { resetCheckout: new Set() });
-    expect(res.moved.map((m) => m.id)).toEqual([t.id]);
-    expect(getDb().prepare("SELECT group_id FROM tasks WHERE id = ?").get(t.id)).toEqual({ group_id: null });
-    expect(getGroup(g.id)!.counts.total).toBe(0);
+    // Suffixed rather than merged — two same-named groups are two features —
+    // and the report names both spellings so the caller can say what happened.
+    expect(res.carried).toEqual([{ id: g.id, name: "G (moved 2)", renamed_from: "G" }]);
+    expect(getGroup(g.id)!.name).toBe("G (moved 2)");
+    expect(listGroups(dest).map((x) => x.name)).toEqual(["G", "G (moved)", "G (moved 2)"]);
+    // The destination's own group of that name is untouched.
+    expect(listGroups(dest).find((x) => x.name === "G")!.id).not.toBe(g.id);
+  });
+
+  it("a carried group keeps its provenance only when the planning task moves too", () => {
+    const planner = createTask({ project_id: pid, title: "plan" });
+    const g = createGroup({ project_id: pid, name: "G", origin_task_id: planner.id });
+    const a = createTask({ project_id: pid, title: "a", group_id: g.id });
+    const dest = project();
+    // `a` is the group's only member, so the group travels — but the planning
+    // task stays behind, and a link across projects is exactly what the rest of
+    // this rule exists to prevent, so the provenance goes.
+    moveTasks([a.id], dest, { resetCheckout: new Set() });
+    expect(getGroup(g.id)!.project_id).toBe(dest);
+    expect(getGroup(g.id)!.origin_task_id).toBeNull();
+
+    const g2 = createGroup({ project_id: pid, name: "G2", origin_task_id: planner.id });
+    const b = createTask({ project_id: pid, title: "b", group_id: g2.id });
+    const res = moveTasks([b.id, planner.id], dest, { resetCheckout: new Set() });
+    expect(res.carried.map((c) => c.id)).toEqual([g2.id]);
+    expect(getGroup(g2.id)!.origin_task_id).toBe(planner.id);
+  });
+
+  it("a member the move refuses keeps the whole group behind", () => {
+    const g = createGroup({ project_id: pid, name: "G" });
+    const a = createTask({ project_id: pid, title: "a", group_id: g.id });
+    const b = createTask({ project_id: pid, title: "b", group_id: g.id });
+    // A started task can't move without the checkout acknowledgement, so it
+    // isn't in the moving set — which makes this a partial selection.
+    updateTask(b.id, { started: 1, worktree_path: "/tmp/nope" });
+    const dest = project();
+    const res = moveTasks([a.id, b.id], dest, { resetCheckout: new Set() });
+    expect(res.skipped.map((sk) => sk.id)).toEqual([b.id]);
+    expect(res.carried).toEqual([]);
+    expect(res.ungrouped.map((u) => u.id)).toEqual([a.id]);
+    expect(getGroup(g.id)!.project_id).toBe(pid);
   });
 
   it("parseGroupColor accepts the palette and clears on empty", () => {

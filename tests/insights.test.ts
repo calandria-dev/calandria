@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { ensureWorktree, mergeTask } from "../lib/git";
 import {
   addUsage,
+  createGroup,
   createProject,
   createTask,
+  deleteTask,
   getInsightsData,
   recordTaskMerge,
   updateTask,
@@ -131,5 +133,31 @@ describe("getInsightsData", () => {
     expect(taskRows).toHaveLength(1);
     expect(taskRows[0].cost).toBeCloseTo(1.5);
     expect(taskRows[0].inp).toBe(100);
+  });
+
+  // The Groups leaderboard ("what did the auth migration cost") reads the same
+  // usage cube, one dimension finer.
+  it("tags task usage with its group and leaves ungrouped spend in the same cube", () => {
+    const { project, task } = makeProjectTask();
+    const group = createGroup({ project_id: project.id, name: "Auth migration" });
+    const member = createTask({ project_id: project.id, title: "member", group_id: group.id });
+    const doomed = createTask({ project_id: project.id, title: "doomed", group_id: group.id });
+    addUsage({ project_id: project.id, task_id: member.id, generation: 1, agent: "claude", usage: usage() });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 2 }) });
+    addUsage({ project_id: project.id, task_id: doomed.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 4 }) });
+    // A deleted task takes its usage with it (ON DELETE CASCADE), so this row
+    // is gone from both buckets — what matters is that the JOIN doesn't drop
+    // spend that IS still there.
+    deleteTask(doomed.id);
+
+    const data = getInsightsData(Date.now() - DAY);
+    const rows = data.usage.filter((r) => r.p === project.id);
+    expect(rows.find((r) => r.g === group.id)!.cost).toBeCloseTo(1.5);
+    // Ungrouped spend keys on "" rather than vanishing — the day/project/agent
+    // totals every chart above the leaderboard is built on must not change.
+    expect(rows.find((r) => r.g === "")!.cost).toBeCloseTo(2);
+    expect(rows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
+    // The group itself rides along so the leaderboard has a label for that key.
+    expect(data.groups.find((g) => g.id === group.id)).toMatchObject({ name: "Auth migration", project_id: project.id });
   });
 });
