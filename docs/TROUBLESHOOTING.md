@@ -8,6 +8,7 @@ is setup and architecture; this file is what to do when something's already wron
 | App won't start, `[config]`/`[server]`/`[db-lock]` warnings, or a boot refusal | [Common boot failures](#common-boot-failures) |
 | `SQLITE_CORRUPT`, `database disk image is malformed`, garbled tasks after a crash | [Database corruption](#database-corruption) |
 | Disk filling up, container out of space | [Disk usage and sizing](#disk-usage-and-sizing) |
+| Running on Windows: locking errors, "not logged in" agents, slow git, service hostnames | [WSL2 on Windows](#wsl2-on-windows) |
 | A turn fails with "Failed to authenticate" / the titlebar shows a broken-connection banner | [Headless re-authentication](#headless-re-authentication) |
 | Upgrading, or need to roll back a version | [Upgrade rollback](#upgrade-rollback) |
 
@@ -41,6 +42,35 @@ pid, host, and start time when available. See **One process per database** in
 [`docs/SELF_HOSTING.md`](SELF_HOSTING.md#notes--caveats) for what causes it and how to resolve
 it — don't reach for `ORCH_DB_LOCK=off` as a fix; it disables the exact protection this error is
 giving you.
+
+## WSL2 on Windows
+
+WSL2 is the supported way to run Calandria on Windows ([setup](INSTALLATION.md#windows-wsl2));
+native Windows is not supported yet. Inside WSL2 it is the ordinary Linux build, so everything
+else in this file applies unchanged. Three failures are specific to the WSL2 boundary.
+
+**Anything under `/mnt/c` or `\\wsl$`.** `ORCH_DB_DIR`, `ORCH_WORKTREES_DIR`, and project repos
+must live on the WSL2 ext4 root. Those cross-boundary filesystems (drvfs/9p) do not implement
+file locking, so `lib/db-lock.mjs`'s SQLite mutex cannot exclude a second process — two
+instances open the same database and the WAL can be corrupted rather than one boot being
+refused. Symptoms range from a `[db-lock]` boot that should have refused and didn't, through
+`SQLITE_IOERR`/`SQLITE_BUSY` mid-turn, to the torn-WAL damage in
+[Database corruption](#database-corruption). Git on those paths is also 10–50× slower, which
+shows up as every task launch and diff crawling. Fix: move the directories to `/home/<you>/…`
+(recreating a worktree is cheap; move or re-clone repos) and restart.
+
+**Agents report "not logged in" despite a working Windows login.** WSL2 has its own `$HOME`, and
+a Claude or Codex login done on the Windows side is invisible to the CLIs inside it. Run
+`claude` / `codex` from the WSL2 shell and complete the browser login there, or reconnect the
+agent from Settings → Agents. If a turn already failed, the recovery path is the same as
+[Headless re-authentication](#headless-re-authentication).
+
+**Service hostnames don't open from the Windows browser.** `localhost:3000` is forwarded
+automatically, but subdomains of `localhost` are not, and `<slug>--<host>` service URLs
+(`ORCH_SERVICE_HOSTS=1`, see [Managed services](SERVICES.md)) resolve through DNS like anywhere
+else. Either use the port directly, or add each hostname to
+`C:\Windows\System32\drivers\etc\hosts` pointing at `127.0.0.1`. There is no wildcard-hosts-file
+equivalent — a real wildcard DNS record is the only way to avoid one entry per service.
 
 ## Database corruption
 
