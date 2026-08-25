@@ -157,6 +157,28 @@ carry each task's group badge. **Insights** gains a *Groups* leaderboard beside 
 one: spend and tokens summed over every member's usage, which is the "what did the migration
 cost" answer.
 
+Agents plan into groups too, which is where the noun earns its keep. `suggest_task` takes a
+`group` — an id or a name — resolved in the project the task is *filed into*, and a name that
+doesn't exist yet is created there and attributed to the session that filed it, so one pass
+of a planning turn lands a whole named plan instead of seven loose rows. (The result says
+which happened, `Created group "Auth migration" in <project>` or `Filed under group …`, so a
+near-miss spelling is visible while the rest of the batch can still use the right one.)
+`update_task`'s `group` is strict by contrast — an existing id or exact name only, `""` to
+ungroup — because the task already exists and a typo there would split a feature the user is
+filtering by in two; an unknown group refuses the whole call and nothing else in it lands.
+`list_tasks` gains a `group` filter and carries every row's group either way, and
+`list_groups` answers "how is the migration going" in one call: description, counts, and the
+members with their statuses.
+
+The other half is what a MEMBER session is told. A grouped task's context opens with the
+group's name and description, which step of how many it is (the same dependency order the
+strip numbers), its siblings with their statuses — marking the ones this task is holding up,
+and the task itself with `← this task` — and a link back to the planning session's task, so
+the brief behind the whole plan is one `get_task` away. Sibling *descriptions* are
+deliberately left out: a seven-task group would spend a fifth of a session's context on work
+this task isn't doing. A task with **Send project context** off gets none of this, exactly as
+it gets no project context.
+
 Groups sit orthogonal to dependencies — a group says *belongs with*, an edge says
 *waits for*, and nothing is inferred from one to the other.
 
