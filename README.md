@@ -54,7 +54,9 @@ yours to stop, not the harness's to kill (`ORCH_BACKGROUND_LINGER_MS` sets
 an optional auto-cut — a wakeup beyond it is cancelled and named in the
 transcript; `ORCH_BACKGROUND_LINGER=off` disables lingering, and then every
 pending wakeup is reported cancelled at the end of the turn instead of
-silently dying with the process).
+silently dying with the process). A message you send while a session is
+lingering isn't queued behind it — the input is still open, so it goes
+straight in and starts the next turn.
 
 ## What makes it different
 
