@@ -284,11 +284,14 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               //
               // THE BUG: on mobile the composer offers an SMS/verification-code
               // suggestion above the keyboard and refuses to autocorrect.
-              // MEASURED 2026-08-25, iPhone / iOS 18.7 / Safari 27 / INSTALLED
-              // PWA (display-mode: standalone, navigator.standalone true) — the
-              // only configuration it has ever been reported from. Five rounds
-              // of side-by-side A/B on the actual device; docs/kbprobe.html is
-              // the instrument (copy it into public/ and restart to re-run it).
+              // MEASURED 2026-08-25 on an iPhone running an iOS 27 BETA, as an
+              // INSTALLED PWA (display-mode: standalone, navigator.standalone
+              // true) — the only configuration it has ever been reported from.
+              // The UA reads "CPU iPhone OS 18_7" and that is NOT the OS: Apple
+              // freezes that token, and "Version/27.0" is the real signal. Do
+              // not read the OS off the UA string here. Five rounds of
+              // side-by-side A/B on the device; docs/kbprobe.html is the
+              // instrument (copy it into public/ and restart to re-run it).
               //
               // A replica of this textarea — same attributes, same rows={1},
               // same 22px min-height, same placeholder — does NEITHER, while
@@ -318,9 +321,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // which is why "no autocorrect" is the tell worth watching.
               //
               // The mechanism remains unidentified and is not anything this
-              // element declares about itself. Until someone reproduces it
-              // outside the app, treat it as platform behaviour we cannot talk
-              // our way out of, and don't spend another round here.
+              // element declares about itself. Since every measurement above
+              // was taken on a BETA OS, the leading remaining explanation is a
+              // beta regression rather than something we can fix in markup —
+              // so the cheap next step is a retest on a shipping OS (and on a
+              // second device) before anyone concludes it is permanent, not a
+              // sixth round of attribute edits here.
               autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
               // Inert: added on the since-disproven theory that an unnamed field
               // invited the one-time-code guess. Harmless, so left alone.
