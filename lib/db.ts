@@ -7,7 +7,7 @@ import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
 
-// Single shared connection. Stored outside the repo (ORCH_DB_DIR, default
+// Single shared connection. Stored outside the repo (CALANDRIA_DB_DIR, default
 // ~/.zen-orchestrator) so `git clean`/re-clone can't wipe it.
 const DB_PATH = path.join(DB_DIR, "orchestrator.db");
 
@@ -550,7 +550,7 @@ function recoverFromCrash(db: Database.Database) {
  *
  * Deliberately here rather than in startScheduler(): this runs once per process
  * before anything can read the ledger, whereas startScheduler() is skipped
- * entirely when ORCH_SCHEDULER is off — the one configuration where nothing
+ * entirely when CALANDRIA_SCHEDULER is off — the one configuration where nothing
  * else would ever clear the wedge, while the API still serves it.
  *
  * Exported so tests/scheduleStore.test.ts can drive it directly;
@@ -1019,7 +1019,7 @@ export function getDb(): Database.Database {
  * second writer the lock exists to stop. It gets a warning rather than a throw:
  * the same code path is how `next build` and the test suite legitimately open a
  * database they should never claim, and failing those closed would cost more
- * than this catches. Skipped entirely under the ORCH_DB_LOCK=off escape hatch,
+ * than this catches. Skipped entirely under the CALANDRIA_DB_LOCK=off escape hatch,
  * which is a deliberate choice to run unguarded.
  */
 function warnIfUnowned() {

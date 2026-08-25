@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { readEnv } from "./env.mjs";
 
 /**
  * Per-instance configuration, driven entirely by environment variables so an
@@ -12,14 +13,14 @@ import os from "node:os";
  */
 
 /** App-data dir for the SQLite database. */
-export const DB_DIR = process.env.ORCH_DB_DIR || path.join(os.homedir(), ".zen-orchestrator");
+export const DB_DIR = readEnv("CALANDRIA_DB_DIR") || path.join(os.homedir(), ".zen-orchestrator");
 
 /** Where per-task git worktrees are created (must be outside any project repo). */
 export const WORKTREES_DIR =
-  process.env.ORCH_WORKTREES_DIR || path.join(os.homedir(), ".agent-orchestrator", "worktrees");
+  readEnv("CALANDRIA_WORKTREES_DIR") || path.join(os.homedir(), ".agent-orchestrator", "worktrees");
 
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
-export const PROJECTS_DIR = process.env.ORCH_PROJECTS_DIR || path.join(os.homedir(), "projects");
+export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");
 
 /**
  * Path to the user's logged-in `claude` binary (Max subscription). The SDK
@@ -47,7 +48,7 @@ export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
  * the user's terminal (Homebrew, snap) can be invisible to the app's PATH and
  * used to be reported as "not installed". Set this to pin a specific binary.
  */
-export const GH_BIN = process.env.ORCH_GH_BIN || "";
+export const GH_BIN = readEnv("CALANDRIA_GH_BIN") || "";
 
 // Number of milliseconds from an env var, falling back to `def` for anything
 // unset, unparseable, or negative. (0 is meaningful for the knobs below — it
@@ -80,7 +81,7 @@ const num = (name: string, raw: string | undefined, def: number): number => {
  * instead of holding the task "running" (and the instance busy) forever.
  * Set to 0 to park indefinitely, exactly like an unanswered question card.
  */
-export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMPT_TIMEOUT_MS, 4 * 60 * 60 * 1000);
+export const PERMISSION_PROMPT_TIMEOUT_MS = ms(readEnv("CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS"), 4 * 60 * 60 * 1000);
 
 /**
  * The same deadline when NOBODY is watching — an auto-started task
@@ -90,7 +91,7 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(process.env.ORCH_PERMISSION_PROMP
  * to decide (the gate re-checks and switches to the attended timeout above).
  * 0 disables the unattended shortcut, making every prompt use the attended cap.
  */
-export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDED_MS, 45_000);
+export const PERMISSION_UNATTENDED_MS = ms(readEnv("CALANDRIA_PERMISSION_UNATTENDED_MS"), 45_000);
 
 /**
  * Master switch for background linger. Each Claude turn is one SDK query
@@ -105,7 +106,7 @@ export const PERMISSION_UNATTENDED_MS = ms(process.env.ORCH_PERMISSION_UNATTENDE
  * result time and background tasks die with the CLI.
  */
 export const BACKGROUND_LINGER_ENABLED = !["0", "off", "false", "no"].includes(
-  String(process.env.ORCH_BACKGROUND_LINGER || "").toLowerCase(),
+  String(readEnv("CALANDRIA_BACKGROUND_LINGER") || "").toLowerCase(),
 );
 
 /**
@@ -122,7 +123,7 @@ export const BACKGROUND_LINGER_ENABLED = !["0", "off", "false", "no"].includes(
  * task's turn slot; a backgrounded process that never exits (a dev server)
  * holds both until stopped.
  */
-export const BACKGROUND_LINGER_MS = ms(process.env.ORCH_BACKGROUND_LINGER_MS, 0);
+export const BACKGROUND_LINGER_MS = ms(readEnv("CALANDRIA_BACKGROUND_LINGER_MS"), 0);
 
 /**
  * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by
@@ -137,7 +138,7 @@ export const BACKGROUND_LINGER_MS = ms(process.env.ORCH_BACKGROUND_LINGER_MS, 0)
  * period regardless, so waiting longer only risks losing the drain's own work.
  * 0 waits indefinitely (not recommended — see this file's `ms()` contract).
  */
-export const SHUTDOWN_GRACE_MS = ms(process.env.ORCH_SHUTDOWN_GRACE_MS, 5000);
+export const SHUTDOWN_GRACE_MS = ms(readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000);
 
 /**
  * The `approval_policy` the Codex driver passes to the CLI for turns and
@@ -193,7 +194,7 @@ export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
  * their 0600 files at db init, after the strip.
  */
 export const ALLOW_API_KEY_ENV = ["1", "true", "on"].includes(
-  String(process.env.ORCH_ALLOW_API_KEY_ENV || "").toLowerCase(),
+  String(readEnv("CALANDRIA_ALLOW_API_KEY_ENV") || "").toLowerCase(),
 );
 
 /**
@@ -202,7 +203,7 @@ export const ALLOW_API_KEY_ENV = ["1", "true", "on"].includes(
  * into the dev/setup/test service env and the project's PTY shell. Override to
  * relocate the block (e.g. avoid a clash with the app/pty ports). See lib/services.ts.
  */
-export const SERVICE_PORT_BASE = num("ORCH_SERVICE_PORT_BASE", process.env.ORCH_SERVICE_PORT_BASE, 4300);
+export const SERVICE_PORT_BASE = num("CALANDRIA_SERVICE_PORT_BASE", readEnv("CALANDRIA_SERVICE_PORT_BASE"), 4300);
 
 /**
  * Per-service log ring-buffer cap (lines). Each managed service keeps at most
@@ -210,7 +211,7 @@ export const SERVICE_PORT_BASE = num("ORCH_SERVICE_PORT_BASE", process.env.ORCH_
  * through startup + recent output without growing unbounded for a dev server
  * that's been up for days.
  */
-export const SERVICE_LOG_LINES = num("ORCH_SERVICE_LOG_LINES", process.env.ORCH_SERVICE_LOG_LINES, 1500);
+export const SERVICE_LOG_LINES = num("CALANDRIA_SERVICE_LOG_LINES", readEnv("CALANDRIA_SERVICE_LOG_LINES"), 1500);
 
 /**
  * The origin the app answers on over loopback, for in-container server-to-server
@@ -221,7 +222,7 @@ export const SERVICE_LOG_LINES = num("ORCH_SERVICE_LOG_LINES", process.env.ORCH_
  * inside the box.
  */
 export const INTERNAL_BASE_URL =
-  process.env.ORCH_INTERNAL_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+  readEnv("CALANDRIA_INTERNAL_BASE_URL") || `http://127.0.0.1:${process.env.PORT || 3000}`;
 
 /** Absolute path to the stdio MCP bridge the non-Claude drivers register per turn. */
 export const ORCH_MCP_SCRIPT = path.join(process.cwd(), "scripts", "orch-mcp.mjs");
@@ -235,7 +236,7 @@ export const ORCH_MCP_SCRIPT = path.join(process.cwd(), "scripts", "orch-mcp.mjs
  * remote-aware surface then degrades to the purely local behaviour.
  */
 export const GIT_FETCH_ENABLED = !["0", "off", "false", "no"].includes(
-  String(process.env.ORCH_GIT_FETCH || "").toLowerCase(),
+  String(readEnv("CALANDRIA_GIT_FETCH") || "").toLowerCase(),
 );
 
 /**
@@ -244,7 +245,11 @@ export const GIT_FETCH_ENABLED = !["0", "off", "false", "no"].includes(
  * carries on from the best ref it already has locally. Keep it short — this is
  * latency a user waits through when they click Start.
  */
-export const GIT_FETCH_TIMEOUT_MS = num("ORCH_GIT_FETCH_TIMEOUT_MS", process.env.ORCH_GIT_FETCH_TIMEOUT_MS, 10_000);
+export const GIT_FETCH_TIMEOUT_MS = num(
+  "CALANDRIA_GIT_FETCH_TIMEOUT_MS",
+  readEnv("CALANDRIA_GIT_FETCH_TIMEOUT_MS"),
+  10_000,
+);
 
 /**
  * How long a successful fetch of a repo counts as fresh. Opening a project and
@@ -252,8 +257,8 @@ export const GIT_FETCH_TIMEOUT_MS = num("ORCH_GIT_FETCH_TIMEOUT_MS", process.env
  * window the extra calls reuse the refs the first one wrote.
  */
 export const GIT_FETCH_COOLDOWN_MS = num(
-  "ORCH_GIT_FETCH_COOLDOWN_MS",
-  process.env.ORCH_GIT_FETCH_COOLDOWN_MS,
+  "CALANDRIA_GIT_FETCH_COOLDOWN_MS",
+  readEnv("CALANDRIA_GIT_FETCH_COOLDOWN_MS"),
   15_000,
 );
 
@@ -283,7 +288,7 @@ export const VAPID_SUBJECT =
  * The VAPID private key: a base64url-encoded raw P-256 scalar (32 bytes) — the
  * format `npx web-push generate-vapid-keys` prints, so a key made elsewhere can
  * be pinned here. Empty (the default) means the instance mints one on first
- * use and keeps it at `<ORCH_DB_DIR>/vapid.json`, beside the database it
+ * use and keeps it at `<CALANDRIA_DB_DIR>/vapid.json`, beside the database it
  * belongs with: every push subscription is bound to the key it was created
  * under, so a key that travels separately from the subscriptions strands all
  * of them. Set this only to hold one key across instances that share a
@@ -297,7 +302,7 @@ export const VAPID_PRIVATE_KEY = (process.env.VAPID_PRIVATE_KEY || "").trim();
  * (lib/scheduler.ts). Firings are minute-granular, so this bounds how late one
  * can be. Short enough to be punctual, long enough to be free.
  */
-export const SCHEDULE_TICK_MS = ms(process.env.ORCH_SCHEDULE_TICK_MS, 30_000);
+export const SCHEDULE_TICK_MS = ms(readEnv("CALANDRIA_SCHEDULE_TICK_MS"), 30_000);
 
 /**
  * How late a missed firing may still run. The machine sleeps, the container
@@ -307,7 +312,7 @@ export const SCHEDULE_TICK_MS = ms(process.env.ORCH_SCHEDULE_TICK_MS, 30_000);
  * it ran is useful; finding it start at 6pm is not. 0 disables catch-up
  * entirely; a schedule can override this with its own catch_up_ms.
  */
-export const SCHEDULE_CATCHUP_MS = ms(process.env.ORCH_SCHEDULE_CATCHUP_MS, 4 * 60 * 60 * 1000);
+export const SCHEDULE_CATCHUP_MS = ms(readEnv("CALANDRIA_SCHEDULE_CATCHUP_MS"), 4 * 60 * 60 * 1000);
 
 /**
  * How long the fire-time slash-command probe (lib/schedule/commands.ts) may
@@ -317,7 +322,7 @@ export const SCHEDULE_CATCHUP_MS = ms(process.env.ORCH_SCHEDULE_CATCHUP_MS, 4 * 
  * single-flight sweep, so a stalled CLI would otherwise wedge every schedule on
  * the instance with no error to show for it.
  */
-export const SCHEDULE_PROBE_MS = ms(process.env.ORCH_SCHEDULE_PROBE_MS, 20_000);
+export const SCHEDULE_PROBE_MS = ms(readEnv("CALANDRIA_SCHEDULE_PROBE_MS"), 20_000);
 
 /**
  * Master switch for the schedule ticker. On by default. Set to off/0/false for
@@ -325,7 +330,7 @@ export const SCHEDULE_PROBE_MS = ms(process.env.ORCH_SCHEDULE_PROBE_MS, 20_000);
  * session, or a second container pointed at a copy of the database.
  */
 export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
-  String(process.env.ORCH_SCHEDULER || "").toLowerCase(),
+  String(readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase(),
 );
 
 /**
@@ -335,7 +340,7 @@ export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
  * consumers, or one that should make no requests beyond the turns themselves.
  */
 export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
-  String(process.env.ORCH_PLAN_USAGE || "").toLowerCase(),
+  String(readEnv("CALANDRIA_PLAN_USAGE") || "").toLowerCase(),
 );
 
 /**
@@ -346,4 +351,4 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  * interval for the same endpoint. Between fetches the display coasts on the
  * cache plus the passive rate-limit telemetry that rides every turn for free.
  */
-export const PLAN_USAGE_MIN_FETCH_MS = ms(process.env.ORCH_PLAN_USAGE_MIN_FETCH_MS, 300_000);
+export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);

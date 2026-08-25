@@ -140,7 +140,7 @@ describe("VAPID", () => {
     expect(b64url.decode(s).length).toBe(64);
   });
 
-  it("mints a keypair on first use, keeps it in ORCH_DB_DIR, and reads it back", () => {
+  it("mints a keypair on first use, keeps it in CALANDRIA_DB_DIR, and reads it back", () => {
     const file = path.join(DB_DIR, "vapid.json");
     fs.rmSync(file, { force: true });
     resetVapidCache();

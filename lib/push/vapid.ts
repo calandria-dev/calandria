@@ -6,7 +6,7 @@
 // encrypt.ts, both pinned by tests (the RFC's own vector for the latter), and
 // that is smaller than the dependency tree it would replace.
 //
-// Key storage: VAPID_PRIVATE_KEY (env) wins; otherwise `<ORCH_DB_DIR>/vapid.json`,
+// Key storage: VAPID_PRIVATE_KEY (env) wins; otherwise `<CALANDRIA_DB_DIR>/vapid.json`,
 // minted on first use. It sits beside the database on purpose — a subscription
 // is bound to the key it was created under (the push service rejects a push
 // signed by any other), so the key must travel with the subscriptions or every

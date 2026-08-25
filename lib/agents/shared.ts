@@ -140,9 +140,9 @@ export function buildProjectContext(project: Project, task: Task): string {
       `the PORT environment variable the orchestrator injected ` +
       `(${project.port ? `PORT=${project.port}` : "set per project"}) so the address is stable. ` +
       `Because the URL is proxied under that hostname, allow it in dev-server host checks when ` +
-      `you scaffold or configure an app: Vite → \`server.allowedHosts: [process.env.ORCH_PUBLIC_HOST]\` ` +
-      `(or \`true\`), Next dev → \`allowedDevOrigins: [process.env.ORCH_PUBLIC_HOST]\` in next.config, ` +
-      `CRA/webpack-dev-server is pre-cleared via env. ORCH_PUBLIC_HOST is injected into services ` +
+      `you scaffold or configure an app: Vite → \`server.allowedHosts: [process.env.CALANDRIA_PUBLIC_HOST]\` ` +
+      `(or \`true\`), Next dev → \`allowedDevOrigins: [process.env.CALANDRIA_PUBLIC_HOST]\` in next.config, ` +
+      `CRA/webpack-dev-server is pre-cleared via env. CALANDRIA_PUBLIC_HOST is injected into services ` +
       `the orchestrator starts.`
   );
   return lines.join("\n");

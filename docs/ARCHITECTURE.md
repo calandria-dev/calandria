@@ -216,7 +216,7 @@ tools every driver exposes. The Claude driver mounts all but `ask_user` as an in
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
-reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
+reads `CALANDRIA_TASK_ID` / `CALANDRIA_PROJECT_ID` / `CALANDRIA_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
 (`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-groups,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
@@ -286,7 +286,7 @@ SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches the runner
 The policy lives in `updateTaskForAgent()` alone, because the two paths differ in who names
 the target: the Claude driver closes over the caller and hands the model's `task` argument
 straight through, while the bridge's endpoint takes the caller from the env-injected
-`ORCH_TASK_ID` and the target from the request body — model-supplied, and the reason
+`CALANDRIA_TASK_ID` and the target from the request body — model-supplied, and the reason
 `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
 asserts on the database rather than on the refusal text.
 
@@ -386,8 +386,8 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   **owned by the server** (not a turn or a tab), captures their stdout/stderr into a
   per-service ring buffer, and publishes status/log events over SSE. State lives on
   `globalThis` (survives HMR), like `lib/events.ts`. Each project gets a stable `PORT`
-  (`projects.port`, deterministic from `ORCH_SERVICE_PORT_BASE`) injected into every
-  service's env and the PTY shell. On by default (`ORCH_FEATURE_SERVICES=0` disables):
+  (`projects.port`, deterministic from `CALANDRIA_SERVICE_PORT_BASE`) injected into every
+  service's env and the PTY shell. On by default (`CALANDRIA_FEATURE_SERVICES=0` disables):
   the registry is **persisted** (`services` table) and `server.js` restores +
   auto-restarts managed services on boot — first **reaping any process group a crashed
   server left orphaned** (the spawn pid is persisted per row; the reaper verifies the
@@ -395,7 +395,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   never killed by mistake), and probing the port first so a conflict with an unmanaged
   process surfaces as a readable `error` on the service instead of an EADDRINUSE crash
   loop. A clean process exit SIGKILLs every managed group on the way out. **Public
-  hostnames are a separate opt-in** (`ORCH_SERVICE_HOSTS`): each service then gets a
+  hostnames are a separate opt-in** (`CALANDRIA_SERVICE_HOSTS`): each service then gets a
   stable `<slug>--<appHost>` hostname with per-service visibility (private /
   shared-link / public), dispatched through the reverse-proxy router in
   **`lib/service-router.mjs`** (WebSocket/HMR passthrough included), with the pure
@@ -418,10 +418,10 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 
 | What | Where |
 |-|-|
-| Projects, tasks, transcripts, summaries, session index | `orchestrator.db` (SQLite) in `ORCH_DB_DIR`, default `~/.zen-orchestrator` |
+| Projects, tasks, transcripts, summaries, session index | `orchestrator.db` (SQLite) in `CALANDRIA_DB_DIR`, default `~/.zen-orchestrator` |
 | The single-instance boot lock | `orchestrator.lock.db` beside it — a pure mutex holding no data (see below) |
-| Per-task git worktrees | `ORCH_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
-| Cloned project repos | `ORCH_PROJECTS_DIR`, default `~/projects` |
+| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
+| Cloned project repos | `CALANDRIA_PROJECTS_DIR`, default `~/projects` |
 | Your apps' actual code | each project's working directory — never inside Calandria's own tree |
 | Claude Code's raw session logs | `~/.claude/projects/...` (managed by Claude Code) |
 
@@ -444,7 +444,7 @@ over a pid+heartbeat lease file deliberately: there's no heartbeat to miss, no s
 window to tune, and no pid-liveness heuristic to get wrong (pids are small and reused
 inside a container, and `docker restart` keeps the hostname, so "pid 7 on host abc is
 alive" proves nothing). The OS drops the lock when the process dies, so recovery after a
-SIGKILL is immediate. Boot still retries for `ORCH_DB_LOCK_WAIT_MS`, which covers only
+SIGKILL is immediate. Boot still retries for `CALANDRIA_DB_LOCK_WAIT_MS`, which covers only
 the second or so a predecessor spends shutting down. `locking_mode = EXCLUSIVE` is
 pointedly *not* layered on top: in that mode a connection retains its SHARED lock even
 after a failed write, so two racing processes could deadlock each other out of the

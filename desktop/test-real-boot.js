@@ -9,7 +9,7 @@
  * defaults, and that SIGTERM drains them.
  *
  * Requires `npm ci` + `npm run build` in the repo root first. Uses a throwaway
- * ORCH_DB_DIR so it can never contend for the lock on your real database.
+ * CALANDRIA_DB_DIR so it can never contend for the lock on your real database.
  */
 "use strict";
 const assert = require("node:assert/strict");
@@ -26,7 +26,7 @@ const { Supervisor } = require("./supervisor");
     // interesting case, not a reason to fail.
     port: Number(process.env.PORT || 3000),
     ptyPort: Number(process.env.PTY_PORT || 3001),
-    env: { ...process.env, ORCH_DB_DIR: dbDir, ORCH_SCHEDULER: "off" },
+    env: { ...process.env, CALANDRIA_DB_DIR: dbDir, CALANDRIA_SCHEDULER: "off" },
     onLog: (l) => process.env.VERBOSE && console.log(l),
   });
 
@@ -61,7 +61,7 @@ const { Supervisor } = require("./supervisor");
     check("server proxies /pty at the shell's sidecar port", () =>
       assert.ok(log.includes(`ws://127.0.0.1:${ptyPort}`), "server.js did not report the pty target we set"));
     check("pty sidecar came up", () => assert.ok(/\[pty\].*listening/.test(log), "no pty listening line"));
-    check("db lives in the throwaway dir", () => assert.ok(log.includes(dbDir), "server did not report our ORCH_DB_DIR"));
+    check("db lives in the throwaway dir", () => assert.ok(log.includes(dbDir), "server did not report our CALANDRIA_DB_DIR"));
 
     await sup.stop();
     check("both sidecars exited on SIGTERM", () => assert.ok(sup.children.every((c) => c.exited)));

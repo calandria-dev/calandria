@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Session-scoped wakeups (ScheduleWakeup / CronCreate / /loop) under the
 // UNBOUNDED linger default — its own file because claudeBackgroundLinger.test.ts
-// pins ORCH_BACKGROUND_LINGER_MS=500 at module load, and a cron fires at a
+// pins CALANDRIA_BACKGROUND_LINGER_MS=500 at module load, and a cron fires at a
 // minute boundary, so on that instance no wakeup can ever fit the window.
 //
 // Measured on claude CLI 2.1.240 / SDK 0.3.159 (record in the commit): with
@@ -13,8 +13,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // while a recurring cron is reported again on every wake turn. Closing the
 // input with a cron pending exits the CLI in ~300ms and the wake is gone.
 const { queryMock } = vi.hoisted(() => {
-  delete process.env.ORCH_BACKGROUND_LINGER_MS;
-  delete process.env.ORCH_BACKGROUND_LINGER;
+  delete process.env.CALANDRIA_BACKGROUND_LINGER_MS;
+  delete process.env.CALANDRIA_BACKGROUND_LINGER;
   return { queryMock: vi.fn() };
 });
 

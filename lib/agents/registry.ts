@@ -31,7 +31,7 @@ function drivers(): Record<string, AgentDriver> {
     // Playwright suite's env flag is set, so it can never appear in a real
     // instance's agent picker. The import above is unconditional but harmless:
     // the mock has no SDK dependency.
-    if (process.env.ORCH_E2E_MOCK_AGENT === "1") DRIVERS[mockDriver.id] = mockDriver;
+    if (process.env.CALANDRIA_E2E_MOCK_AGENT === "1") DRIVERS[mockDriver.id] = mockDriver;
   }
   return DRIVERS;
 }

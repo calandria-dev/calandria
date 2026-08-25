@@ -50,7 +50,7 @@ setTimeout(() => {
 `;
 
 function installFakeCodex(): string {
-  const dir = fs.mkdtempSync(path.join(process.env.ORCH_TEST_TMP!, "codex-verify-"));
+  const dir = fs.mkdtempSync(path.join(process.env.CALANDRIA_TEST_TMP!, "codex-verify-"));
   const bin = path.join(dir, "codex");
   fs.writeFileSync(bin, fakeCodex, { mode: 0o755 });
   return bin;

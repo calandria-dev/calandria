@@ -539,7 +539,7 @@ export function isInertSuggestion(t: Task): boolean {
  *
  * `caller` is the session's own task and is TRUSTED — it never comes from the
  * model. The Claude driver closes over it; the bridge's endpoint reads it from
- * the env-injected ORCH_TASK_ID. `targetRef` is the opposite: the id the MODEL
+ * the env-injected CALANDRIA_TASK_ID. `targetRef` is the opposite: the id the MODEL
  * named, or undefined for "my own row". Everything that decides whether that id
  * may be written lives here, so the in-process server and the HTTP endpoint
  * behind the stdio bridge cannot drift into two different policies.

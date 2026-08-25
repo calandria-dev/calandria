@@ -29,9 +29,9 @@ import { init } from "../lib/db";
 const HOLDER = path.join(__dirname, "fixtures", "dbLockHolder.mjs");
 
 let n = 0;
-/** A fresh, empty ORCH_DB_DIR-shaped directory per case. */
+/** A fresh, empty CALANDRIA_DB_DIR-shaped directory per case. */
 function freshDir(): string {
-  const dir = path.join(process.env.ORCH_TEST_TMP!, `lockdir-${++n}`);
+  const dir = path.join(process.env.CALANDRIA_TEST_TMP!, `lockdir-${++n}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -133,12 +133,12 @@ describe("db boot lock", () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(600);
   });
 
-  it("lets both processes in when ORCH_DB_LOCK=off, without claiming ownership", async () => {
+  it("lets both processes in when CALANDRIA_DB_LOCK=off, without claiming ownership", async () => {
     const dir = freshDir();
     const state = await acquireDbLock({ dir, waitMs: 0, lock: "off" });
     expect(state.mode).toBe("bypass");
 
-    const { child, first } = spawnHolder(dir, 0, "exit", { ORCH_DB_LOCK: "off" });
+    const { child, first } = spawnHolder(dir, 0, "exit", { CALANDRIA_DB_LOCK: "off" });
     spawned.push(child);
     expect(await first).toMatchObject({ ok: true, mode: "bypass" });
   });
@@ -153,7 +153,7 @@ describe("crash-recovery authorization", () => {
     expect(consumeDbRecoveryAuthorization(dir)).toBe(false);
   });
 
-  it("is granted under the ORCH_DB_LOCK=off escape hatch", async () => {
+  it("is granted under the CALANDRIA_DB_LOCK=off escape hatch", async () => {
     const dir = freshDir();
     await acquireDbLock({ dir, waitMs: 0, lock: "off" });
 
@@ -234,7 +234,7 @@ describe("init() crash recovery", () => {
 
   it("clears the wreckage of a dead process when this one owns the database", async () => {
     const db = midTurnDb();
-    await acquireDbLock({ dir: process.env.ORCH_DB_DIR!, waitMs: 0 });
+    await acquireDbLock({ dir: process.env.CALANDRIA_DB_DIR!, waitMs: 0 });
 
     init(db);
 
@@ -243,7 +243,7 @@ describe("init() crash recovery", () => {
 
   it("does not re-run recovery on a later init() in the same process", async () => {
     const db = midTurnDb();
-    await acquireDbLock({ dir: process.env.ORCH_DB_DIR!, waitMs: 0 });
+    await acquireDbLock({ dir: process.env.CALANDRIA_DB_DIR!, waitMs: 0 });
     init(db);
 
     // A turn starts, and a follow-up is queued behind it.

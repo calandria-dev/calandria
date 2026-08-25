@@ -116,7 +116,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   // The driver holds the session open past the result while run_in_background
   // work runs (streaming-input linger — see driver.ts). Off when the operator
-  // disabled the feature (ORCH_BACKGROUND_LINGER=off), and then
+  // disabled the feature (CALANDRIA_BACKGROUND_LINGER=off), and then
   // buildProjectContext re-warns the model that backgrounded commands die at
   // turn end.
   backgroundTasksLinger: BACKGROUND_LINGER_ENABLED,

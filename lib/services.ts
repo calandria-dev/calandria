@@ -34,7 +34,7 @@ import { resolveFeatures } from "./features";
 import { SERVICE_LOG_LINES } from "./config";
 import { appHostFromEnv, serviceHostsEnabled, slugifyServiceName } from "./service-host.mjs";
 
-// Per-service log ring buffer cap (lines) — ORCH_SERVICE_LOG_LINES, default 1500.
+// Per-service log ring buffer cap (lines) — CALANDRIA_SERVICE_LOG_LINES, default 1500.
 const LOG_CAP = SERVICE_LOG_LINES;
 
 type Listener = (ev: ServiceEvent) => void;
@@ -87,7 +87,7 @@ const keyOf = (projectId: string, name: string) => `${projectId}:${name}`;
 // ---------- public URLs ----------
 
 // Public routing is on only when the feature flag is on, public hostnames are
-// explicitly opted into (ORCH_SERVICE_HOSTS — the flag alone must never expose
+// explicitly opted into (CALANDRIA_SERVICE_HOSTS — the flag alone must never expose
 // anything), AND the instance knows its own hostname; otherwise serviceUrl
 // falls back to the honest local URL. A nonstandard port in PUBLIC_BASE_URL
 // (local testing) is carried into the built URLs; hostname parsing ignores it
@@ -338,12 +338,18 @@ function newManaged(projectId: string, name: string, kind: ServiceKind, command:
 // deterministic; the host-check vars pre-clear the frameworks that respect env
 // for requests arriving via the public hostname (the router preserves the
 // original Host header). Vite/Next need a config line instead — the public
-// host is handed over as ORCH_PUBLIC_HOST so configs can reference it; see
+// host is handed over as CALANDRIA_PUBLIC_HOST so configs can reference it; see
 // docs/SERVICES.md.
 function serviceEnv(m: Managed): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(m.port), FORCE_COLOR: "1" };
   const host = publicServiceHost(m.slug);
   if (host) {
+    // Both names are injected, and ORCH_PUBLIC_HOST is not on a deprecation
+    // clock: unlike our own env reads, this one is baked into users' own
+    // vite/next configs in THEIR repos (docs/SERVICES.md), which this app has
+    // no way to migrate — so the old name keeps being set indefinitely,
+    // alongside the new one, rather than only until the alias table is retired.
+    env.CALANDRIA_PUBLIC_HOST = host;
     env.ORCH_PUBLIC_HOST = host;
     env.DANGEROUSLY_DISABLE_HOST_CHECK = "true"; // CRA / webpack-dev-server
     env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS = host; // Vite ≥ 5.4.12

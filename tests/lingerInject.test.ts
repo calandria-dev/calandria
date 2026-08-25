@@ -33,8 +33,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Unbounded linger (the default), so this file deletes the bounded override
 // claudeBackgroundLinger.test.ts sets — env leaks across files in a worker.
 const { queryMock } = vi.hoisted(() => {
-  delete process.env.ORCH_BACKGROUND_LINGER_MS;
-  delete process.env.ORCH_BACKGROUND_LINGER;
+  delete process.env.CALANDRIA_BACKGROUND_LINGER_MS;
+  delete process.env.CALANDRIA_BACKGROUND_LINGER;
   return { queryMock: vi.fn() };
 });
 

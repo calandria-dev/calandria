@@ -25,7 +25,7 @@
 // needs no ticker, a launch is a side effect — so this is server-owned periodic
 // work like lib/scheduler.ts, started from the same boot ping and idempotent
 // on globalThis. It is deliberately NOT folded into that ticker: it is not a
-// schedule, and `ORCH_SCHEDULER=off` must not silently disable a button the
+// schedule, and `CALANDRIA_SCHEDULER=off` must not silently disable a button the
 // task hero offers. Boot catch-up is free: a deadline that passed while the
 // server was down is simply due on the first sweep.
 //

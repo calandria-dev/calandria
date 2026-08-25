@@ -1,4 +1,5 @@
 import pkg from "@/package.json";
+import { readEnv } from "@/lib/env.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -12,8 +13,8 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   return Response.json({
-    sha: process.env.ORCH_GIT_SHA ?? "unknown",
-    builtAt: process.env.ORCH_BUILT_AT ?? "unknown",
+    sha: readEnv("CALANDRIA_GIT_SHA") ?? "unknown",
+    builtAt: readEnv("CALANDRIA_BUILT_AT") ?? "unknown",
     version: pkg.version,
   });
 }

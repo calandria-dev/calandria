@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 //
 // Two ids, and the difference between them is the whole blast-radius story:
 //
-//   body.taskId  the CALLER. ORCH_TASK_ID, injected into the bridge's env by
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
 //                lib/agents/codex/driver.ts — never a field the model can set.
 //   body.task    the TARGET the MODEL named, and therefore untrusted. Optional;
 //                omitted means "my own row".

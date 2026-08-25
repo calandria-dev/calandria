@@ -156,7 +156,7 @@ function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {}
   if (port) out.PORT = String(port);
   if (ptyPort) out.PTY_PORT = String(ptyPort);
   out.PTY_HOST = env.PTY_HOST || "127.0.0.1";
-  if (dbDir) out.ORCH_DB_DIR = dbDir;
+  if (dbDir) out.CALANDRIA_DB_DIR = dbDir;
   if (process.platform === "win32" && !out.SHELL) {
     out.SHELL = out.COMSPEC || "powershell.exe";
   }
@@ -256,7 +256,9 @@ class Supervisor {
     this.dbDir = opts.dbDir || null;
     this.preferredPort = opts.port || 3000;
     this.preferredPtyPort = opts.ptyPort || 3001;
-    this.shutdownGraceMs = Number(this.env.ORCH_SHUTDOWN_GRACE_MS || 5000);
+    // Mirrors lib/env.mjs's CALANDRIA_X-falls-back-to-ORCH_X alias by hand — this
+    // file is CommonJS and can't import the ESM reader.
+    this.shutdownGraceMs = Number(this.env.CALANDRIA_SHUTDOWN_GRACE_MS || this.env.ORCH_SHUTDOWN_GRACE_MS || 5000);
     this.children = [];
     this.port = null;
     this.ptyPort = null;
@@ -357,7 +359,7 @@ class Supervisor {
 
   /**
    * SIGTERM, then wait. server.js's own handler POSTs /api/instance/drain and
-   * exits when in-flight turns have settled (ORCH_SHUTDOWN_GRACE_MS), so the
+   * exits when in-flight turns have settled (CALANDRIA_SHUTDOWN_GRACE_MS), so the
    * shell's job is only to not out-run it. SIGKILL is the backstop.
    * On Windows there is no SIGTERM: the .kill() lands as TerminateProcess, so
    * the drain is skipped — a known gap, listed in the spike doc.

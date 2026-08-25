@@ -32,7 +32,7 @@ const isExecutable = (p: string): boolean => {
 };
 
 /**
- * The gh binary to spawn: ORCH_GH_BIN if set (taken verbatim — a wrong path
+ * The gh binary to spawn: CALANDRIA_GH_BIN if set (taken verbatim — a wrong path
  * should fail loudly, not be silently papered over by the probe), else bare
  * "gh" when the server's PATH can resolve it, else the first hit in the
  * well-known install dirs. Falls back to "gh" so the ENOENT lands in the
@@ -63,9 +63,9 @@ export function resolveGhBin(
  */
 export function ghMissingMessage(configured: string = GH_BIN): string {
   if (configured)
-    return `GitHub CLI not found: ORCH_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
+    return `GitHub CLI not found: CALANDRIA_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
   return (
-    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set ORCH_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
+    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set CALANDRIA_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
   );
 }
 

@@ -14,7 +14,7 @@ describe("middleware: fleet token stays read-only", () => {
     CF_ACCESS_TEAM_DOMAIN: process.env.CF_ACCESS_TEAM_DOMAIN,
     CF_ACCESS_AUD: process.env.CF_ACCESS_AUD,
     SERVICE_TOKEN: process.env.SERVICE_TOKEN,
-    ORCH_FLEET_TOKEN: process.env.ORCH_FLEET_TOKEN,
+    CALANDRIA_FLEET_TOKEN: process.env.CALANDRIA_FLEET_TOKEN,
   };
 
   beforeEach(() => {
@@ -23,7 +23,7 @@ describe("middleware: fleet token stays read-only", () => {
     process.env.CF_ACCESS_TEAM_DOMAIN = "test-team.cloudflareaccess.com";
     process.env.CF_ACCESS_AUD = "test-aud";
     process.env.SERVICE_TOKEN = "instance-secret";
-    process.env.ORCH_FLEET_TOKEN = "fleet-secret";
+    process.env.CALANDRIA_FLEET_TOKEN = "fleet-secret";
   });
 
   afterEach(() => {

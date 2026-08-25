@@ -59,7 +59,7 @@ const cfAccessImport = import("./lib/auth/origin.mjs");
 const localOriginImport = import("./lib/auth/local-origin.mjs");
 
 // Host-header router for public service hostnames (<slug>--<appHost>, e.g.
-// calc--myhost.example.com). Opt-in via ORCH_SERVICE_HOSTS (the services
+// calc--myhost.example.com). Opt-in via CALANDRIA_SERVICE_HOSTS (the services
 // feature flag alone exposes nothing); no-ops entirely (returns false,
 // requests fall through to Next) when that, the feature flag, or
 // PUBLIC_BASE_URL says no. Service hostnames carry their OWN per-service auth
@@ -71,8 +71,14 @@ const serviceRouterImport = import("./lib/service-router.mjs");
 // from the launch environment would make every SDK turn bill per-token while
 // the UI reports the subscription login. Strip such keys before we serve a
 // single request (persisted keys are re-applied from their 0600 files at db
-// init; ORCH_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
+// init; CALANDRIA_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
 const envKeysImport = import("./lib/env-keys.mjs");
+
+// CALANDRIA_*/ORCH_* alias reader (lib/env.mjs) — dynamic-imported for the same
+// reason as the other lib/*.mjs files above: this entrypoint is plain CommonJS
+// and can't `require()` an ES module. Needed before listen() (SHUTDOWN_GRACE_MS,
+// SCHEDULER) and for the one-line deprecation notice printed below.
+const envImport = import("./lib/env.mjs");
 
 // One app process per orchestrator.db. Two processes against one database
 // silently corrupt each other — the loser of the race is whichever one is
@@ -88,16 +94,17 @@ const dbLockImport = import("./lib/db-lock.mjs");
 // is reached exclusively through this proxy.
 const dev = process.env.NODE_ENV !== "production";
 const port = numEnv("PORT", process.env.PORT, 3000);
-// ORCH_HOSTNAME only, defaulting to loopback — bare HOSTNAME is ignored because
-// shells and container runtimes inject it, and the default must not publish an
-// unauthenticated shell to the network. See lib/resolveHostname.js.
+// CALANDRIA_HOSTNAME only, defaulting to loopback — bare HOSTNAME is ignored
+// because shells and container runtimes inject it, and the default must not
+// publish an unauthenticated shell to the network. See lib/resolveHostname.js.
 const hostname = resolveHostname();
 const ptyHost = process.env.PTY_HOST || "127.0.0.1";
 const ptyPort = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
 // Mirrors lib/config.ts's SHUTDOWN_GRACE_MS — kept in sync per this file's own
 // env-var convention (see numEnv above). Used below by the SIGTERM/SIGINT
-// graceful-shutdown handler.
-const shutdownGraceMs = numEnv("ORCH_SHUTDOWN_GRACE_MS", process.env.ORCH_SHUTDOWN_GRACE_MS, 5000);
+// graceful-shutdown handler. Assigned once envImport resolves (below) since it
+// reads CALANDRIA_SHUTDOWN_GRACE_MS via lib/env.mjs's readEnv.
+let shutdownGraceMs;
 
 const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });
@@ -195,7 +202,7 @@ const prepared = dbLockImport
     dbDir = held.dir;
     if (held.mode === "bypass") {
       console.warn(
-        "[server] WARN: ORCH_DB_LOCK=off — the single-instance check is DISABLED. " +
+        "[server] WARN: CALANDRIA_DB_LOCK=off — the single-instance check is DISABLED. " +
           "If a second process is running against this database, the two will overwrite " +
           "each other's running tasks, queued follow-ups and open permission prompts.",
       );
@@ -208,7 +215,17 @@ const prepared = dbLockImport
   })
   .then(() => app.prepare());
 
-Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys]) => {
+Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env]) => {
+  // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still relied
+  // on — the old spellings keep working, but this is the only heads-up an
+  // operator gets, so print it before the app starts serving.
+  const deprecation = env.deprecatedEnvWarning();
+  if (deprecation) console.warn("[server] WARN: " + deprecation);
+
+  // Resolved here (not at top-level) because it reads CALANDRIA_SHUTDOWN_GRACE_MS
+  // through lib/env.mjs's readEnv, which needs envImport settled.
+  shutdownGraceMs = numEnv("CALANDRIA_SHUTDOWN_GRACE_MS", env.readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000);
+
   // Before listen (= before any request can read env): drop inherited billing
   // keys so turns can't silently switch from the subscription login to
   // per-token API billing. See lib/env-keys.mjs.
@@ -216,7 +233,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     console.warn(
       `[server] WARN: ${name} was set in the environment — unsetting it. ` +
         `Turns authenticate via the connected agent login (or a key saved in Settings). ` +
-        `Set ORCH_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose.`,
+        `Set CALANDRIA_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose.`,
     );
   }
 
@@ -289,7 +306,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   // persist its interrupted state (DENIED_INTERRUPTED permission cards,
   // running/awaiting_input settled, turn_end published) before we exit.
   //
-  // The route's own wait is bounded by ORCH_SHUTDOWN_GRACE_MS
+  // The route's own wait is bounded by CALANDRIA_SHUTDOWN_GRACE_MS
   // (lib/config.ts's SHUTDOWN_GRACE_MS); the hardTimeout here is that plus
   // headroom for the HTTP round trip, so a hung fetch — or a drain route that
   // never becomes reachable — still exits instead of hanging until the
@@ -338,7 +355,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     );
     // One-line boot summary (issue #18 item 4): "is it configured the way I
     // think" as a log-grep instead of a source read, alongside the warnings below.
-    const schedulerOn = !["0", "off", "false", "no"].includes(String(process.env.ORCH_SCHEDULER || "").toLowerCase());
+    const schedulerOn = !["0", "off", "false", "no"].includes(String(env.readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase());
     console.log(
       `[server] config: bind=${hostname}:${port} pty=${ptyHost}:${ptyPort} ` +
         `cfAccess=${cfAccess.originAuthEnabled() ? "on" : "off"} ` +
@@ -355,7 +372,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     if (!cfAccess.originAuthEnabled() && !/^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i.test(hostname)) {
       console.warn(
         `[server] WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
-          `this port gets the app and a shell. Set CF_ACCESS_*, or unset ORCH_HOSTNAME.`,
+          `this port gets the app and a shell. Set CF_ACCESS_*, or unset CALANDRIA_HOSTNAME.`,
       );
     }
     // Half-configured Access is the dangerous shape: enforcement is ON iff BOTH

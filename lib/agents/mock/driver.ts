@@ -1,5 +1,5 @@
 // The e2e mock driver — a deterministic AgentDriver used only by the Playwright
-// suite (registered when ORCH_E2E_MOCK_AGENT=1, see registry.ts). It exercises
+// suite (registered when CALANDRIA_E2E_MOCK_AGENT=1, see registry.ts). It exercises
 // the full turn contract (session/model/tool/assistant/usage/done, plus error,
 // suggested, and abort-aware sleeps) without any real agent CLI or login, so
 // e2e runs need no Claude/Codex credentials and produce the same transcript
