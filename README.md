@@ -145,7 +145,7 @@ Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is publis
 publicly: `latest` is the newest tagged release, `edge` tracks nightly builds of `main`.
 
 ```bash
-docker pull ghcr.io/calandria-dev/calandria:edge
+docker pull ghcr.io/calandria-dev/calandria:latest
 ```
 
 Use `npm run dev` only when developing Calandria itself. For Docker tags and
