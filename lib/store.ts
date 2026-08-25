@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
+import type { Project, Task, TaskGroup, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -446,6 +446,8 @@ export function createTask(input: {
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
   runbook_id?: string | null;
+  /** The task group this joins at birth (validated against the project by the caller). null = ungrouped. */
+  group_id?: string | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -462,13 +464,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, permission_mode, schedule_id, runbook_id, group_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
       agent, sendContext ? 1 : 0, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      position, now, now
+      input.group_id ?? null, position, now, now
     );
   return getTask(id)!;
 }
@@ -694,8 +696,12 @@ export function moveTasks(
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
+        reasoning = ?, permission_mode = ?, session_id = ?, group_id = NULL, updated_at = ? WHERE id = ?`
     );
+    // group_id = NULL: a group is project-scoped like a dependency edge, so a
+    // moved row can't keep pointing at one in the project it left. (Carrying
+    // a group whose EVERY member is moving is the follow-on in the groups
+    // spec; today the move ungroups, and the edit dialog says so.)
     // Everything that described the checkout being thrown away. Its own
     // statement, run AFTER the reparent: it's the exception rather than part of
     // every move, so the ordinary unstarted move still writes exactly the
@@ -817,9 +823,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, group_id=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.group_id ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -867,6 +873,172 @@ export function listReclaimableWorktrees(): ReclaimableWorktree[] {
 // The durable half of the tool-permission gate (lib/permissions.ts): what the
 // user chose to stop being asked about, scoped to one project. Matching logic
 // lives in lib/permissions.ts; this is storage only.
+
+// ---------- task groups ----------
+// A named, project-scoped container of tasks (lib/types TaskGroup; design in
+// docs/superpowers/specs/2026-08-24-task-grouping-design.md). Everything about
+// a group's PROGRESS is derived here at read time from its members — no cached
+// column, no trigger — so a deleted or moved task can never leave it stale.
+
+// done/cancelled are terminal the way lib/autoStart's blocks() counts them: a
+// withdrawn suggestion is `cancelled` and counts as finished-with, not as
+// outstanding. `awaiting` is the project badge's own NEEDS_YOU predicate.
+const GROUP_COUNTS_SQL = `
+  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id) AS c_total,
+  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.status = 'done') AS c_done,
+  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.status = 'cancelled') AS c_cancelled,
+  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.running = 1) AS c_running,
+  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND ${NEEDS_YOU}) AS c_awaiting`;
+
+type GroupRow = Omit<TaskGroup, "counts"> & { c_total: number; c_done: number; c_cancelled: number; c_running: number; c_awaiting: number };
+
+function groupFromRow(r: GroupRow): TaskGroup {
+  const { c_total, c_done, c_cancelled, c_running, c_awaiting, ...rest } = r;
+  return { ...rest, counts: { total: c_total, done: c_done, cancelled: c_cancelled, running: c_running, awaiting: c_awaiting } };
+}
+
+const SELECT_GROUP = `SELECT g.*, ${GROUP_COUNTS_SQL} FROM task_groups g`;
+
+/** A rename or create that would collide with UNIQUE(project_id, name). Routes map it to 409. */
+export class GroupNameConflictError extends Error {
+  readonly code = "group_name_taken" as const;
+  constructor(name: string) {
+    super(`A group named "${name}" already exists in this project`);
+    this.name = "GroupNameConflictError";
+  }
+}
+
+export function listGroups(projectId: string): TaskGroup[] {
+  return (getDb().prepare(`${SELECT_GROUP} WHERE g.project_id = ? ORDER BY g.position ASC, g.created_at ASC`).all(projectId) as GroupRow[]).map(groupFromRow);
+}
+
+export function getGroup(id: string): TaskGroup | undefined {
+  const r = getDb().prepare(`${SELECT_GROUP} WHERE g.id = ?`).get(id) as GroupRow | undefined;
+  return r ? groupFromRow(r) : undefined;
+}
+
+// Exact match, case-sensitive, like the UNIQUE constraint it mirrors. A near
+// miss creating a second group is bounded by that constraint plus the tool
+// result naming what happened (resolveGroup's `created`).
+function groupByName(projectId: string, name: string): TaskGroup | undefined {
+  const r = getDb().prepare(`${SELECT_GROUP} WHERE g.project_id = ? AND g.name = ?`).get(projectId, name) as GroupRow | undefined;
+  return r ? groupFromRow(r) : undefined;
+}
+
+export function createGroup(input: {
+  project_id: string;
+  name: string;
+  description?: string;
+  color?: string | null;
+  /** The session that filed it, when an agent did. */
+  origin_task_id?: string | null;
+}): TaskGroup {
+  const name = input.name.trim();
+  if (!name) throw new Error("group name required");
+  // Checked rather than left to the constraint so the error names the group,
+  // and so the throw is the same class whether it came from create or rename.
+  if (groupByName(input.project_id, name)) throw new GroupNameConflictError(name);
+  const now = Date.now();
+  const id = nanoid();
+  const position = (
+    getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM task_groups WHERE project_id = ?").get(input.project_id) as { n: number }
+  ).n;
+  getDb()
+    .prepare(
+      `INSERT INTO task_groups (id, project_id, name, description, color, origin_task_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(id, input.project_id, name, input.description ?? "", input.color ?? null, input.origin_task_id ?? null, position, now, now);
+  return getGroup(id)!;
+}
+
+export function updateGroup(
+  id: string,
+  fields: Partial<Pick<TaskGroup, "name" | "description" | "color" | "position">>
+): TaskGroup | undefined {
+  const cur = getGroup(id);
+  if (!cur) return undefined;
+  const patch: Record<string, string | number | null> = {};
+  if (fields.name !== undefined) {
+    const name = fields.name.trim();
+    if (!name) throw new Error("group name required");
+    const other = groupByName(cur.project_id, name);
+    if (other && other.id !== id) throw new GroupNameConflictError(name);
+    patch.name = name;
+  }
+  if (fields.description !== undefined) patch.description = fields.description;
+  if (fields.color !== undefined) patch.color = fields.color;
+  if (fields.position !== undefined) patch.position = fields.position;
+  const keys = Object.keys(patch);
+  if (!keys.length) return cur;
+  getDb()
+    .prepare(`UPDATE task_groups SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
+    .run(...keys.map((k) => patch[k]), Date.now(), id);
+  return getGroup(id);
+}
+
+/**
+ * Hard delete, like everything else. Members are UNGROUPED, never deleted —
+ * tasks.group_id is ON DELETE SET NULL, and that is the whole policy: a group
+ * is a label over work, not the work. Returns whether a row was removed.
+ */
+export function deleteGroup(id: string): boolean {
+  return getDb().prepare("DELETE FROM task_groups WHERE id = ?").run(id).changes > 0;
+}
+
+/**
+ * Resolve an agent's or a form's reference — an id or an exact name — inside
+ * ONE project. Two policies behind one flag, because the two callers mean
+ * different things by a miss:
+ *   - `create: true` is the planning verb (suggest_task): the common case IS
+ *     "this group doesn't exist yet", so a miss creates it, tagged with the
+ *     session that filed it, and `created` says so in the tool result.
+ *   - strict (the default) is for update_task and the PATCH routes, where a
+ *     typo must fail the call rather than mint a near-duplicate.
+ * Returns null on a strict miss or an empty ref.
+ */
+export function resolveGroup(
+  projectId: string,
+  ref: string,
+  opts: { create?: boolean; originTaskId?: string | null } = {}
+): { group: TaskGroup; created: boolean } | null {
+  const key = ref.trim();
+  if (!key) return null;
+  const byId = getGroup(key);
+  if (byId && byId.project_id === projectId) return { group: byId, created: false };
+  const byName = groupByName(projectId, key);
+  if (byName) return { group: byName, created: false };
+  if (!opts.create) return null;
+  return { group: createGroup({ project_id: projectId, name: key, origin_task_id: opts.originTaskId ?? null }), created: true };
+}
+
+/**
+ * Assign (or with null, clear) the group on a batch of tasks, in one
+ * transaction. Refuses the WHOLE batch when any task lives outside the group's
+ * project — a group never spans repositories, and a batch that silently
+ * skipped the strays would report success for a half-applied selection.
+ * Returns the ids actually rewritten (a task already in the group is skipped,
+ * so callers can tell "nothing changed" from "changed").
+ */
+export function setTaskGroup(ids: string[], groupId: string | null): string[] {
+  const db = getDb();
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  const group = groupId ? getGroup(groupId) : null;
+  if (groupId && !group) throw new Error("no such group");
+  const rows = unique.map((id) => getTask(id)).filter((t): t is Task => !!t);
+  if (group) {
+    const stray = rows.find((t) => t.project_id !== group.project_id);
+    if (stray) throw new Error(`task "${stray.title}" is in another project — a group can't span projects`);
+  }
+  const changed = rows.filter((t) => (t.group_id ?? null) !== (group?.id ?? null));
+  const now = Date.now();
+  db.transaction(() => {
+    const stmt = db.prepare("UPDATE tasks SET group_id = ?, updated_at = ? WHERE id = ?");
+    for (const t of changed) stmt.run(group?.id ?? null, now, t.id);
+  })();
+  return changed.map((t) => t.id);
+}
 
 export function listPermissionRules(projectId: string): PermissionRule[] {
   return getDb()

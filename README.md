@@ -85,6 +85,10 @@ silently dying with the process).
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.
+- **Task groups:** name the feature a set of tasks belongs to ("Auth
+  migration") and filter the list or board down to it with one chip. Every
+  member carries a tinted badge, progress is derived from the members, and
+  finished groups fold away.
 - **Runbooks:** save a task you run often ("push everything unpushed and
   babysit CI", "sweep my Jiras and report") as a named recipe, then dispatch
   it in one click. Each run mints a fresh task, and a box for this-run-only

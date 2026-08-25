@@ -330,6 +330,31 @@ export function init(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
+    -- A named, project-scoped container of tasks — the noun a multi-task
+    -- feature was missing (docs/superpowers/specs/2026-08-24-task-grouping-design.md).
+    -- Deliberately NOT a task: no session, no worktree, no status of its own.
+    -- Status is derived per read from the members (done when every member is
+    -- terminal), never stored, so a deleted task can't leave it stale.
+    -- UNIQUE(project_id, name) is what makes exact-name resolution from an
+    -- agent unambiguous; a rename collision is a 409. origin_task_id is
+    -- provenance — the planning session that filed the group — and SET NULL
+    -- because deleting the plan must not delete the set it named. Members are
+    -- linked from tasks.group_id (added in migrate(), below the runbook link).
+    CREATE TABLE IF NOT EXISTS task_groups (
+      id             TEXT PRIMARY KEY,
+      project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name           TEXT NOT NULL,
+      description    TEXT NOT NULL DEFAULT '',
+      color          TEXT,                       -- optional badge tint (hex), from the project palette
+      origin_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      position       INTEGER NOT NULL DEFAULT 0, -- chip order; created_at order for now
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL,
+      UNIQUE(project_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_groups_project ON task_groups(project_id);
+
     -- App-level key/value preferences that must be readable server-side (e.g. the
     -- default reasoning level + permission mode a task inherits when it hasn't
     -- overridden them). Distinct from the browser-local UI settings in localStorage.
@@ -685,6 +710,13 @@ export function migrate(db: Database.Database) {
   // block runs BEFORE this ALTER, so indexing the column there fails with
   // "no such column: runbook_id".
   db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_runbook ON tasks(runbook_id)");
+  // Which group this task belongs to (one group per task, nullable). SET NULL:
+  // deleting a group ungroups its members, never deletes them. Same
+  // create-the-index-here reasoning as runbook_id above.
+  if (!taskCols.includes("group_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN group_id TEXT REFERENCES task_groups(id) ON DELETE SET NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_id)");
   // An optional link from a schedule to the runbook it fires, so "the morning
   // sweep" is one recipe edited in one place. SET NULL is the FK's answer;
   // deleteRunbook() gets there first and copies the recipe back into the

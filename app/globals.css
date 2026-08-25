@@ -2042,3 +2042,31 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .collab-split,.collab-split:has(.collab-side){grid-template-columns:1fr;grid-template-rows:minmax(0,1.3fr) minmax(0,1fr);}
   .collab-hint{display:none;}
 }
+
+/* ---- task groups: chip bar over the list/board, badge on rows and cards (GroupChips.tsx) ----
+   --gc is the group's tint; unset, everything below falls back to the neutral ink. */
+.gchips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px 4px;}
+.board-ws .gchips{padding:6px 18px 2px;}
+.gchip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;max-width:220px;border-radius:999px;border:1px solid var(--line-2);background:var(--raise);color:var(--ink-2);font-size:11.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .12s,background .12s,color .12s;}
+.gchip:hover{border-color:var(--line-strong);color:var(--ink);}
+.gchip.on{background:color-mix(in oklab,var(--gc,var(--ink-3)) 14%,var(--raise));border-color:var(--gc,var(--line-strong));color:var(--ink);}
+.gchip .gc-dot{width:7px;height:7px;border-radius:50%;background:var(--gc,var(--ink-4));flex:0 0 auto;}
+.gchip .gc-name{overflow:hidden;text-overflow:ellipsis;}
+.gchip .gc-frac{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--ink-4);}
+.gchip.on .gc-frac{color:var(--ink-3);}
+.gchip .gc-need{width:6px;height:6px;border-radius:50%;background:var(--blue);flex:0 0 auto;}
+.gchip.fold{color:var(--ink-3);border-style:dashed;}
+.gchip.fold.open{border-style:solid;}
+.gbadge{display:inline-flex;align-items:center;max-width:160px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto;font-family:var(--sans);
+  color:var(--gc,var(--ink-3));background:color-mix(in oklab,var(--gc,var(--ink-3)) 13%,transparent);border:1px solid color-mix(in oklab,var(--gc,var(--ink-3)) 35%,transparent);}
+button.gbadge{cursor:pointer;transition:background .12s,border-color .12s;}
+button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,transparent);border-color:var(--gc,var(--ink-3));}
+.task .task-top .gbadge{min-width:0;flex:0 1 auto;}
+.bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
+.sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
+.sess-head .gbadge{max-width:200px;}
+/* The Group field in the task dialogs: a select over the project's groups plus an inline "New group…" row. */
+.group-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
+.group-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.group-field .group-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.group-field .group-new input[type=text]{flex:1;min-width:0;}

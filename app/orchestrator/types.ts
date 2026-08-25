@@ -1,8 +1,10 @@
 // Client-side shapes + UI constants shared across the orchestrator modules.
 // Pure data only (no React / no Icon) so any module can import freely.
-import { PRIORITIES } from "@/lib/types";
-import type { Priority, Status } from "@/lib/types";
-export { PRIORITIES };
+import { PRIORITIES, GROUP_COLORS, groupIsDone } from "@/lib/types";
+import type { Priority, Status, TaskGroup } from "@/lib/types";
+export { PRIORITIES, GROUP_COLORS, groupIsDone };
+/** A task group as the project GET embeds it — lib/types' row plus its derived counts. */
+export type TaskGroupRow = TaskGroup;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
 export type { InternalUsageEstimate };
 
@@ -58,6 +60,7 @@ export interface TaskRow {
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
   depends_on: string[]; // task ids this task is blocked by until they're done
+  group_id: string | null; // the task group this belongs to (see GroupChips.tsx); null = ungrouped
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens

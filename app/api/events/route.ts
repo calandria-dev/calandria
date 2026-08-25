@@ -128,6 +128,12 @@ export async function GET(req: Request) {
           send({ type: "runbooks_changed", projectId: ev.projectId });
           return;
         }
+        // A project's task groups changed. Same shape and same reason as
+        // runbooks_changed: no task row is involved, so nothing to re-read.
+        if (ev.type === "task_groups_changed") {
+          send({ type: "task_groups_changed", projectId: ev.projectId });
+          return;
+        }
         // A composed notification (lib/notifications/notify.ts). Bypasses the
         // re-read below for the strongest reason of all these branches: the
         // payload isn't a fact to look up but a message already written for a

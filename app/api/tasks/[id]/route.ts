@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting } from "@/lib/store";
+import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting, getGroup } from "@/lib/store";
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
@@ -38,7 +38,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at", "group_id"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -92,6 +92,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     allowed.snoozed_until = v;
   }
   if ((body as { unsnooze?: unknown }).unsnooze === true) allowed.snoozed_until = Date.now();
+  // Group membership. Validated here rather than trusted: the column is a
+  // plain FK, so a group from ANOTHER project would be accepted by SQLite and
+  // then filter this task out of every view in its own project. null or ""
+  // ungroups. (Bulk assignment is its own route; this is the edit dialog's.)
+  if ("group_id" in body) {
+    const gid = (body as { group_id?: unknown }).group_id;
+    if (gid !== null && typeof gid !== "string") return NextResponse.json({ error: "group_id must be a string or null" }, { status: 400 });
+    const group = gid ? getGroup(gid) : undefined;
+    if (gid && !group) return NextResponse.json({ error: "no such group" }, { status: 400 });
+    if (group && group.project_id !== current.project_id) return NextResponse.json({ error: "group belongs to another project — a group can't span projects" }, { status: 400 });
+    allowed.group_id = group ? group.id : null;
+  }
   // Queued start (lib/deferredStart.ts): the same shape and the same validation
   // as the snooze deadline — a ms epoch the user picked (the client reads the
   // usage-window reset off the plan meter), 0 to cancel. Past deadlines are

@@ -7,7 +7,7 @@ import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
-import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow } from "./types";
+import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TaskGroupRow } from "./types";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
@@ -26,6 +26,10 @@ export function useOrchestrator() {
   const [selProj, setSelProj] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [runbooks, setRunbooks] = useState<RunbookRow[]>([]);
+  // The selected project's task groups, with their derived counts. Loaded on
+  // the same fetch as `tasks` (the counts are computed from those rows) and
+  // refetched on task_groups_changed; membership rides the task rows' group_id.
+  const [groups, setGroups] = useState<TaskGroupRow[]>([]);
   const [selTask, setSelTask] = useState<string | null>(null);
   // First-paint state: booted flips once the initial project fetch lands, so the
   // shell can show a column skeleton instead of a blank flash; a failed boot
@@ -154,8 +158,9 @@ export function useOrchestrator() {
   useEffect(() => { agentsRef.current = agents; }, [agents]);
 
   const loadTasks = useCallback(async (projectId: string, selectFirst = true) => {
-    const data = await jget<{ tasks: TaskRow[] }>(`/api/projects/${projectId}`);
+    const data = await jget<{ tasks: TaskRow[]; groups?: TaskGroupRow[] }>(`/api/projects/${projectId}`);
     setTasks(data.tasks);
+    setGroups(data.groups ?? []);
     setTasksFor(projectId);
     if (selectFirst) {
       const first = data.tasks.find((t) => !t.suggested);
@@ -722,12 +727,13 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; permission_mode: string | null; group_id: string | null }) => {
     if (!project) return;
     // permission_mode goes in the CREATE, not a follow-up PATCH: `startNow`
     // below launches the first turn, and a mode applied after that would miss
-    // the very turn the user picked it for.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}) });
+    // the very turn the user picked it for. The group rides the create too, so
+    // the first turn's context (phase 2 of the groups spec) sees it.
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), ...(input.group_id ? { group_id: input.group_id } : {}) });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -778,6 +784,18 @@ export function useOrchestrator() {
     }
   }, [loadTasks]);
 
+  // Mint a group from the edit/new-task dialogs' "New group…" — name only;
+  // description and color come later from the group strip. Rejects on a name
+  // collision (409), which the field shows. The task_groups_changed echo
+  // refetches the list; the row is added here too so the field can select it
+  // before that lands.
+  const createGroup = useCallback(async (name: string): Promise<TaskGroupRow> => {
+    if (!selProjRef.current) throw new Error("no project selected");
+    const g = await jsend<TaskGroupRow>(`/api/projects/${selProjRef.current}/groups`, "POST", { name });
+    setGroups((prev) => (prev.some((x) => x.id === g.id) ? prev : [...prev, g]));
+    return g;
+  }, []);
+
   // `action` is the edit dialog's Add / Start: the same write, plus accepting
   // the task out of the suggestions tray (`suggested: 0`) and — for "start" —
   // launching its first turn. One PATCH carries both, so a sharpened brief and
@@ -785,7 +803,7 @@ export function useOrchestrator() {
   // clears a withdrawal (reason + cancelled status) for free.
   const saveTask = async (
     id: string,
-    patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean },
+    patch: { title: string; description: string; priority: Priority; agent?: string; depends_on: string[]; auto_start: boolean; group_id: string | null },
     action?: SaveAction,
   ) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {
@@ -954,7 +972,7 @@ export function useOrchestrator() {
     // state + derived
     booted, bootError, retryBoot: boot, tasksLoading, transcriptLoading,
     projects, activeProjects, deprecatedProjects, selProj, setSelProj, project,
-    tasks, realTasks, suggested, selTask, task, messages, running, runbooks, sparklines,
+    tasks, realTasks, suggested, selTask, task, messages, running, runbooks, groups, sparklines,
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
@@ -966,7 +984,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
-    setReasoning, setPermission, setSendContext, createTask, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, createGroup, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

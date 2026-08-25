@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
-import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView } from "./types";
+import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TaskGroupRow } from "./types";
+import { GroupChips, GroupBadge, useGroupFilter, inGroup } from "./GroupChips";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge, useCoarsePointer } from "./shared";
 import { DiffFooter } from "./DiffFooter";
@@ -134,8 +135,8 @@ function dayBucket(ts: number): string {
   return "Earlier";
 }
 
-function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, actions, sparkline }: {
-  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[];
+function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, actions, sparkline, group, onSelectGroup }: {
+  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; group?: TaskGroupRow; onSelectGroup: (id: string) => void;
   mini?: boolean; dragging: boolean; canDrag: boolean;
   onSelect: () => void; onDragStart: () => void; onDragOverCard: (e: React.DragEvent) => void;
   onDropOnCard: (e: React.DragEvent) => void; onDragEnd: () => void;
@@ -182,6 +183,10 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         {!mini && <PriPill p={task.priority} />}
       </div>
       <div className="bc-meta">
+        {/* On the board the pill is the only group cue (the list also has the
+            chip bar's context). Off the compact terminal rows, which are one
+            line each; the chip filter still narrows those columns. */}
+        {group && !mini && <GroupBadge group={group} onSelect={() => onSelectGroup(group.id)} />}
         <AgentBadge label={agentLabel(agents, task.agent)} multi={!mini && agents.agents.length > 1} />
         <span className={`bc-act ${awaiting ? "need" : running ? "on" : ""}`}>{activity}</span>
       </div>
@@ -237,11 +242,12 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, canDrag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, groupsById, onSelectGroup, canDrag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
-  // Dragging is disabled while a search filter is active: hidden cards would be
-  // silently dropped from the persisted order.
+  groupsById: Map<string, TaskGroupRow>; onSelectGroup: (id: string) => void;
+  // Dragging is disabled while a search filter OR a group chip is active:
+  // hidden cards would be silently dropped from the persisted order.
   canDrag: boolean;
   onSelect: (id: string) => void; onEditTask: (id: string) => void;
   onMove: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
@@ -359,6 +365,8 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       onSnooze={(until) => onSnooze(t.id, until)}
                       onUnsnooze={() => onUnsnooze(t.id)}
                       sparkline={sparklines[t.id]}
+                      group={t.group_id ? groupsById.get(t.group_id) : undefined}
+                      onSelectGroup={onSelectGroup}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
                           <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
@@ -397,8 +405,8 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
 // Full-workspace board shell (desktop): owns everything right of the projects
 // sidebar — header with the List/Board toggle, the board, and (via `children`)
 // the slide-over session panel + drawers the composition root mounts on top.
-export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, children }: {
-  project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; selTaskId: string | null;
+export function BoardWorkspace({ project, agents, tasks, suggested, groups, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, children }: {
+  project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; groups: TaskGroupRow[]; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;
   onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
@@ -409,10 +417,14 @@ export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, r
   children?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
+  // Same chip bar and the same persisted selection as the list column, so
+  // flipping List ↔ Board keeps the narrowing.
+  const { selected: groupSel, select: selectGroup } = useGroupFilter(project.id, groups);
+  const groupsById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const q = query.trim().toLowerCase();
   const match = (t: TaskRow) => !q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q);
-  const shown = tasks.filter(match);
-  const shownSuggested = suggested.filter(match);
+  const shown = inGroup(tasks, groupSel).filter(match);
+  const shownSuggested = inGroup(suggested, groupSel).filter(match);
   const total = tasks.length;
   return (
     <div className="col board-ws">
@@ -432,7 +444,9 @@ export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, r
         </div>
         <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} Task</button>
       </div>
+      <GroupChips groups={groups} selected={groupSel} onSelect={selectGroup} />
       {q && shown.length === 0 && shownSuggested.length === 0 && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
+      {!q && groupSel && shown.length === 0 && shownSuggested.length === 0 && <div className="search-empty">No tasks in {groupsById.get(groupSel)?.name ?? "this group"} yet.</div>}
       {loading ? (
         <div className="board board-loading">
           {["Suggested", "Not started", "In progress"].map((label) => (
@@ -446,7 +460,8 @@ export function BoardWorkspace({ project, agents, tasks, suggested, selTaskId, r
       ) : (
         <TaskBoard
           tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
-          running={running} blockedBy={blockedBy} sparklines={sparklines} canDrag={!q}
+          running={running} blockedBy={blockedBy} sparklines={sparklines} canDrag={!q && !groupSel}
+          groupsById={groupsById} onSelectGroup={selectGroup}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
           onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}

@@ -55,6 +55,7 @@ export type TaskMutationEvent =
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
   | { type: "tasks_reordered"; projectId: string }
   | { type: "runbooks_changed"; projectId: string }
+  | { type: "task_groups_changed"; projectId: string }
   | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
@@ -101,6 +102,16 @@ export type RunbooksChangedWireEvent = {
   type: "runbooks_changed";
   projectId: string;
 };
+/**
+ * A project's task groups changed (created, renamed, recolored, described,
+ * deleted). Modelled on runbooks_changed exactly — no task row is involved, the
+ * publishers key the bus with "", and the client refetches the project.
+ * MEMBERSHIP changes (a task's group_id) are task edits and ride task_edited.
+ */
+export type TaskGroupsChangedWireEvent = {
+  type: "task_groups_changed";
+  projectId: string;
+};
 /** A composed, ready-to-render notification. See lib/notifications/. */
 export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
@@ -109,6 +120,7 @@ export type GlobalWireEvent =
   | TasksMovedWireEvent
   | TasksReorderedWireEvent
   | RunbooksChangedWireEvent
+  | TaskGroupsChangedWireEvent
   | NotificationWireEvent
   | AgentAuthEvent;
 
