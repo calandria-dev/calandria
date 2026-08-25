@@ -796,6 +796,16 @@ export function useOrchestrator() {
     return g;
   }, []);
 
+  // Put a whole selection in one group (or, with null, take it out of one) —
+  // the selection bar's Group…. One request, one transaction; the server's
+  // task_groups_changed echo refetches the tray, but the rows are patched here
+  // too so the badges land with the modal closing rather than a beat later.
+  const groupTasks = useCallback(async (ids: string[], groupId: string | null) => {
+    const { changed } = await jsend<{ changed: string[] }>("/api/tasks/group", "POST", { ids, group_id: groupId });
+    const set = new Set(changed);
+    setTasks((prev) => prev.map((t) => (set.has(t.id) ? { ...t, group_id: groupId } : t)));
+  }, []);
+
   // `action` is the edit dialog's Add / Start: the same write, plus accepting
   // the task out of the suggestions tray (`suggested: 0`) and — for "start" —
   // launching its first turn. One PATCH carries both, so a sharpened brief and
@@ -984,7 +994,7 @@ export function useOrchestrator() {
     // actions
     setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
-    setReasoning, setPermission, setSendContext, createTask, createGroup, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, createGroup, groupTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

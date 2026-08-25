@@ -9,6 +9,7 @@ import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TaskGroupRow } from "./types";
 import { GroupChips, GroupBadge, useGroupFilter, inGroup } from "./GroupChips";
+import { GroupStrip } from "./GroupStrip";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
 import { TaskCardSkeleton } from "./Layout";
@@ -280,7 +281,7 @@ function useCollapsed(key: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, groups: taskGroups, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onCollapse, mobile, onBack, baseBranchTick }: {
+export function TasksColumn({ project, agents, tasks, suggested, groups: taskGroups, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onBulkGroup, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; groups: TaskGroupRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
@@ -288,9 +289,10 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
-  // Hand a multi-select off to the bulk-move modal. Owned by the shell (it owns
-  // every modal) — this column only decides WHAT is selected.
+  // Hand a multi-select off to the bulk-move / bulk-group modal. Owned by the
+  // shell (it owns every modal) — this column only decides WHAT is selected.
   onBulkMove: (ids: string[]) => void;
+  onBulkGroup: (ids: string[]) => void;
   mobile?: boolean; onBack?: () => void;
   // Bumped when a merge lands, so the base-branch banner re-reads a branch the merge just moved.
   baseBranchTick?: number;
@@ -307,6 +309,7 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   // (`taskGroups`, not `groups`: the status buckets below already own that name.)
   const { selected: groupSel, select: selectGroup } = useGroupFilter(project.id, taskGroups);
   const groupsById = useMemo(() => new Map(taskGroups.map((g) => [g.id, g])), [taskGroups]);
+  const selectedGroup = groupSel ? groupsById.get(groupSel) ?? null : null;
   const q = query.trim().toLowerCase();
   const match = (t: TaskRow) => !q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q);
   const shown = inGroup(tasks, groupSel).filter(match);
@@ -386,6 +389,21 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
       </div>
       {canSearch && <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" />}
       <GroupChips groups={taskGroups} selected={groupSel} onSelect={selectGroup} />
+      {/* The selected chip's detail: description, progress, provenance, the
+          members in dependency order, and the two verbs a group has. A group
+          gets no route of its own — this band IS the epic page. Members come
+          from both lists because a plan lands in the tray first. */}
+      {selectedGroup && (
+        <GroupStrip
+          group={selectedGroup}
+          members={[...tasks, ...suggested].filter((t) => t.group_id === selectedGroup.id)}
+          originTask={selectedGroup.origin_task_id
+            ? [...tasks, ...suggested].find((t) => t.id === selectedGroup.origin_task_id)
+            : undefined}
+          onSelectTask={onSelectTask}
+          onDeleted={() => selectGroup(null)}
+        />
+      )}
       {loading ? (
         // The list in state is still the previous project's — skeleton cards
         // instead of a flash of the wrong tasks (or a false "No tasks yet").
@@ -503,6 +521,9 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
         <div className="pick-bar">
           <span className="pb-count">{picked.size} selected</span>
           <span className="spacer" />
+          <button className="btn btn-line btn-sm" onClick={() => onBulkGroup([...picked])} title="Put every selected task in one group — the quick way to group a plan an agent filed before the group existed">
+            {Icon.spark()} Group…
+          </button>
           <button className="btn btn-line btn-sm" onClick={() => onBulkMove([...picked])} title="Re-file every selected task under another project">
             {Icon.chevRight()} Move to project…
           </button>
