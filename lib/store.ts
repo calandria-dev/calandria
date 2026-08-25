@@ -153,13 +153,18 @@ export function listAllTasksLite(): {
   project_name: string;
   project_color: string;
   project_icon: string;
+  /** The group this is a step of, for the palette's badge; null when ungrouped. */
+  group_name: string | null;
+  group_color: string | null;
 }[] {
   return getDb()
     .prepare(
       `SELECT t.id, t.project_id, t.title, t.status, t.running, t.awaiting_input, t.updated_at,
-         p.name AS project_name, p.color AS project_color, p.icon AS project_icon
+         p.name AS project_name, p.color AS project_color, p.icon AS project_icon,
+         g.name AS group_name, g.color AS group_color
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
+       LEFT JOIN task_groups g ON g.id = t.group_id
        WHERE t.suggested = 0 AND p.deprecated = 0
        ORDER BY t.updated_at DESC`
     )
@@ -593,6 +598,23 @@ export interface TaskMoveBatch {
   dropped: TaskEdge[];
   /** Edges that survived because both of their ends moved together. */
   kept: TaskEdge[];
+  /**
+   * Moved rows whose group stayed behind, because some of its members weren't
+   * coming. The group's name travels with the report so the caller can say
+   * WHICH feature the task just left rather than "a group".
+   */
+  ungrouped: { id: string; group_id: string; group_name: string }[];
+  /** Groups whose every member was in the selection, so the group row moved too. */
+  carried: MovedGroup[];
+}
+
+/** A group re-keyed to the destination project along with its whole membership. */
+export interface MovedGroup {
+  id: string;
+  /** Its name in the destination — suffixed when a group there already had that name. */
+  name: string;
+  /** The name it arrived with, when the collision above renamed it; null otherwise. */
+  renamed_from: string | null;
 }
 
 /**
@@ -664,7 +686,7 @@ export function moveTasks(
       else movers.push({ ...task, picked });
     }
   });
-  if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [] };
+  if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [], ungrouped: [], carried: [] };
 
   // Append in SOURCE order, not click order, so a selection keeps the shape it
   // had in the tray it left. Positions only mean something WITHIN a project — a
@@ -685,6 +707,25 @@ export function moveTasks(
   const kept = touching.filter((e) => moving.has(e.task_id) && moving.has(e.depends_on_id));
   const dropped = touching.filter((e) => !(moving.has(e.task_id) && moving.has(e.depends_on_id)));
 
+  // Groups get the same both-ends-moving rule the edges above do. A group is
+  // project-scoped, so a moved row can't keep pointing at one in the project it
+  // left — UNLESS the whole group is leaving with it, which is what "both ends
+  // are moving" means for a container: it follows its contents. A feature
+  // selected whole therefore arrives whole, badges intact; a feature selected
+  // in part leaves the group (and its remaining members) behind.
+  const carried: MovedGroup[] = [];
+  const ungrouped: { id: string; group_id: string; group_name: string }[] = [];
+  const carriedGroups: TaskGroup[] = [];
+  const membersOf = db.prepare("SELECT id FROM tasks WHERE group_id = ?");
+  for (const gid of new Set(movers.map((t) => t.group_id).filter((g): g is string => !!g))) {
+    const group = getGroup(gid);
+    // The FK says a member's group exists; a missing one just means nothing to carry.
+    if (!group) continue;
+    const members = (membersOf.all(gid) as { id: string }[]).map((m) => m.id);
+    if (members.every((id) => moving.has(id))) carriedGroups.push(group);
+    else for (const t of movers) if (t.group_id === gid) ungrouped.push({ id: t.id, group_id: gid, group_name: group.name });
+  }
+
   // Position is per-project (createTask appends at MAX+1 within the project), so
   // the movers need fresh ones or they collide with the destination's order.
   let position = (
@@ -696,19 +737,41 @@ export function moveTasks(
   // waiting on lost nothing when that edge went, and reaping its (already dead)
   // auto_start would bump an updated_at on a row this move never touched.
   const touched = new Set([...moving, ...dropped.map((e) => e.task_id)]);
+  const leftBehind = new Set(ungrouped.map((u) => u.id));
   const now = Date.now();
 
   db.transaction(() => {
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
+    // Re-key the carried groups FIRST, so nothing in between ever reads a
+    // member in one project and its group in another.
+    let groupPos = (
+      db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM task_groups WHERE project_id = ?").get(projectId) as { n: number }
+    ).n;
+    const nameTaken = db.prepare("SELECT 1 AS x FROM task_groups WHERE project_id = ? AND name = ?");
+    const rekey = db.prepare(
+      "UPDATE task_groups SET project_id = ?, name = ?, position = ?, origin_task_id = ?, updated_at = ? WHERE id = ?"
+    );
+    for (const g of carriedGroups) {
+      // UNIQUE(project_id, name), and a same-named group in the destination is
+      // NOT this feature: suffix rather than merge, because merging two plans
+      // is a decision and this is a move. The report names what happened.
+      let name = g.name;
+      for (let n = 1; nameTaken.get(projectId, name); n++) name = n === 1 ? `${g.name} (moved)` : `${g.name} (moved ${n})`;
+      // Provenance can't span projects either — the planning session stays put
+      // unless it was selected too, in which case the link survives intact.
+      const origin = g.origin_task_id && moving.has(g.origin_task_id) ? g.origin_task_id : null;
+      rekey.run(projectId, name, groupPos++, origin, now, g.id);
+      carried.push({ id: g.id, name, renamed_from: name === g.name ? null : g.name });
+    }
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, group_id = NULL, updated_at = ? WHERE id = ?`
+        reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
     );
-    // group_id = NULL: a group is project-scoped like a dependency edge, so a
-    // moved row can't keep pointing at one in the project it left. (Carrying
-    // a group whose EVERY member is moving is the follow-on in the groups
-    // spec; today the move ungroups, and the edit dialog says so.)
+    // The group a row leaves behind, when the rest of it stayed. Not folded
+    // into the reparent above: a whole selection now KEEPS its group, so
+    // clearing one is the exception — the way the checkout reset below is.
+    const clearGroup = db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ?");
     // Everything that described the checkout being thrown away. Its own
     // statement, run AFTER the reparent: it's the exception rather than part of
     // every move, so the ordinary unstarted move still writes exactly the
@@ -752,6 +815,7 @@ export function moveTasks(
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
       if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
+      if (leftBehind.has(r.id)) clearGroup.run(r.id);
       for (const stmt of repoint) stmt.run(projectId, r.id);
     }
     // A blocker-less task can never auto-start (lib/autoStart.ts selects through
@@ -772,6 +836,8 @@ export function moveTasks(
     skipped,
     dropped,
     kept,
+    ungrouped,
+    carried,
   };
 }
 
@@ -917,6 +983,25 @@ export class GroupNameConflictError extends Error {
 
 export function listGroups(projectId: string): TaskGroup[] {
   return (getDb().prepare(`${SELECT_GROUP} WHERE g.project_id = ? ORDER BY g.position ASC, g.created_at ASC`).all(projectId) as GroupRow[]).map(groupFromRow);
+}
+
+/**
+ * Every group in every active project, with its project's identity — the ⌘K
+ * palette's list, which is cross-project the way its session list is. Rides the
+ * same fetch as listAllTasksLite (one request when the palette opens) and takes
+ * the same deprecated-project exclusion: a shelved project's features are not
+ * somewhere you want to be sent.
+ */
+export function listAllGroupsLite(): (TaskGroup & { project_name: string; project_color: string; project_icon: string })[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT g.*, ${GROUP_COUNTS_SQL}, p.name AS project_name, p.color AS project_color, p.icon AS project_icon
+       FROM task_groups g JOIN projects p ON p.id = g.project_id
+       WHERE p.deprecated = 0
+       ORDER BY p.position ASC, g.position ASC, g.created_at ASC`
+    )
+    .all() as (GroupRow & { project_name: string; project_color: string; project_icon: string })[];
+  return rows.map((r) => ({ ...groupFromRow(r), project_name: r.project_name, project_color: r.project_color, project_icon: r.project_icon }));
 }
 
 export function getGroup(id: string): TaskGroup | undefined {
@@ -1583,8 +1668,10 @@ export function getInstanceUsage(): InstanceUsage {
  */
 export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
-  /** Per-day token/cost usage. */
-  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** Per-day token/cost usage. `g` is the task's group id, "" when it has none. */
+  usage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** The groups those `g` keys name, for the leaderboard's labels. */
+  groups: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
   internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
@@ -1600,15 +1687,27 @@ export function getInsightsData(sinceMs: number): InsightsData {
   const projects = db
     .prepare("SELECT id, name, color, deprecated FROM projects ORDER BY position ASC, created_at ASC")
     .all() as InsightsData["projects"];
+  // A LEFT JOIN, so usage whose task has since been deleted still counts toward
+  // the day/project/agent totals every chart above the leaderboard is built on —
+  // it just lands in the "" group. Grouping one dimension finer changes no total:
+  // the client sums these rows back up per (day, project, agent) as it always has.
   const usage = db
     .prepare(
-      `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d, project_id AS p,
-              CASE WHEN agent = '' THEN 'claude' ELSE agent END AS a,
-              SUM(cost_usd) AS cost, SUM(input_tokens) AS inp, SUM(output_tokens) AS out,
-              SUM(cache_read_tokens) AS cr, SUM(cache_creation_tokens) AS cw
-       FROM task_usage WHERE created_at >= ? GROUP BY d, p, a`
+      `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
+              CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
+              COALESCE(t.group_id, '') AS g,
+              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
+       FROM task_usage u LEFT JOIN tasks t ON t.id = u.task_id
+       WHERE u.created_at >= ? GROUP BY d, p, a, g`
     )
     .all(sinceMs) as InsightsData["usage"];
+  // Every group, not just the ones with spend: the leaderboard says "no spend
+  // yet" for a feature that's been planned and not run, which is a different
+  // fact from a feature that isn't there.
+  const groups = db
+    .prepare("SELECT id, name, color, project_id FROM task_groups ORDER BY position ASC, created_at ASC")
+    .all() as InsightsData["groups"];
   const internal = db
     .prepare(
       `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
@@ -1637,7 +1736,7 @@ export function getInsightsData(sinceMs: number): InsightsData {
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  return { projects, usage, internal, shipped, merges, models };
+  return { projects, groups, usage, internal, shipped, merges, models };
 }
 
 // ---------- recaps ----------

@@ -19,7 +19,7 @@ export function groupTint(color: string | null): CSSProperties | undefined {
 // taken OUT of the denominator rather than shown as unfinished — a group of
 // five with two withdrawn is 3/3 when the three land — and the tooltip says
 // how many were withdrawn so the fraction doesn't read as a lie.
-export function groupProgress(g: TaskGroupRow): { done: number; of: number; label: string; detail: string } {
+export function groupProgress(g: Pick<TaskGroupRow, "counts">): { done: number; of: number; label: string; detail: string } {
   const { total, done, cancelled, running, awaiting } = g.counts;
   const of = total - cancelled;
   const parts = [`${done} done`];
@@ -122,9 +122,14 @@ export function GroupChips({ groups, selected, onSelect }: {
  * `onSelect` it's a button that selects the group's chip — the way into the
  * filter from any surface showing a task — otherwise a plain label.
  */
-export function GroupBadge({ group, onSelect, className }: { group: TaskGroupRow; onSelect?: () => void; className?: string }) {
-  const p = groupProgress(group);
-  const title = `Group: ${group.name} — ${p.detail}`;
+export function GroupBadge({ group, onSelect, className }: {
+  // Name and tint are all a badge needs to RENDER; the counts are only for its
+  // tooltip, and the palette's rows (listAllTasksLite) carry the name without
+  // them. So they're optional rather than forcing a fake `counts` on callers.
+  group: Pick<TaskGroupRow, "name" | "color"> & Partial<Pick<TaskGroupRow, "counts">>;
+  onSelect?: () => void; className?: string;
+}) {
+  const title = group.counts ? `Group: ${group.name} — ${groupProgress({ counts: group.counts }).detail}` : `Group: ${group.name}`;
   const cls = `gbadge ${className ?? ""}`;
   if (!onSelect) return <span className={cls} style={groupTint(group.color)} title={title}>{group.name}</span>;
   return (

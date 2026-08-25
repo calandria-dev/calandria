@@ -105,5 +105,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // What the teardown destroyed, so the caller can say so rather than leaving
     // the user to notice. Null when the move needed no teardown.
     discarded: result.discarded[0] ?? null,
+    // The group half of the same account. A task moving alone takes its group
+    // with it only when it was the group's ONLY member (the container follows
+    // its whole contents, never part of them); otherwise it leaves the group
+    // behind and the name says which feature it just stepped out of.
+    dropped_group: result.ungrouped[0]?.group_name ?? null,
+    carried_group: result.carried[0] ?? null,
   });
 }

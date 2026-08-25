@@ -16,7 +16,8 @@ import type { AgentsBundle } from "./types";
 // Mirrors InsightsData in lib/store.ts.
 interface Payload {
   projects: { id: string; name: string; color: string; deprecated: number }[];
-  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  groups: { id: string; name: string; color: string | null; project_id: string }[];
+  usage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
   internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
@@ -288,6 +289,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const [showOperator, setShowOperator] = useState(true);
   const [menu, setMenu] = useState<"project" | "agent" | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [showAllGroups, setShowAllGroups] = useState(false);
   const [hover, setHover] = useState<Hover>({ chart: null, i: null });
 
   useEffect(() => {
@@ -427,6 +429,36 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       .map(([id, e]) => ({ id, name: projMeta.get(id)?.name ?? "(deleted project)", color: projMeta.get(id)?.color ?? "var(--ink-4)", ...e }))
       .sort((a, b) => b.spend - a.spend);
 
+    // ---- groups leaderboard: what a whole feature cost ----
+    // Both filters apply here, unlike the projects table: a group sits INSIDE a
+    // project, so the project filter narrowing to one project's features is
+    // exactly what you'd want from it. Usage with no group ("" — ungrouped, or
+    // a task since deleted) is dropped rather than pooled into an "Other" row:
+    // this table answers "what did the migration cost", and an unnamed bucket
+    // holding most of a workshop's spend would dominate every ranking.
+    const perGroup = new Map<string, { spend: number; tokens: number; spark: number[] }>();
+    for (const u of data.usage) {
+      if (!u.g || !matchP(u.p) || !matchA(u.a)) continue;
+      const i = dayIndex.get(u.d);
+      if (i === undefined) continue;
+      let e = perGroup.get(u.g);
+      if (!e) { e = { spend: 0, tokens: 0, spark: rows.map(() => 0) }; perGroup.set(u.g, e); }
+      e.spend += u.cost; e.tokens += u.inp + u.out + u.cr + u.cw; e.spark[i] += u.cost;
+    }
+    const groupMeta = new Map(data.groups.map((g) => [g.id, g]));
+    const groupRows = [...perGroup.entries()]
+      .map(([id, e]) => {
+        const meta = groupMeta.get(id);
+        return {
+          id,
+          name: meta?.name ?? "(deleted group)",
+          color: meta?.color ?? null,
+          project: projMeta.get(meta?.project_id ?? "")?.name ?? "",
+          ...e,
+        };
+      })
+      .sort((a, b) => b.spend - a.spend);
+
     // ---- Calandria convenience work, grouped into actionable job rows ----
     const jobs = new Map<string, { job: string; n: number; tokens: number; cost: number; estimated: boolean; projects: Set<string> }>();
     for (const u of data.internal) {
@@ -443,7 +475,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
 
     const isEmpty = data.usage.length === 0 && data.internal.length === 0 && data.shipped.length === 0 && data.merges.length === 0;
 
-    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, jobRows, isEmpty };
+    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, groupRows, jobRows, isEmpty };
   }, [data, N, project, agent, agents]);
 
   const projName = (id: string) => data?.projects.find((p) => p.id === id)?.name ?? id;
@@ -456,7 +488,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     );
   if (!data || !model) return <div className="col col-session insights" />;
 
-  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, jobRows, isEmpty } = model;
+  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, groupRows, jobRows, isEmpty } = model;
   // Spend framing when estimated-cost agents are in view: all-estimated vs a
   // mix of billed + estimated figures.
   const spendSub = estIds.size === 0 ? "API-equivalent cost"
@@ -503,6 +535,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     : [{ k: "inp", label: "Input" }, { k: "out", label: "Output" }];
 
   const visibleProjects = showAll ? projectRows : projectRows.slice(0, 4);
+  const visibleGroups = showAllGroups ? groupRows : groupRows.slice(0, 4);
   const label = (id: string) => agentLabel(agents, id);
 
   return (
@@ -825,6 +858,46 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                 )}
               </div>
             </section>
+
+            {/* groups leaderboard — "what did the auth migration cost", which
+                until now was a sum you did by hand. Rendered only once a group
+                has spend: on an instance that doesn't use groups this is an
+                empty table saying nothing, not a feature. */}
+            {groupRows.length > 0 && (
+              <section className="in-card" style={{ padding: 0, overflow: "hidden" }}>
+                <div className="in-card-h" style={{ padding: "17px 20px 14px" }}>
+                  <div>
+                    <div className="in-card-t">Groups</div>
+                    <div className="in-card-s">What each feature cost, summed over its tasks</div>
+                  </div>
+                  <span className="mono in-card-n">{groupRows.length} with spend</span>
+                </div>
+                <div className="in-gtable">
+                  <div className="in-grow in-phead mono">
+                    <span>GROUP</span><span>PROJECT</span><span>SPEND</span><span>TOKENS</span><span>{N}-DAY ACTIVITY</span>
+                  </div>
+                  {visibleGroups.map((g) => (
+                    <div key={g.id} className="in-grow">
+                      <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                        <span className="in-leg-dot" style={{ background: g.color ?? "var(--ink-4)", borderRadius: "50%" }} />
+                        <span className="in-pname">{g.name}</span>
+                      </span>
+                      <span className="dim" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{g.project}</span>
+                      <span className="mono">{fmtMoney(g.spend)}</span>
+                      <span className="mono dim">{fmtCompact(g.tokens)}</span>
+                      <span style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <span style={{ width: 120 }}><Sparkline vals={g.spark} color={g.color ?? "var(--s3)"} h={26} /></span>
+                      </span>
+                    </div>
+                  ))}
+                  {groupRows.length > 4 && (
+                    <button className="in-pmore mono" onClick={() => setShowAllGroups((v) => !v)}>
+                      {showAllGroups ? "▲ Show less" : `▾ Show ${groupRows.length - 4} more`}
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

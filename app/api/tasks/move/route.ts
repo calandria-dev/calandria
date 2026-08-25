@@ -85,5 +85,11 @@ export async function POST(req: Request) {
     // What the teardowns destroyed, per task, so the modal can say what it cost
     // rather than leaving the user to notice a branch missing.
     discarded: result.discarded,
+    // The group account, on the same footing as `dropped`/`kept`: a group whose
+    // every member was selected travels with them (renamed when the destination
+    // already had that name), and one selected in part is left behind by the
+    // rows that went.
+    ungrouped: result.ungrouped,
+    carried: result.carried,
   });
 }

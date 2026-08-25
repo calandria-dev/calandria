@@ -97,7 +97,18 @@ export interface PaletteTaskRow {
   project_name: string;
   project_color: string;
   project_icon: string;
+  /** The group this is a step of — the palette's badge; null when ungrouped. */
+  group_name: string | null;
+  group_color: string | null;
 }
+// A group in the ⌘K palette: a jump target of its own ("Group · Auth migration
+// · 4/7"), so a feature is reachable by name from anywhere. Mirrors
+// lib/store.ts listAllGroupsLite().
+export type PaletteGroupRow = TaskGroupRow & {
+  project_name: string;
+  project_color: string;
+  project_icon: string;
+};
 export interface Msg {
   id: string;
   // "queued" is a client-only role: a follow-up the user typed mid-turn that's
@@ -149,6 +160,10 @@ export interface BulkMoveResult {
   /** One per worktree torn down to let a started task move — the part of the
    *  account nobody can get back, so the report names it. */
   discarded: { id: string; branch: string; dirty: boolean; ahead: number }[];
+  /** Moved rows that left their group behind, because the rest of it stayed. */
+  ungrouped: { id: string; group_id: string; group_name: string }[];
+  /** Groups that came along whole — `renamed_from` when the destination had that name. */
+  carried: { id: string; name: string; renamed_from: string | null }[];
 }
 
 // What discarding a task's checkout would cost — GET /api/tasks/[id]/move for

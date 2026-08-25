@@ -116,8 +116,15 @@ no "close group" verb and nothing to go stale when a task is deleted or moved.
 Every task belongs to at most one group. Pick it in **New task** or **Edit task** from the
 **Group** field, above **Blocked by** (which feature comes before which step), where **New
 group…** mints one inline by name. Names are unique within a project; a collision says so.
-Groups never span projects: moving a task elsewhere clears its group, and the move field
-says as much beside the dropped blocked-by links.
+A whole selection can be grouped at once from the list's action bar — tick the rows,
+**Group…**, pick the group (or mint one), and it lands in a single write. That's the cheap
+path for a plan an agent filed before the group existed.
+
+Groups never span projects, so a move applies the same both-ends rule blocked-by links get:
+a group whose *every* member is in the move travels with them, re-keyed to the destination
+(and suffixed `(moved)` if a group there already has that name), while one selected only in
+part stays behind and the rows that left lose their badge. Both move dialogs say which of
+the two is about to happen, beside the dropped blocked-by links.
 
 Once a project has a group, a chip bar appears over the task list and the board — **All ·
 Auth migration 3/7 · Mobile PWA 0/4 · Done (2)**. One chip narrows every status bucket, the
@@ -132,9 +139,26 @@ and clicking any badge selects that chip. Dragging cards on the board is paused 
 is active, for the same reason it pauses during a search: hidden cards would fall out of
 the order a drop persists.
 
-Deleting a group ungroups its members and never deletes them. Groups sit orthogonal to
-dependencies — a group says *belongs with*, an edge says *waits for*, and nothing is inferred
-from one to the other.
+Selecting a chip opens the **group strip** beneath the bar — a group's whole detail view,
+since it gets no page of its own. It carries the description, a progress bar reading
+`3 done · 2 withdrawn` so the fraction can't be mistaken for a lie, a link back to the
+session that planned it (**Planned in …**, when an agent filed it), and the members in
+dependency order — a topological sort over their blocked-by edges *within* the group — each
+with its status dot, numbered so "step 3 of 7" means something. Its two verbs are **Edit**
+(rename, describe, recolor from the badge palette) and **Delete group**, which asks twice
+and names how many tasks stay: deleting a group ungroups its members and never deletes them.
+
+Groups are reachable from outside the task list too. The project landing page carries a
+**Groups** card between the recap and Runbooks — the active ones with their progress,
+what's running and what needs you (a group with nothing filed yet reads *no tasks yet*) —
+and clicking one opens the list narrowed to it. ⌘K finds a group by name anywhere
+(`Auth migration · Mobile PWA 4/7`) and lands on the same selection, and its session results
+carry each task's group badge. **Insights** gains a *Groups* leaderboard beside the projects
+one: spend and tokens summed over every member's usage, which is the "what did the migration
+cost" answer.
+
+Groups sit orthogonal to dependencies — a group says *belongs with*, an edge says
+*waits for*, and nothing is inferred from one to the other.
 
 ### Snoozing
 

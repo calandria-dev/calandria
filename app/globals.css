@@ -987,16 +987,35 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-fact svg{width:12px;height:12px;}
 .tc-chev{transition:transform .12s;color:var(--ink-3);display:inline-block;font-size:10px;}
 .tc-chev.open{transform:rotate(90deg);}
-.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);}
+/* The file's diff is ONE horizontal scrollport. Everything inside it is laid
+   out against the widest line (.tc-rows/.tc-split are max-content), so a long
+   line widens the whole file rather than growing a scrollbar of its own on
+   every row — and row highlights stay full-width across the scrolled area.
+   container-type is what lets a review comment stay the width of the VISIBLE
+   pane (100cqi) instead of stretching to that max-content width. */
+.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
+.tc-rows,.tc-split{width:max-content;min-width:100%;}
 .dl{padding:0 12px;white-space:pre;color:var(--ink);}
 .dl.add{background:var(--diff-add-bg);color:var(--run);}
 .dl.del{background:var(--diff-del-bg);color:var(--err);}
 .dl.ctx{color:var(--dim);}
 /* dual line-number gutters — the full-file diff viewer only (tc-hunks). Tool-
    call/peek diffs elsewhere reuse .dl as a single text row and stay untouched. */
-.tc-hunks .dl{display:grid;grid-template-columns:42px 42px 1fr;padding:0;}
-.dl-no{color:var(--dim);opacity:.5;text-align:right;padding-right:8px;font-size:10.5px;user-select:none;}
-.dl-c{padding:0 12px;overflow-x:auto;}
+.tc-hunks .dl{display:flex;padding:0;}
+/* Dimmed via the text colour, NOT opacity: the gutter is sticky, and opacity
+   would fade its background too, letting the line it's pinned over show
+   through as it scrolls under. */
+.dl-no{color:color-mix(in oklab, var(--dim) 50%, transparent);text-align:right;padding-right:8px;font-size:10.5px;user-select:none;}
+/* Flex, not grid, so the gutters can be sticky: a sticky grid item is clamped
+   to its own grid area and would scroll away with the text. Their background
+   has to be opaque (the diff tints are translucent) or the line they're
+   pinned over shows through. */
+.tc-hunks .dl>.dl-no{position:sticky;left:0;z-index:1;flex:0 0 42px;background:var(--surface);}
+.tc-hunks .dl>.dl-no+.dl-no{left:42px;}
+.tc-hunks .dl.add>.dl-no{background:linear-gradient(var(--diff-add-bg),var(--diff-add-bg)),var(--surface);}
+.tc-hunks .dl.del>.dl-no{background:linear-gradient(var(--diff-del-bg),var(--diff-del-bg)),var(--surface);}
+.tc-hunks .dl.spacer>.dl-no{background:var(--panel);}
+.dl-c{padding:0 12px;}
 .tc-hunks .dl.hunk{display:block;padding:2px 14px;background:var(--panel);color:var(--dim);font-size:11px;}
 .tc-empty{padding:10px 12px;color:var(--ink-3);font-size:12px;font-family:var(--sans);}
 .tc-bigdiff{display:block;width:100%;padding:10px 12px;border:none;border-radius:0 0 var(--r) var(--r);background:var(--surface);color:var(--ink-3);font-size:12px;font-family:var(--sans);text-align:left;cursor:pointer;}
@@ -1012,13 +1031,16 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-split{display:flex;flex-direction:column;}
 .tc-split-pair{display:grid;grid-template-columns:1fr 1fr;}
 .tc-split-pair>.dl:first-child{border-right:1px solid var(--line);}
-.tc-hunks .tc-split-pair .dl{grid-template-columns:42px 1fr;}
 .dl.spacer{background:var(--panel);}
 .dl-no.click{cursor:pointer;}
-.dl-no.click:hover{opacity:1;color:var(--accent-ink);}
+.dl-no.click:hover{color:var(--accent-ink);}
 /* Review comment box (composing) / thread (posted) — anchored under the diff
    row it targets, in both view modes. */
 .cmt{margin:6px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-family:var(--sans);}
+/* Prose in a scrollport sized to the longest line of code: hold it to the
+   visible width and pin it there, so a wide file doesn't push comments off
+   the right edge or wrap them at 2000px. */
+.tc-hunks .cmt{position:sticky;left:0;width:calc(100cqi - 28px);}
 .cmt-who{font-size:11.5px;color:var(--dim);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
 .cmt-sent{color:var(--green);font-weight:600;}
 .cmt-cancel{margin-left:auto;background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:0;}
@@ -1981,6 +2003,13 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .in-pname{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .in-pmore{width:100%;text-align:center;font-size:11px;letter-spacing:.06em;color:var(--ink-3);background:var(--bg-2);border:none;padding:12px;cursor:pointer;}
 .in-pmore:hover{color:var(--accent);}
+/* groups leaderboard — the projects table's language with fewer columns (a
+   group has no branch, so no lines/last-active), and no click behavior: the
+   dashboard filters by project and agent, not by feature. */
+.in-gtable{display:flex;flex-direction:column;overflow-x:auto;}
+.in-grow{display:grid;grid-template-columns:1.8fr 1.1fr 1fr .9fr 132px;gap:12px;align-items:center;padding:14px 20px;min-width:640px;font-size:12.5px;border-bottom:1px solid var(--line-2);}
+.in-grow:last-child{border-bottom:none;}
+.in-grow > .mono{text-align:right;}
 
 .in-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:18px;padding:70px 24px;border:1px dashed var(--line-strong);border-radius:14px;background:var(--panel-2);}
 .in-empty-bars{display:flex;align-items:flex-end;gap:6px;height:60px;opacity:.5;}
@@ -2076,6 +2105,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .gchip .gc-frac{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--ink-4);}
 .gchip.on .gc-frac{color:var(--ink-3);}
 .gchip .gc-need{width:6px;height:6px;border-radius:50%;background:var(--blue);flex:0 0 auto;}
+/* the same dot outside a chip: the palette's group rows and the landing card. */
+.pal-row .gc-dot,.grp-head .gc-dot{width:7px;height:7px;border-radius:50%;background:var(--gc,var(--ink-4));flex:0 0 auto;}
 .gchip.fold{color:var(--ink-3);border-style:dashed;}
 .gchip.fold.open{border-style:solid;}
 .gbadge{display:inline-flex;align-items:center;max-width:160px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto;font-family:var(--sans);
@@ -2086,6 +2117,58 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
 .sess-head .gbadge{max-width:200px;}
+/* The group strip (GroupStrip.tsx): what a selected chip expands into, sitting
+   directly under the bar. Tinted with the group's own --gc like the chips. */
+.gstrip{margin:2px 12px 6px;padding:10px 12px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r);background:var(--surface);display:flex;flex-direction:column;gap:8px;}
+.board-ws .gstrip{margin:2px 18px 6px;}
+.gs-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.gs-head .spacer{flex:1;}
+.gs-name{font-size:13.5px;font-weight:700;color:var(--ink);}
+.gs-frac{font-size:11px;color:var(--ink-3);}
+.gs-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.gs-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));transition:width .2s;}
+.gs-desc{font-size:12px;color:var(--ink-2);white-space:pre-wrap;}
+.gs-origin{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;font-size:11.5px;color:var(--ink-3);background:none;border:none;padding:0;cursor:pointer;text-align:left;}
+.gs-origin:hover{color:var(--accent);}
+.gs-origin svg{width:12px;height:12px;flex:0 0 auto;}
+.gs-origin em{font-style:normal;color:var(--ink-2);}
+.gs-members{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.gs-member{display:flex;align-items:center;gap:8px;width:100%;padding:4px 4px;background:none;border:none;border-radius:var(--r-sm);cursor:pointer;text-align:left;font-size:12.5px;color:var(--ink-2);}
+.gs-member:hover{background:var(--surface-2);color:var(--ink);}
+.gs-member.gone .gs-mtitle{text-decoration:line-through;color:var(--ink-4);}
+.gs-step{font-size:10px;color:var(--ink-4);min-width:14px;}
+.gs-mtitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gs-tag{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);background:var(--surface-2);padding:1px 6px;border-radius:999px;flex:0 0 auto;}
+.gs-none{font-size:12px;color:var(--ink-4);padding:4px;}
+.gs-err{font-size:11.5px;color:var(--err);}
+.gs-edit{display:flex;flex-direction:column;gap:8px;}
+.gs-name-in,.gs-desc-in{width:100%;border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--raise);padding:7px 9px;font-family:var(--sans);font-size:13px;color:var(--ink);outline:none;}
+.gs-desc-in{resize:vertical;}
+.gs-name-in:focus,.gs-desc-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.gs-colors{display:flex;align-items:center;gap:6px;}
+.gs-colors .spacer{flex:1;}
+.gs-sw{width:18px;height:18px;border-radius:50%;border:1px solid var(--line-strong);cursor:pointer;padding:0;}
+.gs-sw.none{background:var(--surface-2);}
+.gs-sw.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--accent);}
+
+/* Groups card on the project landing — the same rows as the chip bar, with room
+   for a description and a progress bar. Shares the schedules/runbooks card
+   language it sits between. */
+.grp-card{margin:18px 0;display:flex;flex-direction:column;gap:8px;}
+.grp-card h3{margin:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.grp-row{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;padding:11px 13px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--sh-1);cursor:pointer;}
+.grp-row:hover{border-color:var(--line-strong);border-left-color:var(--gc,var(--ink-3));}
+.grp-head{display:flex;align-items:center;gap:8px;}
+.grp-head .spacer{flex:1;}
+.grp-head strong{font-size:13.5px;color:var(--ink);}
+.grp-frac{font-size:11px;color:var(--ink-4);}
+.grp-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;}
+.grp-tag.run{color:var(--accent);background:var(--accent-soft);}
+.grp-tag.need{color:var(--blue);background:color-mix(in oklab,var(--blue) 14%,transparent);}
+.grp-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.grp-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));}
+.grp-desc{font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
 /* Full-width <select> fields: Group and Model in the task dialogs, and the
    default-model picker in Settings → Run defaults. Model is a select rather
    than the segmented control its neighbours use because Claude Code's catalog
