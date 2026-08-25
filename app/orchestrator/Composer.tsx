@@ -277,16 +277,59 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
           <div className="comp-area">
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
-              // A free-text prompt box: with no declared intent, iOS heuristics
-              // guess — and guessed "code entry", which both offered an SMS
-              // verification code above the keyboard AND silently switched
-              // autocorrect off (codes must not be autocorrected). So every
-              // intent is stated explicitly: nothing to autofill, but this IS
-              // prose — autocorrect, sentence caps and spellcheck on.
+              // These state the field's intent and are kept because they are
+              // correct — NOT because they fix the mobile keyboard bug. They
+              // don't, and neither did the attribute combinations tried before
+              // them. DO NOT "fix" that bug by editing this line again.
+              //
+              // THE BUG: on mobile the composer offers an SMS/verification-code
+              // suggestion above the keyboard and refuses to autocorrect.
+              // MEASURED 2026-08-25 on an iPhone running an iOS 27 BETA, as an
+              // INSTALLED PWA (display-mode: standalone, navigator.standalone
+              // true) — the only configuration it has ever been reported from.
+              // The UA reads "CPU iPhone OS 18_7" and that is NOT the OS: Apple
+              // freezes that token, and "Version/27.0" is the real signal. Do
+              // not read the OS off the UA string here. Five rounds of
+              // side-by-side A/B on the device; docs/kbprobe.html is the
+              // instrument (copy it into public/ and restart to re-run it).
+              //
+              // A replica of this textarea — same attributes, same rows={1},
+              // same 22px min-height, same placeholder — does NEITHER, while
+              // the live composer beside it does both. Every static property of
+              // this element has now been copied exactly and none reproduces it:
+              //   · attributes — a bare textarea and this one behave alike
+              //   · one-line geometry — 22px vs 46px min-height: no difference
+              //   · the placeholder, even carrying a task title containing the
+              //     literal words "verification-code" (clean — so sanitising
+              //     task titles is not the fix either)
+              //   · the task title — a neutral-titled task reproduces the bug
+              //   · field count — lone field vs two: no difference
+              //   · <form> membership — the app has no <form> anywhere
+              //   · controlled-component behaviour — reassigning .value on every
+              //     keystroke, autosizing, and re-render churn, separately and
+              //     together, all autocorrect normally
+              //
+              // What IS true, and worth not breaking: iOS's classifier can be
+              // reached through text, but only when the accessible name is
+              // essentially nothing BUT trigger words — "verification code" as
+              // the entire placeholder, or in aria-label, reproduces it on
+              // demand, while prose around the same words defeats it. So
+              // aria-label is a second channel here, not just the placeholder.
+              // And there are two levels: a bare <input> gets the code
+              // suggestion but still autocorrects; losing autocorrect as well
+              // is the stronger classification the live composer is stuck in,
+              // which is why "no autocorrect" is the tell worth watching.
+              //
+              // The mechanism remains unidentified and is not anything this
+              // element declares about itself. Since every measurement above
+              // was taken on a BETA OS, the leading remaining explanation is a
+              // beta regression rather than something we can fix in markup —
+              // so the cheap next step is a retest on a shipping OS (and on a
+              // second device) before anyone concludes it is permanent, not a
+              // sixth round of attribute edits here.
               autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
-              // Named so the heuristic has a prose word to read instead of
-              // nothing — an unnamed field is where the one-time-code guess
-              // keeps creeping back in.
+              // Inert: added on the since-disproven theory that an unnamed field
+              // invited the one-time-code guess. Harmless, so left alone.
               name="message"
               placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now — the session is held open…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
