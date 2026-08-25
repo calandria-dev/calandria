@@ -293,8 +293,8 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
 // (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
 // which can keep a link whose both ends are moving, as one task alone can't,
 // and which asks this same question once per started row.)
-function MoveProjectField({ task, tasks, projects, agents, onMove }: {
-  task: TaskRow; tasks: TaskRow[]; projects: ProjectRow[]; agents: AgentsBundle;
+function MoveProjectField({ task, tasks, groups, projects, agents, onMove }: {
+  task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle;
   onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>;
 }) {
   const [target, setTarget] = useState("");
@@ -315,6 +315,12 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
   useEffect(() => { if (target) loadPreview(); }, [target, loadPreview]);
 
   if (targets.length === 0) return null;
+  // A group follows its whole contents or not at all (the both-ends rule the
+  // links get), so a task moving ALONE takes its group with it exactly when it
+  // is the only member left in it. Read off the group's own derived count, not
+  // by filtering `tasks` — that list is the REAL tasks, and a sibling still
+  // sitting in the Suggested tray is a member like any other.
+  const soloMember = !!task.group_id && groups.find((g) => g.id === task.group_id)?.counts.total === 1;
   // Every edge touching this task goes — the ones it owns and the ones pointing
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
@@ -357,7 +363,9 @@ function MoveProjectField({ task, tasks, projects, agents, onMove }: {
           <div className="hlp" style={{ color: "var(--amber)" }}>
             Moves this task to {dest.name} right away — unsaved edits above are discarded.
             {links > 0 && ` ${links} blocked-by link${links !== 1 ? "s" : ""} drop${links === 1 ? "s" : ""}: dependencies can't span projects.`}
-            {task.group_id && " Its group is cleared: groups don't span projects either."}
+            {task.group_id && (soloMember
+              ? " Its group has no other members, so the group comes along too — renamed if that name is taken there."
+              : " Its group is cleared: a group moves only when every one of its members does, and the others are staying.")}
             {switching && ` It will run on ${agentLabel(agents, switching)}, ${dest.name}'s default.`}
             {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
             {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
@@ -486,8 +494,22 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
-  // Grouped rows lose their group on the way (same rule as the links).
-  const grouped = selected.filter((t) => !!t.group_id).length;
+  // Groups get the links' both-ends rule: a group whose EVERY member is in the
+  // selection travels with it (re-keyed to the destination, suffixed there if
+  // the name is taken), and one selected only in part stays behind — with the
+  // rows that go losing their badge. Counted over the whole project, since a
+  // member left out of the selection is exactly what decides this.
+  const groupTally = new Map<string, { total: number; going: number }>();
+  for (const t of tasks) {
+    if (!t.group_id) continue;
+    const e = groupTally.get(t.group_id) ?? { total: 0, going: 0 };
+    e.total++;
+    if (moving_.has(t.id)) e.going++;
+    groupTally.set(t.group_id, e);
+  }
+  const inPlay = [...groupTally.values()].filter((e) => e.going > 0);
+  const carried = inPlay.filter((e) => e.going === e.total).length;
+  const ungrouped = inPlay.filter((e) => e.going < e.total).reduce((n, e) => n + e.going, 0);
   let dropped = 0;
   for (const t of tasks) {
     for (const dep of t.depends_on ?? []) {
@@ -558,6 +580,16 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
               {result.discarded.length} worktree{result.discarded.length !== 1 ? "s" : ""} and{" "}
               {result.discarded.length !== 1 ? "their branches" : "its branch"} were deleted from {src?.name ?? "the old project"}
               &rsquo;s repo. The next turn cuts a fresh one from {dest?.name}.
+            </div>
+          )}
+          {result.carried.length > 0 && (
+            <div className="hlp" style={{ marginTop: 4 }}>
+              {result.carried.map((g) => g.renamed_from ? `“${g.renamed_from}” arrived as “${g.name}” (that name was taken)` : `“${g.name}” came along whole`).join("; ")}.
+            </div>
+          )}
+          {result.ungrouped.length > 0 && (
+            <div className="hlp" style={{ color: "var(--amber)", marginTop: 4 }}>
+              {result.ungrouped.length} left {[...new Set(result.ungrouped.map((u) => u.group_name))].map((n) => `“${n}”`).join(", ")} behind — the rest of the group stayed.
             </div>
           )}
           {result.skipped.length > 0 && (
@@ -632,7 +664,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
               <div className="hlp" style={{ color: "var(--amber)" }}>
                 Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.
                 {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""} — the other end isn't coming.`}
-                {grouped > 0 && ` ${grouped} ${grouped === 1 ? "is" : "are"} in a group; the move clears that — groups don't span projects.`}
+                {carried > 0 && ` ${carried} group${carried !== 1 ? "s" : ""} come${carried === 1 ? "s" : ""} along whole — every member is in the selection.`}
+                {ungrouped > 0 && ` ${ungrouped} ${ungrouped === 1 ? "task loses its" : "tasks lose their"} group: the rest of it isn't moving.`}
                 {kept > 0 && ` ${kept} link${kept !== 1 ? "s" : ""} survive${kept === 1 ? "s" : ""}: both ends are moving together.`}
                 {switching > 0 && ` ${switching} will switch to ${agentLabel(agents, dest.default_agent || "claude")}, ${dest.name}'s default agent.`}
                 {contextFlips > 0 && ` ${contextFlips} will follow ${dest.name}'s project-context setting.`}
@@ -644,6 +677,77 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
           {err && <ErrNote>{err}</ErrNote>}
         </>
       )}
+    </Modal>
+  );
+}
+
+/**
+ * Put a whole selection in one group — the list's selection bar beside
+ * "Move to project…". The cheap path for the case groups were designed around:
+ * an agent filed seven suggestions before the group existed, and regrouping
+ * them one edit dialog at a time is seven round trips.
+ *
+ * Whole-batch, unlike the move beside it: there is nothing per-row to refuse
+ * (no worktree, no turn, nothing irreversible), so the route applies all of it
+ * or none, and this modal only has to decide WHICH group. "No group" is a real
+ * choice here — it's the only way to ungroup a batch.
+ */
+export function GroupTasksModal({ selected, groups, onClose, onApply, onCreateGroup }: {
+  /** The picked rows, in list order. */
+  selected: TaskRow[];
+  groups: TaskGroupRow[];
+  onClose: () => void;
+  onApply: (ids: string[], groupId: string | null) => Promise<void>;
+  onCreateGroup: (name: string) => Promise<TaskGroupRow>;
+}) {
+  // Seeded from the selection when it already agrees on a group, so re-opening
+  // the modal on a grouped batch doesn't read as "these are ungrouped".
+  const shared = selected.length > 0 && selected.every((t) => t.group_id === selected[0].group_id) ? selected[0].group_id : null;
+  const [groupId, setGroupId] = useState<string | null>(shared);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const n = selected.length;
+  const target = groups.find((g) => g.id === groupId) ?? null;
+  // Rows already in the target group aren't rewritten server-side; saying so
+  // keeps the button honest about what it's about to do.
+  const changing = selected.filter((t) => (t.group_id ?? null) !== groupId).length;
+
+  const apply = async () => {
+    if (busy || changing === 0) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onApply(selected.map((t) => t.id), groupId);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Group ${n} task${n !== 1 ? "s" : ""}`} sub="Which feature these are steps of" onClose={onClose}
+      footer={<>
+        <span className="spacer" />
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-accent" disabled={busy || changing === 0} onClick={apply}>
+          {Icon.check()} {busy ? "Saving…" : target ? `Add ${changing} to ${target.name}` : changing === 0 ? "No change" : `Ungroup ${changing}`}
+        </button>
+      </>}>
+      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
+      <div className="field">
+        <div className="lab">Selection</div>
+        <div className="dep-list">
+          {selected.map((t) => (
+            <div key={t.id} className="dep-row" style={{ cursor: "default" }}>
+              <StatusDot status={t.status} />
+              <span className="dep-title">{t.title}</span>
+              <span className="dep-status">{t.group_id === groupId ? "already there" : t.group_id ? "regrouped" : ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {err && <ErrNote>{err}</ErrNote>}
     </Modal>
   );
 }
@@ -757,7 +861,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
           from this project's repo, which the field asks for explicitly. Only a
           live turn is refused outright, and the field surfaces the server's
           reason. */}
-      <MoveProjectField task={task} tasks={tasks} projects={projects} agents={agents} onMove={onMove} />
+      <MoveProjectField task={task} tasks={tasks} groups={groups} projects={projects} agents={agents} onMove={onMove} />
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
           This permanently removes “{task.title}”, its agent session and git worktree from the orchestrator. Any unmerged work in the worktree is discarded.

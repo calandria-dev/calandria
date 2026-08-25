@@ -90,7 +90,9 @@ straight in and starts the next turn.
 - **Task groups:** name the feature a set of tasks belongs to ("Auth
   migration") and filter the list or board down to it with one chip. Every
   member carries a tinted badge, progress is derived from the members, and
-  finished groups fold away.
+  finished groups fold away. The chip expands into a strip with the group's
+  brief and its steps in dependency order; ⌘K, the project landing page and
+  the Insights leaderboard all reach it by name.
 - **Runbooks:** save a task you run often ("push everything unpushed and
   babysit CI", "sweep my Jiras and report") as a named recipe, then dispatch
   it in one click. Each run mints a fresh task, and a box for this-run-only
