@@ -45,7 +45,8 @@ untagged, unreleased code. Pin `sha-<short>` (or a specific `X.Y.Z`) when you wa
 that can never change under you. See [Pinning a version](#pinning-a-version) below.
 
 The first release, `v0.2.0`, was cut on 2026-08-25, so `latest`,
-`<version>` and `<major>.<minor>` all exist and point at it.
+`<version>` and `<major>.<minor>` all exist and point at it — as `0.2.0` and
+`0.2`, with no `v`.
 
 ### Verify the image's provenance
 
@@ -78,6 +79,8 @@ Note the image tag carries **no leading `v`**, even though the git tag does:
 `v0.2.0` in git is `:0.2.0` in the registry (`docker/metadata-action`'s
 `{{version}}` strips it). `:vX.Y.Z` does not exist and will fail to pull.
 
+Pick one of:
+
 | You want | Set `ORCH_IMAGE` to |
 |-|-|
 | A specific release, never changes | `ghcr.io/calandria-dev/calandria:X.Y.Z` |
@@ -85,12 +88,12 @@ Note the image tag carries **no leading `v`**, even though the git tag does:
 | Whatever the newest release is, moves on every release | `ghcr.io/calandria-dev/calandria:latest` |
 | Nightly builds of `main`, ahead of any release, least stable | `ghcr.io/calandria-dev/calandria:edge` |
 
-`vX.Y.Z` is the only one of these that never changes under you — `X.Y` and `latest` are
-both moving targets by design (see the tag table above). Pin `vX.Y.Z` for anything you
+`X.Y.Z` is the only one of these that never changes under you — `X.Y` and `latest` are
+both moving targets by design (see the tag table above). Pin `X.Y.Z` for anything you
 don't want to babysit; use `latest` only if you're fine re-reading the changelog after
 every unattended upgrade.
 
-**Rollback** is re-pinning: set `ORCH_IMAGE` back to the previous `vX.Y.Z` and
+**Rollback** is re-pinning: set `ORCH_IMAGE` back to the previous `X.Y.Z` and
 `docker compose pull && up -d --no-build` again. There's no separate rollback mechanism —
 every past release tag stays pullable indefinitely, so "roll back" and "pin an older
 version" are the same operation.
