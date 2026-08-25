@@ -10,8 +10,17 @@ export const maxDuration = 120;
 
 // Accept a resolved conflict: commit the merge in the worktree and land the
 // (now conflict-free) work branch into the base branch.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Optional body, same contract as the plain merge route: the main checkout's
+  // uncommitted paths the user was shown and agreed to have stashed aside for
+  // the merge. Accepting a resolution lands through `mergeTask` too, so it hits
+  // the same clean-tree requirement and deserves the same way out.
+  const body = (await req.json().catch(() => null)) as { stashDirty?: unknown } | null;
+  const stashDirty =
+    Array.isArray(body?.stashDirty) && body.stashDirty.every((p) => typeof p === "string")
+      ? (body.stashDirty as string[])
+      : undefined;
   // Locked against the turn-launch path: committing the resolved merge stages
   // the whole worktree, so no turn may start writing into it mid-commit.
   return jsonGuard(`merge/complete ${id}`, () => withTaskLock(id, async () => {
@@ -30,6 +39,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       workBranch: task.work_branch,
       baseBranch: project.branch,
       message: `${task.title} (orchestrator task ${task.id})`,
+      stashDirty,
     });
 
     if (result.ok) {

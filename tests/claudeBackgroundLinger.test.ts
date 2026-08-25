@@ -30,6 +30,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 import { claudeDriver } from "@/lib/agents/claude/driver";
+import { sendTurnInput } from "@/lib/turnInput";
 import { createProject, createTask, getTask, listMessages, getTaskUsage } from "@/lib/store";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe } from "@/lib/events";
@@ -190,6 +191,42 @@ describe("claude driver background linger", () => {
     expect(notice && "content" in notice ? notice.content : "").toMatch(/sleep 5/);
     expect(events.some((e) => e.type === "background_resumed")).toBe(false);
     expect(events[events.length - 1]?.type).toBe("done");
+  }, 10_000);
+
+  it("restarts the deadline when the user speaks mid-linger", async () => {
+    // The deadline is fixed from the FIRST linger entry on purpose (a wake
+    // turn must not let a task chain sleeps forever) — but a message from the
+    // user is not the session extending itself, it's a human sitting there
+    // watching. Cutting their reply off 300ms into it, because a clock started
+    // before they spoke, is the auto-cut destroying work nobody asked it to.
+    let firstLingerAt = 0;
+    let closedAt = 0;
+    mockCli(async function* ({ stop, nextInput }) {
+      await nextInput();
+      yield init;
+      yield text("started");
+      await stop(BG);
+      yield result(0.05, { input_tokens: 4, output_tokens: 9 });
+      firstLingerAt = Date.now();
+      // Speak 200ms into a 500ms window, so a deadline that did NOT reset
+      // would cut the injected turn's own linger 300ms later.
+      await new Promise((r) => setTimeout(r, 200));
+      expect(sendTurnInput("t1", "how is it going?")).toBe(true);
+      expect((await nextInput()).done).toBe(false);
+      yield init;
+      yield text("still running");
+      await stop(BG);
+      yield result(0.06, { input_tokens: 2, output_tokens: 11 });
+      const end = await nextInput();
+      closedAt = Date.now();
+      expect(end.done).toBe(true);
+    });
+    const events = await drain();
+    // A window anchored at the first entry would have closed at +500ms.
+    expect(closedAt - firstLingerAt).toBeGreaterThan(620);
+    // Still bounded, just from the new anchor — the work is cut and named.
+    const notice = events.find((e) => e.type === "notice");
+    expect(notice && "content" in notice ? notice.content : "").toMatch(/exceeded the linger window/);
   }, 10_000);
 });
 
