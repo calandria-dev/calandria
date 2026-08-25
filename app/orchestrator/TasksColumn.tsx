@@ -357,8 +357,16 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}:${groupSel ?? ""}`, order);
   const { expanded, toggleExpanded } = useExpanded(project.id);
 
-  return (
-    <div className="col col-tasks" style={{ flexBasis: width }}>
+  // Everything above the list — the project banner, the search field, the
+  // group chips and the selected group's summary strip — scrolls WITH the
+  // tasks rather than being pinned above them. Stacked, they took most of a
+  // narrow column's height and left the list itself a couple of cards tall,
+  // and none of them is something you need while scrolling a backlog: the app
+  // titlebar is the only thing that stays put. Board view is the exception
+  // below — its columns scroll individually and only have a height because the
+  // wrapper is bounded, so pinning is what makes it work at all.
+  const head = (
+    <>
       <div className="proj-banner">
         <div className="pb-row">
           {onBack && <button className="mobile-back" onClick={onBack} title="Back to projects" aria-label="Back to projects">{Icon.chevRight({ style: { transform: "rotate(180deg)" } })}</button>}
@@ -404,15 +412,23 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
           onDeleted={() => selectGroup(null)}
         />
       )}
+    </>
+  );
+
+  return (
+    <div className="col col-tasks" style={{ flexBasis: width }}>
       {loading ? (
         // The list in state is still the previous project's — skeleton cards
         // instead of a flash of the wrong tasks (or a false "No tasks yet").
         <div className="scroll">
+          {head}
           <div className="task-scroll">
             {[0, 1, 2].map((i) => <TaskCardSkeleton key={i} i={i} />)}
           </div>
         </div>
       ) : view === "board" ? (
+        <>
+        {head}
         <div className="board-wrap">
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {groupEmpty && <div className="search-empty">No tasks in {groupsById.get(groupSel!)?.name ?? "this group"} yet.</div>}
@@ -425,8 +441,10 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
             onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}
           />
         </div>
+        </>
       ) : (
       <div className="scroll">
+        {head}
         <div className="task-scroll">
           {tasks.length === 0 && (
             <div className="empty void" style={{ margin: "16px" }}>
