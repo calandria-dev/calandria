@@ -194,3 +194,42 @@ test.describe("mobile tab bar", () => {
     await expect(listRow(page, "Alpha task")).toBeVisible();
   });
 });
+
+// Settings on a phone: the section nav is a horizontal chip rail. `.nav-item`
+// is `width:100%` for the desktop sidebar, which in a flex row made every chip
+// a full screen wide — one section visible, the other nine reachable only by a
+// horizontal scroll with nothing on screen to suggest it existed.
+test.describe("mobile settings nav", () => {
+  test.use({ viewport: { width: 390, height: 800 } });
+
+  test("several sections are on screen at once and stay reachable", async ({ page }) => {
+    await gotoApp(page);
+    // Wait for the phone layout to mount before reading which pane is up — a
+    // phone boots into the first project's task pane, and Settings hangs off
+    // the projects column behind it.
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByTitle("App settings").click();
+
+    const chips = page.locator(".settings-nav-list .nav-item");
+    await expect(chips.first()).toBeVisible();
+    // Shrink-to-fit, not full-bleed: several chips share the row, and the next
+    // one is cut off by the right edge — that clipped chip IS the affordance
+    // that says the rail scrolls.
+    const boxes = await chips.evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
+    expect(boxes.every((b) => b.right - b.left < 390)).toBe(true);
+    expect(boxes.filter((b) => b.left >= 0 && b.right <= 390).length).toBeGreaterThanOrEqual(2);
+    expect(boxes.some((b) => b.left < 390 && b.right > 390)).toBe(true);
+
+    // A section past the fold still selects, and gets scrolled into view.
+    const agents = chips.filter({ hasText: "Agents" });
+    await agents.click();
+    await expect(agents).toHaveClass(/\bactive\b/);
+    await expect(page.getByText("Each task runs as a coding agent.")).toBeVisible();
+    const box = await agents.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  });
+});

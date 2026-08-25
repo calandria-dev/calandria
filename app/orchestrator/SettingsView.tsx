@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import {
   DEFAULT_SETTINGS, reasoningOptions, permissionOptions, MONO_FONTS, PROMPT_FONTS,
@@ -675,11 +675,21 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const clampPct = (n: number) => Math.min(100, Math.max(1, Math.round(n)));
   const clampTokens = (n: number) => Math.max(1000, Math.round(n));
   const active = SETTINGS_SECTIONS.find((s) => s.id === section) ?? SETTINGS_SECTIONS[0];
+  // On a phone the nav is a horizontal rail (see globals.css), so a section
+  // past the third one — or a deep link straight into `initialSection` — starts
+  // scrolled off the right edge with no sign it's selected. Pull it back into
+  // view. `nearest` on both axes makes this a no-op for the desktop sidebar,
+  // where every entry already fits.
+  const navRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    navRef.current?.querySelector<HTMLElement>(".nav-item.active")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [section]);
   return (
     <>
       <div className="col settings-nav">
         <div className="settings-nav-h">Settings</div>
-        <div className="settings-nav-list">
+        <div className="settings-nav-list" ref={navRef}>
           {SETTINGS_SECTIONS.map((s) => (
             <button key={s.id} className={`nav-item${section === s.id ? " active" : ""}`} onClick={() => setSection(s.id)}>
               {s.icon()} {s.label}
