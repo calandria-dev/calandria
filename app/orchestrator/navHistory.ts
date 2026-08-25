@@ -1,5 +1,6 @@
-// Browser-history mechanics for the mobile projects → tasks → session panes,
-// kept pure (no React, no globals) so the Back-button behaviour can be unit-tested.
+// Browser-history mechanics for the mobile projects → tasks → (project home |
+// session) panes, kept pure (no React, no globals) so the Back-button behaviour
+// can be unit-tested.
 //
 // Why a "trap" instead of one-entry-per-level: the live task list re-selects the
 // open task on every background refresh, so selTask churns null↔id constantly.
@@ -11,12 +12,21 @@
 // Arming is keyed on the BOOLEAN "is a pane open" (isDeep), which selTask churn
 // does not change — so churn only ever rewrites the current entry's URL, never
 // adds entries. Back consumes the trap; the app then closes exactly one level
-// (closeOneLevel) and re-arms, so Back walks session → tasks → projects → exit.
+// (closeOneLevel) and re-arms, so Back walks session → tasks → projects → exit
+// (or project home → tasks → projects → exit).
 import type { View } from "./types";
 
 export interface NavSel {
   proj: string | null;
   task: string | null;
+  /**
+   * The project home (recap + Groups + Runbooks + Schedules) is showing. A real
+   * navigation level, not a derived state: on a phone it is the ONLY way to
+   * reach those cards, so Back must close it before it closes the project, and
+   * a refresh must land back on it. It only ever coexists with `proj` and never
+   * with `task` (selecting a task drops the intent — useOrchestrator).
+   */
+  home: boolean;
   view: View;
 }
 
@@ -31,6 +41,7 @@ export function selectionUrl(sel: NavSel, pathname: string): string {
   const q = new URLSearchParams();
   if (sel.proj) q.set("project", sel.proj);
   if (sel.task) q.set("task", sel.task);
+  if (sel.home && sel.proj && !sel.task) q.set("home", "1");
   if (sel.view === "settings" || sel.view === "insights") q.set("view", sel.view);
   const s = q.toString();
   return s ? `?${s}` : pathname;
@@ -62,9 +73,12 @@ export function reconcileHistory(h: HistoryLike, pathname: string, sel: NavSel, 
 
 // One Back press closes the deepest open level. Returns the selection to apply;
 // at the projects root it returns the input unchanged (Back then leaves the app).
+// The project home sits BETWEEN the task list and the project: it is reached by
+// tapping the project name in the task list's header, so Back returns there.
 export function closeOneLevel(sel: NavSel): NavSel {
   if (sel.view === "settings" || sel.view === "insights") return { ...sel, view: "workspace" };
-  if (sel.task) return { ...sel, task: null };
-  if (sel.proj) return { ...sel, proj: null };
+  if (sel.task) return { ...sel, task: null, home: false };
+  if (sel.home) return { ...sel, home: false };
+  if (sel.proj) return { ...sel, proj: null, home: false };
   return sel;
 }

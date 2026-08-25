@@ -132,7 +132,7 @@ export function useOrchestrator() {
   // runs (once `hydrated` flips) before the async project fetch applies selection,
   // and would wipe the query string while selProj/selTask are still null — so we
   // must read ?project/?task before that happens, not inside the fetch callback.
-  const urlSelRef = useRef<{ project?: string; task?: string; view?: string } | null>(null);
+  const urlSelRef = useRef<{ project?: string; task?: string; view?: string; home?: boolean } | null>(null);
   if (urlSelRef.current === null) urlSelRef.current = readUrlSel();
 
   // selProjRef tracks selProj for callbacks/intervals that must read the latest
@@ -231,11 +231,7 @@ export function useOrchestrator() {
   // The tasks in state still belong to the previously selected project.
   const tasksLoading = !!project && tasksFor !== project.id;
 
-  // ---------- prefs (appearance/settings/layout/view) + persistence ----------
-  const { view, setView, taskView, setTaskView, appearance, setAppearance, settings, setSetting, setSettings, layout, setLayout, hydrated } =
-    usePrefs({ selProj, selTask, urlSelRef, setSelProj, setSelTask });
-
-  // ---------- project recaps + landing decision ----------
+  // ---------- the project-home intent ----------
   //
   // "I want the project home" as an explicit intent, held as the project it was
   // asked for. The landing decision (useRecaps) auto-picks the first real task
@@ -250,14 +246,32 @@ export function useOrchestrator() {
   // Held per project id, and cleared the moment a task is selected, so it's a
   // one-shot intent rather than a mode: the next time you enter this project
   // normally, auto-selection is back.
+  //
+  // On a phone it is more than an intent: the landing pane is a PANE there (see
+  // Orchestrator's mobilePane), and the only place Runbooks and Schedules are
+  // mounted — so this same flag is a navigation level, mirrored into the URL as
+  // ?home=1 and closed by Back before the project is (navHistory.ts).
   const [homeProj, setHomeProj] = useState<string | null>(null);
   const showProjectHome = useCallback(() => {
     setSelTask(null);
     setHomeProj(selProjRef.current);
   }, []);
+  const projectHome = !!selProj && homeProj === selProj;
+  // Back / the pane's own back chevron. Only ever turns it OFF — turning it on
+  // is showProjectHome's job, which also has to clear the task selection.
+  const setProjectHome = useCallback((on: boolean) => { if (!on) setHomeProj(null); }, []);
   useEffect(() => { if (selTask) setHomeProj(null); }, [selTask]);
-  useEffect(() => { setHomeProj(null); }, [selProj]);
+  // Moving to a DIFFERENT project drops the intent. Written as a functional
+  // update rather than an unconditional clear so it doesn't fire on the boot
+  // restore below, where selProj goes null → the restored project in the same
+  // batch that sets homeProj to it.
+  useEffect(() => { setHomeProj((h) => (h === selProj ? h : null)); }, [selProj]);
 
+  // ---------- prefs (appearance/settings/layout/view) + persistence ----------
+  const { view, setView, taskView, setTaskView, appearance, setAppearance, settings, setSetting, setSettings, layout, setLayout, hydrated } =
+    usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj, setSelTask, setProjectHome });
+
+  // ---------- project recaps + landing decision ----------
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
@@ -266,7 +280,7 @@ export function useOrchestrator() {
     settingsReady: appDefaultsReady,
     backgroundJobs: appDefaults.background_jobs !== "off",
     recapMode,
-    homeRequested: !!selProj && homeProj === selProj,
+    homeRequested: projectHome,
   });
 
   // Load server-backed app defaults (reasoning / permission mode) once.
@@ -326,6 +340,10 @@ export function useOrchestrator() {
       // carry over a task from a different project.) Validity within the project
       // is checked once its tasks load, below.
       if (wantTask && landProj === wantProj) setSelTask(wantTask);
+      // ?home=1 restores the project-home pane (Runbooks/Schedules) — on mobile
+      // that pane is a route of its own, so a refresh must land back on it
+      // rather than dropping to the task list.
+      else if (url.home && landProj && landProj === wantProj) setHomeProj(landProj);
       setBooted(true);
     }).catch((e) => {
       setBootError(e instanceof Error ? e.message : String(e));
@@ -992,7 +1010,7 @@ export function useOrchestrator() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    setSelTask, showProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
+    projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSendContext, createTask, createGroup, groupTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,

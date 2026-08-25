@@ -489,6 +489,32 @@ push service receive the same message from the same exit, and the channels
 planned next — an outbound webhook (Slack, Discord, Teams) and an iMessage relay
 — will deliver exactly the same messages under exactly the same rules.
 
+## On a phone
+
+Below 760px the three columns can't coexist, so the workspace collapses to one
+pane at a time with a bottom tab bar — **Board · Diffs · Terminals · Insights**
+— and the device Back button walks the panes back out.
+
+The Board tab is a drill-down: **projects → tasks → session**, plus a fourth
+level, the **project home**, reached by tapping the project's name in the task
+list's header. That screen is the phone's mount point for everything that is
+project-level rather than task-level — the "where you left off" recap, the
+Groups card, [Runbooks](#runbooks) and [Scheduled tasks](#scheduled-tasks). On
+desktop the same screen is simply what the session pane shows when no task is
+selected; on a phone that state shows the task list instead, so it needs a level
+of its own. It is a real route (`?home=1`), so a reload or a shared link lands
+back on it, and Back returns to the task list rather than leaving the project.
+
+Two surfaces differ from desktop on purpose. The terminal is a full-screen sheet
+with its own font sizing and a Paste / Ctrl-C / Enter key row, not the desktop's
+bottom drawer, and it has its own tab. The ⌘K command palette is desktop-only —
+there is no keyboard to summon it with.
+
+One is not yet there: **managed services** have no phone UI at all. The Services
+drawer is mouse-resizable and lays its service list beside its log pane, neither
+of which survives a 390px screen, so it is desktop-only until it is rebuilt for
+the project home above.
+
 ## Install as an app
 
 Calandria is an installable PWA: Chrome and Edge offer "Install app" from the

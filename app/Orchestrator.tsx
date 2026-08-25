@@ -203,7 +203,17 @@ export default function Orchestrator() {
   // elements sit side by side. Which pane shows is derived purely from the
   // selection state, so the titlebar "needs you" pill (which drives selection)
   // navigates correctly from any level.
-  const mobilePane: "projects" | "tasks" | "session" = !project ? "projects" : !task ? "tasks" : "session";
+  //
+  // "project" is the phone's fourth level, and it exists because ProjectLanding
+  // had no mount point here at all: on desktop that pane IS "a project is open
+  // and no task is selected", but on a phone that same state shows the task
+  // list, so Runbooks, Schedules, the Groups card and the recap — every
+  // project-level surface ProjectLanding hosts — were unreachable by
+  // construction. It's entered by tapping the project name in the task list's
+  // header (the same "Project home" control desktop has) and sits between the
+  // task list and the session in the Back stack (navHistory.ts).
+  const mobilePane: "projects" | "tasks" | "project" | "session" =
+    !project ? "projects" : task ? "session" : o.projectHome ? "project" : "tasks";
 
   // Bottom tab bar (mobile only). Board reuses the drill-down above unchanged;
   // Diffs/Terminals are new full-pane surfaces; Insights mirrors the existing
@@ -234,9 +244,10 @@ export default function Orchestrator() {
     // nothing changed and the session stayed on screen. Deselecting is
     // enough (mobile skips the desktop auto-pick-first-task landing in
     // useRecaps); the URL/history trap re-mirrors off the new selection.
-    if (t === "board" && mobileTab === "board" && o.view === "workspace" && mobilePane === "session") {
-      o.setSelTask(null);
-      return;
+    // The project-home pane pops the same way, to the same root.
+    if (t === "board" && mobileTab === "board" && o.view === "workspace") {
+      if (mobilePane === "session") { o.setSelTask(null); return; }
+      if (mobilePane === "project") { o.setProjectHome(false); return; }
     }
     setMobileTab(t);
     if (t === "insights") o.setView("insights");
@@ -328,6 +339,17 @@ export default function Orchestrator() {
           </div>
         )}
       </div>
+      {/* Managed services: desktop only, and that is ACCIDENTAL, not a decision
+          — the same class of gap as the one this pane fixes. `.tb-actions` is
+          `display:none` on a phone (globals.css) so the Services button isn't
+          even rendered there, and this gate then declines to mount the drawer,
+          so a phone has no way to start, stop or read the log of a project's
+          dev server. Unlike the terminal below there is no mobile substitute.
+          It is left alone here rather than half-fixed because the drawer needs
+          real work to fit a phone — a mouse-only drag-to-resize handle and a
+          side-by-side service-list/log split — and that is its own task, not a
+          rider on this one. When it is done, the project pane above is where it
+          belongs: it is the project-level surface a phone now has. */}
       {project && features.services && o.servicesMounted && !isMobile && (
         <ServicesDrawer
           key={`svc-${project.id}`}
@@ -339,6 +361,11 @@ export default function Orchestrator() {
           onResize={o.setServicesHeight}
         />
       )}
+      {/* Terminal: desktop only ON PURPOSE — a phone gets MobileTerminalSheet
+          (mounted at the bottom of this file), a full-screen sheet with real
+          text sizing and a Paste/Ctrl-C/Enter key row, plus its own Terminals
+          tab. This bottom drawer is the cramped desktop form; mounting both
+          would put two live shells in the same project. Deliberate omission. */}
       {project && o.termMounted && !isMobile && (
         <TerminalDrawer
           key={project.id}
@@ -434,6 +461,47 @@ export default function Orchestrator() {
         />
       )}
     </BoardWorkspace>
+  );
+
+  // Mobile project pane: ProjectLanding with a header of its own. On desktop
+  // this component lives in the session column, framed by the task list beside
+  // it; on a phone that frame is a different pane, so the back chevron (to the
+  // task list, one Back level — navHistory.ts), the project name and the New
+  // task action have to travel with the pane. Everything below the header is
+  // the same component desktop renders, so Runbooks/Schedules/Groups/recap
+  // can't drift between the two.
+  const projectColumn = project && (
+    <div className="col col-project">
+      <div className="proj-banner">
+        <div className="pb-row">
+          <button className="mobile-back" onClick={() => o.setProjectHome(false)} title="Back to tasks" aria-label="Back to tasks">
+            {Icon.chevRight({ style: { transform: "rotate(180deg)" } })}
+          </button>
+          <span className="pb-home static">
+            <span className="pb-pic" style={{ background: project.color }}>{project.name[0]}</span>
+            <span className="pb-name">{project.name}</span>
+          </span>
+          <button className="btn btn-line btn-sm" onClick={() => o.setModal("sessions")} title="Agent sessions run under this project">{Icon.clock()} Sessions</button>
+          <button className="btn btn-line btn-sm" onClick={() => o.setModal("task")}>{Icon.plus()} Task</button>
+        </div>
+      </div>
+      <div className="session-body">
+        <ProjectLanding
+          mobile
+          project={project}
+          projects={o.activeProjects}
+          agents={o.agents}
+          recap={o.recaps[project.id]}
+          groups={o.groups}
+          // A group chip is a filter on the TASK LIST, so picking one has to
+          // leave this pane — otherwise the tap looks dead on a phone.
+          onSelectGroup={(id) => { selectGroupFilter(project.id, id); o.setProjectHome(false); }}
+          onNewTask={() => o.setModal("task")}
+          onRefreshRecap={() => o.fetchRecap(project.id, true)}
+          onOpenTask={o.setSelTask}
+        />
+      </div>
+    </div>
   );
 
   // Mobile Diffs tab: the same TaskChanges the desktop rail mounts, full-pane
@@ -595,6 +663,7 @@ export default function Orchestrator() {
             : mobileTab === "terminals" ? null /* the full-screen terminal sheet below covers this pane */
             : mobilePane === "projects" ? projectsColumn
             : mobilePane === "tasks" ? tasksColumn
+            : mobilePane === "project" ? projectColumn
             : sessionColumn
         ) : (
           <>
