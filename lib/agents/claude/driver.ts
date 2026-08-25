@@ -1,7 +1,7 @@
 // The Claude Code driver — the Agent SDK behind the AgentDriver seam
 // (lib/agents/types.ts). This is the moved lib/claude.ts: runTurn() drives one
 // user turn (resume or fresh session; project context appended to the Claude
-// Code system prompt), mounts the orchestrator MCP tools (suggest_task /
+// Code system prompt), mounts the Calandria MCP tools (suggest_task /
 // list_projects / list_tasks / get_task / update_task / withdraw_suggestion /
 // expose_service), and normalizes SDK messages into the StreamEvent contract.
 // The one-shot helpers
@@ -156,7 +156,7 @@ function sessionCwd(task: Task, project: Project): string {
 
 // The one-shots below are a different animal, and they get a different policy.
 // A handoff note or a four-bullet recap is an internal transformation, not a
-// session the user is sitting in: it has no orchestrator bridge, no transcript,
+// session the user is sitting in: it has no Calandria bridge, no transcript,
 // no way to answer a prompt. Inheriting the full session config made every one
 // of them spawn the user's entire MCP fleet — measured on this machine: 10
 // servers, 146 MCP tools in context, ~8s of a ~5s job — purely to offer tools
@@ -248,7 +248,7 @@ function orchestratorServer(
   // unrelated tasks rather than an ambiguous ref.
   const createdByTitle = new Map<string, string>();
   return createSdkMcpServer({
-    name: "orchestrator",
+    name: "calandria",
     version: "1.0.0",
     tools: [
       tool(
@@ -900,7 +900,7 @@ async function* runTurn(
       permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       mcpServers: {
-        orchestrator: orchestratorServer(
+        calandria: orchestratorServer(
           project,
           task,
           // Straight onto the queue, like expose_service's notice below: the
@@ -1328,9 +1328,9 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `patterns, and constraints; how to run/build/test it; and any other orientation a new contributor needs. ` +
       `Prefer concrete file paths over vague description. Be accurate — only state what you verified in the code. ` +
       `Do not invent features that aren't there.\n\n` +
-      `If the project has a dev server, note how it starts and that it must bind the PORT env var the ` +
-      `orchestrator injects, and (when the framework enforces host checks) the one-liner that allows the ` +
-      `orchestrator's proxied hostname: Vite → server.allowedHosts including process.env.CALANDRIA_PUBLIC_HOST, ` +
+      `If the project has a dev server, note how it starts and that it must bind the PORT env var ` +
+      `Calandria injects, and (when the framework enforces host checks) the one-liner that allows ` +
+      `Calandria's proxied hostname: Vite → server.allowedHosts including process.env.CALANDRIA_PUBLIC_HOST, ` +
       `Next → allowedDevOrigins in next.config; CRA/webpack-dev-server needs nothing (pre-cleared via env).\n\n` +
       `Write the context as plain markdown (no code fences around the whole thing), tight and ` +
       `information-dense, ~200–500 words. Wrap ONLY the final document between a line containing ` +

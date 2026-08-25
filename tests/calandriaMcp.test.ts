@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-// Smoke test for the portable stdio MCP bridge (scripts/orch-mcp.mjs). We stand
+// Smoke test for the portable stdio MCP bridge (scripts/calandria-mcp.mjs). We stand
 // up a tiny fake "app" HTTP server that records the internal calls the bridge
 // makes and returns canned tool text, spawn the real bridge over stdio, and
 // drive it with the MCP client SDK — the same protocol Codex speaks to it.
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "orch-mcp.mjs");
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
 interface Received {
   path: string;
@@ -103,8 +103,8 @@ async function connectBridge() {
   return { client, close: () => client.close() };
 }
 
-describe("orch-mcp stdio bridge", () => {
-  it("exposes the full orchestrator tool set over stdio", async () => {
+describe("calandria-mcp stdio bridge", () => {
+  it("exposes the full calandria tool set over stdio", async () => {
     const { client, close } = await connectBridge();
     try {
       const { tools } = await client.listTools();

@@ -30,7 +30,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 12 | Unit suite: `tests/setup.ts:77` pins `GIT_CONFIG_SYSTEM=/dev/null` (e2e already branches to `NUL`); pty tests force `SHELL=/bin/sh` and group-kill; services tests use `sleep 30` through `cmd.exe`; `ghBin`/`diff` tests assert exec-bit semantics | Tests | M | For CI, yes |
 | 13 | No Windows CI lane; better-sqlite3's win32 prebuild is fetched at install (network), node-pty's is vendored | Tests/CI | M | For declaring support, yes |
 | 14 | `lib/db-lock.mjs` — SQLite `BEGIN IMMEDIATE` uses `LockFileEx` byte-range locks on Windows; released on process death; semantics hold on local NTFS | File locking | — | **No change needed** |
-| 15 | `scripts/orch-mcp.mjs` bridge: launched as `process.execPath <abs path>` — already portable; `postinstall` `fix-pty.js` no-ops correctly (win32 prebuilds ship no `spawn-helper`) | Entrypoints | — | **No change needed** |
+| 15 | `scripts/calandria-mcp.mjs` bridge: launched as `process.execPath <abs path>` — already portable; `postinstall` `fix-pty.js` no-ops correctly (win32 prebuilds ship no `spawn-helper`) | Entrypoints | — | **No change needed** |
 
 Effort key: S = under a day, M = one to three days, L = a week or more. Nothing
 here is L on its own; the L is the sum plus the standing CI lane.
@@ -217,8 +217,8 @@ Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
   silently (leaves inherited MCP servers mounted, the exact context-waste it
   exists to prevent). `codexPathOverride` via `CODEX_CLI_PATH` already works as
   an escape hatch.
-- **`scripts/orch-mcp.mjs`** is launched as `{ command: process.execPath,
-  args: [ORCH_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
+- **`scripts/calandria-mcp.mjs`** is launched as `{ command: process.execPath,
+  args: [CALANDRIA_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
   `path.join(process.cwd(), …)` script path and talks to the app over loopback
   HTTP. Already portable; the shebang is inert.
 - **`gh`** probe dirs (`lib/github.ts:17-23`) are all POSIX; bare `gh` on PATH

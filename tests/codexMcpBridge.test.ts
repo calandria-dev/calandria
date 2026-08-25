@@ -2,13 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { orchestratorMcpConfig } from "@/lib/agents/codex/driver";
-import { disableInheritedServers, ORCHESTRATOR_SERVER } from "@/lib/agents/codex/mcp";
+import { disableInheritedServers, CALANDRIA_SERVER } from "@/lib/agents/codex/mcp";
 import { getCapabilities } from "@/lib/agents/capabilities";
 import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
 import type { Project, Task } from "@/lib/types";
 
-// Pins the codex-side wiring of the orchestrator's stdio MCP bridge
-// (scripts/orch-mcp.mjs), which gives Codex tasks suggest_task /
+// Pins the codex-side wiring of Calandria's stdio MCP bridge
+// (scripts/calandria-mcp.mjs), which gives Codex tasks suggest_task /
 // expose_service / ask_user.
 //
 // The load-bearing field is `default_tools_approval_mode`. Codex gates MCP tool
@@ -21,8 +21,8 @@ import type { Project, Task } from "@/lib/types";
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo" } as Project;
 const task = { id: "t1", agent: "codex" } as Task;
 
-describe("codex orchestrator MCP bridge config", () => {
-  const server = (orchestratorMcpConfig(project, task) as Record<string, any>).mcp_servers.orchestrator;
+describe("codex calandria MCP bridge config", () => {
+  const server = (orchestratorMcpConfig(project, task) as Record<string, any>).mcp_servers.calandria;
 
   it("auto-approves the bridge's tools (non-interactive exec has no approver)", () => {
     expect(server.default_tools_approval_mode).toBe("approve");
@@ -41,7 +41,7 @@ describe("codex orchestrator MCP bridge config", () => {
 
   it("spawns the bridge with an absolute node binary (no PATH dependency)", () => {
     expect(server.command).toBe(process.execPath);
-    expect(server.args[0]).toMatch(/scripts[/\\]orch-mcp\.mjs$/);
+    expect(server.args[0]).toMatch(/scripts[/\\]calandria-mcp\.mjs$/);
   });
 
   it("keeps the auto-approval scoped to the bridge, never a global default", () => {
@@ -66,14 +66,14 @@ describe("codex does not inherit the user's MCP servers", () => {
     expect(cfg.mcp_servers.userthing).toEqual({ enabled: false });
     expect(cfg.mcp_servers.another).toEqual({ enabled: false });
     // …without touching the bridge, which is the whole point of the exercise.
-    expect(cfg.mcp_servers.orchestrator.command).toBe(process.execPath);
-    expect(cfg.mcp_servers.orchestrator.default_tools_approval_mode).toBe("approve");
+    expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
+    expect(cfg.mcp_servers.calandria.default_tools_approval_mode).toBe("approve");
   });
 
   it("never disables the bridge, even if the user has a server by that name", () => {
-    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers([ORCHESTRATOR_SERVER])) as Record<string, any>;
-    expect(cfg.mcp_servers.orchestrator.enabled).toBeUndefined();
-    expect(cfg.mcp_servers.orchestrator.command).toBe(process.execPath);
+    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers([CALANDRIA_SERVER])) as Record<string, any>;
+    expect(cfg.mcp_servers.calandria.enabled).toBeUndefined();
+    expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
   });
 
   it("skips names that aren't safe as a --config dotted-path segment", () => {
@@ -128,7 +128,7 @@ const TOOL_NAMES = Object.values(TOOL_DEFS)
 
 describe("agent tool defs reach both servers", () => {
   it("mounts every def in the Claude driver's in-process server", () => {
-    // The bridge side is covered live in tests/orchMcp.test.ts (listTools over
+    // The bridge side is covered live in tests/calandriaMcp.test.ts (listTools over
     // real stdio). The in-process SDK server has no such handle — building one
     // needs an SDK session — so this side is pinned at the source level.
     //
@@ -158,7 +158,7 @@ describe("agent tool defs reach both servers", () => {
     // The param that lets an agent edit a row other than its own. Mounted on one
     // side only, the cross-task policy is simply unreachable from the other
     // agent — a capability gap no test of either side alone would notice.
-    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/calandria-mcp.mjs"]) {
       expect(read(rel), `update_task's \`task\` param is missing from ${rel}`).toContain("UPDATE_TASK.params.task");
     }
   });
@@ -168,7 +168,7 @@ describe("agent tool defs reach both servers", () => {
     // call that invents the task, so a batch of new tasks has no ids to
     // reference yet. Mounted on one side only, that agent can file a roadmap but
     // never say what waits on what.
-    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/calandria-mcp.mjs"]) {
       expect(read(rel), `update_task's \`blocked_by\` param is missing from ${rel}`).toContain("UPDATE_TASK.params.blocked_by");
     }
   });
@@ -178,7 +178,7 @@ describe("agent tool defs reach both servers", () => {
     // Mounted on one side only, an agent on the other has nothing but
     // `status: "done"` for "this suggestion is redundant" — which claims work
     // nobody started is finished AND fires the auto-start sweep.
-    for (const rel of ["lib/agents/claude/driver.ts", "scripts/orch-mcp.mjs"]) {
+    for (const rel of ["lib/agents/claude/driver.ts", "scripts/calandria-mcp.mjs"]) {
       const src = read(rel);
       expect(src, `withdraw_suggestion's \`task\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.task");
       expect(src, `withdraw_suggestion's \`reason\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.reason");
@@ -191,7 +191,7 @@ describe("agent tool defs reach both servers", () => {
   it("has an internal endpoint behind every path the bridge proxies to", () => {
     // A bridge tool whose endpoint doesn't exist fails at call time with a bare
     // 404 — invisible until an agent tries it in anger.
-    const src = read("scripts/orch-mcp.mjs");
+    const src = read("scripts/calandria-mcp.mjs");
     const paths = [...src.matchAll(/callInternal\("([^"]+)"/g)].map((m) => m[1]);
     expect(paths.length).toBeGreaterThan(0);
     for (const p of new Set(paths)) {

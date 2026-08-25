@@ -92,7 +92,7 @@ The app talks to coding agents only through the `AgentDriver` interface.
 ### The Claude driver (`lib/agents/claude/driver.ts`)
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
-the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `list_tasks` +
+the Claude Code system prompt), the Calandria MCP tools (`suggest_task` + `list_tasks` +
 `get_task` + `update_task` + `withdraw_suggestion` + `list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
@@ -208,13 +208,13 @@ The five-minute sweep requires `automatic`; opening a project accepts `automatic
 unattended gate. Settings reads a single 30-day aggregation from `internal_usage` so the
 controls show their run count and API-price-equivalent cost without polling.
 
-### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
+### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
 `list_groups` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
-equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
+equivalent is **`scripts/calandria-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `CALANDRIA_TASK_ID` / `CALANDRIA_PROJECT_ID` / `CALANDRIA_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints

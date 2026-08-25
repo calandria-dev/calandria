@@ -16,7 +16,7 @@
  *   - better-sqlite3 is a V8-ABI addon; the npm prebuild for Node 22 (ABI 127)
  *     will not load into Electron 44 (ABI 149) without @electron/rebuild.
  *   - lib/agents/codex/driver.ts spawns the MCP bridge as `process.execPath
- *     scripts/orch-mcp.mjs` with a CLOSED four-key env map. Under an
+ *     scripts/calandria-mcp.mjs` with a CLOSED four-key env map. Under an
  *     Electron-hosted server that execPath is the Electron binary and the child
  *     inherits no ELECTRON_RUN_AS_NODE, so every Codex turn would launch a
  *     silent GUI process instead of the tool bridge.

@@ -7,7 +7,7 @@ import type { Priority, Status } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `update_task` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs) — the same write the Claude driver mounts in-process.
+// (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts in-process.
 // Auth is the per-instance SERVICE_TOKEN (middleware.ts, isAgentToolPath).
 //
 // Two ids, and the difference between them is the whole blast-radius story:

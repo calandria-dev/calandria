@@ -144,10 +144,10 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # alias reader db-lock.mjs, the auth .mjs files and server.js itself all import.
 COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
-# The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/orch-mcp.mjs)
+# The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/calandria-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so
 # they must be COPY'd explicitly (same gotcha as the auth/router .mjs above).
-COPY --from=build --chown=root:root /app/scripts/orch-mcp.mjs ./scripts/orch-mcp.mjs
+COPY --from=build --chown=root:root /app/scripts/calandria-mcp.mjs ./scripts/calandria-mcp.mjs
 COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDefs.mjs
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/orch-entrypoint
 

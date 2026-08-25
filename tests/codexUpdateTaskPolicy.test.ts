@@ -13,9 +13,9 @@ import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups
 
 // update_task's cross-task policy, proved END TO END on the Codex path.
 //
-// tests/orchMcp.test.ts drives the same bridge against a FAKE app server, so it
+// tests/calandriaMcp.test.ts drives the same bridge against a FAKE app server, so it
 // can only show what the bridge forwards. This file closes the loop: the real
-// scripts/orch-mcp.mjs runs as its own process and its calls are served by the
+// scripts/calandria-mcp.mjs runs as its own process and its calls are served by the
 // REAL route handler against the REAL database.
 //
 // That matters because this is the one path where the MODEL names the write
@@ -26,7 +26,7 @@ import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups
 // checks the DB afterwards — a refusal that still wrote would pass a
 // text-only assertion.
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "orch-mcp.mjs");
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
 // The real handlers, keyed by the path the bridge posts to. Only the endpoints
 // these tests exercise are mounted: an unrouted path 404s loudly rather than

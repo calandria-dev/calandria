@@ -232,7 +232,7 @@ function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): 
   // internal ask-user endpoint (lib/agentTools.startAskUser) — suppress the
   // generic tool line so the question isn't shown twice (mirrors the Claude
   // driver skipping AskUserQuestion tool_use blocks).
-  if (item.server === "orchestrator" && item.tool === "ask_user") return [];
+  if (item.server === "calandria" && item.tool === "ask_user") return [];
   const out: StreamEvent[] = [];
   const tool = toolOnce(state, item.id, { title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
   if (nonEmpty(tool)) out.push(tool);

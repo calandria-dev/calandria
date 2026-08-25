@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
- * future one) the orchestrator's task tools (suggest_task / list_tasks /
+ * future one) Calandria's task tools (suggest_task / list_tasks /
  * get_task / update_task / withdraw_suggestion), its runbook tools
  * (create_runbook / list_runbooks / update_runbook), list_projects,
  * expose_service and ask_user.
@@ -62,7 +62,7 @@ async function callInternal(path, payload) {
       body: JSON.stringify({ projectId: PROJECT_ID, taskId: TASK_ID, ...payload }),
     });
   } catch (e) {
-    throw new Error(`orchestrator unreachable at ${BASE_URL}: ${e?.message || e}`);
+    throw new Error(`Calandria unreachable at ${BASE_URL}: ${e?.message || e}`);
   }
   let data = null;
   try {
@@ -70,11 +70,11 @@ async function callInternal(path, payload) {
   } catch {
     /* non-JSON error body (e.g. a 403 text) — handled below */
   }
-  if (!res.ok) throw new Error((data && data.error) || `orchestrator returned ${res.status}`);
+  if (!res.ok) throw new Error((data && data.error) || `Calandria returned ${res.status}`);
   return data;
 }
 
-const server = new McpServer({ name: "orchestrator", version: "1.0.0" });
+const server = new McpServer({ name: "calandria", version: "1.0.0" });
 
 server.registerTool(
   EXPOSE_SERVICE.name,

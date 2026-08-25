@@ -49,14 +49,14 @@ const READ_ONLY_TOOLS = new Set([
   "AskUserQuestion",
 ]);
 
-// The orchestrator's own MCP tools, spelled out rather than matched by server
+// Calandria's own MCP tools, spelled out rather than matched by server
 // prefix: these three can't touch the user's code (they file a suggestion,
 // register a URL, ask a question), but a future tool on the same server must
 // not inherit that trust just because its name starts the same way.
 const ORCHESTRATOR_TOOLS = new Set([
-  "mcp__orchestrator__suggest_task",
-  "mcp__orchestrator__expose_service",
-  "mcp__orchestrator__ask_user",
+  "mcp__calandria__suggest_task",
+  "mcp__calandria__expose_service",
+  "mcp__calandria__ask_user",
 ]);
 
 // Tools that must be decided EVERY time, no rule and no allowlist.

@@ -4,7 +4,7 @@ import { registerExposedService } from "@/lib/agentTools";
 
 export const dynamic = "force-dynamic";
 
-// Internal endpoint the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the
+// Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
 // `expose_service` tool call to — the HTTP counterpart of the Claude driver's
 // in-process tool. Auth is the per-instance SERVICE_TOKEN (middleware.ts).
 export async function POST(req: NextRequest) {

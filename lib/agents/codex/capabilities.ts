@@ -87,8 +87,8 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
   // /answer route are shared with Claude's AskUserQuestion flow).
   supportsAsks: true,
-  // The orchestrator's suggest_task / expose_service tools reach Codex through
-  // the portable stdio MCP bridge (scripts/orch-mcp.mjs), registered per turn
+  // Calandria's suggest_task / expose_service tools reach Codex through
+  // the portable stdio MCP bridge (scripts/calandria-mcp.mjs), registered per turn
   // by the driver — the same tools the Claude driver mounts in-process.
   supportsMcpTools: true,
   // …but ONLY those. Unlike a Claude task, a Codex task does not get the MCP

@@ -10,7 +10,7 @@
 // stream into the StreamEvent contract via lib/agents/codex/events.ts.
 //
 // Codex non-interactive mode can't ask the user natively, but the stdio MCP
-// bridge (scripts/orch-mcp.mjs) mounts the orchestrator tools — so
+// bridge (scripts/calandria-mcp.mjs) mounts the Calandria tools — so
 // supportsMcpTools=true, and its ask_user tool restores interactive asks: the
 // tool call parks server-side until the user answers the card (see
 // lib/agentTools.startAskUser), so supportsAsks=true. ChatGPT-plan auth
@@ -24,7 +24,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, ORCH_MCP_SCRIPT } from "../../config";
+import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
@@ -32,8 +32,8 @@ import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 
-// Register the orchestrator's stdio MCP bridge as a Codex mcp_server for this
-// turn. The bridge is a thin proxy: the CLI spawns `node scripts/orch-mcp.mjs`
+// Register Calandria's stdio MCP bridge as a Codex mcp_server for this
+// turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
 // and the tool calls POST back to the app's internal endpoints, authenticated
 // with the per-instance SERVICE_TOKEN and scoped to this task/project via env.
 // `command` is the absolute node binary (process.execPath) so the spawn doesn't
@@ -54,9 +54,9 @@ export function orchestratorMcpConfig(
     mcp_servers: {
       // Spread FIRST so the bridge's own entry always wins a name collision.
       ...inherited,
-      orchestrator: {
+      calandria: {
         command: process.execPath,
-        args: [ORCH_MCP_SCRIPT],
+        args: [CALANDRIA_MCP_SCRIPT],
         // Codex gates MCP tool calls behind their OWN approval decision, which
         // `approval_policy` does NOT cover: under the default mode every call to
         // this server is routed to an approver, and `codex exec` (what the SDK
@@ -265,7 +265,7 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // Claude driver. Usage received before an error or max-items abort is retained.
 async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
   // Same MCP policy as a turn, and it bites harder here: a one-shot mounts no
-  // orchestrator bridge at all, so every inherited server is a subprocess
+  // Calandria bridge at all, so every inherited server is a subprocess
   // spawned purely to offer a recap or summary run tools it could never call.
   const inherited = await inheritedServerOverrides();
   const codex = new Codex({

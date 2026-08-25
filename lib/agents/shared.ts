@@ -23,7 +23,7 @@ export const INITIAL_TASK_PROMPT = "Start working on the task described in the t
  *
  * When the task opted out of the saved project context (send_context = 0), the
  * "what we're building" block is omitted but everything the session needs to
- * function stays: task title/details, carried summaries, and the orchestrator
+ * function stays: task title/details, carried summaries, and the Calandria
  * tool instructions.
  */
 export function buildProjectContext(project: Project, task: Task): string {
@@ -96,7 +96,7 @@ export function buildProjectContext(project: Project, task: Task): string {
   }
 
   lines.push(
-    `\n---\nYou have an "orchestrator" MCP tool \`suggest_task\` that creates a task. By ` +
+    `\n---\nYou have a "calandria" MCP tool \`suggest_task\` that creates a task. By ` +
       `default it files into THIS project. New tasks land in the user's "Suggested" tray for ` +
       `them to review and start later as their own session. Use it two ways:\n` +
       `1. On request — when the user asks you to plan, break down, scope, or roadmap work, ` +
@@ -137,13 +137,13 @@ export function buildProjectContext(project: Project, task: Task): string {
       `panel and the tool RETURNS the URL the user can open (on a hosted instance that is a ` +
       `real public hostname like <name>--<instance-host>; reply with that exact URL so ` +
       `the user can verify your work live). Names are slugified to lowercase [a-z0-9-]. Prefer ` +
-      `the PORT environment variable the orchestrator injected ` +
+      `the PORT environment variable Calandria injected ` +
       `(${project.port ? `PORT=${project.port}` : "set per project"}) so the address is stable. ` +
       `Because the URL is proxied under that hostname, allow it in dev-server host checks when ` +
       `you scaffold or configure an app: Vite → \`server.allowedHosts: [process.env.CALANDRIA_PUBLIC_HOST]\` ` +
       `(or \`true\`), Next dev → \`allowedDevOrigins: [process.env.CALANDRIA_PUBLIC_HOST]\` in next.config, ` +
       `CRA/webpack-dev-server is pre-cleared via env. CALANDRIA_PUBLIC_HOST is injected into services ` +
-      `the orchestrator starts.`
+      `Calandria starts.`
   );
   return lines.join("\n");
 }

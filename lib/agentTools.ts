@@ -8,7 +8,7 @@
 //
 // The tool *definitions* (names/descriptions/params) live in lib/agentToolDefs.mjs;
 // this file is the behaviour behind them. Both are deliberately split so the
-// plain-Node bridge (scripts/orch-mcp.mjs) can import the defs without pulling in
+// plain-Node bridge (scripts/calandria-mcp.mjs) can import the defs without pulling in
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";

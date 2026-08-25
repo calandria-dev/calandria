@@ -6,7 +6,7 @@ import { maybeAutoStartDependents } from "@/lib/autoStart";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `withdraw_suggestion` tool for the stdio MCP
-// bridge (scripts/orch-mcp.mjs) — the same write the Claude driver mounts
+// bridge (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts
 // in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //

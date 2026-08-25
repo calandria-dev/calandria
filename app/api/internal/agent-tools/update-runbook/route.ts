@@ -6,7 +6,7 @@ import { updateRunbookForAgent } from "@/lib/runbookTools";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `update_runbook` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs) — the same write the Claude driver mounts in-process.
+// (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts in-process.
 //
 //   body.taskId   the CALLER (CALANDRIA_TASK_ID, injected by the driver).
 //   body.runbook  the TARGET the MODEL named, and therefore untrusted.

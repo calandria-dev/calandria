@@ -7,7 +7,7 @@
 // reason is the CLI, not a config we forgot to pass:
 //
 //   * The @openai/codex-sdk `config` object is flattened into LEAF-level
-//     `--config mcp_servers.orchestrator.command="…"` overrides, and the codex
+//     `--config mcp_servers.calandria.command="…"` overrides, and the codex
 //     CLI merges those into ~/.codex/config.toml rather than replacing the
 //     table. So the user's servers are already inherited today, with no code
 //     asking for it.
@@ -40,7 +40,7 @@ const CODEX = CODEX_CLI_PATH || "codex";
 // The name our own bridge is mounted under. Never disabled, and never treated
 // as an inherited server even if the user happens to have one by that name —
 // our leaf overrides would land on top of theirs either way.
-export const ORCHESTRATOR_SERVER = "orchestrator";
+export const CALANDRIA_SERVER = "calandria";
 
 // One segment of a `--config` dotted path is a TOML bare key. The SDK builds
 // those paths by string concatenation with no quoting, so a server named
@@ -67,7 +67,7 @@ export async function listUserMcpServers(): Promise<string[]> {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((s) => (s as { name?: unknown })?.name)
-      .filter((n): n is string => typeof n === "string" && n !== ORCHESTRATOR_SERVER);
+      .filter((n): n is string => typeof n === "string" && n !== CALANDRIA_SERVER);
   } catch (e) {
     // ENOENT here just means codex isn't installed, which the auth surface
     // already reports far more usefully; anything else is worth a line.
@@ -80,7 +80,7 @@ export async function listUserMcpServers(): Promise<string[]> {
 
 /**
  * `mcp_servers.<name>.enabled = false` for every server we're unmounting, ready
- * to be spread alongside the orchestrator entry. Empty when CODEX_INHERIT_MCP
+ * to be spread alongside the calandria entry. Empty when CODEX_INHERIT_MCP
  * is on (the user opted back into mounting them) or when there's nothing to
  * unmount.
  */
@@ -88,7 +88,7 @@ export function disableInheritedServers(names: string[]): Record<string, { enabl
   if (CODEX_INHERIT_MCP) return {};
   const out: Record<string, { enabled: false }> = {};
   for (const name of names) {
-    if (name === ORCHESTRATOR_SERVER || !BARE_KEY.test(name)) continue;
+    if (name === CALANDRIA_SERVER || !BARE_KEY.test(name)) continue;
     out[name] = { enabled: false };
   }
   return out;

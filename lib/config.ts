@@ -215,7 +215,7 @@ export const SERVICE_LOG_LINES = num("CALANDRIA_SERVICE_LOG_LINES", readEnv("CAL
 
 /**
  * The origin the app answers on over loopback, for in-container server-to-server
- * calls. The stdio MCP bridge (scripts/orch-mcp.mjs, spawned by the Codex CLI)
+ * calls. The stdio MCP bridge (scripts/calandria-mcp.mjs, spawned by the Codex CLI)
  * POSTs the suggest_task / expose_service tool calls back to the app's internal
  * endpoints at this base. Defaults to 127.0.0.1 on the app's own PORT (server.js
  * reads the same PORT). Override only if the app is reached differently from
@@ -225,7 +225,7 @@ export const INTERNAL_BASE_URL =
   readEnv("CALANDRIA_INTERNAL_BASE_URL") || `http://127.0.0.1:${process.env.PORT || 3000}`;
 
 /** Absolute path to the stdio MCP bridge the non-Claude drivers register per turn. */
-export const ORCH_MCP_SCRIPT = path.join(process.cwd(), "scripts", "orch-mcp.mjs");
+export const CALANDRIA_MCP_SCRIPT = path.join(process.cwd(), "scripts", "calandria-mcp.mjs");
 
 /**
  * Whether the app may talk to a project's git remote at all. On by default: a
