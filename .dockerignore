@@ -7,6 +7,8 @@ node_modules
 .env*
 *.md
 docs
+# the desktop shell wraps a running server from the outside; it is never in one
+desktop
 Dockerfile
 docker-compose.yml
 .dockerignore

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+    <title>Starting Calandria…</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; height: 100vh; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px;
+        background: #0b0d10; color: #e6e8eb;
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+      .sub { color: #8b939c; font-size: 12.5px; }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: #4c9aff; animation: pulse 1.2s ease-in-out infinite; }
+      @keyframes pulse { 0%,100% { opacity: .25; transform: scale(.85);} 50% { opacity: 1; transform: scale(1);} }
+      pre {
+        margin: 0; padding: 12px 14px; width: min(760px, 84vw); height: 190px; overflow: auto;
+        background: #12151a; border: 1px solid #1e232b; border-radius: 8px;
+        font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9aa4ae; white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dot"></div>
+    <h1>Starting Calandria</h1>
+    <div class="sub">Booting the local server and terminal sidecar…</div>
+    <pre id="log"></pre>
+    <script>
+      // main.js pushes sidecar output here via executeJavaScript. A cold Next
+      // boot is a few seconds; a first-ever launch can be longer, and a silent
+      // spinner in that window is indistinguishable from a hang.
+      const el = document.getElementById("log");
+      window.__log = (line) => {
+        el.textContent += line + "\n";
+        el.scrollTop = el.scrollHeight;
+      };
+    </script>
+  </body>
+</html>

@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+# the desktop shell spike installs its own Electron (~280 MB) — see desktop/README.md
+/desktop/node_modules
+/desktop/dist
 /.pnp
 .pnp.*
 .yarn/*
