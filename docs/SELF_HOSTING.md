@@ -44,9 +44,9 @@ ordinary nightly builds publish under `edge` instead, so pulling `latest` never 
 untagged, unreleased code. Pin `sha-<short>` (or a specific `X.Y.Z`) when you want a tag
 that can never change under you. See [Pinning a version](#pinning-a-version) below.
 
-The `v` is a **git**-tag convention only: the `v0.2.0` tag ref publishes the image tags
-`0.2.0` and `0.2`. There is no `:v0.2.0` on the registry — pinning one is a
-`manifest unknown` pull.
+The first release, `v0.2.0`, was cut on 2026-08-25, so `latest`,
+`<version>` and `<major>.<minor>` all exist and point at it — as `0.2.0` and
+`0.2`, with no `v`.
 
 ### Verify the image's provenance
 
@@ -74,6 +74,10 @@ included the `attest` job carry a signature — anything older reports
 `no attestations found`.
 
 ### Pinning a version
+
+Note the image tag carries **no leading `v`**, even though the git tag does:
+`v0.2.0` in git is `:0.2.0` in the registry (`docker/metadata-action`'s
+`{{version}}` strips it). `:vX.Y.Z` does not exist and will fail to pull.
 
 Pick one of:
 
@@ -106,9 +110,10 @@ export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
 docker build -t calandria .
 docker compose -p orch-alice up -d
 
-# B) or run the published image, nothing to build — swap :edge for a version
-# tag (e.g. :0.2.0, no `v`); see "Pinning a version" above
-export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:edge
+# B) or run the published image, nothing to build. :latest is the newest
+# release; pin :0.2.0 (no leading v) to hold one; :edge is nightly main.
+# See "Pinning a version" above.
+export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest
 docker compose -p orch-alice pull
 docker compose -p orch-alice up -d --no-build
 
