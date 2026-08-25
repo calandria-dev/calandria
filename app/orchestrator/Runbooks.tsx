@@ -9,6 +9,7 @@ import { ErrNote } from "./shared";
 import { Modal, PrioritySeg } from "./Modal";
 import { ProjectTargetList } from "./modals";
 import type { Priority } from "@/lib/types";
+import { INHERIT_LABEL } from "./types";
 import type { AgentsBundle, ProjectRow, RunbookRow, RunbooksResponse } from "./types";
 
 // What the slash-command validator returns, mirrored from
@@ -62,7 +63,7 @@ function RunbookForm({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // Unlike a schedule's picker, "Auto"/"Default" stay on offer. A schedule
+  // Unlike a schedule's picker, the inherit head stays on offer. A schedule
   // always runs unattended, so "whatever the default resolves to" is the exact
   // ambiguity that field exists to remove; a runbook dispatch has somebody in
   // front of it who can answer a card, so inheriting the app default is a real
@@ -175,7 +176,10 @@ function RunbookForm({
         <label className="lab" htmlFor={`${uid}-perm`}>Permission mode</label>
         {modeCaps.length > 0 ? (
           <select id={`${uid}-perm`} value={permissionMode ?? ""} onChange={(e) => setPermissionMode(e.target.value || null)}>
-            <option value="">Default — inherit this instance&rsquo;s setting</option>
+            {/* Same word the task pickers' head uses (INHERIT_LABEL), so "inherit
+                the app default" and Claude's own mode spelled "default" — right
+                below in the provider's list — can't read as the same entry. */}
+            <option value="">{INHERIT_LABEL} — use the app-level default</option>
             {modeCaps.map((m) => <option key={m.value} value={m.value} title={m.sub}>{m.label}</option>)}
           </select>
         ) : (
@@ -272,7 +276,7 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
         {/* Show the mode the way this runbook's agent names it (labels are
             provider-native); fall back to the stored value if the descriptor
             hasn't loaded or no longer lists it. */}
-        <span>{capsFor(agents, runbook.agent)?.permissionModes.find((m) => m.value === runbook.permission_mode)?.label ?? runbook.permission_mode ?? "default permissions"}</span>
+        <span>{capsFor(agents, runbook.agent)?.permissionModes.find((m) => m.value === runbook.permission_mode)?.label ?? runbook.permission_mode ?? "inherits the app permission default"}</span>
         <span>·</span>
         <span>{runbook.priority} priority</span>
       </div>

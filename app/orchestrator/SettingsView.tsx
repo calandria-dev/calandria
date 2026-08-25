@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import {
-  DEFAULT_SETTINGS, modelOptions, reasoningOptions, permissionOptions, MONO_FONTS, PROMPT_FONTS,
+  DEFAULT_SETTINGS, modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
   type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
 } from "./types";
 import { capsFor, agentLabel } from "./agents";
@@ -646,6 +646,10 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // "workspace-write"), so the help copy resolves the name per agent instead of
   // hardcoding one.
   const bypassLabel = caps?.permissionModes.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
+  // Every picker's head is the same word ("Inherit") everywhere, but what it
+  // inherits differs by surface: a task inherits THESE defaults, and these
+  // defaults inherit the driver's own. Only the sub says so.
+  const inheritSub = `hand the choice to ${agentLabel(agents, editAgent)}'s own default`;
   const multiAgent = agents.agents.length > 1;
   const backgroundJobs = appDefaults.background_jobs !== "off";
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -839,51 +843,57 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 )}
                 <ModelField
                   label="Default model"
-                  options={modelOptions(caps)}
+                  options={modelOptions(caps, inheritSub)}
                   value={modelVal}
                   onChange={(m) => setAppDefault(`default_model:${editAgent}`, m)}
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The model a task runs on when its own picker is set to <strong>Default</strong>. Per-task choices
-                      always override this, and <strong>Default</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
+                      The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
+                      always override this, and <strong>{INHERIT_LABEL}</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
                     </div>
                   }
                 />
                 <div className="field">
                   <div className="lab">{Icon.spark()} Default reasoning level</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    The thinking level a task uses when its own picker is set to <strong>Default</strong>. Per-task choices always override this.
+                    The thinking level a task uses when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices always override this.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
-                    {reasoningOptions(caps).map((r) => (
-                      <button
-                        key={r.label}
-                        className={reasoningVal === r.value ? "on" : ""}
-                        title={r.sub}
-                        onClick={() => setAppDefault(`default_reasoning:${editAgent}`, r.value)}
-                      >
-                        {r.label}
-                      </button>
+                    {reasoningOptions(caps, inheritSub).map((r) => (
+                      <Fragment key={r.label}>
+                        <button
+                          className={reasoningVal === r.value ? "on" : ""}
+                          title={r.sub}
+                          onClick={() => setAppDefault(`default_reasoning:${editAgent}`, r.value)}
+                        >
+                          {r.label}
+                        </button>
+                        {r.value === null && <span className="seg-sep" aria-hidden />}
+                      </Fragment>
                     ))}
                   </div>
                 </div>
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to the default. Every mode except <strong>{bypassLabel}</strong>
+                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode except <strong>{bypassLabel}</strong>
                     {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
                     away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
-                    {permissionOptions(caps).map((p) => (
-                      <button
-                        key={p.label}
-                        className={permissionVal === p.value ? "on" : ""}
-                        title={p.sub}
-                        onClick={() => setAppDefault(`default_permission_mode:${editAgent}`, p.value)}
-                      >
-                        {p.label}
-                      </button>
+                    {permissionOptions(caps, inheritSub).map((p) => (
+                      <Fragment key={p.label}>
+                        <button
+                          className={permissionVal === p.value ? "on" : ""}
+                          title={p.sub}
+                          onClick={() => setAppDefault(`default_permission_mode:${editAgent}`, p.value)}
+                        >
+                          {p.label}
+                        </button>
+                        {/* Rule after the inherit head — Claude's own list has a
+                            mode spelled "default" right below it. */}
+                        {p.value === null && <span className="seg-sep" aria-hidden />}
+                      </Fragment>
                     ))}
                   </div>
                 </div>

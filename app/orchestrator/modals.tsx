@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
@@ -130,13 +130,13 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
-  // null = the picker's "Default" head: inherit the app-level default, then the
+  // null = the picker's "Inherit" head: use the app-level default, then the
   // driver's. Set here (not just in the session rail) because the auto-start
   // opt-in below decides this task will run with NOBODY WATCHING, and an
   // unattended permission prompt declines itself — so the one dialog that
   // schedules unattended work has to be able to say "don't stop to ask".
   const [permission, setPermission] = useState<string | null>(null);
-  // Same "Default" semantics for the model. Chosen here rather than only in the
+  // Same inherit semantics for the model. Chosen here rather than only in the
   // session rail because "Start session immediately" makes the first turn part
   // of this dialog: a rail pick afterwards would land a model behind the turn
   // that already ran on the default one.
@@ -161,7 +161,7 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   // Permission modes and models are both provider-specific (each driver labels
   // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
   // sandbox modes and GPT ids), so a choice made under one agent may not exist
-  // under the next: switching agents drops it back to Default rather than
+  // under the next: switching agents drops it back to Inherit rather than
   // silently sending a value the new driver would coerce.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
@@ -171,7 +171,7 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   }, [modelOpts, model]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
-  // bypassPermissions is the only mode that never parks on a card. "Default"
+  // bypassPermissions is the only mode that never parks on a card. "Inherit"
   // (null) can resolve to one that does, so it counts as unsafe-for-unattended
   // too — we deliberately don't guess what it resolves to and claim it's fine.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
@@ -214,14 +214,20 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
           <div className="lab">{Icon.lock()} Permission mode</div>
           <div className="seg wrap" style={{ maxWidth: 520 }}>
             {permissionOpts.map((p) => (
-              <button key={p.label} className={permission === p.value ? "on" : ""} title={p.sub}
-                onClick={() => setPermission(p.value)}>
-                {p.label}
-              </button>
+              <Fragment key={p.label}>
+                <button className={permission === p.value ? "on" : ""} title={p.sub}
+                  onClick={() => setPermission(p.value)}>
+                  {p.label}
+                </button>
+                {/* Rule after the inherit head. Everything past it is the
+                    provider's own mode list — Claude's includes one spelled
+                    "default", which the head must not read as a copy of. */}
+                {p.value === null && <span className="seg-sep" aria-hidden />}
+              </Fragment>
             ))}
           </div>
           <div className="hlp">
-            {permissionOpts.find((p) => p.value === permission)?.sub ?? "inherit the agent's default"}
+            {permissionOpts.find((p) => p.value === permission)?.sub ?? permissionOpts[0]?.sub}
             {" — changeable later from the session rail."}
           </div>
         </div>
@@ -785,7 +791,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   // Switching an unstarted task's agent invalidates a model chosen under the old
-  // one, same as the New-task dialog: drop to Default rather than save an id the
+  // one, same as the New-task dialog: drop to Inherit rather than save an id the
   // new driver would never resolve. Gated on the agent actually having MOVED,
   // unlike the New dialog's copy — merely being absent from the catalog is also
   // what a not-yet-loaded bundle and a provider change look like, and rewriting

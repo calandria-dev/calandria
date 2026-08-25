@@ -313,17 +313,28 @@ export interface AgentInfo { id: string; label: string; capabilities: AgentCapab
 export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
-// A picker option list. `value: null` is the synthetic "Default" head — it
+// A picker option list. `value: null` is the synthetic inherit head — it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
 export type PickerOption = { value: string | null; label: string; sub: string; group?: string };
-const DEFAULT_HEAD: PickerOption = { value: null, label: "Default", sub: "inherit the agent's default" };
-const withDefault = (opts: PickerOption[]): PickerOption[] => [DEFAULT_HEAD, ...opts];
+// The head is deliberately NOT called "Default": the labels below it are
+// provider-native (Anthropic's own `--permission-mode` strings), and one of
+// those modes is literally spelled "default", so a capital-D head read as a
+// duplicate of it and made picking the wrong one easy. "Inherit" is the one
+// word every picker built from withInherit() uses for "no choice of my own",
+// and anywhere the resolved value is rendered as a label (the session rail's
+// model/reasoning chips) must show the same word.
+export const INHERIT_LABEL = "Inherit";
+const INHERIT_HEAD: PickerOption = { value: null, label: INHERIT_LABEL, sub: "use the app-level default" };
+// `sub` overrides what the head claims to inherit — Settings → Run defaults IS
+// the app-level default, so there the head hands the choice to the driver.
+const withInherit = (opts: PickerOption[], sub?: string): PickerOption[] =>
+  [sub ? { ...INHERIT_HEAD, sub } : INHERIT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
-// (agent metadata not loaded yet) yields just the Default head.
-export const modelOptions = (caps?: AgentCapabilities): PickerOption[] => withDefault(caps?.models ?? []);
-export const reasoningOptions = (caps?: AgentCapabilities): PickerOption[] => withDefault(caps?.reasoningOptions ?? []);
-export const permissionOptions = (caps?: AgentCapabilities): PickerOption[] => withDefault(caps?.permissionModes ?? []);
+// (agent metadata not loaded yet) yields just the inherit head.
+export const modelOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.models ?? [], sub);
+export const reasoningOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.reasoningOptions ?? [], sub);
+export const permissionOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.permissionModes ?? [], sub);
 
 // Lightweight filter box for the project & task lists — only worth showing once a
 // list grows past SEARCH_MIN, so small workspaces stay clutter-free.

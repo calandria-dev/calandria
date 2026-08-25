@@ -1470,6 +1470,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .seg button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
 .seg button svg{width:14px;height:14px;}
 .seg button .pdot{width:9px;height:9px;border-radius:50%;}
+/* Rule between a picker's synthetic "Inherit" head and the provider's own
+   options below it — Claude's permission modes include one spelled
+   "default", which without this reads as a duplicate of the head. */
+.seg-sep{flex:0 0 2px;align-self:center;height:22px;border-radius:2px;background:var(--line-strong);margin:0 7px;}
 
 .modal-close{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-3);}
 .modal-close:hover{background:var(--surface-2);color:var(--ink);}

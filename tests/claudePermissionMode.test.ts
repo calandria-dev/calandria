@@ -93,15 +93,17 @@ describe("which permission modes the driver offers", () => {
     ]);
   });
 
-  it("labels every mode with Anthropic's own spelling, and never 'Default' — the picker's inherit head owns that word", () => {
+  it("labels every mode with Anthropic's own spelling, and never 'Inherit' — the picker's head owns that word", () => {
     // Provider-native labels: the picker shows exactly the strings
-    // `--permission-mode` takes, so label === value for every entry. The mode
-    // spelled "default" (lowercase) is Anthropic's; the capital-D "Default" is
-    // Calandria's synthetic inherit head, and the subs carry the distinction.
+    // `--permission-mode` takes, so label === value for every entry — including
+    // the mode Anthropic spells "default". Calandria's synthetic head is
+    // "Inherit" precisely so it can't be mistaken for that one (it used to be
+    // "Default", differing by a single capital); tests/pickerInheritHead.test.ts
+    // pins the head end of that separation for every driver.
     for (const p of CLAUDE_CAPABILITIES.permissionModes) expect(p.label).toBe(p.value);
     const labels = CLAUDE_CAPABILITIES.permissionModes.map((p) => p.label);
     expect(new Set(labels).size).toBe(labels.length);
-    expect(labels).not.toContain("Default");
+    expect(labels.map((l) => l.toLowerCase())).not.toContain("inherit");
     for (const p of CLAUDE_CAPABILITIES.permissionModes) expect(p.sub.trim()).not.toBe("");
   });
 });
