@@ -37,6 +37,12 @@ is a one-time cost the next run — and every other worktree — inherits. The
 container's entrypoint reinstalls only when `package-lock.json` changes; wipe
 the volume (`docker volume rm orch-test-node-modules`) to force a clean tree.
 
+The four `*:docker` scripts invoke `bash scripts/docker-test.sh` rather than the
+file directly, so they also run from a Windows shell with Git Bash on PATH
+(`cmd.exe` has no shebang handling and would try to execute the `.sh` itself).
+Docker Desktop must be in **Linux-container mode** there — the test image is a
+`node:22` Linux image and will not run under Windows containers.
+
 Three things this exists to stop you rediscovering:
 
 - **A worktree has no `node_modules`, and you cannot borrow the main
