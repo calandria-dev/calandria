@@ -113,12 +113,16 @@ jobs:
   # importantly BUILT_AT, which would otherwise differ per runner.
   prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # Generous only for the release path: the gate below WAITS for this
+    # commit's Test run to conclude (up to 45 minutes), so the job timeout has
+    # to sit above that wait or it would become the thing that fails releases.
+    # Every other event skips that step and this job still finishes in seconds.
+    timeout-minutes: 50
     permissions:
       contents: read
       # The nightly freshness check reads the registry.
       packages: read
-      # The release gate below reads test.yml's run history for this SHA.
+      # The release gate below polls test.yml's run history for this SHA.
       actions: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
@@ -145,26 +149,101 @@ jobs:
 
       # A release is only as trustworthy as the signal it's cut from (issue
       # #12). Tag pushes don't retrigger test.yml — it only listens on
-      # `push: branches: [main]` — so this queries the Test run that already
-      # happened for the commit the tag points to (release-please tags a
-      # merge-to-main commit; a hand-pushed tag on an untested commit has no
-      # matching run either, which fails this the same way). Scoped to actual
-      # tag pushes: PRs, the nightly schedule and manual dispatch already run
-      # `test` themselves via the `needs: [prepare, test]` chain below.
-      - name: Verify the Test workflow succeeded for this commit before releasing
+      # `push: branches: [main]` — so this watches the Test run that the
+      # push-to-main of the tagged commit already started (release-please tags
+      # a merge-to-main commit).
+      #
+      # It WAITS for that run to conclude rather than demanding one that is
+      # already `completed`, because on the release path it is ALWAYS too early
+      # to ask. Measured on v0.2.0: main push 15:52:22Z -> tag + Release
+      # 15:52:28Z -> this workflow starts 15:52:33Z -> gate failed 15:52:40Z
+      # with "no run found" -> that same Test run concluded green at 16:01:34Z.
+      # The merge commit's run is always the slow one (test.yml gates e2e to
+      # main pushes, ~10-15 minutes) and the tag is always cut seconds after the
+      # merge, so the `status=completed` query did not lose that race
+      # occasionally — it lost it on every release, which made the manual
+      # `gh workflow run publish-image.yml --ref vX.Y.Z` that issue #12 exists
+      # to abolish a mandatory step again. Waiting keeps the property this step
+      # is here for: a run that concludes anything but success, or a tag whose
+      # commit has no push-to-main run at all, still fails hard and publishes
+      # nothing.
+      #
+      # `event=push` is load-bearing, not tidiness (issue #12, defect 3). A
+      # `pull_request` run for the same SHA is green with **e2e skipped**, so
+      # without the filter a rebase-merged release PR — whose head SHA becomes
+      # main's tip — would satisfy this gate having never run e2e, and the
+      # merge method would silently decide whether the gate means anything.
+      # test.yml's push trigger is `branches: [main]`, so an `event=push` run
+      # for this SHA is by construction the push-to-main run, e2e included.
+      #
+      # Scoped to actual tag pushes: PRs, the nightly schedule and manual
+      # dispatch already run `test` themselves via the `needs: [prepare, test]`
+      # chain below.
+      - name: Wait for the Test workflow to succeed for this commit before releasing
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
+          # A ceiling, not an expectation (~10 minutes end to end is typical):
+          # test.yml's e2e job alone is capped at 30 minutes and the run can sit
+          # queued for minutes before that. Expiring here is a hard failure, so
+          # it must sit above the slowest legitimate run rather than near it.
+          WAIT_SECONDS: "2700"
+          # A hand-pushed tag on a commit that never landed on main has no
+          # push-to-main run and never will, so absence fails fast instead of
+          # burning the full wait. This grace covers only the gap between the
+          # tag push and the run row becoming visible to the API.
+          ABSENT_GRACE_SECONDS: "180"
+          POLL_SECONDS: "30"
         run: |
           set -euo pipefail
-          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${SHA}&status=completed&per_page=1" \
-            --jq '.workflow_runs[0].conclusion // "no run found"')
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::Refusing to publish ${GITHUB_REF_NAME}: the Test workflow has not succeeded for ${SHA} (found: ${conclusion}). A release must be cut from a commit whose push-to-main Test run is green — see .github/CLAUDE.md and issue #12."
+
+          fail() {
+            echo "::error::Refusing to publish ${GITHUB_REF_NAME}: the Test workflow has not succeeded for ${SHA} ($1). A release must be cut from a commit whose push-to-main Test run is green — see .github/CLAUDE.md and issue #12."
             exit 1
-          fi
-          echo "Test workflow succeeded for ${SHA}; proceeding with release ${GITHUB_REF_NAME}"
+          }
+
+          # Echoes "<status> <conclusion>" for the newest push-event Test run on
+          # this SHA, or "absent -" when there is none yet. A transient API
+          # error echoes nothing, which the loop reads as one more reason to
+          # keep waiting rather than as grounds to fail a release.
+          probe() {
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
+              --jq '(.workflow_runs[0] // {}) | "\(.status // "absent") \(.conclusion // "-")"' 2>/dev/null || true
+          }
+
+          deadline=$(( SECONDS + WAIT_SECONDS ))
+          absent_deadline=$(( SECONDS + ABSENT_GRACE_SECONDS ))
+          announced=""
+
+          while :; do
+            line=$(probe)
+            [ -n "$line" ] || line="unreadable -"
+            status="${line%% *}"
+            conclusion="${line##* }"
+
+            case "$status" in
+              completed)
+                [ "$conclusion" = "success" ] || fail "found: ${conclusion}"
+                echo "Test workflow succeeded for ${SHA}; proceeding with release ${GITHUB_REF_NAME}"
+                exit 0
+                ;;
+              absent)
+                [ "$SECONDS" -lt "$absent_deadline" ] || fail "found: no run found"
+                ;;
+            esac
+
+            [ "$SECONDS" -lt "$deadline" ] \
+              || fail "still ${status} after $(( WAIT_SECONDS / 60 )) minutes"
+
+            # Only on a transition, so a 45-minute wait doesn't produce 90 lines
+            # of identical log.
+            if [ "$status" != "$announced" ]; then
+              echo "Test run for ${SHA} is ${status}; waiting for it to conclude…"
+              announced="$status"
+            fi
+            sleep "$POLL_SECONDS"
+          done
 
       # The nightly wins nothing when main hasn't moved: if HEAD's sha- tag is
       # already in the registry, `proceed` goes false and every downstream job
