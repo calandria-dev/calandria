@@ -44,10 +44,10 @@ export interface AgentCapabilities {
   permissionModes: AgentPickerOption[];
   /** Can surface interactive AskUserQuestion-style prompts mid-turn ("ask" events). */
   supportsAsks: boolean;
-  /** Can mount the orchestrator's MCP tools (suggest_task / expose_service). */
+  /** Can mount Calandria's MCP tools (suggest_task / expose_service). */
   supportsMcpTools: boolean;
   /**
-   * On top of the orchestrator's own tools, whether a task session also gets
+   * On top of Calandria's own tools, whether a task session also gets
    * the MCP servers the user configured for this agent's CLI (~/.claude for
    * Claude, ~/.codex/config.toml for Codex).
    *

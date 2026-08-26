@@ -16,8 +16,8 @@ import { startTurn } from "@/lib/runner";
 import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
 import { createProject, createTask, getTask, setTaskDeps, updateTask } from "@/lib/store";
 import { createSuggestedTask, withdrawSuggestionForAgent } from "@/lib/agentTools";
-import { isWithdrawn, withdrawnLast } from "@/app/orchestrator/format";
-import type { TaskRow } from "@/app/orchestrator/types";
+import { isWithdrawn, withdrawnLast } from "@/app/shell/format";
+import type { TaskRow } from "@/app/shell/types";
 import { tmpDir } from "./helpers";
 
 const startTurnMock = vi.mocked(startTurn);

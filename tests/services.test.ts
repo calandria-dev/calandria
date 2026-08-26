@@ -33,9 +33,9 @@ const APP_HOST = "ishan.calandria.example.com";
 // The registry lives on globalThis (survives HMR by design); tests reset it to
 // simulate a server restart without recycling the process.
 type Reg = { services: Map<string, unknown>; listeners: Map<string, unknown>; restored?: boolean; gateSecret?: string };
-const registry = () => (globalThis as unknown as { __orchServices?: Reg }).__orchServices;
+const registry = () => (globalThis as unknown as { __calandriaServices?: Reg }).__calandriaServices;
 function wipeRegistry() {
-  (globalThis as unknown as { __orchServices?: Reg }).__orchServices = undefined;
+  (globalThis as unknown as { __calandriaServices?: Reg }).__calandriaServices = undefined;
 }
 
 function withPublicHost() {

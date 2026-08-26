@@ -12,7 +12,7 @@ import { withRepoLock } from "./repoLock";
 
 const run = promisify(execFile);
 
-// Worktrees live OUTSIDE the orchestrator project (CALANDRIA_WORKTREES_DIR, default
+// Worktrees live OUTSIDE the Calandria project (CALANDRIA_WORKTREES_DIR, default
 // ~/.calandria/worktrees), keyed by task id. Each is a real git
 // worktree of the *project's* repo, so a task gets an isolated checkout +
 // branch and parallel tasks never collide. Keeping them out of the project
@@ -230,14 +230,14 @@ export interface FetchOutcome {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchFetch: { last: Map<string, number>; inflight: Map<string, Promise<FetchOutcome>> } | undefined;
+  var __calandriaFetch: { last: Map<string, number>; inflight: Map<string, Promise<FetchOutcome>> } | undefined;
 }
 
 // Same globalThis pattern as lib/events.ts / lib/abort.ts, so dev HMR doesn't
 // reset the cooldown and turn every reload into a fetch storm.
 function fetchState() {
-  if (!global.__orchFetch) global.__orchFetch = { last: new Map(), inflight: new Map() };
-  return global.__orchFetch;
+  if (!global.__calandriaFetch) global.__calandriaFetch = { last: new Map(), inflight: new Map() };
+  return global.__calandriaFetch;
 }
 
 /**
@@ -557,7 +557,7 @@ async function ensureWorktreeLocked(
   baseBranch?: string
 ): Promise<{ path: string; branch: string; baseSha: string } | null> {
   // Greenfield (non-git) or commitless repo: initialize it so the task can be
-  // isolated. Without this, every orchestrator-created project — which starts
+  // isolated. Without this, every Calandria-created project — which starts
   // as a bare folder — would silently skip isolation and have nothing to diff.
   if (!(await isGitRepo(repoPath))) await initRepo(repoPath);
   else if (!(await hasCommit(repoPath))) await baseCommit(repoPath);

@@ -14,7 +14,7 @@ import { loadPersistedOpenAiKey } from "./openai-key";
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchDb: Database.Database | undefined;
+  var __calandriaDb: Database.Database | undefined;
 }
 
 export function init(db: Database.Database) {
@@ -1002,15 +1002,15 @@ Small on purpose, so every change is easy to read and merge.
 };
 
 export function getDb(): Database.Database {
-  if (!global.__orchDb) {
+  if (!global.__calandriaDb) {
     // Create the app-data home on first run (idempotent).
     fs.mkdirSync(DB_DIR, { recursive: true });
     const db = new Database(DB_PATH);
     init(db);
-    global.__orchDb = db;
+    global.__calandriaDb = db;
     warnIfUnowned();
   }
-  return global.__orchDb;
+  return global.__calandriaDb;
 }
 
 /**

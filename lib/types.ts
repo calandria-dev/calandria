@@ -185,7 +185,7 @@ export interface Session {
 // A supervised process belonging to a project. `kind` is the configured slot the
 // service maps to ("dev"/"setup"/"test"), or "exposed" for a server Claude
 // registered at runtime via the expose_service MCP tool (we don't own that
-// process, we only track its url). The orchestrator can start/stop/restart the
+// process, we only track its url). Calandria can start/stop/restart the
 // configured kinds; an exposed entry is informational (its url is reportable).
 export type ServiceStatus = "stopped" | "starting" | "running" | "exited" | "errored";
 export type ServiceKind = "dev" | "setup" | "test" | "exposed";
@@ -204,7 +204,7 @@ export interface ServiceInfo {
   port: number; // the port injected as PORT (configured) or reported by expose_service
   url: string | null; // browseable URL once running/exposed
   startedAt: number | null;
-  managed: boolean; // true if the orchestrator owns the process (can stop/restart)
+  managed: boolean; // true if Calandria owns the process (can stop/restart)
   slug: string | null; // public hostname label (<slug>--<host>); null until first persisted
   visibility: ServiceVisibility;
   shareUrl: string | null; // tokened link (url?t=…) when visibility is "shared"

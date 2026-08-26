@@ -6,7 +6,7 @@ import { DB_DIR } from "@/lib/config";
 // DB dir, deliberately OUTSIDE the task's git worktree — a pasted screenshot or
 // a 500 KB log dump must never show up in the task's diff or get swept into a
 // merge. The message text carries a marker line with the absolute path (see
-// attachmentMarker / fileAttachmentMarker in app/orchestrator/format.ts);
+// attachmentMarker / fileAttachmentMarker in app/shell/format.ts);
 // Claude Code opens it with its Read tool (rendering images natively, reading
 // text files as text), so no SDK content-block plumbing is needed and
 // queued/pending messages keep working as plain text.

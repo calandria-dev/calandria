@@ -2,7 +2,7 @@
 // does not need a browser.
 //
 // (The recap "sweep" that looks like a scheduler is driven by a setInterval in
-// app/orchestrator/useRecaps.ts, so it does nothing when no tab is open. This
+// app/shell/useRecaps.ts, so it does nothing when no tab is open. This
 // has to run at 08:30 with nobody logged in, so it lives here, in the server
 // process, started from a boot self-ping — see app/api/instance/scheduler.)
 //
@@ -40,11 +40,11 @@ interface SchedulerState {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchScheduler: SchedulerState | undefined;
+  var __calandriaScheduler: SchedulerState | undefined;
 }
 
 const state = (): SchedulerState =>
-  (global.__orchScheduler ??= { timer: null, ticking: false, startedAt: 0, lastTickAt: 0, lastError: "" });
+  (global.__calandriaScheduler ??= { timer: null, ticking: false, startedAt: 0, lastTickAt: 0, lastError: "" });
 
 /**
  * What the card needs to tell the truth about the ticker. `tickMs` travels with

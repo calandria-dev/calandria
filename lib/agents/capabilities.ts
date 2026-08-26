@@ -62,7 +62,7 @@ export function getCapabilities(id: string | null | undefined): AgentCapabilitie
 // (models[].contextWindow) — so a Codex task's ~272k window and a Fable task's
 // 1M window are both correct, with no per-agent table here. Unknown/inherited
 // (null) model falls back to the widest window the agent offers, then a
-// conservative constant. Mirrored in app/orchestrator/format.ts
+// conservative constant. Mirrored in app/shell/format.ts
 // (contextWindowOf) so the live SSE update matches the server.
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 export function modelContextWindow(agent: string | null | undefined, model: string | null | undefined): number {

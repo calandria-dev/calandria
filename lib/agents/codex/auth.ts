@@ -154,7 +154,7 @@ interface LoginState extends AgentLoginSession {
 // One session per app instance (= per user), kept on globalThis so every route
 // chunk that imports this module shares the same live session (mirrors
 // lib/claude-auth.ts).
-const g = globalThis as unknown as { __orchCodexLogin?: LoginState };
+const g = globalThis as unknown as { __calandriaCodexLogin?: LoginState };
 
 const tail = (buf: string) => buf.split("\n").slice(-14).join("\n").trim();
 
@@ -169,17 +169,17 @@ const publicView = (st: LoginState): AgentLoginSession => ({
 });
 
 export function getCodexLogin(): AgentLoginSession | null {
-  return g.__orchCodexLogin ? publicView(g.__orchCodexLogin) : null;
+  return g.__calandriaCodexLogin ? publicView(g.__calandriaCodexLogin) : null;
 }
 
 export function cancelCodexLogin(): void {
-  const st = g.__orchCodexLogin;
+  const st = g.__calandriaCodexLogin;
   if (!st) return;
   if (st.timer) clearTimeout(st.timer);
   try {
     st.proc?.kill();
   } catch {}
-  delete g.__orchCodexLogin;
+  delete g.__calandriaCodexLogin;
 }
 
 /**
@@ -188,7 +188,7 @@ export function cancelCodexLogin(): void {
  * CLI keeps running, polling OpenAI, until the user authorizes in a browser.
  */
 export async function startCodexLogin(): Promise<AgentLoginSession> {
-  const cur = g.__orchCodexLogin;
+  const cur = g.__calandriaCodexLogin;
   if (cur && (cur.status === "starting" || cur.status === "awaiting" || cur.status === "submitting")) {
     return awaitUrl();
   }
@@ -206,7 +206,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
     code: null,
     timer: null,
   };
-  g.__orchCodexLogin = st;
+  g.__calandriaCodexLogin = st;
 
   try {
     st.proc = spawn(CODEX, ["login", "--device-auth"], {
@@ -280,7 +280,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
  * the flow completes on its own.
  */
 export async function submitCodexCode(_code: string): Promise<AgentLoginSession> {
-  const st = g.__orchCodexLogin;
+  const st = g.__calandriaCodexLogin;
   if (!st) return { status: "error", url: null, email: null, plan: null, error: "no login in progress", log: "" };
   return publicView(st);
 }
@@ -344,7 +344,7 @@ async function settleAfterExit(st: LoginState, exitCode: number | null) {
 async function awaitUrl(): Promise<AgentLoginSession> {
   const deadline = Date.now() + 20_000;
   for (;;) {
-    const st = g.__orchCodexLogin;
+    const st = g.__calandriaCodexLogin;
     if (!st) return { status: "error", url: null, email: null, plan: null, error: "login session vanished", log: "" };
     if (st.status !== "starting" || Date.now() > deadline) return publicView(st);
     await new Promise((r) => setTimeout(r, 150));

@@ -235,7 +235,7 @@ const TEXT_ONE_SHOT = {
   maxTurns: 1,
 };
 
-function orchestratorServer(
+function calandriaServer(
   project: Project,
   task: Task,
   onSuggest: (s: { title: string; projectId: string }) => void,
@@ -590,7 +590,7 @@ async function* runTurn(
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (a large text paste diverted to a file) marker
-  // lines in the message text (composed in app/orchestrator/format.ts; files
+  // lines in the message text (composed in app/shell/format.ts; files
   // live outside the worktree, see lib/uploads.ts). The Read tool renders images
   // natively and reads text files as text — this nudge makes Claude actually
   // open them. Prompt-only: the persisted transcript keeps the bare markers.
@@ -900,7 +900,7 @@ async function* runTurn(
       permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       mcpServers: {
-        calandria: orchestratorServer(
+        calandria: calandriaServer(
           project,
           task,
           // Straight onto the queue, like expose_service's notice below: the

@@ -58,7 +58,7 @@ export function isUsageLimit(msg: string | null | undefined): boolean {
 }
 
 /** Appended to the persisted error line when a turn dies on a spent usage
- *  limit. The UI (app/orchestrator/Transcript.tsx) matches this exact string
+ *  limit. The UI (app/shell/Transcript.tsx) matches this exact string
  *  to render the informational recovery hint — keep it stable. No action
  *  button: the quota refills on its own, so the recovery is waiting (the raw
  *  provider text above the notice carries the reset time when the SDK reported

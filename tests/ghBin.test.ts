@@ -11,7 +11,7 @@ import { ghMissingMessage, resolveGhBin } from "../lib/github";
 // server's PATH can see it, then the well-known install dirs, then bare "gh"
 // so callers' ENOENT handling still fires.
 
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "orch-ghbin-"));
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ghbin-"));
 afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
 let n = 0;

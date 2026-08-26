@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
-import { orchestratorMcpConfig } from "@/lib/agents/codex/driver";
+import { calandriaMcpConfig } from "@/lib/agents/codex/driver";
 import { disableInheritedServers, CALANDRIA_SERVER } from "@/lib/agents/codex/mcp";
 import { getCapabilities } from "@/lib/agents/capabilities";
 import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
@@ -22,7 +22,7 @@ const project = { id: "p1", name: "P", repo_path: "/tmp/repo" } as Project;
 const task = { id: "t1", agent: "codex" } as Task;
 
 describe("codex calandria MCP bridge config", () => {
-  const server = (orchestratorMcpConfig(project, task) as Record<string, any>).mcp_servers.calandria;
+  const server = (calandriaMcpConfig(project, task) as Record<string, any>).mcp_servers.calandria;
 
   it("auto-approves the bridge's tools (non-interactive exec has no approver)", () => {
     expect(server.default_tools_approval_mode).toBe("approve");
@@ -48,7 +48,7 @@ describe("codex calandria MCP bridge config", () => {
     // The one thing that must NOT drift into a blanket policy: `approve` is
     // right for our own first-party loopback proxy and wrong as a top-level
     // codex setting, which would auto-approve anything else that gets mounted.
-    const cfg = orchestratorMcpConfig(project, task) as Record<string, unknown>;
+    const cfg = calandriaMcpConfig(project, task) as Record<string, unknown>;
     expect(cfg).not.toHaveProperty("default_tools_approval_mode");
     expect(cfg).not.toHaveProperty("tools");
     expect(Object.keys(cfg)).toEqual(["mcp_servers"]);
@@ -62,7 +62,7 @@ describe("codex calandria MCP bridge config", () => {
 // verified live on codex-cli 0.146.0).
 describe("codex does not inherit the user's MCP servers", () => {
   it("unmounts each of the user's servers alongside the bridge", () => {
-    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers(["userthing", "another"])) as Record<string, any>;
+    const cfg = calandriaMcpConfig(project, task, disableInheritedServers(["userthing", "another"])) as Record<string, any>;
     expect(cfg.mcp_servers.userthing).toEqual({ enabled: false });
     expect(cfg.mcp_servers.another).toEqual({ enabled: false });
     // …without touching the bridge, which is the whole point of the exercise.
@@ -71,7 +71,7 @@ describe("codex does not inherit the user's MCP servers", () => {
   });
 
   it("never disables the bridge, even if the user has a server by that name", () => {
-    const cfg = orchestratorMcpConfig(project, task, disableInheritedServers([CALANDRIA_SERVER])) as Record<string, any>;
+    const cfg = calandriaMcpConfig(project, task, disableInheritedServers([CALANDRIA_SERVER])) as Record<string, any>;
     expect(cfg.mcp_servers.calandria.enabled).toBeUndefined();
     expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
   });

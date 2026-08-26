@@ -36,7 +36,7 @@ type Member = Task & { depends_on: string[] };
  * restricted to the group, ties broken by the order they were passed in
  * (listTasks' own: suggested last, then `position`). That's deliberately the
  * SAME order the group strip renders (topoMembers in
- * app/orchestrator/GroupStrip.tsx), so "step 3 of 7" in a session's context and
+ * app/shell/GroupStrip.tsx), so "step 3 of 7" in a session's context and
  * "3" on the user's screen name the same task. The two implementations are
  * separate because the strip runs on the client over TaskRow; keep them in step.
  *

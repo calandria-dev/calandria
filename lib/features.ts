@@ -18,7 +18,7 @@ export interface Features {
    *  backend landing first, so it stays off until the live URL is real. */
   livePreview: boolean;
   /** Command palette: the toolbar "Jump to project, session, or command…"
-   *  omni-search bar and its ⌘K/Ctrl-K shortcut (app/orchestrator/CommandPalette). */
+   *  omni-search bar and its ⌘K/Ctrl-K shortcut (app/shell/CommandPalette). */
   omniSearch: boolean;
   /** Managed Services — the toolbar "Services" button, the Services config
    *  block in the project-context editor, and the persisted supervisor

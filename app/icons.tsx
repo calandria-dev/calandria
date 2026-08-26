@@ -1,4 +1,4 @@
-/* Orchestrator — icon set (ported from the design's icons.js) */
+/* Calandria — icon set (ported from the design's icons.js) */
 import type { SVGProps } from "react";
 
 type P = SVGProps<SVGSVGElement>;

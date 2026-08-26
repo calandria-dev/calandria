@@ -136,9 +136,9 @@ describe("pty sidecar frame handling", () => {
   it("still delivers a well-formed input frame to the shell", async () => {
     const ws = await openSession();
     const output = collectOutput(ws, 1_500);
-    ws.send(JSON.stringify({ type: "input", data: "echo orch-pty-alive\n" }));
+    ws.send(JSON.stringify({ type: "input", data: "echo calandria-pty-alive\n" }));
     const seen = await output;
     await closeSession(ws);
-    expect(seen).toContain("orch-pty-alive");
+    expect(seen).toContain("calandria-pty-alive");
   }, 10_000);
 });

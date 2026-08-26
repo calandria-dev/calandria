@@ -1,4 +1,4 @@
-// Shared implementations of the orchestrator's agent-facing tools
+// Shared implementations of Calandria's agent-facing tools
 // (suggest_task / list_tasks / get_task / update_task / withdraw_suggestion /
 //  list_groups / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:

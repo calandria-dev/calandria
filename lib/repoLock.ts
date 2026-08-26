@@ -28,19 +28,19 @@ const execFileAsync = promisify(execFile);
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchRepoLocks: Map<string, Promise<unknown>> | undefined;
+  var __calandriaRepoLocks: Map<string, Promise<unknown>> | undefined;
   // eslint-disable-next-line no-var
-  var __orchRepoLockKeys: Map<string, Promise<string>> | undefined;
+  var __calandriaRepoLockKeys: Map<string, Promise<string>> | undefined;
 }
 
 function locks(): Map<string, Promise<unknown>> {
-  if (!global.__orchRepoLocks) global.__orchRepoLocks = new Map();
-  return global.__orchRepoLocks;
+  if (!global.__calandriaRepoLocks) global.__calandriaRepoLocks = new Map();
+  return global.__calandriaRepoLocks;
 }
 
 function keyCache(): Map<string, Promise<string>> {
-  if (!global.__orchRepoLockKeys) global.__orchRepoLockKeys = new Map();
-  return global.__orchRepoLockKeys;
+  if (!global.__calandriaRepoLockKeys) global.__calandriaRepoLockKeys = new Map();
+  return global.__calandriaRepoLockKeys;
 }
 
 // Generous: this is a local `rev-parse`, so the ceiling is only there to stop a

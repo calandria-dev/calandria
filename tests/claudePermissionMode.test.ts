@@ -15,7 +15,7 @@ const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: (args: unknown) => queryMock(args),
-  // The driver builds its orchestrator MCP server at query time; the fake
+  // The driver builds its Calandria MCP server at query time; the fake
   // query() never looks at it, so these only have to not throw.
   createSdkMcpServer: (cfg: unknown) => cfg,
   tool: (name: string, description: string, schema: unknown, handler: unknown) => ({ name, description, schema, handler }),

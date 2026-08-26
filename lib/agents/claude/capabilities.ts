@@ -85,7 +85,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // "mode", and the callback was not invoked once either time. So the entire
   // gate in lib/permissions.ts is inert: the read-only allowlist, the project's
   // remembered `permission_rules`, the card. "Pre-approved" means the CLI's own
-  // allow rules in the user's ~/.claude settings, which the orchestrator does
+  // allow rules in the user's ~/.claude settings, which Calandria does
   // not write and should not start writing behind their back.
   //
   // Which leaves nothing for it to be. "Deny unless I have already allowed it"

@@ -21,7 +21,7 @@
 // It is consumed by ANY turn launch (lib/runner.ts startTurn), not only this
 // sweep, so a task the user started by hand in the meantime never fires twice.
 //
-// Unlike snoozing (app/orchestrator/snooze.ts), which is pure derivation and
+// Unlike snoozing (app/shell/snooze.ts), which is pure derivation and
 // needs no ticker, a launch is a side effect — so this is server-owned periodic
 // work like lib/scheduler.ts, started from the same boot ping and idempotent
 // on globalThis. It is deliberately NOT folded into that ticker: it is not a
@@ -68,10 +68,10 @@ interface TickerState {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchDeferredStart: TickerState | undefined;
+  var __calandriaDeferredStart: TickerState | undefined;
 }
 
-const state = (): TickerState => (global.__orchDeferredStart ??= { timer: null, sweeping: false, lastSweepAt: 0 });
+const state = (): TickerState => (global.__calandriaDeferredStart ??= { timer: null, sweeping: false, lastSweepAt: 0 });
 
 const isTerminal = (t: Task) => t.status === "done" || t.status === "cancelled";
 

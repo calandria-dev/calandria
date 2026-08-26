@@ -192,12 +192,12 @@ async function bootStore() {
 }
 
 function closeDb() {
-  const open = (globalThis as { __orchDb?: { close(): void } }).__orchDb;
+  const open = (globalThis as { __calandriaDb?: { close(): void } }).__calandriaDb;
   if (open) {
     // close() checkpoints the WAL away, which is what makes the file below
     // movable — the same reason the migration recipe says to stop the app first.
     try { open.close(); } catch {}
-    delete (globalThis as { __orchDb?: unknown }).__orchDb;
+    delete (globalThis as { __calandriaDb?: unknown }).__calandriaDb;
   }
 }
 

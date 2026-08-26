@@ -13,7 +13,7 @@ import path from "node:path";
 function ensureRoot(): string {
   let root = process.env.CALANDRIA_E2E_ROOT;
   if (!root) {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "orch-e2e-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-e2e-"));
     process.env.CALANDRIA_E2E_ROOT = root;
   }
   for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {

@@ -333,7 +333,7 @@ deliberately **not** a delete: the tray's Dismiss button already hard-deletes vi
 hasn't read is not a call an agent gets to make. So the row is set to `cancelled` while
 `suggested` stays `1` — it remains in the tray, struck through with `tasks.withdrawn_reason`
 beside it and sorted below the live suggestions (`isWithdrawn` / `withdrawnLast` in
-`app/orchestrator/format.ts`, honored by both the list tray and the board's Suggested
+`app/shell/format.ts`, honored by both the list tray and the board's Suggested
 column) — and `task_edited` is published so other tabs refetch a field the coarse wire
 payload can't carry. Reviving is centralised in `PATCH /api/tasks/[id]`, which clears the
 reason and the cancelled status together whenever a withdrawn row leaves that state: three
@@ -407,7 +407,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   `GET /api/projects/[id]/refresh-context`. The draft is for the user to review — never
   auto-saved.
 - **`lib/recap.ts`** — "where you left off" staleness/activity logic + background sweep.
-- **`app/Orchestrator.tsx`** — the dark mission-control client UI (projects rail · task
+- **`app/Shell.tsx`** — the dark mission-control client UI (projects rail · task
   list · live session, the session split into transcript + `SessionRail`
   DIFF/PREVIEW/CONTEXT tabs); one `EventSource` per selected task renders from server
   events, so a reload, sleep, or task switch mid-turn just catches up.

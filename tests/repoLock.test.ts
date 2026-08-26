@@ -35,8 +35,8 @@ function symlinkTo(repo: string): string {
 }
 
 beforeEach(() => {
-  global.__orchRepoLocks?.clear();
-  global.__orchRepoLockKeys?.clear();
+  global.__calandriaRepoLocks?.clear();
+  global.__calandriaRepoLockKeys?.clear();
 });
 
 describe("repoLockKey", () => {
@@ -90,9 +90,9 @@ describe("repoLockKey", () => {
   it("caches the hit, so the hot path doesn't respawn git", async () => {
     const repo = await makeRepo();
     await repoLockKey(repo);
-    expect(global.__orchRepoLockKeys!.has(repo)).toBe(true);
+    expect(global.__calandriaRepoLockKeys!.has(repo)).toBe(true);
     // Same promise instance back — no second subprocess.
-    expect(repoLockKey(repo)).toBe(global.__orchRepoLockKeys!.get(repo));
+    expect(repoLockKey(repo)).toBe(global.__calandriaRepoLockKeys!.get(repo));
   });
 });
 
@@ -139,7 +139,7 @@ describe("withRepoLock", () => {
     // Wait for the holder to actually be registered in the lock table before
     // firing the two racing calls, so both are guaranteed to queue behind it.
     const key = await repoLockKey(repo);
-    await vi.waitFor(() => expect(global.__orchRepoLocks?.has(key)).toBe(true));
+    await vi.waitFor(() => expect(global.__calandriaRepoLocks?.has(key)).toBe(true));
 
     const done: string[] = [];
     const a = ensureWorktree(repo, uid()).then((wt) => (done.push("a"), wt));
@@ -154,7 +154,7 @@ describe("withRepoLock", () => {
     // entries (or a finished call) means the spellings ran their git mutations
     // concurrently; pre-fix `b` was already done here.
     expect(done).toEqual([]);
-    expect([...global.__orchRepoLocks!.keys()]).toHaveLength(1);
+    expect([...global.__calandriaRepoLocks!.keys()]).toHaveLength(1);
 
     gate.resolve();
     const [wtA, wtB] = await Promise.all([a, b, holder]);
@@ -175,7 +175,7 @@ describe("withRepoLock", () => {
     // Wait for the holder to be registered before firing the unrelated repo's
     // lock, so this is genuinely testing two different keys, not a race.
     const oneKey = await repoLockKey(one);
-    await vi.waitFor(() => expect(global.__orchRepoLocks?.has(oneKey)).toBe(true));
+    await vi.waitFor(() => expect(global.__calandriaRepoLocks?.has(oneKey)).toBe(true));
     const other = withRepoLock(two, async () => {
       ran = true;
     });

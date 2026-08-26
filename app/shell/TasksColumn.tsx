@@ -86,7 +86,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <PriPill p={task.priority} />
       </div>
       {/* Why this card is back where you didn't leave it. An unread marker, not
-          history — opening the task clears it (useOrchestrator). */}
+          history — opening the task clears it (useShell). */}
       {!snoozed && wasSnoozed(task) && (
         <div className="snz-chip was" title={`Snoozed until ${new Date(task.snoozed_until).toLocaleString()}`}>
           {Icon.moon()} Was snoozed

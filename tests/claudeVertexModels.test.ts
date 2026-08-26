@@ -62,7 +62,7 @@ const optionFor = (caps: AgentCapabilities, value: string): AgentModelOption =>
   caps.models.find((m) => m.value === value)!;
 
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "orch-vertex-caps-"));
+  dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "calandria-vertex-caps-"));
 });
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 

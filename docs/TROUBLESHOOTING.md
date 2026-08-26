@@ -184,7 +184,7 @@ git -C <repo> worktree list           # cross-check against what git itself thin
 ```
 
 **The maintenance UI worktree-reclaim path** is the built-in fix: Settings → Storage →
-"Reclaim task worktrees" (`app/orchestrator/WorktreePrune.tsx`, backed by `GET`/`POST
+"Reclaim task worktrees" (`app/shell/WorktreePrune.tsx`, backed by `GET`/`POST
 /api/maintenance/worktrees`). It lists every merged-or-Done task whose worktree is still on disk,
 with its measured size (`worktreeDiskUsage()` in `lib/git.ts`, via `du -sk`) and whether removing
 it is safe. "Safe" means no uncommitted changes and no commits on the task's branch that the base
@@ -231,7 +231,7 @@ run just reveals it first. Once detected:
 
 - The titlebar shows a persistent, non-dismissible banner: *"`<Agent>` has stopped working — the
   sign-in expired... No session can run until it's reconnected."* (`AgentAuthBanner` in
-  `app/orchestrator/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the
+  `app/shell/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the
   moment any task hits the failure.
 - The failing task's transcript gets a standing notice with a one-click **Reconnect** button.
 - Any message queued behind the failing turn (`pending_messages`) stays parked rather than

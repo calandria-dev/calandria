@@ -377,7 +377,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
   }, [projectId, load]);
 
   // A ⌘K dispatch that failed. The palette has closed by then and the user may
-  // have been anywhere, so useOrchestrator sends them here and hands the
+  // have been anywhere, so useShell sends them here and hands the
   // message to the one surface that can show it next to the recipe that
   // produced it.
   useEffect(() => {

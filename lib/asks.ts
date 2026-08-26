@@ -17,7 +17,7 @@ interface PendingAsk {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchAsks: Map<string, Map<string, PendingAsk>> | undefined;
+  var __calandriaAsks: Map<string, Map<string, PendingAsk>> | undefined;
 }
 
 // taskId → (askId → pending). A task can have several asks parked at once:
@@ -26,8 +26,8 @@ declare global {
 // promise resolvable — a flat one-per-task entry would orphan all but the
 // latest, deadlocking the turn until the hook timeout.
 function registry(): Map<string, Map<string, PendingAsk>> {
-  if (!global.__orchAsks) global.__orchAsks = new Map();
-  return global.__orchAsks;
+  if (!global.__calandriaAsks) global.__calandriaAsks = new Map();
+  return global.__calandriaAsks;
 }
 
 function remove(taskId: string, askId: string): PendingAsk | undefined {
@@ -113,12 +113,12 @@ export function cancelAsk(taskId: string, id: string, reason: string): boolean {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchAskOutcomes: Map<string, string> | undefined;
+  var __calandriaAskOutcomes: Map<string, string> | undefined;
 }
 
 function outcomes(): Map<string, string> {
-  if (!global.__orchAskOutcomes) global.__orchAskOutcomes = new Map();
-  return global.__orchAskOutcomes;
+  if (!global.__calandriaAskOutcomes) global.__calandriaAskOutcomes = new Map();
+  return global.__calandriaAskOutcomes;
 }
 
 /** Record the final text of an ask (the formatted answers, or a dismissal note). */

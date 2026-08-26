@@ -30,7 +30,7 @@ function resolveMode(mode: Appearance["mode"]): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-// Mirror of Orchestrator's mobile breakpoint — the Back-button trap only arms on
+// Mirror of Shell's mobile breakpoint — the Back-button trap only arms on
 // mobile (single-pane), since on desktop every column is visible and Back should
 // not be hijacked to close a panel.
 const MOBILE_QUERY = "(max-width: 760px)";

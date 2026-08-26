@@ -18,10 +18,10 @@ import { useRecaps } from "./useRecaps";
 
 type Modal = null | "task" | "context" | "project" | "sessions";
 
-// The orchestrator's single source of truth: all client state, the derived
+// Calandria's single source of truth: all client state, the derived
 // views over it, the data-loading effects, and every action callback. Returns a
-// flat bag the composition root (Orchestrator.tsx) wires straight into the UI.
-export function useOrchestrator() {
+// flat bag the composition root (Shell.tsx) wires straight into the UI.
+export function useShell() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selProj, setSelProj] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -248,7 +248,7 @@ export function useOrchestrator() {
   // normally, auto-selection is back.
   //
   // On a phone it is more than an intent: the landing pane is a PANE there (see
-  // Orchestrator's mobilePane), and the only place Runbooks and Schedules are
+  // Shell's mobilePane), and the only place Runbooks and Schedules are
   // mounted — so this same flag is a navigation level, mirrored into the URL as
   // ?home=1 and closed by Back before the project is (navHistory.ts).
   const [homeProj, setHomeProj] = useState<string | null>(null);

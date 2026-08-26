@@ -15,7 +15,7 @@ export { addInternalUsage, type InternalJob } from "./internalUsage";
 // in progress, flagged awaiting_input. Deliberately NO running condition — a
 // turn parked mid-stream on an AskUserQuestion has running=1 AND
 // awaiting_input=1 and needs the user exactly as much as a settled one (the
-// client-side isAwaiting in app/orchestrator/format.ts makes the same call).
+// client-side isAwaiting in app/shell/format.ts makes the same call).
 // Shared by listProjects' awaiting_count subquery, listNeedsYou, and
 // countAwaiting so the project badges, the titlebar "N need you" pill, and its
 // dropdown can never disagree.
@@ -29,7 +29,7 @@ export { addInternalUsage, type InternalJob } from "./internalUsage";
 // The consequence to know about: a deadline passing writes nothing, so a count
 // taken before it and not recomputed will under-report until the next event on
 // the bus. The client closes that by refetching when its own wake timer fires
-// (app/orchestrator/snooze.ts nextWake) — the same refetch a task_edited does.
+// (app/shell/snooze.ts nextWake) — the same refetch a task_edited does.
 const NOT_SNOOZED = "(t.snoozed_until = 0 OR t.snoozed_until <= CAST(strftime('%s','now') AS INTEGER) * 1000)";
 const NEEDS_YOU = `t.suggested = 0 AND t.status = 'in_progress' AND t.awaiting_input = 1 AND ${NOT_SNOOZED}`;
 

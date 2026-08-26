@@ -47,7 +47,7 @@ export function isAuthFailure(msg: string | null | undefined): boolean {
 }
 
 /** Appended to the persisted error line when a turn dies on authentication. The
- *  UI (app/orchestrator/Transcript.tsx) matches this exact string to render the
+ *  UI (app/shell/Transcript.tsx) matches this exact string to render the
  *  "Reconnect" button, so it must stay agent-neutral — the client already knows
  *  the task's agent and labels the button with it. Persisted message content is
  *  the durable channel: it survives SSE reconnects because the snapshot replays
@@ -58,5 +58,5 @@ export const AUTH_EXPIRED_NOTICE =
   "worktree are untouched, and any queued messages stay queued.";
 
 /** The one-line, instance-wide version of the same news, for the titlebar banner
- *  (app/orchestrator/AgentConnect.tsx → AgentAuthBanner). */
+ *  (app/shell/AgentConnect.tsx → AgentAuthBanner). */
 export const AUTH_BANNER_HINT = "No session can run until it's reconnected.";

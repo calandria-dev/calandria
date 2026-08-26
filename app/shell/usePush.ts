@@ -172,7 +172,7 @@ export async function syncPushSubscription(): Promise<PushDevice | null> {
 
 /**
  * Mount-once: relay the worker's notificationclick into the app's task jump,
- * and re-sync this browser's subscription. Lives in useOrchestrator beside the
+ * and re-sync this browser's subscription. Lives in useShell beside the
  * calandria:goto-task listener it feeds.
  */
 export function usePushRelay(): void {

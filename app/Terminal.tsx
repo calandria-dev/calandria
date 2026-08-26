@@ -64,7 +64,7 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
   const fontRef = useRef(fontSize);
   fontRef.current = fontSize;
   // No monoFontFamily prop wired from a caller yet (Terminal.tsx has two call
-  // sites — Orchestrator.tsx's drawer and orchestrator/Layout.tsx's — neither
+  // sites — Shell.tsx's drawer and shell/Layout.tsx's — neither
   // currently threads prefs through); fall back to the --mono custom property
   // usePrefs.ts sets on <html>, which already tracks the selected mono font.
   const monoRef = useRef(monoFontFamily);

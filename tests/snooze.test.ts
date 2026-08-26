@@ -18,7 +18,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isSnoozed, wasSnoozed, snoozePresets, relativeUntil, wakeLabel, nextWake,
-} from "@/app/orchestrator/snooze";
+} from "@/app/shell/snooze";
 import {
   createProject, createTask, updateTask,
   listProjects, listNeedsYou, countAwaiting,

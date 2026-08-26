@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 /**
  * Build provenance, for confirming which commit is actually live without ssh.
  * sha/builtAt are baked into the image at build time (Dockerfile ARGs, fed by
- * scripts/orch-user.sh from the deploy host's git tree); they read "unknown" on
+ * the deploy host's build tooling from its git tree); they read "unknown" on
  * a plain `docker build .`. Also the Docker HEALTHCHECK target: this is exempted
  * from the origin auth gate for callers presenting SERVICE_TOKEN — see
  * middleware.ts.

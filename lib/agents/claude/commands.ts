@@ -84,11 +84,11 @@ type Entry = { at: number; commands: AgentCommand[] };
 // today (every caller passes the driver's SETTING_SOURCES), which is exactly
 // why keying on cwd alone would go wrong silently the first time they aren't.
 const g = globalThis as unknown as {
-  __orchClaudeCommands?: Map<string, Entry>;
-  __orchClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[] | null>>;
+  __calandriaClaudeCommands?: Map<string, Entry>;
+  __calandriaClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[] | null>>;
 };
-const cache = (g.__orchClaudeCommands ??= new Map());
-const inFlight = (g.__orchClaudeCommandsInFlight ??= new Map());
+const cache = (g.__calandriaClaudeCommands ??= new Map());
+const inFlight = (g.__calandriaClaudeCommandsInFlight ??= new Map());
 
 const cacheKey = (cwd: string, settingSources: SettingSource[]) => `${settingSources.join(",")} @ ${cwd}`;
 

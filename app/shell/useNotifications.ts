@@ -81,7 +81,7 @@ export function useNotifications({ selTaskRef }: { selTaskRef: MutableRefObject<
         n.close();
         if (!payload.taskId) return;
         // Routed through a window event rather than a callback prop: this hook
-        // is wired before goToTask exists in useOrchestrator, and the app
+        // is wired before goToTask exists in useShell, and the app
         // already uses this pattern for cross-cutting facts (calandria:runbooks).
         window.dispatchEvent(new CustomEvent("calandria:goto-task", {
           detail: { projectId: payload.projectId, taskId: payload.taskId },

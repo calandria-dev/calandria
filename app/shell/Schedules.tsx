@@ -78,7 +78,7 @@ function withCommand(prompt: string, command: string): string {
 
 // The permission modes a schedule can meaningfully pick for a given agent —
 // sourced from the driver's own capability descriptor (GET /api/agents), the
-// same one app/orchestrator/modals.tsx's NewTaskModal reads via
+// same one app/shell/modals.tsx's NewTaskModal reads via
 // permissionOptions(), so the two pickers can't drift onto different claims
 // about what a mode does. Unlike that picker, "auto"/"default" (Claude's
 // inherit-a-default modes) are dropped: a schedule always runs unattended, so

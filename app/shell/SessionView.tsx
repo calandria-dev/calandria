@@ -246,7 +246,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
   );
 }
 
-// Ref-backed identity-stable wrapper: Orchestrator passes fresh inline handlers
+// Ref-backed identity-stable wrapper: Shell passes fresh inline handlers
 // on every render, which would defeat MessageView's memo — the wrapper keeps one
 // function identity for the component's lifetime while always invoking the
 // latest handler.

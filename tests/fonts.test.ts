@@ -2,7 +2,7 @@
 // directions have already happened here:
 //
 //   - USED BUT NOT LOADED — reference a --nf-* variable in globals.css or the
-//     font picker (orchestrator/types.ts) without declaring it in app/fonts.ts
+//     font picker (shell/types.ts) without declaring it in app/fonts.ts
 //     and every glyph quietly falls back to system-ui. Nothing errors; the app
 //     just stops looking like itself on the machines that lack it.
 //   - LOADED BUT NOT USED — app/fonts.ts ships a next/font/google family that
@@ -32,7 +32,7 @@ const root = path.resolve(__dirname, "..");
 const css = readFileSync(path.join(root, "app/globals.css"), "utf8");
 const layout = readFileSync(path.join(root, "app/layout.tsx"), "utf8");
 const fontsSrc = readFileSync(path.join(root, "app/fonts.ts"), "utf8");
-const fontPicker = readFileSync(path.join(root, "app/orchestrator/types.ts"), "utf8");
+const fontPicker = readFileSync(path.join(root, "app/shell/types.ts"), "utf8");
 
 /** Every `--nf-*` custom property declared via next/font's `variable:` option. */
 function declaredFonts(): { importName: string; cssVar: string }[] {

@@ -18,7 +18,7 @@ import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 import { POST as testNotification } from "@/app/api/notifications/test/route";
-import { classifyNotificationSupport, shouldDisplay } from "@/app/orchestrator/useNotifications";
+import { classifyNotificationSupport, shouldDisplay } from "@/app/shell/useNotifications";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {

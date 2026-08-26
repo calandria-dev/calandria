@@ -1,4 +1,4 @@
-// Pure formatting + derivation helpers shared across the orchestrator modules.
+// Pure formatting + derivation helpers shared across the shell modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";

@@ -129,29 +129,29 @@ type GlobalListener = (taskId: string, ev: BusEvent) => void;
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchEvents: Map<string, Set<Listener>> | undefined;
+  var __calandriaEvents: Map<string, Set<Listener>> | undefined;
   // eslint-disable-next-line no-var
-  var __orchEventsGlobal: Set<GlobalListener> | undefined;
+  var __calandriaEventsGlobal: Set<GlobalListener> | undefined;
   // eslint-disable-next-line no-var
-  var __orchEventsGlobalInternal: Set<GlobalListener> | undefined;
+  var __calandriaEventsGlobalInternal: Set<GlobalListener> | undefined;
 }
 
 function registry(): Map<string, Set<Listener>> {
-  if (!global.__orchEvents) global.__orchEvents = new Map();
-  return global.__orchEvents;
+  if (!global.__calandriaEvents) global.__calandriaEvents = new Map();
+  return global.__calandriaEvents;
 }
 
 function globalRegistry(): Set<GlobalListener> {
-  if (!global.__orchEventsGlobal) global.__orchEventsGlobal = new Set();
-  return global.__orchEventsGlobal;
+  if (!global.__calandriaEventsGlobal) global.__calandriaEventsGlobal = new Set();
+  return global.__calandriaEventsGlobal;
 }
 
 // A MARKER subset of globalRegistry(), not a second delivery list: fan-out still
 // walks one set in one order, and this only records which of those listeners are
 // server-side consumers rather than client streams. See watcherCount().
 function internalRegistry(): Set<GlobalListener> {
-  if (!global.__orchEventsGlobalInternal) global.__orchEventsGlobalInternal = new Set();
-  return global.__orchEventsGlobalInternal;
+  if (!global.__calandriaEventsGlobalInternal) global.__calandriaEventsGlobalInternal = new Set();
+  return global.__calandriaEventsGlobalInternal;
 }
 
 /** Options for subscribeGlobal. */

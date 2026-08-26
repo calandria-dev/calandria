@@ -22,7 +22,7 @@ import { emitTestNotification, resetNotificationDedupe } from "@/lib/notificatio
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { DELETE as unsubscribeRoute, GET as listRoute, POST as subscribeRoute } from "@/app/api/notifications/push/route";
 import { DELETE as removeRoute } from "@/app/api/notifications/push/[id]/route";
-import { classifyPushSupport, deviceLabel } from "@/app/orchestrator/usePush";
+import { classifyPushSupport, deviceLabel } from "@/app/shell/usePush";
 
 // RFC 8291 Appendix A — every intermediate value the spec publishes.
 const RFC = {

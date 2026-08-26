@@ -48,7 +48,7 @@ function withWatcher<T>(fn: () => T): T {
 }
 
 describe("the built-in allowlist", () => {
-  it("passes read-only tools and the orchestrator's own MCP tools", () => {
+  it("passes read-only tools and Calandria's own MCP tools", () => {
     for (const t of ["Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "AskUserQuestion"]) {
       expect(isAlwaysAllowed(t)).toBe(true);
     }
@@ -62,7 +62,7 @@ describe("the built-in allowlist", () => {
     }
   });
 
-  it("never trusts a future tool just because it sits on the orchestrator MCP server", () => {
+  it("never trusts a future tool just because it sits on the Calandria MCP server", () => {
     expect(isAlwaysAllowed("mcp__calandria__delete_everything")).toBe(false);
   });
 

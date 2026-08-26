@@ -150,7 +150,7 @@ describe("getClaudePlanUsage", () => {
     await getClaudePlanUsage();
 
     // Age the cache past the floor, then have the endpoint start failing.
-    const st = (globalThis as { __orchClaudePlanUsage?: { fetched: { at: number } | null } }).__orchClaudePlanUsage!;
+    const st = (globalThis as { __calandriaClaudePlanUsage?: { fetched: { at: number } | null } }).__calandriaClaudePlanUsage!;
     st.fetched!.at = Date.now() - 10 * 60_000;
     fetchMock.mockResolvedValue(usageResponse({}, { status: 500 }));
 
@@ -214,6 +214,6 @@ describe("passive rate_limit_event overlay", () => {
     recordClaudeRateLimit(null);
     recordClaudeRateLimit({ status: "banana" });
     recordClaudeRateLimit("rejected");
-    expect((globalThis as { __orchClaudePlanUsage?: { passive: unknown } }).__orchClaudePlanUsage?.passive ?? null).toBeNull();
+    expect((globalThis as { __calandriaClaudePlanUsage?: { passive: unknown } }).__calandriaClaudePlanUsage?.passive ?? null).toBeNull();
   });
 });

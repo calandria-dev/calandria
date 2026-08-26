@@ -11,7 +11,7 @@
 // can import it.
 
 /** Client: a text paste larger than this becomes a `.txt` attachment instead
- *  of being inlined into the message (see app/orchestrator/Composer.tsx). */
+ *  of being inlined into the message (see app/shell/Composer.tsx). */
 export const PASTE_ATTACH_THRESHOLD = 100_000; // ~100 KB
 
 /** Server: hard cap on a single message's characters (POST /messages). Big
@@ -43,7 +43,7 @@ export function isPromptTooLong(msg: string | null | undefined): boolean {
 }
 
 /** Appended to the persisted error line when a turn overflows the context
- *  window. The UI (app/orchestrator/Transcript.tsx) matches this exact string
+ *  window. The UI (app/shell/Transcript.tsx) matches this exact string
  *  to render the "Start fresh context" recovery button. Persisted message
  *  content is the durable channel — it survives SSE reconnects because the
  *  snapshot replays messages from SQLite. */

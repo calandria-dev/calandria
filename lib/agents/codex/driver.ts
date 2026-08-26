@@ -45,7 +45,7 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 // agent MCP-inheritance policy, explained in full in ./mcp.ts. It's a parameter
 // rather than an await in here so this stays a pure function the tests can read.
 // Exported for tests (tests/codexMcpBridge.test.ts).
-export function orchestratorMcpConfig(
+export function calandriaMcpConfig(
   project: Project,
   task: Task,
   inherited: Record<string, { enabled: false }> = {}
@@ -202,7 +202,7 @@ async function* runTurn(
 
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
-    config: orchestratorMcpConfig(project, task, await inheritedServerOverrides()),
+    config: calandriaMcpConfig(project, task, await inheritedServerOverrides()),
   });
   const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
 

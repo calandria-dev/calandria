@@ -121,7 +121,7 @@ const handle = app.getRequestHandler();
 // pins countsAsActivity's exclusion list; see issue #22 discussion before
 // deleting further.
 const bootAt = Date.now();
-const activity = (globalThis.__orchActivity ??= { lastRequestAt: bootAt });
+const activity = (globalThis.__calandriaActivity ??= { lastRequestAt: bootAt });
 // Health/metadata probes (version, usage) never count as user activity —
 // otherwise a monitor's own loopback polling would keep lastRequestAt pinned
 // to "just now" forever. Mirrors the service-token path list in middleware.ts.

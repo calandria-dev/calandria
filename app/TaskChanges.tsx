@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Skel, ErrNote } from "./orchestrator/shared";
-import { CollabDoc } from "./orchestrator/CollabDoc";
+import { Skel, ErrNote } from "./shell/shared";
+import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
 import type { TaskComment } from "@/lib/types";
 

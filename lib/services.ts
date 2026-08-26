@@ -1,6 +1,6 @@
 // Supervised per-project services.
 //
-// The orchestrator runs a project's dev server (and optional setup/test commands)
+// Calandria runs a project's dev server (and optional setup/test commands)
 // as long-lived child processes OWNED BY THE SERVER PROCESS — not by a Claude turn
 // or a browser tab. That's the whole point: `npm run dev` started here keeps
 // running after the turn ends and after the tab closes, with its logs captured so
@@ -74,12 +74,12 @@ interface Registry {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchServices: Registry | undefined;
+  var __calandriaServices: Registry | undefined;
 }
 
 function reg(): Registry {
-  if (!global.__orchServices) global.__orchServices = { services: new Map(), listeners: new Map() };
-  return global.__orchServices;
+  if (!global.__calandriaServices) global.__calandriaServices = { services: new Map(), listeners: new Map() };
+  return global.__calandriaServices;
 }
 
 const keyOf = (projectId: string, name: string) => `${projectId}:${name}`;
@@ -248,7 +248,7 @@ export function getGateSecret(): string {
 }
 
 // Which configured command a service name maps to, or null if the project has no
-// command for it. Only these three names are orchestrator-managed; expose_service
+// command for it. Only these three names are Calandria-managed; expose_service
 // can register any other name as an (unmanaged) exposed entry.
 function configuredCommand(project: Project, name: string): { kind: ServiceKind; command: string } | null {
   const map: Record<string, { kind: ServiceKind; command: string }> = {

@@ -3,7 +3,7 @@
 // before it resolved to claude-opus-5 — so a badge that reads just "Opus" is
 // worse than no badge. These pin the version (and the 1M variant) surviving.
 import { describe, it, expect } from "vitest";
-import { modelLabel, contextWindowOf } from "@/app/orchestrator/format";
+import { modelLabel, contextWindowOf } from "@/app/shell/format";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
 import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
 

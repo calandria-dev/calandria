@@ -24,7 +24,7 @@ export interface NavSel {
    * navigation level, not a derived state: on a phone it is the ONLY way to
    * reach those cards, so Back must close it before it closes the project, and
    * a refresh must land back on it. It only ever coexists with `proj` and never
-   * with `task` (selecting a task drops the intent — useOrchestrator).
+   * with `task` (selecting a task drops the intent — useShell).
    */
   home: boolean;
   view: View;

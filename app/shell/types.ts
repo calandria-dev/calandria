@@ -1,4 +1,4 @@
-// Client-side shapes + UI constants shared across the orchestrator modules.
+// Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, GROUP_COLORS, groupIsDone } from "@/lib/types";
 import type { Priority, Status, TaskGroup } from "@/lib/types";
@@ -298,7 +298,7 @@ export interface AgentCapabilities {
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
   supportsAsks: boolean;      // can surface interactive ask cards mid-turn
-  supportsMcpTools: boolean;  // can mount the orchestrator MCP tools
+  supportsMcpTools: boolean;  // can mount the Calandria MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
   costIsEstimated: boolean;   // cost is estimated from tokens × API prices — show with ~
   reportsContext?: boolean;   // the stream reports real context occupancy; false = the gauge is a usage-derived estimate (absent on a stale bundle = assume true)
@@ -347,7 +347,7 @@ export type TaskView = "list" | "board";
 // What a save from the Edit-task dialog does BEYOND writing the fields:
 // "add" also accepts a suggestion out of the tray, "start" does that and
 // launches the first session. Both ride along on the one PATCH the save
-// already sends — see saveTask in useOrchestrator.ts.
+// already sends — see saveTask in useShell.ts.
 export type SaveAction = "add" | "start";
 
 // Which surface fills the work area (the right two columns). "workspace" is the
