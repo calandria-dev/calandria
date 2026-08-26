@@ -114,7 +114,7 @@ describe("moveTasks (store)", () => {
     // unacknowledged task would move with its columns cleared and its worktree
     // left orphaned in the repo it came from.
     const { from, to, ids } = batch("Reset set", 2);
-    ids.forEach((id) => updateTask(id, { started: 1, worktree_path: `/tmp/wt-${id}`, work_branch: `orch/${id}` }));
+    ids.forEach((id) => updateTask(id, { started: 1, worktree_path: `/tmp/wt-${id}`, work_branch: `calandria/${id}` }));
 
     const result = moveTasks(ids, to.id, { resetCheckout: new Set([ids[0]]) });
 
@@ -365,14 +365,14 @@ describe("POST /api/tasks/move", () => {
     const held = withTaskLock(ids[0], () => new Promise<void>((r) => (release = r)));
     // withTaskLock registers into the lock map synchronously (before any
     // await), so `held`'s tail is already in the map the instant it returns.
-    const initialTail = global.__orchTaskLocks?.get(ids[0]);
+    const initialTail = global.__calandriaTaskLocks?.get(ids[0]);
 
     const pending = bulkMove({ ids, project_id: to.id });
     // The route's own withTaskLocks call re-registers a new tail chained
     // behind `held`'s — waiting for that identity change is the real signal
     // that the request has cleared its pre-flight checks and is now parked on
     // the lock, rather than guessing how long that takes.
-    await vi.waitFor(() => expect(global.__orchTaskLocks?.get(ids[0])).not.toBe(initialTail));
+    await vi.waitFor(() => expect(global.__calandriaTaskLocks?.get(ids[0])).not.toBe(initialTail));
     deleteProject(to.id);
     release();
     await held;
@@ -521,13 +521,13 @@ describe("a dirty worktree inside a selection", () => {
     // fromRepo's key is already cached from startedBatch's own git ops, so
     // this resolves immediately after (not before) `held` has registered.
     const key = await repoLockKey(fromRepo);
-    const initialTail = global.__orchRepoLocks?.get(key);
+    const initialTail = global.__calandriaRepoLocks?.get(key);
 
     const pending = bulkMove({ ids, project_id: to.id, discard_worktree: ids });
     // discardCheckout's withRepoLock call re-registers a new tail chained
     // behind `held`'s once it reaches the lock — the real signal that the
     // teardown is now parked, rather than a guess at how long that takes.
-    await vi.waitFor(() => expect(global.__orchRepoLocks?.get(key)).not.toBe(initialTail));
+    await vi.waitFor(() => expect(global.__calandriaRepoLocks?.get(key)).not.toBe(initialTail));
     deleteProject(to.id);
     release();
     await held;

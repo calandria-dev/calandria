@@ -1,4 +1,4 @@
-// Pure formatting + derivation helpers shared across the orchestrator modules.
+// Pure formatting + derivation helpers shared across the shell modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";
@@ -193,7 +193,7 @@ export function relTime(ts: number): string {
 // is actually watching for it. Three ways that happens, in order of how much
 // they lie:
 //
-//   1. the ticker was never started (ORCH_SCHEDULER=off, a boot ping that never
+//   1. the ticker was never started (CALANDRIA_SCHEDULER=off, a boot ping that never
 //      landed) — nothing will ever fire;
 //   2. the ticker is started but its sweeps have STOPPED COMING BACK. This is
 //      the quiet one: tickSchedules() is single-flight, so one call that never

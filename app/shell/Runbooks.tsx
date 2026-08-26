@@ -372,12 +372,12 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<string>).detail === projectId) void load();
     };
-    window.addEventListener("orch:runbooks", onChanged);
-    return () => window.removeEventListener("orch:runbooks", onChanged);
+    window.addEventListener("calandria:runbooks", onChanged);
+    return () => window.removeEventListener("calandria:runbooks", onChanged);
   }, [projectId, load]);
 
   // A ⌘K dispatch that failed. The palette has closed by then and the user may
-  // have been anywhere, so useOrchestrator sends them here and hands the
+  // have been anywhere, so useShell sends them here and hands the
   // message to the one surface that can show it next to the recipe that
   // produced it.
   useEffect(() => {
@@ -385,8 +385,8 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
       const d = (e as CustomEvent<{ projectId: string; message: string }>).detail;
       if (d.projectId === projectId) setError(d.message);
     };
-    window.addEventListener("orch:runbook-error", onErr);
-    return () => window.removeEventListener("orch:runbook-error", onErr);
+    window.addEventListener("calandria:runbook-error", onErr);
+    return () => window.removeEventListener("calandria:runbook-error", onErr);
   }, [projectId]);
 
   const act = async (id: string, fn: () => Promise<unknown>) => {

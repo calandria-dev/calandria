@@ -14,7 +14,7 @@ export async function git(cwd: string, ...args: string[]): Promise<string> {
 
 /** Fresh directory under the per-run tmp root (cleaned up by tests/setup.ts). */
 export function tmpDir(prefix = "dir-"): string {
-  return fs.mkdtempSync(path.join(process.env.ORCH_TEST_TMP!, prefix));
+  return fs.mkdtempSync(path.join(process.env.CALANDRIA_TEST_TMP!, prefix));
 }
 
 export const uid = () => crypto.randomBytes(6).toString("hex");

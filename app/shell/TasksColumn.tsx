@@ -86,7 +86,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <PriPill p={task.priority} />
       </div>
       {/* Why this card is back where you didn't leave it. An unread marker, not
-          history — opening the task clears it (useOrchestrator). */}
+          history — opening the task clears it (useShell). */}
       {!snoozed && wasSnoozed(task) && (
         <div className="snz-chip was" title={`Snoozed until ${new Date(task.snoozed_until).toLocaleString()}`}>
           {Icon.moon()} Was snoozed
@@ -264,15 +264,16 @@ function useExpanded(scope: string) {
   return { expanded, toggleExpanded: toggle };
 }
 
-// Per-group collapsed flag, persisted in localStorage under `key`.
-function useCollapsed(key: string, def: boolean) {
+// Per-group collapsed flag, persisted in localStorage under `key` (falling
+// back to `legacyKey` for a reader that hasn't written the new key yet).
+function useCollapsed(key: string, legacyKey: string, def: boolean) {
   const [collapsed, setCollapsed] = useState(def);
   useEffect(() => {
     try {
-      const v = localStorage.getItem(key);
+      const v = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
       setCollapsed(v === null ? def : v === "1");
     } catch {}
-  }, [key, def]);
+  }, [key, legacyKey, def]);
   const toggle = () => setCollapsed((c) => {
     const next = !c;
     try { localStorage.setItem(key, next ? "1" : "0"); } catch {}
@@ -302,8 +303,8 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   // abandoned) tasks doesn't force scrolling past them. Per-project, persisted
   // so the choice sticks across reloads. Cancelled starts collapsed — it's the
   // graveyard, not the working set.
-  const [doneCollapsed, toggleDone] = useCollapsed(`orch_done_collapsed_${project.id}`, false);
-  const [cancelledCollapsed, toggleCancelled] = useCollapsed(`orch_cancelled_collapsed_${project.id}`, true);
+  const [doneCollapsed, toggleDone] = useCollapsed(`calandria_done_collapsed_${project.id}`, `orch_done_collapsed_${project.id}`, false);
+  const [cancelledCollapsed, toggleCancelled] = useCollapsed(`calandria_cancelled_collapsed_${project.id}`, `orch_cancelled_collapsed_${project.id}`, true);
   // The group chip narrows every bucket below — the Suggested tray included —
   // to one group's members. Applied before the search so the two compose.
   // (`taskGroups`, not `groups`: the status buckets below already own that name.)

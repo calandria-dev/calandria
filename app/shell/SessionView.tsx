@@ -204,7 +204,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
         </div>
       </div>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: running ? "not-allowed" : "pointer" }}
-        title="Uncheck to start without the saved project context. Task details and orchestrator tools are always included.">
+        title="Uncheck to start without the saved project context. Task details and Calandria tools are always included.">
         <input type="checkbox" checked={sendContext} disabled={running} onChange={(e) => onSetSendContext(e.target.checked)} />
         Send saved project context to the agent
       </label>
@@ -246,7 +246,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
   );
 }
 
-// Ref-backed identity-stable wrapper: Orchestrator passes fresh inline handlers
+// Ref-backed identity-stable wrapper: Shell passes fresh inline handlers
 // on every render, which would defeat MessageView's memo — the wrapper keeps one
 // function identity for the component's lifetime while always invoking the
 // latest handler.

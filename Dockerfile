@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
-# Agent Orchestrator — one container per user (see docs/DEPLOY.md).
+# Calandria — one container per user (see docs/DEPLOY.md).
 #
 # The image bundles Node, git, and the `claude` CLI, and runs BOTH processes
 # (Next.js custom server + node-pty terminal sidecar) via docker/entrypoint.sh.
 # It is a PRODUCTION build (next build; NODE_ENV=production) so a stopped
 # container wakes in seconds, not a dev-mode cold compile.
 #
-# All per-user state lives under /home/orch — mount one named volume there:
-#   .zen-orchestrator/  SQLite db        worktrees/  per-task git worktrees
+# All per-user state lives under /home/calandria — mount one named volume there:
+#   .calandria/         SQLite db        worktrees/  per-task git worktrees
 #   projects/           cloned repos     .claude/    claude CLI login (Max)
 #   .config/gh/         gh CLI login     .gitconfig  git credential helper
 #
-# Build:  docker build -t agent-orchestrator .
+# Build:  docker build -t calandria .
 # Run:    see docker-compose.yml or the reference `docker run` in docs/DEPLOY.md.
 
 # ---- build stage: install all deps (incl. dev), compile Next ----------------
@@ -115,12 +115,22 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claud
 # JSONL to this exact binary, so a minor skew between them is a real risk.
 RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
-# Replace the base image's `node` user so uid 1000 owns /home/orch — named
+# Replace the base image's `node` user so uid 1000 owns /home/calandria — named
 # volumes initialize from this skeleton with correct ownership on first mount.
+#
+# /home/orch is kept as a symlink to the new home, and is NOT vestigial: an
+# instance that predates the rename has ABSOLUTE /home/orch paths baked into
+# rows it cannot re-derive — projects.repo_path, tasks.worktree_path — and into
+# the git worktree metadata under each project's .git/worktrees/<id>/gitdir.
+# Mounting the same named volume at /home/calandria moves the bytes but not
+# those strings, so without the symlink every existing project and task on a
+# Docker-hosted instance would point at a path that no longer exists. It costs
+# one inode; drop it only once old paths are known to be gone.
 RUN userdel -r node \
-  && useradd --create-home --uid 1000 --home-dir /home/orch --shell /bin/bash orch \
-  && mkdir -p /home/orch/.zen-orchestrator /home/orch/worktrees /home/orch/projects /home/orch/.claude /home/orch/.codex \
-  && chown -R orch:orch /home/orch
+  && useradd --create-home --uid 1000 --home-dir /home/calandria --shell /bin/bash calandria \
+  && mkdir -p /home/calandria/.calandria /home/calandria/worktrees /home/calandria/projects /home/calandria/.claude /home/calandria/.codex \
+  && chown -R calandria:calandria /home/calandria \
+  && ln -s /home/calandria /home/orch
 
 WORKDIR /app
 COPY --from=build --chown=root:root /app/node_modules ./node_modules
@@ -140,17 +150,20 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # lib/db-lock.mjs (the single-instance boot lock) is in the same set: server.js
 # imports it un-bundled to claim the database before serving, and lib/db.ts
 # imports the bundled copy to decide whether crash recovery may run. Missing
-# here, the container would fail to boot.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js ./lib/
+# here, the container would fail to boot. lib/env.mjs is the CALANDRIA_*/ORCH_*
+# alias reader db-lock.mjs, the auth .mjs files and server.js itself all import,
+# and lib/storage.mjs (which resolves the database/worktree locations, including
+# the pre-rename fallback) is imported by server.js and db-lock.mjs alike.
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
-# The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/orch-mcp.mjs)
+# The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/calandria-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so
 # they must be COPY'd explicitly (same gotcha as the auth/router .mjs above).
-COPY --from=build --chown=root:root /app/scripts/orch-mcp.mjs ./scripts/orch-mcp.mjs
+COPY --from=build --chown=root:root /app/scripts/calandria-mcp.mjs ./scripts/calandria-mcp.mjs
 COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDefs.mjs
-COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/orch-entrypoint
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/calandria-entrypoint
 
-# ORCH_HOSTNAME, not HOSTNAME: server.js no longer reads the generic variable
+# CALANDRIA_HOSTNAME, not HOSTNAME: server.js no longer reads the generic variable
 # (Docker injects the container id into it, and Fedora's /etc/profile exports
 # the machine name) — see lib/resolveHostname.js. 0.0.0.0 is correct INSIDE the
 # container, where the default loopback bind would make the published port
@@ -158,29 +171,29 @@ COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/orch-entrypoint
 # (-p 127.0.0.1:<port>:3000) with Cloudflare Tunnel in front.
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    HOME=/home/orch \
+    HOME=/home/calandria \
     SHELL=/bin/bash \
     PORT=3000 \
-    ORCH_HOSTNAME=0.0.0.0 \
+    CALANDRIA_HOSTNAME=0.0.0.0 \
     PTY_HOST=127.0.0.1 \
     PTY_PORT=3001 \
-    ORCH_WORKTREES_DIR=/home/orch/worktrees \
+    CALANDRIA_WORKTREES_DIR=/home/calandria/worktrees \
     CLAUDE_CLI_PATH=/usr/local/bin/claude \
     CODEX_CLI_PATH=/usr/local/bin/codex \
     DISABLE_AUTOUPDATER=1
 
-USER orch
+USER calandria
 EXPOSE 3000
-VOLUME ["/home/orch"]
+VOLUME ["/home/calandria"]
 
-# Build provenance. orch-user.sh passes --build-arg GIT_SHA/BUILT_AT, captured
+# Build provenance. The deploy script passes --build-arg GIT_SHA/BUILT_AT, captured
 # from the deploy host's git tree BEFORE rsync (the image has no .git). Exposed
 # read-only at GET /api/version so a deploy can be confirmed without ssh. Kept
 # late so the per-build SHA churn doesn't bust any earlier layer's cache.
 ARG GIT_SHA=unknown
 ARG BUILT_AT=unknown
-ENV ORCH_GIT_SHA=$GIT_SHA \
-    ORCH_BUILT_AT=$BUILT_AT
+ENV CALANDRIA_GIT_SHA=$GIT_SHA \
+    CALANDRIA_BUILT_AT=$BUILT_AT
 
 # /api/version doubles as the health probe (it exercises Next + SQLite-backed
 # routing). It presents SERVICE_TOKEN — the one path middleware.ts exempts from
@@ -188,12 +201,12 @@ ENV ORCH_GIT_SHA=$GIT_SHA \
 #
 # The token is read from the environment OR from the file the entrypoint writes
 # when Access is on and the operator supplied none (see docker/entrypoint.sh —
-# keep the path in step with ORCH_SERVICE_TOKEN_FILE there). A healthcheck runs
+# keep the path in step with CALANDRIA_SERVICE_TOKEN_FILE there). A healthcheck runs
 # as a fresh exec with the IMAGE's environment, not the entrypoint's, so the
 # file is the only way a generated token reaches it. Without this, Access mode
 # plus an unset SERVICE_TOKEN meant every probe 403'd and the container was
 # permanently unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "let t=(process.env.SERVICE_TOKEN||'').trim();if(!t){try{t=require('node:fs').readFileSync('/tmp/orch-service-token','utf8').trim()}catch{}}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/version',{headers:t?{'x-service-token':t}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+  CMD node -e "let t=(process.env.SERVICE_TOKEN||'').trim();if(!t){try{t=require('node:fs').readFileSync('/tmp/calandria-service-token','utf8').trim()}catch{}}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/version',{headers:t?{'x-service-token':t}:{}}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
-ENTRYPOINT ["tini", "--", "/usr/local/bin/orch-entrypoint"]
+ENTRYPOINT ["tini", "--", "/usr/local/bin/calandria-entrypoint"]

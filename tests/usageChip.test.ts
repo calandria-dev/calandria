@@ -5,8 +5,8 @@
 // re-sent every turn at ~10% of the input rate, not work), and a dollar figure
 // is only presented as money when the agent is signed in with an API key.
 import { describe, it, expect } from "vitest";
-import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/orchestrator/format";
-import type { AgentInfo, TaskRow } from "@/app/orchestrator/types";
+import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/shell/format";
+import type { AgentInfo, TaskRow } from "@/app/shell/types";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
 import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
 import { addUsage, createProject, createTask, listTasks } from "@/lib/store";

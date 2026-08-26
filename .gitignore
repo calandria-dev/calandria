@@ -58,7 +58,10 @@ next-env.d.ts
 __pycache__/
 *.pyc
 
-# orchestrator local db
+# local db (calandria.db; orchestrator.db is the pre-rename name, still read)
+calandria.db
+calandria.db-shm
+calandria.db-wal
 orchestrator.db
 orchestrator.db-shm
 orchestrator.db-wal

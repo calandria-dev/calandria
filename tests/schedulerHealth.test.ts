@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { schedulerAlert } from "@/app/orchestrator/format";
+import { schedulerAlert } from "@/app/shell/format";
 
 // The Schedules card's warning banner. A schedule's whole promise is work at
 // 08:30 with nobody logged in, so the one thing the card must never do is show

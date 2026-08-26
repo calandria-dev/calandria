@@ -18,10 +18,10 @@ import { useRecaps } from "./useRecaps";
 
 type Modal = null | "task" | "context" | "project" | "sessions";
 
-// The orchestrator's single source of truth: all client state, the derived
+// Calandria's single source of truth: all client state, the derived
 // views over it, the data-loading effects, and every action callback. Returns a
-// flat bag the composition root (Orchestrator.tsx) wires straight into the UI.
-export function useOrchestrator() {
+// flat bag the composition root (Shell.tsx) wires straight into the UI.
+export function useShell() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selProj, setSelProj] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -83,7 +83,7 @@ export function useOrchestrator() {
   const [servicesMounted, setServicesMounted] = useState(false);
   const [servicesHeight, setServicesHeight] = useState(300);
   // Server-backed app defaults (e.g. default reasoning / permission mode a task
-  // inherits). Stored in orchestrator.db, not localStorage, so runTurn can read them.
+  // inherits). Stored in the database, not localStorage, so runTurn can read them.
   const [appDefaults, setAppDefaults] = useState<Record<string, string>>({});
   const [appDefaultsReady, setAppDefaultsReady] = useState(false);
   // Agent capability descriptors (GET /api/agents): the model/reasoning/permission
@@ -248,7 +248,7 @@ export function useOrchestrator() {
   // normally, auto-selection is back.
   //
   // On a phone it is more than an intent: the landing pane is a PANE there (see
-  // Orchestrator's mobilePane), and the only place Runbooks and Schedules are
+  // Shell's mobilePane), and the only place Runbooks and Schedules are
   // mounted — so this same flag is a navigation level, mirrored into the URL as
   // ?home=1 and closed by Back before the project is (navHistory.ts).
   const [homeProj, setHomeProj] = useState<string | null>(null);
@@ -371,8 +371,8 @@ export function useOrchestrator() {
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<string>).detail === selProjRef.current) void loadRunbooks((e as CustomEvent<string>).detail);
     };
-    window.addEventListener("orch:runbooks", onChanged);
-    return () => window.removeEventListener("orch:runbooks", onChanged);
+    window.addEventListener("calandria:runbooks", onChanged);
+    return () => window.removeEventListener("calandria:runbooks", onChanged);
   }, [loadRunbooks]);
 
   // A hidden tab gets throttled and its SSE streams may quietly die, so the
@@ -557,20 +557,20 @@ export function useOrchestrator() {
   };
 
   // Clicking a browser notification. A window event rather than a prop because
-  // the channel hook runs above this definition — same pattern as orch:runbooks.
+  // the channel hook runs above this definition — same pattern as calandria:runbooks.
   useEffect(() => {
     const onGoto = (e: Event) => {
       const { projectId, taskId } = (e as CustomEvent<{ projectId: string; taskId: string }>).detail;
       if (taskId) goToTask(projectId, taskId);
     };
-    window.addEventListener("orch:goto-task", onGoto);
-    return () => window.removeEventListener("orch:goto-task", onGoto);
+    window.addEventListener("calandria:goto-task", onGoto);
+    return () => window.removeEventListener("calandria:goto-task", onGoto);
     // goToTask is re-created each render but only calls setState, so binding
     // the first instance is safe and keeps the listener stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // A click on a PUSHED notification arrives from the service worker as a
-  // message, not a window event; this relays it onto orch:goto-task above and
+  // message, not a window event; this relays it onto calandria:goto-task above and
   // re-registers this browser's push subscription once per load (usePush.ts).
   usePushRelay();
 
@@ -738,7 +738,7 @@ export function useOrchestrator() {
       if (projectId) {
         setSelTask(null);
         setHomeProj(projectId);
-        window.dispatchEvent(new CustomEvent("orch:runbook-error", {
+        window.dispatchEvent(new CustomEvent("calandria:runbook-error", {
           detail: { projectId, message: e instanceof Error ? e.message : String(e) },
         }));
       }

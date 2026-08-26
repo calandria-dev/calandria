@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Orchestrator — hi-fi app styling
+   Calandria — hi-fi app styling
    Three-column tool for running Claude Code projects & task sessions
    (ported from the Claude Design hi-fi prototype)
    ========================================================================== */
@@ -7,7 +7,7 @@
 /* ==========================================================================
    Theme primitives — Calandria design system (docs/design/handoff/styles.css,
    copied verbatim). Four selectable palettes, each dark + light, switched via
-   [data-theme]="<palette>-<mode>" on <html> (app/orchestrator/usePrefs.ts).
+   [data-theme]="<palette>-<mode>" on <html> (app/shell/usePrefs.ts).
    cherenkov-dark is the :root default (SSR-safe before hydration picks a
    palette/mode). [data-mode]="dark"|"light" is set alongside data-theme so
    component CSS can key off resolved mode without knowing the palette name. */
@@ -491,7 +491,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* "queued to auto-start" — blocked, but armed to launch itself (blue, not amber) */
 .blocked-chip.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
 
-/* ---------- snoozed tasks (app/orchestrator/snooze.ts) ----------
+/* ---------- snoozed tasks (app/shell/snooze.ts) ----------
    Deliberately the quietest state in the app: a parked task has nothing to say
    until its deadline, so it recedes (muted ink, reduced opacity) rather than
    taking a signal color the way "needs you" or "blocked" do. It brightens back
@@ -1433,7 +1433,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field:last-child{margin-bottom:0;}
 /* Body-face caps, matching the design language's section headers (.ap-h2 /
    handoff Settings.html .sec h2) — the mono-caps version was the pre-revamp
-   operator style. */
+   style. */
 .field .lab{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:8px;}
 .field .lab svg{width:13px;height:13px;}
 .field .lab .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--ink-4);}
@@ -1695,7 +1695,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sched-check,.rb-check{margin-top:8px;padding:9px 12px;border-radius:var(--r-sm);font-size:12px;display:flex;flex-direction:column;gap:2px;}
 .sched-check.bad,.rb-check.bad{color:var(--red);background:var(--red-soft);border:1px solid var(--red);}
 
-/* Runbooks (app/orchestrator/Runbooks.tsx) reuse the schedules card's visual
+/* Runbooks (app/shell/Runbooks.tsx) reuse the schedules card's visual
    language above — they are the same object with and without a clock, so they
    must not read as unrelated features. Only what a schedule row has no
    equivalent for lives here. */
@@ -1712,7 +1712,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 }
 
 /* ============================== phone layout ==============================
-   Below 760px the three columns can't coexist. Orchestrator mounts a single
+   Below 760px the three columns can't coexist. Shell mounts a single
    pane at a time (projects → tasks → session) and threads a back button into
    each header; this block makes that pane fill the screen, fattens hit targets
    to a thumb-friendly ~44px, and respects the notch / home-indicator insets. */

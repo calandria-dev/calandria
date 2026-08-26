@@ -33,27 +33,27 @@ const APP_HOST = "ishan.calandria.example.com";
 // The registry lives on globalThis (survives HMR by design); tests reset it to
 // simulate a server restart without recycling the process.
 type Reg = { services: Map<string, unknown>; listeners: Map<string, unknown>; restored?: boolean; gateSecret?: string };
-const registry = () => (globalThis as unknown as { __orchServices?: Reg }).__orchServices;
+const registry = () => (globalThis as unknown as { __calandriaServices?: Reg }).__calandriaServices;
 function wipeRegistry() {
-  (globalThis as unknown as { __orchServices?: Reg }).__orchServices = undefined;
+  (globalThis as unknown as { __calandriaServices?: Reg }).__calandriaServices = undefined;
 }
 
 function withPublicHost() {
   process.env.PUBLIC_BASE_URL = `https://${APP_HOST}`;
-  process.env.ORCH_FEATURE_SERVICES = "1";
-  process.env.ORCH_SERVICE_HOSTS = "1"; // public hostnames are their own opt-in
+  process.env.CALANDRIA_FEATURE_SERVICES = "1";
+  process.env.CALANDRIA_SERVICE_HOSTS = "1"; // public hostnames are their own opt-in
 }
 
 beforeEach(() => {
   wipeRegistry();
   delete process.env.PUBLIC_BASE_URL;
-  delete process.env.ORCH_FEATURE_SERVICES;
-  delete process.env.ORCH_SERVICE_HOSTS;
+  delete process.env.CALANDRIA_FEATURE_SERVICES;
+  delete process.env.CALANDRIA_SERVICE_HOSTS;
 });
 afterEach(() => {
   delete process.env.PUBLIC_BASE_URL;
-  delete process.env.ORCH_FEATURE_SERVICES;
-  delete process.env.ORCH_SERVICE_HOSTS;
+  delete process.env.CALANDRIA_FEATURE_SERVICES;
+  delete process.env.CALANDRIA_SERVICE_HOSTS;
 });
 
 // ---------- hostname parsing ----------
@@ -105,11 +105,11 @@ describe("service hostname parsing", () => {
 
 describe("services feature flag", () => {
   it("ships ON by default; an explicit 0 disables it", () => {
-    delete process.env.ORCH_FEATURE_SERVICES;
+    delete process.env.CALANDRIA_FEATURE_SERVICES;
     expect(resolveFeatures().services).toBe(true);
-    process.env.ORCH_FEATURE_SERVICES = "0";
+    process.env.CALANDRIA_FEATURE_SERVICES = "0";
     expect(resolveFeatures().services).toBe(false);
-    process.env.ORCH_FEATURE_SERVICES = "1";
+    process.env.CALANDRIA_FEATURE_SERVICES = "1";
     expect(resolveFeatures().services).toBe(true);
   });
 });
@@ -304,18 +304,18 @@ describe("host-header router", () => {
     });
   }
 
-  it("hostname routing stays opt-in: needs ORCH_SERVICE_HOSTS, the flag not off, and a public host", () => {
+  it("hostname routing stays opt-in: needs CALANDRIA_SERVICE_HOSTS, the flag not off, and a public host", () => {
     // The services feature defaults ON, but that alone must expose nothing:
     // without the explicit hosts opt-in the router never claims a hostname.
-    delete process.env.ORCH_FEATURE_SERVICES;
-    delete process.env.ORCH_SERVICE_HOSTS;
+    delete process.env.CALANDRIA_FEATURE_SERVICES;
+    delete process.env.CALANDRIA_SERVICE_HOSTS;
     expect(serviceRoutingEnabled()).toBe(false);
     // Hosts opted in, but the feature explicitly disabled → still inert.
-    process.env.ORCH_SERVICE_HOSTS = "1";
-    process.env.ORCH_FEATURE_SERVICES = "0";
+    process.env.CALANDRIA_SERVICE_HOSTS = "1";
+    process.env.CALANDRIA_FEATURE_SERVICES = "0";
     expect(serviceRoutingEnabled()).toBe(false);
     // Default-on flag + hosts opt-in, but no public hostname to parse against.
-    delete process.env.ORCH_FEATURE_SERVICES;
+    delete process.env.CALANDRIA_FEATURE_SERVICES;
     delete process.env.PUBLIC_BASE_URL;
     expect(serviceRoutingEnabled()).toBe(false);
     // All three present (flag by default) → live.
@@ -403,14 +403,14 @@ describe("host-header router", () => {
     expect(api.status).toBe(401);
   });
 
-  it("private: a valid gate cookie admits; /__orch/auth sets it from a grant token", async () => {
+  it("private: a valid gate cookie admits; /__calandria/auth sets it from a grant token", async () => {
     const project = createProject({ name: "Priv2" });
     exposeService(project, "priv2", upstreamPort);
     const secret = getGateSecret();
 
     // The hop from /api/services/grant: token -> cookie -> redirect to next.
     const hop = mintGateToken(secret, "priv2", 60_000);
-    const auth = await request(`priv2--${APP_HOST}`, `/__orch/auth?t=${encodeURIComponent(hop)}&next=%2Fafter`);
+    const auth = await request(`priv2--${APP_HOST}`, `/__calandria/auth?t=${encodeURIComponent(hop)}&next=%2Fafter`);
     expect(auth.status).toBe(302);
     expect(auth.headers.location).toBe("/after");
     const cookie = String(auth.headers["set-cookie"]?.[0]);

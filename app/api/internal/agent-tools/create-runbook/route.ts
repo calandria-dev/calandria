@@ -6,12 +6,12 @@ import { createRunbookForAgent } from "@/lib/runbookTools";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `create_runbook` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs) — the same write the Claude driver mounts in-process.
+// (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts in-process.
 // Auth is the per-instance SERVICE_TOKEN (middleware.ts, isAgentToolPath).
 //
 // The same trust split every tool here makes:
 //
-//   body.taskId  the CALLER. ORCH_TASK_ID, injected into the bridge's env by
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
 //                lib/agents/codex/driver.ts — never a field the model can set.
 //   body.project the TARGET the MODEL named, and therefore untrusted;
 //                resolveTargetProject is strict about it.

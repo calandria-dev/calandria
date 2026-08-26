@@ -21,7 +21,7 @@ import { emitAwaitingInput, emitTurnFailed } from "./notify";
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchNotifier: (() => void) | undefined;
+  var __calandriaNotifier: (() => void) | undefined;
 }
 
 function handle(taskId: string, ev: BusEvent): void {
@@ -65,8 +65,8 @@ function handle(taskId: string, ev: BusEvent): void {
  * watching, and unattended auto-deny would never fire again.
  */
 export function ensureNotifier(): void {
-  if (global.__orchNotifier) return;
-  global.__orchNotifier = subscribeGlobal((taskId, ev) => {
+  if (global.__calandriaNotifier) return;
+  global.__calandriaNotifier = subscribeGlobal((taskId, ev) => {
     try {
       handle(taskId, ev);
     } catch (err) {
@@ -79,6 +79,6 @@ export function ensureNotifier(): void {
 
 /** Unsubscribe. Test seam, and the symmetry HMR wants. */
 export function stopNotifier(): void {
-  global.__orchNotifier?.();
-  global.__orchNotifier = undefined;
+  global.__calandriaNotifier?.();
+  global.__calandriaNotifier = undefined;
 }

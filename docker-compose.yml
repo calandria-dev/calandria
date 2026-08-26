@@ -1,36 +1,44 @@
-# One orchestrator instance = one user = one compose project (-p), one
+# One Calandria instance = one user = one compose project (-p), one
 # container, one named home volume, one bridge network. NEVER share an
 # instance between users — the app is single-user and the integrated terminal
 # is a full shell.
 #
-#   ORCH_USER=alice ORCH_PORT=10001 PUBLIC_BASE_URL=https://alice.example.com \
-#     docker compose -p orch-alice up -d --build
+#   CALANDRIA_USER=alice CALANDRIA_PORT=10001 PUBLIC_BASE_URL=https://alice.example.com \
+#     docker compose -p calandria-alice up -d --build
 #
 # The app port is published on the HOST's loopback only; put your own
 # authenticated tunnel or reverse proxy in front before exposing it anywhere.
+#
+# The compose-level knobs below were renamed CALANDRIA_* in the same pass that
+# renamed the app's own env vars. Unlike the app's, these have no old-name
+# fallback: compose interpolates them itself and offers no aliasing, so an
+# existing `ORCH_USER=… docker compose up` now fails loudly on the required
+# ones rather than starting a second, empty instance. The resource NAMES it
+# creates (`orch-u-<user>-home`, `-net`) deliberately did NOT change — see
+# docs/SELF_HOSTING.md, "Upgrading from ORCH_* names".
 services:
-  orchestrator:
+  calandria:
     build: .
     # Defaults to the image `docker build -t calandria .` produces from this
     # checkout. To run the published multi-arch build instead of building anything:
-    #   ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest docker compose ... pull
-    #   ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest docker compose ... up -d --no-build
+    #   CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:latest docker compose ... pull
+    #   CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:latest docker compose ... up -d --no-build
     # The build stanza stays so a plain checkout still works with no env set.
-    image: ${ORCH_IMAGE:-calandria:latest}
-    container_name: orch-u-${ORCH_USER:?set ORCH_USER (e.g. alice)}
+    image: ${CALANDRIA_IMAGE:-calandria:latest}
+    container_name: orch-u-${CALANDRIA_USER:?set CALANDRIA_USER (e.g. alice)}
     restart: unless-stopped
     # gVisor: untrusted-user containers should run on a userspace kernel
     # (runsc), so the full shell + bypassPermissions agent inside never talk to
     # the host kernel directly. Local dev (Docker Desktop / colima have no
-    # runsc): ORCH_RUNTIME=runc docker compose ... — runc is NOT an acceptable
+    # runsc): CALANDRIA_RUNTIME=runc docker compose ... — runc is NOT an acceptable
     # runtime for untrusted users in production.
-    runtime: ${ORCH_RUNTIME:-runsc}
+    runtime: ${CALANDRIA_RUNTIME:-runsc}
     # Resource caps: enough to run a Next.js dev server + a build + an agent
     # turn together without OOM, while one runaway container can't starve the
     # host. swap is pinned equal to memory (no thrash onto host disk).
-    cpus: ${ORCH_CPUS:-2}
-    mem_limit: ${ORCH_MEM:-4g}
-    memswap_limit: ${ORCH_MEM:-4g}
+    cpus: ${CALANDRIA_CPUS:-2}
+    mem_limit: ${CALANDRIA_MEM:-4g}
+    memswap_limit: ${CALANDRIA_MEM:-4g}
     pids_limit: 1024
     # Attack-surface hardening. The image runs everything as uid 1000 and
     # needs no capabilities; no-new-privileges blocks setuid re-escalation;
@@ -44,11 +52,13 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=512m
     environment:
+      # App vars: the ${CALANDRIA_X:-${ORCH_X:-}} spellings below keep an
+      # existing host environment working, matching lib/env.mjs's precedence.
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       # Extra exact browser origins for intentional unauthenticated LAN access.
       # Loopback + PUBLIC_BASE_URL already work without this. Internet-facing
       # instances should use CF_ACCESS_* instead of broadening local mode.
-      ORCH_ALLOWED_ORIGINS: ${ORCH_ALLOWED_ORIGINS:-}
+      CALANDRIA_ALLOWED_ORIGINS: ${CALANDRIA_ALLOWED_ORIGINS:-${ORCH_ALLOWED_ORIGINS:-}}
       GIT_USER_NAME: ${GIT_USER_NAME:-}
       GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
       # Origin-side Cloudflare Access enforcement (lib/cf-access.mjs). Both
@@ -66,21 +76,25 @@ services:
       # accepted on /api/instance/usage and /api/version only — so a dashboard
       # can poll many instances without learning each one's private
       # SERVICE_TOKEN. Never accepted on the mutating routes.
-      ORCH_FLEET_TOKEN: ${ORCH_FLEET_TOKEN:-}
+      CALANDRIA_FLEET_TOKEN: ${CALANDRIA_FLEET_TOKEN:-${ORCH_FLEET_TOKEN:-}}
       # Feature flags (lib/features.ts). Managed Services + public service
       # hostnames; empty = off (self-host/local default).
-      ORCH_FEATURE_SERVICES: ${ORCH_FEATURE_SERVICES:-}
+      CALANDRIA_FEATURE_SERVICES: ${CALANDRIA_FEATURE_SERVICES:-${ORCH_FEATURE_SERVICES:-}}
     ports:
-      - "127.0.0.1:${ORCH_PORT:?set ORCH_PORT (e.g. 10001)}:3000"
+      - "127.0.0.1:${CALANDRIA_PORT:?set CALANDRIA_PORT (e.g. 10001)}:3000"
     volumes:
-      - home:/home/orch
+      - home:/home/calandria
 
 networks:
   # One bridge per user. Docker's inter-bridge isolation gives each container
   # internet egress but no path to other instances on the same host.
   default:
-    name: orch-u-${ORCH_USER}-net
+    name: orch-u-${CALANDRIA_USER}-net
 
 volumes:
+  # The volume NAME is deliberately unchanged by the Calandria rename: it is a
+  # storage id, and renaming it would orphan every existing instance's database,
+  # projects and logins behind a name nothing mounts any more. Only the mount
+  # PATH moved (/home/orch -> /home/calandria), which a named volume follows.
   home:
-    name: orch-u-${ORCH_USER}-home
+    name: orch-u-${CALANDRIA_USER}-home

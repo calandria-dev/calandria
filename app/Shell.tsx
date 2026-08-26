@@ -5,28 +5,28 @@ import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
 import TaskChanges from "./TaskChanges";
-import { PROJ_W, TASK_W, DEFAULT_LAYOUT } from "./orchestrator/types";
-import { useOrchestrator } from "./orchestrator/useOrchestrator";
-import { ProjectsColumn } from "./orchestrator/ProjectsColumn";
-import { TasksColumn } from "./orchestrator/TasksColumn";
-import { BoardWorkspace } from "./orchestrator/TaskBoard";
-import { SessionView } from "./orchestrator/SessionView";
-import { ProjectLanding } from "./orchestrator/ProjectLanding";
-import { selectGroupFilter } from "./orchestrator/GroupChips";
-import { SettingsView } from "./orchestrator/SettingsView";
-import { InsightsView } from "./orchestrator/InsightsView";
-import { AppearancePanel } from "./orchestrator/AppearancePanel";
-import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./orchestrator/Layout";
-import { ServicesDrawer } from "./orchestrator/Services";
+import { PROJ_W, TASK_W, DEFAULT_LAYOUT } from "./shell/types";
+import { useShell } from "./shell/useShell";
+import { ProjectsColumn } from "./shell/ProjectsColumn";
+import { TasksColumn } from "./shell/TasksColumn";
+import { BoardWorkspace } from "./shell/TaskBoard";
+import { SessionView } from "./shell/SessionView";
+import { ProjectLanding } from "./shell/ProjectLanding";
+import { selectGroupFilter } from "./shell/GroupChips";
+import { SettingsView } from "./shell/SettingsView";
+import { InsightsView } from "./shell/InsightsView";
+import { AppearancePanel } from "./shell/AppearancePanel";
+import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
+import { ServicesDrawer } from "./shell/Services";
 import { clientFeatures } from "@/lib/features";
-import { NewTaskModal, EditTaskModal, MoveTasksModal, GroupTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./orchestrator/modals";
-import { OnboardingWizard } from "./orchestrator/OnboardingWizard";
-import { AgentNudge, AgentAuthBanner } from "./orchestrator/AgentConnect";
-import { WelcomeCoach, WelcomeNudge } from "./orchestrator/Welcome";
-import { NeedsYouMenu } from "./orchestrator/NeedsYouMenu";
-import { PlanUsagePill } from "./orchestrator/PlanUsage";
-import { CommandPalette, type PaletteCommand } from "./orchestrator/CommandPalette";
-import { MobileTabBar, type MobileTabId } from "./orchestrator/MobileTabBar";
+import { NewTaskModal, EditTaskModal, MoveTasksModal, GroupTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
+import { OnboardingWizard } from "./shell/OnboardingWizard";
+import { AgentNudge, AgentAuthBanner } from "./shell/AgentConnect";
+import { WelcomeCoach, WelcomeNudge } from "./shell/Welcome";
+import { NeedsYouMenu } from "./shell/NeedsYouMenu";
+import { PlanUsagePill } from "./shell/PlanUsage";
+import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
+import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
 // one pane at a time (projects → tasks → session) with back affordances. matchMedia
@@ -95,8 +95,8 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
   );
 }
 
-export default function Orchestrator() {
-  const o = useOrchestrator();
+export default function Shell() {
+  const o = useShell();
   const { project, task, selProj, selTask, layout } = o;
   // The selected task's group, for the session header's badge. Looked up here
   // because both SessionView mounts (list layout, board slide-over) need it.
@@ -138,7 +138,7 @@ export default function Orchestrator() {
   // server refuses stays picked when the modal closes.
   const [bulkMoveIds, setBulkMoveIds] = useState<string[] | null>(null);
   // The same shape for the selection bar's other verb — one group over a whole
-  // selection (app/orchestrator/modals GroupTasksModal).
+  // selection (app/shell/modals GroupTasksModal).
   const [bulkGroupIds, setBulkGroupIds] = useState<string[] | null>(null);
   const [clearRequest, setClearRequest] = useState<string | null>(null);
   useEffect(() => setClearRequest(null), [selTask]);

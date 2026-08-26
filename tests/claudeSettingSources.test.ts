@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // because it's tracked and shows up in that same diff.
 //
 // A ONE-SHOT does not. The handoff note, the recap and the context draft are
-// internal transformations with no orchestrator bridge and no UI to answer a
+// internal transformations with no Calandria bridge and no UI to answer a
 // prompt; inheriting the session config made each of them spawn the user's
 // whole MCP fleet (measured: 10 servers, 146 tools) to offer tools they can
 // never call. They isolate CAPABILITY (`tools`, `strictMcpConfig`, `skills`,
@@ -50,7 +50,7 @@ const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: (args: unknown) => queryMock(args),
-  // The orchestrator MCP server is built eagerly inside runTurn's options; it
+  // The Calandria MCP server is built eagerly inside runTurn's options; it
   // only has to be *something* here, since this test never calls its tools.
   createSdkMcpServer: (cfg: unknown) => ({ type: "sdk", ...(cfg as object) }),
   tool: (name: string, description: string, schema: unknown, handler: unknown) => ({ name, description, schema, handler }),
@@ -186,7 +186,7 @@ describe("claude driver one-shot isolation", () => {
       // plugins alike. `tools` doesn't — it governs built-ins only, so without
       // this the user's whole fleet still spawns and still fills the context.
       expect(options.strictMcpConfig, `${name} still inherits MCP servers`).toBe(true);
-      // None of the three mounts the orchestrator bridge either — no task, no
+      // None of the three mounts the Calandria bridge either — no task, no
       // transcript, nothing for suggest_task to attach to.
       expect(options.mcpServers, `${name} mounted an MCP server`).toBeUndefined();
     }

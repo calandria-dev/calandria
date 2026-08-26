@@ -83,7 +83,7 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
     // Runbooks card, the ⌘K list) own their own fetches, and this hook has no
     // state of theirs to patch.
     if (ev.type === "runbooks_changed") {
-      window.dispatchEvent(new CustomEvent("orch:runbooks", { detail: ev.projectId }));
+      window.dispatchEvent(new CustomEvent("calandria:runbooks", { detail: ev.projectId }));
       return;
     }
     // A project's task groups changed (create/rename/recolor/delete — here, in

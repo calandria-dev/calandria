@@ -25,7 +25,7 @@ describe("isGitRepo", () => {
 
 describe("branchForTask", () => {
   it("prefixes the task id", () => {
-    expect(branchForTask("abc123")).toBe("orch/abc123");
+    expect(branchForTask("abc123")).toBe("calandria/abc123");
   });
 });
 
@@ -62,11 +62,11 @@ describe("ensureWorktree", () => {
     const wt = await ensureWorktree(repo, taskId);
     expect(wt).not.toBeNull();
     expect(wt!.path).toBe(path.join(WORKTREES_DIR, taskId));
-    expect(wt!.branch).toBe(`orch/${taskId}`);
+    expect(wt!.branch).toBe(`calandria/${taskId}`);
     expect(wt!.baseSha).toBe(head);
 
     expect(await isGitRepo(wt!.path)).toBe(true);
-    expect(await git(wt!.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`orch/${taskId}`);
+    expect(await git(wt!.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`calandria/${taskId}`);
     expect(fs.existsSync(path.join(wt!.path, "file.txt"))).toBe(true);
     // The main repo stays on its original branch.
     expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
@@ -130,7 +130,7 @@ describe("ensureWorktree", () => {
     // Baseline commit captured the existing file and a default .gitignore.
     expect(fs.existsSync(path.join(dir, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(wt!.path, "app.js"))).toBe(true);
-    expect(await git(dir, "log", "--format=%s")).toBe("Initial project state (orchestrator)");
+    expect(await git(dir, "log", "--format=%s")).toBe("Initial project state (calandria)");
   });
 
   it("makes a baseline commit in a repo with no commits", async () => {

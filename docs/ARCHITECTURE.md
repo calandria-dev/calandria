@@ -92,7 +92,7 @@ The app talks to coding agents only through the `AgentDriver` interface.
 ### The Claude driver (`lib/agents/claude/driver.ts`)
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
-the Claude Code system prompt), the orchestrator MCP tools (`suggest_task` + `list_tasks` +
+the Claude Code system prompt), the Calandria MCP tools (`suggest_task` + `list_tasks` +
 `get_task` + `update_task` + `withdraw_suggestion` + `list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
@@ -165,7 +165,7 @@ usage → tokens plus an **estimated** `cost_usd`) into the `StreamEvent` contra
 Run controls map our permission modes to codex's sandbox/approval policy
 (bypassPermissions → workspace-write + approvals-never; plan → read-only); reasoning
 presets map to `model_reasoning_effort`. Capabilities declare `supportsMcpTools: true` (the
-orchestrator's tools reach codex through the portable stdio MCP bridge below, registered
+Calandria's tools reach codex through the portable stdio MCP bridge below, registered
 per turn with a ~1-day `tool_timeout_sec` so a parked ask survives),
 `supportsAsks: true` (codex has no native interactive-ask hook, but the bridge's
 `ask_user` tool surfaces the same question card and blocks until the user answers) and
@@ -208,15 +208,15 @@ The five-minute sweep requires `automatic`; opening a project accepts `automatic
 unattended gate. Settings reads a single 30-day aggregation from `internal_usage` so the
 controls show their run count and API-price-equivalent cost without polling.
 
-### The agent-tool bridge (`scripts/orch-mcp.mjs` + `lib/agentTools.ts`)
+### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
-`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same orchestrator
+`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same Calandria
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
-equivalent is **`scripts/orch-mcp.mjs`**, a plain-Node stdio MCP server
+equivalent is **`scripts/calandria-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
-reads `ORCH_TASK_ID` / `ORCH_PROJECT_ID` / `ORCH_BASE_URL` / `SERVICE_TOKEN` from env
+reads `CALANDRIA_TASK_ID` / `CALANDRIA_PROJECT_ID` / `CALANDRIA_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
 (`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-groups,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
@@ -286,7 +286,7 @@ SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches the runner
 The policy lives in `updateTaskForAgent()` alone, because the two paths differ in who names
 the target: the Claude driver closes over the caller and hands the model's `task` argument
 straight through, while the bridge's endpoint takes the caller from the env-injected
-`ORCH_TASK_ID` and the target from the request body — model-supplied, and the reason
+`CALANDRIA_TASK_ID` and the target from the request body — model-supplied, and the reason
 `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
 asserts on the database rather than on the refusal text.
 
@@ -333,7 +333,7 @@ deliberately **not** a delete: the tray's Dismiss button already hard-deletes vi
 hasn't read is not a call an agent gets to make. So the row is set to `cancelled` while
 `suggested` stays `1` — it remains in the tray, struck through with `tasks.withdrawn_reason`
 beside it and sorted below the live suggestions (`isWithdrawn` / `withdrawnLast` in
-`app/orchestrator/format.ts`, honored by both the list tray and the board's Suggested
+`app/shell/format.ts`, honored by both the list tray and the board's Suggested
 column) — and `task_edited` is published so other tabs refetch a field the coarse wire
 payload can't carry. Reviving is centralised in `PATCH /api/tasks/[id]`, which clears the
 reason and the cancelled status together whenever a withdrawn row leaves that state: three
@@ -386,8 +386,8 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   **owned by the server** (not a turn or a tab), captures their stdout/stderr into a
   per-service ring buffer, and publishes status/log events over SSE. State lives on
   `globalThis` (survives HMR), like `lib/events.ts`. Each project gets a stable `PORT`
-  (`projects.port`, deterministic from `ORCH_SERVICE_PORT_BASE`) injected into every
-  service's env and the PTY shell. On by default (`ORCH_FEATURE_SERVICES=0` disables):
+  (`projects.port`, deterministic from `CALANDRIA_SERVICE_PORT_BASE`) injected into every
+  service's env and the PTY shell. On by default (`CALANDRIA_FEATURE_SERVICES=0` disables):
   the registry is **persisted** (`services` table) and `server.js` restores +
   auto-restarts managed services on boot — first **reaping any process group a crashed
   server left orphaned** (the spawn pid is persisted per row; the reaper verifies the
@@ -395,7 +395,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   never killed by mistake), and probing the port first so a conflict with an unmanaged
   process surfaces as a readable `error` on the service instead of an EADDRINUSE crash
   loop. A clean process exit SIGKILLs every managed group on the way out. **Public
-  hostnames are a separate opt-in** (`ORCH_SERVICE_HOSTS`): each service then gets a
+  hostnames are a separate opt-in** (`CALANDRIA_SERVICE_HOSTS`): each service then gets a
   stable `<slug>--<appHost>` hostname with per-service visibility (private /
   shared-link / public), dispatched through the reverse-proxy router in
   **`lib/service-router.mjs`** (WebSocket/HMR passthrough included), with the pure
@@ -407,7 +407,7 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
   `GET /api/projects/[id]/refresh-context`. The draft is for the user to review — never
   auto-saved.
 - **`lib/recap.ts`** — "where you left off" staleness/activity logic + background sweep.
-- **`app/Orchestrator.tsx`** — the dark mission-control client UI (projects rail · task
+- **`app/Shell.tsx`** — the dark mission-control client UI (projects rail · task
   list · live session, the session split into transcript + `SessionRail`
   DIFF/PREVIEW/CONTEXT tabs); one `EventSource` per selected task renders from server
   events, so a reload, sleep, or task switch mid-turn just catches up.
@@ -418,12 +418,22 @@ test (`tests/codexEvents.test.ts`) are the templates for pinning a new driver to
 
 | What | Where |
 |-|-|
-| Projects, tasks, transcripts, summaries, session index | `orchestrator.db` (SQLite) in `ORCH_DB_DIR`, default `~/.zen-orchestrator` |
-| The single-instance boot lock | `orchestrator.lock.db` beside it — a pure mutex holding no data (see below) |
-| Per-task git worktrees | `ORCH_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees` — deliberately outside every repo |
-| Cloned project repos | `ORCH_PROJECTS_DIR`, default `~/projects` |
+| Projects, tasks, transcripts, summaries, session index | `calandria.db` (SQLite) in `CALANDRIA_DB_DIR`, default `~/.calandria` |
+| The single-instance boot lock | `calandria.lock.db` beside it — a pure mutex holding no data (see below) |
+| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees` — deliberately outside every repo |
+| Cloned project repos | `CALANDRIA_PROJECTS_DIR`, default `~/projects` |
 | Your apps' actual code | each project's working directory — never inside Calandria's own tree |
 | Claude Code's raw session logs | `~/.claude/projects/...` (managed by Claude Code) |
+
+With the env unset, nothing is ever moved automatically: if `~/.calandria` holds
+no database but the pre-rename `~/.zen-orchestrator/orchestrator.db` exists, the
+old path keeps being used and boot prints one hint line. Inside an explicit
+`CALANDRIA_DB_DIR`, `calandria.db` wins and an existing `orchestrator.db` is the
+fallback. A populated legacy `~/.agent-orchestrator/worktrees` is kept where it
+is, because git registers each worktree by absolute path in the parent repo's
+`.git/worktrees/<id>/gitdir` — relocating would need `git worktree repair` per
+project; an empty one is abandoned. All of this resolves in one shared module,
+`lib/storage.mjs`; see `docs/SELF_HOSTING.md` for the manual migration recipe.
 
 ### One process per database
 
@@ -438,20 +448,20 @@ rows the second believes are idle.
 
 So **`server.js` claims the database before `app.prepare()`** (`lib/db-lock.mjs`) and
 exits with the holder's pid and host if it can't. The mutex is a kernel file lock — a
-`BEGIN IMMEDIATE` transaction opened on a dedicated `orchestrator.lock.db` and never
+`BEGIN IMMEDIATE` transaction opened on a dedicated `calandria.lock.db` and never
 committed, holding SQLite's RESERVED lock for the life of the connection. That's chosen
 over a pid+heartbeat lease file deliberately: there's no heartbeat to miss, no staleness
 window to tune, and no pid-liveness heuristic to get wrong (pids are small and reused
 inside a container, and `docker restart` keeps the hostname, so "pid 7 on host abc is
 alive" proves nothing). The OS drops the lock when the process dies, so recovery after a
-SIGKILL is immediate. Boot still retries for `ORCH_DB_LOCK_WAIT_MS`, which covers only
+SIGKILL is immediate. Boot still retries for `CALANDRIA_DB_LOCK_WAIT_MS`, which covers only
 the second or so a predecessor spends shutting down. `locking_mode = EXCLUSIVE` is
 pointedly *not* layered on top: in that mode a connection retains its SHARED lock even
 after a failed write, so two racing processes could deadlock each other out of the
 upgrade forever.
 
-A separate lock file, rather than locking `orchestrator.db` itself, keeps a concurrent
-read-only `sqlite3 orchestrator.db` inspection working and leaves WAL alone. Who holds
+A separate lock file, rather than locking `calandria.db` itself, keeps a concurrent
+read-only `sqlite3 calandria.db` inspection working and leaves WAL alone. Who holds
 it is a best-effort JSON sidecar read only to write a good error message — it never
 decides ownership, so one left by a hard kill can't wedge anything.
 

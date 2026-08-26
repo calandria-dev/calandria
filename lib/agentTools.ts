@@ -1,4 +1,4 @@
-// Shared implementations of the orchestrator's agent-facing tools
+// Shared implementations of Calandria's agent-facing tools
 // (suggest_task / list_tasks / get_task / update_task / withdraw_suggestion /
 //  list_groups / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
@@ -8,7 +8,7 @@
 //
 // The tool *definitions* (names/descriptions/params) live in lib/agentToolDefs.mjs;
 // this file is the behaviour behind them. Both are deliberately split so the
-// plain-Node bridge (scripts/orch-mcp.mjs) can import the defs without pulling in
+// plain-Node bridge (scripts/calandria-mcp.mjs) can import the defs without pulling in
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
@@ -539,7 +539,7 @@ export function isInertSuggestion(t: Task): boolean {
  *
  * `caller` is the session's own task and is TRUSTED — it never comes from the
  * model. The Claude driver closes over it; the bridge's endpoint reads it from
- * the env-injected ORCH_TASK_ID. `targetRef` is the opposite: the id the MODEL
+ * the env-injected CALANDRIA_TASK_ID. `targetRef` is the opposite: the id the MODEL
  * named, or undefined for "my own row". Everything that decides whether that id
  * may be written lives here, so the in-process server and the HTTP endpoint
  * behind the stdio bridge cannot drift into two different policies.

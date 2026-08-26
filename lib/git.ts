@@ -12,8 +12,8 @@ import { withRepoLock } from "./repoLock";
 
 const run = promisify(execFile);
 
-// Worktrees live OUTSIDE the orchestrator project (ORCH_WORKTREES_DIR, default
-// ~/.agent-orchestrator/worktrees), keyed by task id. Each is a real git
+// Worktrees live OUTSIDE the Calandria project (CALANDRIA_WORKTREES_DIR, default
+// ~/.calandria/worktrees), keyed by task id. Each is a real git
 // worktree of the *project's* repo, so a task gets an isolated checkout +
 // branch and parallel tasks never collide. Keeping them out of the project
 // root is essential: nested checkouts under the Next app would be swept up by
@@ -62,7 +62,22 @@ async function hasCommit(repoPath: string): Promise<boolean> {
   }
 }
 
-export const branchForTask = (taskId: string) => `orch/${taskId}`;
+export const branchForTask = (taskId: string) => `calandria/${taskId}`;
+
+// Fallback committer identity, used only when the user has none configured.
+const FALLBACK_IDENTITY = ["-c", "user.name=Calandria", "-c", "user.email=calandria@local"];
+
+/**
+ * The message for a commit the app makes on the user's behalf. Every one carries
+ * the task id so a merge on `main` traces back to the session that produced it.
+ * Lives here so the five routes that commit can't drift apart.
+ */
+export const taskCommitMessage = (task: { id: string; title: string }) =>
+  `${task.title} (calandria task ${task.id})`;
+
+/** The message for the commit that syncs a project's base branch into a task. */
+export const syncCommitMessage = (project: { branch: string }, task: { id: string; title: string }) =>
+  `Sync ${project.branch} into ${taskCommitMessage(task)}`;
 
 // Commit whatever is currently in the repo as the project baseline. Writes a
 // sensible default .gitignore first (so a base commit doesn't swallow
@@ -71,11 +86,11 @@ async function baseCommit(repoPath: string): Promise<void> {
   const gi = path.join(repoPath, ".gitignore");
   if (!fs.existsSync(gi)) fs.writeFileSync(gi, "node_modules/\n.next/\ndist/\nbuild/\n.DS_Store\n*.log\n");
   await git(repoPath, ["add", "-A"]);
-  const args = ["commit", "--allow-empty", "-m", "Initial project state (orchestrator)", "--no-verify"];
+  const args = ["commit", "--allow-empty", "-m", "Initial project state (calandria)", "--no-verify"];
   try {
     await git(repoPath, args);
   } catch {
-    await git(repoPath, ["-c", "user.name=Orchestrator", "-c", "user.email=orchestrator@local", ...args]);
+    await git(repoPath, [...FALLBACK_IDENTITY, ...args]);
   }
 }
 
@@ -215,14 +230,14 @@ export interface FetchOutcome {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchFetch: { last: Map<string, number>; inflight: Map<string, Promise<FetchOutcome>> } | undefined;
+  var __calandriaFetch: { last: Map<string, number>; inflight: Map<string, Promise<FetchOutcome>> } | undefined;
 }
 
 // Same globalThis pattern as lib/events.ts / lib/abort.ts, so dev HMR doesn't
 // reset the cooldown and turn every reload into a fetch storm.
 function fetchState() {
-  if (!global.__orchFetch) global.__orchFetch = { last: new Map(), inflight: new Map() };
-  return global.__orchFetch;
+  if (!global.__calandriaFetch) global.__calandriaFetch = { last: new Map(), inflight: new Map() };
+  return global.__calandriaFetch;
 }
 
 /**
@@ -542,7 +557,7 @@ async function ensureWorktreeLocked(
   baseBranch?: string
 ): Promise<{ path: string; branch: string; baseSha: string } | null> {
   // Greenfield (non-git) or commitless repo: initialize it so the task can be
-  // isolated. Without this, every orchestrator-created project — which starts
+  // isolated. Without this, every Calandria-created project — which starts
   // as a bare folder — would silently skip isolation and have nothing to diff.
   if (!(await isGitRepo(repoPath))) await initRepo(repoPath);
   else if (!(await hasCommit(repoPath))) await baseCommit(repoPath);
@@ -1002,16 +1017,7 @@ export async function commitWorktree(worktreePath: string, message: string): Pro
     await git(worktreePath, ["commit", "-m", message, "--no-verify"]);
   } catch {
     // No committer identity configured — commit with a local fallback.
-    await git(worktreePath, [
-      "-c",
-      "user.name=Orchestrator",
-      "-c",
-      "user.email=orchestrator@local",
-      "commit",
-      "-m",
-      message,
-      "--no-verify",
-    ]);
+    await git(worktreePath, [...FALLBACK_IDENTITY, "commit", "-m", message, "--no-verify"]);
   }
   return true;
 }
@@ -1220,7 +1226,7 @@ async function mergeViaTree(input: {
       commit = await git(repoPath, args);
     } catch {
       // No committer identity configured — same fallback as commitWorktree.
-      commit = await git(repoPath, ["-c", "user.name=Orchestrator", "-c", "user.email=orchestrator@local", ...args]);
+      commit = await git(repoPath, [...FALLBACK_IDENTITY, ...args]);
     }
     // Passing the old tip makes the update atomic: if anything moved the branch
     // since we read it, git refuses instead of silently discarding that move.
@@ -1463,14 +1469,30 @@ export async function mergeTask(input: {
 // parallel tasks each get their own marker and never collide on the shared ref
 // store. See `abortWorktreeMerge` for the full lifecycle (set here → cleared on
 // abort or a successful `completeWorktreeMerge`).
-const MERGE_ABORT_REF = "refs/worktree/orch-merge-abort";
+const MERGE_ABORT_REF = "refs/worktree/calandria-merge-abort";
+// A merge prepared before the rename recorded its marker under the old name. A
+// paused merge lives in the worktree, not the DB, so it can outlive a deploy —
+// aborting has to still find it. Read (and cleared) as well as the new name;
+// only ever written under the new one.
+const LEGACY_MERGE_ABORT_REF = "refs/worktree/orch-merge-abort";
 
 async function setMergeAbortMarker(worktreePath: string): Promise<void> {
   await git(worktreePath, ["update-ref", MERGE_ABORT_REF, "HEAD"]).catch(() => {});
 }
 
+/** The recorded pre-merge tip, from either ref name; "" when there's no marker. */
+async function readMergeAbortMarker(worktreePath: string): Promise<string> {
+  for (const ref of [MERGE_ABORT_REF, LEGACY_MERGE_ABORT_REF]) {
+    const sha = (await git(worktreePath, ["rev-parse", "-q", "--verify", ref]).catch(() => "")).trim();
+    if (sha) return sha;
+  }
+  return "";
+}
+
 async function clearMergeAbortMarker(worktreePath: string): Promise<void> {
-  await git(worktreePath, ["update-ref", "-d", MERGE_ABORT_REF]).catch(() => {});
+  for (const ref of [MERGE_ABORT_REF, LEGACY_MERGE_ABORT_REF]) {
+    await git(worktreePath, ["update-ref", "-d", ref]).catch(() => {});
+  }
 }
 
 /** Conflict-resolution state of a task's worktree (survives reloads). */
@@ -1632,7 +1654,7 @@ export async function abortWorktreeMerge(worktreePath: string): Promise<void> {
   // its pre-merge tip. Guessing from HEAD's parent count (the old behaviour) also
   // matched an ordinary sync merge and would `reset --hard` away that commit AND
   // any uncommitted work — real data loss.
-  const marker = (await git(worktreePath, ["rev-parse", "-q", "--verify", MERGE_ABORT_REF]).catch(() => "")).trim();
+  const marker = await readMergeAbortMarker(worktreePath);
   if (!marker) return; // nothing the app started to abort → no-op
 
   try {
@@ -1805,10 +1827,7 @@ export async function completeWorktreeMerge(input: {
     try {
       await git(worktreePath, ["commit", "--no-edit", "--no-verify"]);
     } catch {
-      await git(worktreePath, [
-        "-c", "user.name=Orchestrator", "-c", "user.email=orchestrator@local",
-        "commit", "--no-edit", "--no-verify",
-      ]);
+      await git(worktreePath, [...FALLBACK_IDENTITY, "commit", "--no-edit", "--no-verify"]);
     }
   }
 

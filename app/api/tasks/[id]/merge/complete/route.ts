@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
-import { completeWorktreeMerge } from "@/lib/git";
+import { completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
       baseBranch: project.branch,
-      message: `${task.title} (orchestrator task ${task.id})`,
+      message: taskCommitMessage(task),
       stashDirty,
     });
 

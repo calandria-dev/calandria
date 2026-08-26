@@ -1,8 +1,8 @@
 // Hermetic run environment for the Playwright suite. One temp root per run —
 // created by the first process that loads this module (Playwright's main
-// process) and shared with worker processes via ORCH_E2E_ROOT, which children
+// process) and shared with worker processes via CALANDRIA_E2E_ROOT, which children
 // inherit. Everything the app persists (SQLite, worktrees, cloned/seeded repos)
-// lands under this root, so an e2e run never touches ~/.zen-orchestrator or the
+// lands under this root, so an e2e run never touches ~/.calandria or the
 // developer's real projects, and every run starts from a truly fresh instance
 // (which is what makes the onboarding spec deterministic).
 
@@ -11,10 +11,10 @@ import os from "node:os";
 import path from "node:path";
 
 function ensureRoot(): string {
-  let root = process.env.ORCH_E2E_ROOT;
+  let root = process.env.CALANDRIA_E2E_ROOT;
   if (!root) {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "orch-e2e-"));
-    process.env.ORCH_E2E_ROOT = root;
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-e2e-"));
+    process.env.CALANDRIA_E2E_ROOT = root;
   }
   for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
@@ -29,7 +29,7 @@ function ensureRoot(): string {
       gitconfig,
       [
         "[user]",
-        "\tname = Orchestrator E2E",
+        "\tname = Calandria E2E",
         "\temail = e2e@example.com",
         "[init]",
         "\tdefaultBranch = main",
@@ -45,7 +45,7 @@ function ensureRoot(): string {
 }
 
 export const E2E_ROOT = ensureRoot();
-export const E2E_PORT = Number(process.env.ORCH_E2E_PORT || 4711);
+export const E2E_PORT = Number(process.env.CALANDRIA_E2E_PORT || 4711);
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
 export const FIXTURES_DIR = path.join(E2E_ROOT, "fixtures");
 
@@ -61,14 +61,14 @@ export const SERVER_ENV: Record<string, string> = {
   HOSTNAME: "127.0.0.1",
   PTY_PORT: String(E2E_PORT + 1),
   PTY_HOST: "127.0.0.1",
-  ORCH_DB_DIR: path.join(E2E_ROOT, "db"),
-  ORCH_WORKTREES_DIR: path.join(E2E_ROOT, "worktrees"),
-  ORCH_PROJECTS_DIR: path.join(E2E_ROOT, "projects"),
+  CALANDRIA_DB_DIR: path.join(E2E_ROOT, "db"),
+  CALANDRIA_WORKTREES_DIR: path.join(E2E_ROOT, "worktrees"),
+  CALANDRIA_PROJECTS_DIR: path.join(E2E_ROOT, "projects"),
   // Keep the managed-services port block clear of the app/pty ports.
-  ORCH_SERVICE_PORT_BASE: String(E2E_PORT + 100),
+  CALANDRIA_SERVICE_PORT_BASE: String(E2E_PORT + 100),
   // Registers the deterministic mock agent (lib/agents/mock/driver.ts) so
   // onboarding and turns run without any real agent CLI or login.
-  ORCH_E2E_MOCK_AGENT: "1",
+  CALANDRIA_E2E_MOCK_AGENT: "1",
   // Hermetic Claude config, same reasoning as tests/setup.ts: the server reads
   // this dir for the developer's real settings.json (model catalog/provider)
   // and .credentials.json — which the plan-usage meter would otherwise use to

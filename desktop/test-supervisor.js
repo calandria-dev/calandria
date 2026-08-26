@@ -150,7 +150,7 @@ function hold(port) {
   });
 
   await test("waitForReady rejects a 200 that isn't the app (a port mix-up)", async () => {
-    const impostor = require("node:http").createServer((_q, r) => r.writeHead(200).end("orchestrator pty-server"));
+    const impostor = require("node:http").createServer((_q, r) => r.writeHead(200).end("calandria pty-server"));
     await new Promise((r) => impostor.listen(45090, "127.0.0.1", r));
     try {
       await assert.rejects(() => waitForReady(45090, { timeoutMs: 500, intervalMs: 100 }), /not as the app/);

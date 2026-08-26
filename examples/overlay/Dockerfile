@@ -4,12 +4,12 @@
 # point, not something to deploy as-is — see README.md in this directory.
 #
 # THE ONE CONSTRAINT THAT SHAPES THIS FILE
-# The base image declares `VOLUME ["/home/orch"]` and runs as the non-root
-# `orch` user (uid 1000). Docker discards anything a later build step writes
+# The base image declares `VOLUME ["/home/calandria"]` and runs as the non-root
+# `calandria` user (uid 1000). Docker discards anything a later build step writes
 # under a declared volume path, and a freshly created volume is seeded from
 # whatever's at that path in the image at build time — so installs belong
 # under a rootfs path (/usr/local, /opt), never $HOME, and any root-owned
-# leftovers left under /home/orch become permanently unwritable for uid 1000
+# leftovers left under /home/calandria become permanently unwritable for uid 1000
 # once a real volume mounts. Install as root, reassert ownership, then drop
 # back to the base image's user as the last step.
 
@@ -40,9 +40,9 @@ RUN apt-get update \
 # env vars at `docker compose up` time instead.
 COPY gitconfig.example /etc/gitconfig
 
-# Everything above ran as root. /home/orch is the volume skeleton: reassert
+# Everything above ran as root. /home/calandria is the volume skeleton: reassert
 # ownership before dropping back, or a fresh volume inherits unwritable
 # root-owned files.
-RUN chown -R orch:orch /home/orch
+RUN chown -R calandria:calandria /home/calandria
 
-USER orch
+USER calandria

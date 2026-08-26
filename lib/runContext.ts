@@ -47,10 +47,10 @@ export const SCHEDULED_RUN_CONTEXT: RunContext = { origin: "schedule", interacti
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchRunContexts: Map<string, RunContext> | undefined;
+  var __calandriaRunContexts: Map<string, RunContext> | undefined;
 }
 
-const contexts = (): Map<string, RunContext> => (global.__orchRunContexts ??= new Map());
+const contexts = (): Map<string, RunContext> => (global.__calandriaRunContexts ??= new Map());
 
 export function setRunContext(taskId: string, ctx: RunContext): void {
   contexts().set(taskId, ctx);

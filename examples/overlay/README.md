@@ -14,19 +14,19 @@ rootfs and survive a home-volume reset.
 
 ## The one constraint
 
-The base image declares `VOLUME ["/home/orch"]`. Docker discards anything a later build
+The base image declares `VOLUME ["/home/calandria"]`. Docker discards anything a later build
 step writes under a declared volume path, and a freshly created volume is seeded from
 whatever's there at build time — so an installer that defaults to `$HOME` needs
 redirecting to a rootfs path (`/usr/local`, `/opt`), and any root-owned leftovers under
-`/home/orch` at the end of the build become permanently unwritable for uid 1000. That's
-why `Dockerfile` here ends with `chown -R orch:orch /home/orch` before dropping back to
-`USER orch`.
+`/home/calandria` at the end of the build become permanently unwritable for uid 1000. That's
+why `Dockerfile` here ends with `chown -R calandria:calandria /home/calandria` before dropping back to
+`USER calandria`.
 
 ## Build and run
 
 ```bash
 cd examples/overlay
-docker compose -p orch-example up -d --build
+docker compose -p calandria-example up -d --build
 # open http://127.0.0.1:10001
 ```
 

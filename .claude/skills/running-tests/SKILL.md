@@ -37,13 +37,13 @@ npm run test:docker -- -- tests/merge.test.ts -t "conflicts"  # ✅ reaches vite
 ## node_modules is a shared named volume
 
 The checkout is bind-mounted at `/work`; `node_modules` is the named volume
-`orch-test-node-modules`, reinstalled only when `package-lock.json` changes. That
+`calandria-test-node-modules`, reinstalled only when `package-lock.json` changes. That
 install is a one-time cost every later run — and every other worktree — inherits.
 
 A worktree having no `node_modules` of its own is **normal**, not something to
-fix. `docker volume rm orch-test-node-modules` only to force a clean install (a
+fix. `docker volume rm calandria-test-node-modules` only to force a clean install (a
 wedged tree, or proving a dependency change from scratch); it costs a full
-`npm ci` on the next run of every worktree. `ORCH_TEST_REBUILD=1` after editing
+`npm ci` on the next run of every worktree. `CALANDRIA_TEST_REBUILD=1` after editing
 anything under `docker/test/` — the wrapper skips the build when the image tag
 already exists.
 
@@ -87,6 +87,6 @@ discount a test failure once the wrapper has started.**
 
 `e2e/README.md` is the source of truth for the container recipe and its reasoning
 — why a `node:22` base rather than the Playwright image, the browser version pin,
-`ORCH_TEST_USER` on a daemon that doesn't remap bind mounts — plus the mock
+`CALANDRIA_TEST_USER` on a daemon that doesn't remap bind mounts — plus the mock
 agent's turn directives and the spec inventory. Read it before changing the
 harness or adding e2e coverage.

@@ -5,7 +5,7 @@ import { listTasksForAgent, resolveGroupRef, resolveTargetProject } from "@/lib/
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `list_tasks` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs) — the same board the Claude driver serves in-process.
+// (scripts/calandria-mcp.mjs) — the same board the Claude driver serves in-process.
 // Auth is the per-instance SERVICE_TOKEN (middleware.ts, isAgentToolPath).
 //
 // `projectId` is where the SESSION runs; the optional `project` names a

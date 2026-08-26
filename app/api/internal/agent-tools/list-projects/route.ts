@@ -4,7 +4,7 @@ import { listProjectsForAgent } from "@/lib/agentTools";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `list_projects` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs) — the same list the Claude driver serves in-process.
+// (scripts/calandria-mcp.mjs) — the same list the Claude driver serves in-process.
 // Auth is the per-instance SERVICE_TOKEN (middleware.ts, isAgentToolPath).
 //
 // POST rather than GET only because the bridge speaks one shape to every

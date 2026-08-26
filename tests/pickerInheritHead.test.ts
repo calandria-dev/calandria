@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { INHERIT_LABEL, modelOptions, permissionOptions, reasoningOptions } from "@/app/orchestrator/types";
+import { INHERIT_LABEL, modelOptions, permissionOptions, reasoningOptions } from "@/app/shell/types";
 import { getCapabilities, listAgentIds } from "@/lib/agents/capabilities";
 
 // The synthetic head every run-control picker is built from (withInherit() in
-// app/orchestrator/types.ts) versus the provider's own option labels, which are
+// app/shell/types.ts) versus the provider's own option labels, which are
 // deliberately the driver's native spellings — Anthropic's `--permission-mode`
 // strings among them, one of which is literally "default".
 //

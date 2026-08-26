@@ -36,7 +36,7 @@ const SCHEDULER_PATH = "/api/instance/scheduler";
 // drains in-flight turns before the process exits.
 const DRAIN_PATH = "/api/instance/drain";
 
-// Read-only: the fleet-wide ORCH_FLEET_TOKEN is honored here (see cf-access.mjs)
+// Read-only: the fleet-wide CALANDRIA_FLEET_TOKEN is honored here (see cf-access.mjs)
 // because nothing reachable this way can mutate instance state.
 function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
   if (pathname === VERSION_PATH || pathname === USAGE_PATH) {
@@ -54,7 +54,7 @@ function isInstanceOnlyServiceTokenPath(pathname: string): boolean {
   return pathname === SERVICES_RESTORE_PATH || pathname === SCHEDULER_PATH || pathname === DRAIN_PATH;
 }
 
-// The internal endpoints the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the
+// The internal endpoints the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
 // agent tool calls to. No Access JWT exists in that server-to-server call, so it
 // presents the per-instance SERVICE_TOKEN instead. These MUTATE, so they demand
 // the strict instance token (never the read-only fleet token) — see cf-access.mjs.

@@ -1,5 +1,5 @@
 // Where a notification is MINTED. Every channel — today the browser
-// (app/orchestrator/useNotifications.ts), next a webhook — receives what this
+// (app/shell/useNotifications.ts), next a webhook — receives what this
 // file composed, so the policy lives here exactly once: which switches apply,
 // which rows stay quiet, how a repeat is collapsed, and how the text reads.
 //
@@ -39,12 +39,12 @@ const DEDUPE_MS = 10_000;
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchNotifySeen: Map<string, number> | undefined;
+  var __calandriaNotifySeen: Map<string, number> | undefined;
 }
 
 function seen(): Map<string, number> {
-  if (!global.__orchNotifySeen) global.__orchNotifySeen = new Map();
-  return global.__orchNotifySeen;
+  if (!global.__calandriaNotifySeen) global.__calandriaNotifySeen = new Map();
+  return global.__calandriaNotifySeen;
 }
 
 /** Was this exact payload id delivered inside the window? Reads, never records. */

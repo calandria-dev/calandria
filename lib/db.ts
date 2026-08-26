@@ -2,18 +2,19 @@ import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 import path from "node:path";
 import fs from "node:fs";
-import { DB_DIR, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
+import { DB_DIR, DB_PATH, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
 import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
 
-// Single shared connection. Stored outside the repo (ORCH_DB_DIR, default
-// ~/.zen-orchestrator) so `git clean`/re-clone can't wipe it.
-const DB_PATH = path.join(DB_DIR, "orchestrator.db");
+// Single shared connection. Stored outside the repo (CALANDRIA_DB_DIR, default
+// ~/.calandria) so `git clean`/re-clone can't wipe it. The file is calandria.db
+// on a fresh install and a pre-rename orchestrator.db wherever one already
+// exists — resolved once in lib/storage.mjs, never moved. See lib/config.ts.
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchDb: Database.Database | undefined;
+  var __calandriaDb: Database.Database | undefined;
 }
 
 export function init(db: Database.Database) {
@@ -550,7 +551,7 @@ function recoverFromCrash(db: Database.Database) {
  *
  * Deliberately here rather than in startScheduler(): this runs once per process
  * before anything can read the ledger, whereas startScheduler() is skipped
- * entirely when ORCH_SCHEDULER is off — the one configuration where nothing
+ * entirely when CALANDRIA_SCHEDULER is off — the one configuration where nothing
  * else would ever clear the wedge, while the API still serves it.
  *
  * Exported so tests/scheduleStore.test.ts can drive it directly;
@@ -587,7 +588,7 @@ function ensureOnboardingFlag(db: Database.Database) {
   if (inUse) db.prepare("INSERT INTO settings (key, value) VALUES ('onboarding_complete', '1')").run();
 }
 
-// Add columns introduced after a DB was first created (older orchestrator.db files).
+// Add columns introduced after a DB was first created (older database files).
 export function migrate(db: Database.Database) {
   const cols = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
   const add = (name: string, def: string) => {
@@ -1001,15 +1002,15 @@ Small on purpose, so every change is easy to read and merge.
 };
 
 export function getDb(): Database.Database {
-  if (!global.__orchDb) {
+  if (!global.__calandriaDb) {
     // Create the app-data home on first run (idempotent).
     fs.mkdirSync(DB_DIR, { recursive: true });
     const db = new Database(DB_PATH);
     init(db);
-    global.__orchDb = db;
+    global.__calandriaDb = db;
     warnIfUnowned();
   }
-  return global.__orchDb;
+  return global.__calandriaDb;
 }
 
 /**
@@ -1019,7 +1020,7 @@ export function getDb(): Database.Database {
  * second writer the lock exists to stop. It gets a warning rather than a throw:
  * the same code path is how `next build` and the test suite legitimately open a
  * database they should never claim, and failing those closed would cost more
- * than this catches. Skipped entirely under the ORCH_DB_LOCK=off escape hatch,
+ * than this catches. Skipped entirely under the CALANDRIA_DB_LOCK=off escape hatch,
  * which is a deliberate choice to run unguarded.
  */
 function warnIfUnowned() {

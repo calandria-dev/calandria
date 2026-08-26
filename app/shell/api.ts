@@ -1,4 +1,4 @@
-// Tiny fetch helpers used throughout the orchestrator client.
+// Tiny fetch helpers used throughout the Calandria client.
 
 // Routes report failures as JSON `{ error }` — unwrap that so surfaced messages
 // read "worktree is dirty", not a raw JSON blob (transcript system errors, modal

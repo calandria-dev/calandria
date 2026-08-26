@@ -4,7 +4,7 @@ import { getTaskForAgent } from "@/lib/agentTools";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `get_task` tool for the stdio MCP bridge
-// (scripts/orch-mcp.mjs). Auth is the per-instance SERVICE_TOKEN (middleware.ts,
+// (scripts/calandria-mcp.mjs). Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //
 // `taskId` is the calling session's own task, which is both the default target

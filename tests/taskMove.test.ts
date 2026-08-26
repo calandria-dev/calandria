@@ -71,7 +71,7 @@ describe("moveTask (store)", () => {
 
   it.each([
     ["a worktree on record", { worktree_path: "/tmp/wt" }],
-    ["a work branch on record", { work_branch: "orch/abc" }],
+    ["a work branch on record", { work_branch: "calandria/abc" }],
     ["a base sha on record", { base_sha: "deadbeef" }],
     ["a running turn", { running: 1 }],
   ])("refuses a task with %s", (_label, patch) => {

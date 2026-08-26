@@ -21,12 +21,12 @@
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchTaskLocks: Map<string, Promise<void>> | undefined;
+  var __calandriaTaskLocks: Map<string, Promise<void>> | undefined;
 }
 
 function locks(): Map<string, Promise<void>> {
-  if (!global.__orchTaskLocks) global.__orchTaskLocks = new Map();
-  return global.__orchTaskLocks;
+  if (!global.__calandriaTaskLocks) global.__calandriaTaskLocks = new Map();
+  return global.__calandriaTaskLocks;
 }
 
 /**

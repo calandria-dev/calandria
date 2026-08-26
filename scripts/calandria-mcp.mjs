@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
- * future one) the orchestrator's task tools (suggest_task / list_tasks /
+ * future one) Calandria's task tools (suggest_task / list_tasks /
  * get_task / update_task / withdraw_suggestion), its runbook tools
  * (create_runbook / list_runbooks / update_runbook), list_projects,
  * expose_service and ask_user.
@@ -14,10 +14,10 @@
  *
  * Per-turn wiring comes from env, injected by the driver when it registers this
  * server (lib/agents/codex/driver.ts):
- *   ORCH_TASK_ID     the task this turn belongs to
- *   ORCH_PROJECT_ID  the owning project (tasks/services are created under it)
- *   ORCH_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
- *   SERVICE_TOKEN    the per-instance secret the internal endpoints require
+ *   CALANDRIA_TASK_ID     the task this turn belongs to
+ *   CALANDRIA_PROJECT_ID  the owning project (tasks/services are created under it)
+ *   CALANDRIA_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
+ *   SERVICE_TOKEN         the per-instance secret the internal endpoints require
  *
  * Tool names / descriptions / param docs come from lib/agentToolDefs.mjs so this
  * bridge and the in-process server never drift. Plain .mjs: this file AND
@@ -28,9 +28,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_GROUPS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 
-const TASK_ID = process.env.ORCH_TASK_ID || "";
-const PROJECT_ID = process.env.ORCH_PROJECT_ID || "";
-const BASE_URL = (process.env.ORCH_BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
+const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
+const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
+const BASE_URL = (process.env.CALANDRIA_BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
 const SERVICE_TOKEN = process.env.SERVICE_TOKEN || "";
 
 // Titles created this turn → their task ids, so `blocked_by` can reference an
@@ -62,7 +62,7 @@ async function callInternal(path, payload) {
       body: JSON.stringify({ projectId: PROJECT_ID, taskId: TASK_ID, ...payload }),
     });
   } catch (e) {
-    throw new Error(`orchestrator unreachable at ${BASE_URL}: ${e?.message || e}`);
+    throw new Error(`Calandria unreachable at ${BASE_URL}: ${e?.message || e}`);
   }
   let data = null;
   try {
@@ -70,11 +70,11 @@ async function callInternal(path, payload) {
   } catch {
     /* non-JSON error body (e.g. a 403 text) — handled below */
   }
-  if (!res.ok) throw new Error((data && data.error) || `orchestrator returned ${res.status}`);
+  if (!res.ok) throw new Error((data && data.error) || `Calandria returned ${res.status}`);
   return data;
 }
 
-const server = new McpServer({ name: "orchestrator", version: "1.0.0" });
+const server = new McpServer({ name: "calandria", version: "1.0.0" });
 
 server.registerTool(
   EXPOSE_SERVICE.name,
@@ -175,7 +175,7 @@ server.registerTool(
   { description: GET_TASK.description, inputSchema: { task: z.string().optional().describe(GET_TASK.params.task) } },
   async ({ task }) => {
     // Omitted `task` means "my own", which only the server can resolve — the
-    // endpoint falls back to ORCH_TASK_ID, sent on every call by callInternal.
+    // endpoint falls back to CALANDRIA_TASK_ID, sent on every call by callInternal.
     const data = await callInternal("get-task", { task });
     return { content: [{ type: "text", text: JSON.stringify(data.task, null, 2) }] };
   }
@@ -202,7 +202,7 @@ server.registerTool(
   async ({ task, title, description, priority, status, blocked_by, group }) => {
     // `task` is the target the MODEL chose, and it is forwarded unvalidated —
     // this bridge deliberately holds no policy. The endpoint decides what may
-    // be written, against ORCH_TASK_ID (sent by callInternal as the trusted
+    // be written, against CALANDRIA_TASK_ID (sent by callInternal as the trusted
     // caller identity, which nothing here can override).
     const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, group });
     return { content: [{ type: "text", text: data.text }] };
@@ -221,7 +221,7 @@ server.registerTool(
   async ({ task, reason }) => {
     // Both values are the MODEL's, forwarded unvalidated — the bridge holds no
     // policy here either. The endpoint decides whether that target is an inert
-    // tray suggestion, against ORCH_TASK_ID as the trusted caller identity.
+    // tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("withdraw-suggestion", { task, reason });
     return { content: [{ type: "text", text: data.text }] };
   }

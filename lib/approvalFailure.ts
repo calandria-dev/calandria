@@ -63,7 +63,7 @@ export function isApprovalBlocked(msg: string | null | undefined): boolean {
 }
 
 /** Appended to the persisted error line when a turn is blocked by the approval
- *  policy. The UI (app/orchestrator/Transcript.tsx) matches this exact string
+ *  policy. The UI (app/shell/Transcript.tsx) matches this exact string
  *  to render the "Retry" button — the driver has already switched future turns
  *  to the exec-compatible "on-request" policy by the time anyone reads this, so
  *  resending the same message is the recovery. Persisted message content is the

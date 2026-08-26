@@ -6,7 +6,7 @@ import type { Priority } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// Internal endpoint the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the
+// Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
 // `suggest_task` tool call to, so non-Claude agents (Codex, future CLIs) get the
 // same tool the Claude driver mounts in-process. Auth is the per-instance
 // SERVICE_TOKEN, enforced in middleware.ts (isAgentToolPath). The bridge has

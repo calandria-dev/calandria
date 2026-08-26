@@ -17,8 +17,8 @@ import { FIXTURES_DIR, GIT_ENV } from "./env";
  */
 export async function gotoApp(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    localStorage.setItem("orch_agent_nudge_dismissed", "1");
-    localStorage.setItem("orch:welcomeCoach:dismissed", "1");
+    localStorage.setItem("calandria_agent_nudge_dismissed", "1");
+    localStorage.setItem("calandria:welcomeCoach:dismissed", "1");
   });
   await page.goto("/");
 }

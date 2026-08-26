@@ -6,7 +6,7 @@
 // encrypt.ts, both pinned by tests (the RFC's own vector for the latter), and
 // that is smaller than the dependency tree it would replace.
 //
-// Key storage: VAPID_PRIVATE_KEY (env) wins; otherwise `<ORCH_DB_DIR>/vapid.json`,
+// Key storage: VAPID_PRIVATE_KEY (env) wins; otherwise `<CALANDRIA_DB_DIR>/vapid.json`,
 // minted on first use. It sits beside the database on purpose — a subscription
 // is bound to the key it was created under (the push service rejects a push
 // signed by any other), so the key must travel with the subscriptions or every
@@ -47,7 +47,7 @@ export function generateVapidKeys(): VapidKeys {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchVapid: { keys: VapidKeys; source: "env" | "file" } | undefined;
+  var __calandriaVapid: { keys: VapidKeys; source: "env" | "file" } | undefined;
 }
 
 function validScalar(s: string): boolean {
@@ -59,11 +59,11 @@ function validScalar(s: string): boolean {
  * Cached on globalThis so the file is read once per process (and survives HMR).
  */
 export function vapidKeys(): VapidKeys {
-  if (global.__orchVapid) return global.__orchVapid.keys;
+  if (global.__calandriaVapid) return global.__calandriaVapid.keys;
   if (VAPID_PRIVATE_KEY) {
     if (!validScalar(VAPID_PRIVATE_KEY)) throw new Error("VAPID_PRIVATE_KEY is not a base64url-encoded 32-byte P-256 private key");
     const keys = { privateKey: VAPID_PRIVATE_KEY, publicKey: publicKeyFor(VAPID_PRIVATE_KEY) };
-    global.__orchVapid = { keys, source: "env" };
+    global.__calandriaVapid = { keys, source: "env" };
     return keys;
   }
   const file = path.join(DB_DIR, KEY_FILE);
@@ -74,7 +74,7 @@ export function vapidKeys(): VapidKeys {
       // with a mismatched pair would sign with one key and advertise another,
       // and every subscription made under the advertised one would be rejected.
       const keys = { privateKey: parsed.privateKey, publicKey: publicKeyFor(parsed.privateKey) };
-      global.__orchVapid = { keys, source: "file" };
+      global.__calandriaVapid = { keys, source: "file" };
       return keys;
     }
     console.warn(`[push] ${file} is unusable; minting a new VAPID key (existing subscriptions will stop working)`);
@@ -84,13 +84,13 @@ export function vapidKeys(): VapidKeys {
   const keys = generateVapidKeys();
   fs.mkdirSync(DB_DIR, { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ ...keys, createdAt: new Date().toISOString() }, null, 2) + "\n", { mode: 0o600 });
-  global.__orchVapid = { keys, source: "file" };
+  global.__calandriaVapid = { keys, source: "file" };
   return keys;
 }
 
 /** Test seam: forget the cached pair so the next call re-reads (or re-mints). */
 export function resetVapidCache(): void {
-  global.__orchVapid = undefined;
+  global.__calandriaVapid = undefined;
 }
 
 function privateKeyObject(keys: VapidKeys): KeyObject {

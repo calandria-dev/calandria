@@ -58,7 +58,7 @@ node test-real-boot.js                                    # needs a repo-root bu
 **The server runs under a real `node`, never inside Electron.** Two reasons, both
 measured in `docs/DESKTOP_APP.md`: `better-sqlite3`'s prebuild will not load into
 Electron's V8 ABI, and `lib/agents/codex/driver.ts` spawns the MCP tool bridge as
-`process.execPath scripts/orch-mcp.mjs` with a closed env — under an
+`process.execPath scripts/calandria-mcp.mjs` with a closed env — under an
 Electron-hosted server that would launch a GUI process on every Codex turn
 instead of the bridge.
 

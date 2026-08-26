@@ -129,7 +129,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
         CF_ACCESS_AUD: "test-aud",
         // Deliberately empty — the documented default, and the whole point.
         PUBLIC_BASE_URL: "",
-        ORCH_ALLOWED_ORIGINS: "",
+        CALANDRIA_ALLOWED_ORIGINS: "",
       },
       stdio: ["ignore", "ignore", "pipe"],
       detached: true,
@@ -158,7 +158,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
     // THE regression. Same-origin against a hostname in no allowlist now gets
     // past the origin gate and fails on the missing assertion instead — which
     // is the check that should be deciding in this mode.
-    const reason = await refusalReason("https://orch.example.com", "orch.example.com");
+    const reason = await refusalReason("https://calandria.example.com", "calandria.example.com");
     expect(reason).toContain("rejected:401");
     expect(reason).toContain("no valid Access assertion");
     expect(reason).not.toContain("does not match host");
@@ -167,14 +167,14 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
   it("still refuses a cross-site handshake before it ever looks at the JWT", async () => {
     // Cross-site WebSocket hijacking: the Access cookie is SameSite=None, so a
     // valid assertion proves identity but not intent. Origin is what proves it.
-    const reason = await refusalReason("https://evil.example", "orch.example.com");
+    const reason = await refusalReason("https://evil.example", "calandria.example.com");
     expect(reason).toContain("rejected:401");
     expect(reason).toContain("does not match host");
     expect(reason).not.toContain("no valid Access assertion");
   });
 
   it("still refuses a handshake with no Origin at all", async () => {
-    const reason = await refusalReason(undefined, "orch.example.com");
+    const reason = await refusalReason(undefined, "calandria.example.com");
     expect(reason).toContain("rejected:401");
     expect(reason).toContain("does not match host");
   });

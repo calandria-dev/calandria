@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-// Smoke test for the portable stdio MCP bridge (scripts/orch-mcp.mjs). We stand
+// Smoke test for the portable stdio MCP bridge (scripts/calandria-mcp.mjs). We stand
 // up a tiny fake "app" HTTP server that records the internal calls the bridge
 // makes and returns canned tool text, spawn the real bridge over stdio, and
 // drive it with the MCP client SDK — the same protocol Codex speaks to it.
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "orch-mcp.mjs");
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
 interface Received {
   path: string;
@@ -91,9 +91,9 @@ async function connectBridge() {
     command: process.execPath,
     args: [SCRIPT],
     env: {
-      ORCH_TASK_ID: "task-xyz",
-      ORCH_PROJECT_ID: "proj-abc",
-      ORCH_BASE_URL: baseUrl,
+      CALANDRIA_TASK_ID: "task-xyz",
+      CALANDRIA_PROJECT_ID: "proj-abc",
+      CALANDRIA_BASE_URL: baseUrl,
       SERVICE_TOKEN: "smoke-token",
       PATH: process.env.PATH || "",
     },
@@ -103,8 +103,8 @@ async function connectBridge() {
   return { client, close: () => client.close() };
 }
 
-describe("orch-mcp stdio bridge", () => {
-  it("exposes the full orchestrator tool set over stdio", async () => {
+describe("calandria-mcp stdio bridge", () => {
+  it("exposes the full calandria tool set over stdio", async () => {
     const { client, close } = await connectBridge();
     try {
       const { tools } = await client.listTools();
@@ -139,7 +139,7 @@ describe("orch-mcp stdio bridge", () => {
       const { tools } = await client.listTools();
       // `task` is the target the model picks; it is optional, so omitting it
       // still means "my own row". What is deliberately absent is `taskId` —
-      // the CALLER, which callInternal supplies from ORCH_TASK_ID. If the model
+      // the CALLER, which callInternal supplies from CALANDRIA_TASK_ID. If the model
       // could set that, naming any row would be enough to be treated as owning
       // it. Whether the named target may actually be written is the server's
       // call, proved end-to-end in tests/codexUpdateTaskPolicy.test.ts.
@@ -179,7 +179,7 @@ describe("orch-mcp stdio bridge", () => {
       });
       expect((res.content as { text: string }[])[0].text).toContain("Sweep");
       const call = calls.find((c) => c.path.endsWith("/create-runbook"))!;
-      // The caller identity the bridge supplies from ORCH_TASK_ID, not the model.
+      // The caller identity the bridge supplies from CALANDRIA_TASK_ID, not the model.
       expect(call.body.taskId).toBe("task-xyz");
     } finally {
       await close();
@@ -213,7 +213,7 @@ describe("orch-mcp stdio bridge", () => {
         required?: string[];
       };
       // `taskId` is absent for the same reason it is on update_task: the CALLER
-      // comes from ORCH_TASK_ID via callInternal, and a model that could set it
+      // comes from CALANDRIA_TASK_ID via callInternal, and a model that could set it
       // would own any row it could name.
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["reason", "task"]);
       // Both required — a retraction with no target is meaningless and one with
@@ -276,7 +276,7 @@ describe("orch-mcp stdio bridge", () => {
     const { client, close } = await connectBridge();
     try {
       const res = (await client.callTool({ name: "get_task", arguments: {} })) as { content: { text: string }[] };
-      // The bridge doesn't substitute ORCH_TASK_ID itself — it always sends it
+      // The bridge doesn't substitute CALANDRIA_TASK_ID itself — it always sends it
       // as `taskId`, and the endpoint falls back to it when `task` is absent.
       expect(calls.find((c) => c.path.endsWith("/get-task"))!.body).toMatchObject({ taskId: "task-xyz" });
       expect(JSON.parse(res.content[0].text)).toMatchObject({ id: "task-xyz", description: "my brief" });
@@ -316,7 +316,7 @@ describe("orch-mcp stdio bridge", () => {
     const { client, close } = await connectBridge();
     try {
       // The bridge holds no policy — it passes the id straight through. What it
-      // must NOT do is let that id become the caller: `taskId` stays ORCH_TASK_ID.
+      // must NOT do is let that id become the caller: `taskId` stays CALANDRIA_TASK_ID.
       await client.callTool({ name: "update_task", arguments: { task: "task-someone-else", title: "Sharpened" } });
       const call = calls.find((c) => c.path.endsWith("/update-task"))!;
       expect(call.body).toMatchObject({ taskId: "task-xyz", task: "task-someone-else", title: "Sharpened" });

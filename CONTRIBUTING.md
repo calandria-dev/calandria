@@ -63,6 +63,11 @@ on a pull request labelled `e2e` — add that label when a change touches the co
   or the relevant file under `docs/` in the same PR.
 - **Env-driven config:** a new per-instance knob is an env var with a documented default,
   added to `lib/config.ts` (or `lib/features.ts` for flags) **and** `.env.example`.
+- **Naming:** the app is Calandria — `tests/naming.test.ts` fails any new `orch`,
+  `orchestrator`, `operator` or `ORCH_` reference by file and line. If yours is genuinely
+  attribution, the deprecated `ORCH_*` alias table, a pre-rename on-disk/localStorage name,
+  or the ordinary noun for whoever runs an instance, add the file to that test's `ALLOWED`
+  map with the narrowest pattern covering the line, and a comment saying which of those.
 
 ## AI-assisted contributions
 

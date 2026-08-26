@@ -21,7 +21,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 3 | `CLAUDE_CLI_PATH` default has no `.exe`; bare `"codex"` spawned without a shell can't resolve npm's `.cmd` shim | Agent CLIs | S | Yes — no turns |
 | 4 | Six negative-PID process-group kills + a `ps`-based orphan guard in `lib/services.ts`; `detached: true` means "new console" on Windows | Process mgmt | M | Yes — services can't be stopped or reaped |
 | 5 | Path identity compared case-sensitively after `realpathSync` (`lib/git.ts:536`, `lib/repoLock.ts:73`) — NTFS is case-insensitive | Paths | S | Yes — can wrongly `rmSync` a linked worktree |
-| 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.agent-orchestrator\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
+| 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
 | 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
 | 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` on Windows kills via `taskkill /F` (unverified) | Process mgmt | S–M | Degradation, not a crash |
 | 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) | Files | S | Security downgrade |
@@ -30,7 +30,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 12 | Unit suite: `tests/setup.ts:77` pins `GIT_CONFIG_SYSTEM=/dev/null` (e2e already branches to `NUL`); pty tests force `SHELL=/bin/sh` and group-kill; services tests use `sleep 30` through `cmd.exe`; `ghBin`/`diff` tests assert exec-bit semantics | Tests | M | For CI, yes |
 | 13 | No Windows CI lane; better-sqlite3's win32 prebuild is fetched at install (network), node-pty's is vendored | Tests/CI | M | For declaring support, yes |
 | 14 | `lib/db-lock.mjs` — SQLite `BEGIN IMMEDIATE` uses `LockFileEx` byte-range locks on Windows; released on process death; semantics hold on local NTFS | File locking | — | **No change needed** |
-| 15 | `scripts/orch-mcp.mjs` bridge: launched as `process.execPath <abs path>` — already portable; `postinstall` `fix-pty.js` no-ops correctly (win32 prebuilds ship no `spawn-helper`) | Entrypoints | — | **No change needed** |
+| 15 | `scripts/calandria-mcp.mjs` bridge: launched as `process.execPath <abs path>` — already portable; `postinstall` `fix-pty.js` no-ops correctly (win32 prebuilds ship no `spawn-helper`) | Entrypoints | — | **No change needed** |
 
 Effort key: S = under a day, M = one to three days, L = a week or more. Nothing
 here is L on its own; the L is the sum plus the standing CI lane.
@@ -47,7 +47,7 @@ here is L on its own; the L is the sum plus the standing CI lane.
 - **Shell selection is the break.** `const shell = process.env.SHELL || "/bin/zsh"`
   (`pty-server.js:119`). `SHELL` is a POSIX convention and is unset in a native
   Windows environment, so every terminal session tries to spawn `/bin/zsh` and
-  ENOENTs. Fix: an `ORCH_PTY_SHELL` env knob (useful on every platform — the
+  ENOENTs. Fix: a `CALANDRIA_PTY_SHELL` env knob (useful on every platform — the
   server never reads a shell profile, so `$SHELL` is already a guess) with a
   win32 default of `process.env.COMSPEC || "powershell.exe"`. `pwsh.exe` if
   present is the nicer default; `cmd.exe` is the guaranteed one.
@@ -121,7 +121,7 @@ own the pty sidecar as a child.
 - **Worktree paths are safe.** `path.join(WORKTREES_DIR, taskId)`
   (`lib/git.ts:552`) with a nanoid task id (`A-Za-z0-9_-`) — no NTFS-illegal
   characters, no reserved device names possible. The merge scratch path
-  (`lib/git.ts:1147`) is already scrubbed to `[A-Za-z0-9._-]`. Branch `orch/<id>`
+  (`lib/git.ts:1147`) is already scrubbed to `[A-Za-z0-9._-]`. Branch `calandria/<id>`
   is a git ref, which git for Windows nests as folders — fine.
 - **Git is invoked correctly.** Every call is `execFile("git", [argv])`
   (`lib/git.ts:22-27`); Windows `CreateProcess` resolves `git.exe` on PATH. All
@@ -173,7 +173,7 @@ file avoids the WAL `-shm` mapping, which is also correct on Windows.
 The caveat is **WSL2's cross-boundary filesystems**, and it applies to today's
 Linux build, not just a native port: `/mnt/c` (drvfs/9p) and `\\wsl$` do not
 implement file locking, and SQLite's WAL mode over them can return stale data or
-corrupt. `ORCH_DB_DIR` **and** `ORCH_WORKTREES_DIR` must live on the WSL2 ext4
+corrupt. `CALANDRIA_DB_DIR` **and** `CALANDRIA_WORKTREES_DIR` must live on the WSL2 ext4
 root. That belongs in the WSL2 docs (task 1).
 
 ### 5. Entrypoints and scripts
@@ -184,7 +184,7 @@ root. That belongs in the WSL2 docs (task 1).
 | `test:docker`, `typecheck:docker`, `test:e2e:docker`, `preflight:docker` | Bare `scripts/docker-test.sh` — no shebang interpreter under `cmd.exe`. `bash scripts/docker-test.sh` works with Git Bash on PATH; the Docker Desktop side additionally needs Linux-container mode |
 | `dev`, `dev:next`, `pty`, `typecheck`, `test`, `test:e2e*`, `preflight`, `postinstall` | Portable as written; `concurrently`'s nested quotes survive npm's `cmd.exe /d /s /c` wrapper |
 | `next.config.mjs`, `server.js`, `pty-server.js` | Plain Node, no POSIX assumptions beyond the shell default in §1 |
-| `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `ORCH_RUNTIME=runc` override documented (no gVisor) |
+| `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `CALANDRIA_RUNTIME=runc` override documented (no gVisor) |
 
 Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
 `start` breakage — fixing the scripts is the prerequisite for everything else.
@@ -217,8 +217,8 @@ Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
   silently (leaves inherited MCP servers mounted, the exact context-waste it
   exists to prevent). `codexPathOverride` via `CODEX_CLI_PATH` already works as
   an escape hatch.
-- **`scripts/orch-mcp.mjs`** is launched as `{ command: process.execPath,
-  args: [ORCH_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
+- **`scripts/calandria-mcp.mjs`** is launched as `{ command: process.execPath,
+  args: [CALANDRIA_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
   `path.join(process.cwd(), …)` script path and talks to the app over loopback
   HTTP. Already portable; the shebang is inert.
 - **`gh`** probe dirs (`lib/github.ts:17-23`) are all POSIX; bare `gh` on PATH
@@ -256,7 +256,7 @@ WSL2, Node 20.9+, Git, the agent CLIs *inside* WSL2, clones or keeps project
 repos on the ext4 root, and runs `npm start`. WSL2 forwards `localhost:3000` to
 the Windows browser automatically; xterm gets a real Linux shell; every
 process-group, signal, path, lock and CLI finding above is moot. Three things
-to document because they bite: (1) `ORCH_DB_DIR`/`ORCH_WORKTREES_DIR`/repos must
+to document because they bite: (1) `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`/repos must
 not be on `/mnt/c` (no file locking — §4 — and 10–50× slower git), (2) the
 Windows-side Claude/Codex logins are not visible inside WSL2, the CLIs log in
 separately there, and (3) `<slug>--<host>` service hostnames need the same DNS
@@ -266,7 +266,7 @@ without a hosts-file entry.
 **Native** is three phases if it happens:
 
 1. *Boot* (S, all hygiene on every platform): cross-platform npm scripts,
-   `ORCH_PTY_SHELL` + win32 shell default, `.exe`/`.cmd` resolution for
+   `CALANDRIA_PTY_SHELL` + win32 shell default, `.exe`/`.cmd` resolution for
    `claude`/`codex`/`gh`, `NUL` in `tests/setup.ts`, case-folded path identity.
    After this the app starts, turns run, the terminal opens.
 2. *Correctness* (M): `killTree` for managed services + `tasklist` guard,
@@ -286,7 +286,7 @@ Filed in the Suggested tray, in dependency order:
 
 1. Docs: WSL2 as the supported Windows path (README, INSTALLATION, TROUBLESHOOTING; the `/mnt/c` locking and login caveats). No blockers. **Do first.**
 2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`).
-3. `ORCH_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
+3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
 4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check).
 5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
 6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics).

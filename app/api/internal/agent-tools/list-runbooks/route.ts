@@ -5,7 +5,7 @@ import { listRunbooksForAgent } from "@/lib/runbookTools";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the read-only `list_runbooks` tool for the stdio MCP
-// bridge (scripts/orch-mcp.mjs). Same caller/target split as its siblings:
+// bridge (scripts/calandria-mcp.mjs). Same caller/target split as its siblings:
 // `taskId` is the server's word for who is asking, `project` the model's word
 // for which board to read.
 export async function POST(req: NextRequest) {

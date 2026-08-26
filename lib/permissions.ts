@@ -49,14 +49,14 @@ const READ_ONLY_TOOLS = new Set([
   "AskUserQuestion",
 ]);
 
-// The orchestrator's own MCP tools, spelled out rather than matched by server
+// Calandria's own MCP tools, spelled out rather than matched by server
 // prefix: these three can't touch the user's code (they file a suggestion,
 // register a URL, ask a question), but a future tool on the same server must
 // not inherit that trust just because its name starts the same way.
-const ORCHESTRATOR_TOOLS = new Set([
-  "mcp__orchestrator__suggest_task",
-  "mcp__orchestrator__expose_service",
-  "mcp__orchestrator__ask_user",
+const CALANDRIA_TOOLS = new Set([
+  "mcp__calandria__suggest_task",
+  "mcp__calandria__expose_service",
+  "mcp__calandria__ask_user",
 ]);
 
 // Tools that must be decided EVERY time, no rule and no allowlist.
@@ -72,7 +72,7 @@ const NEVER_REMEMBER = new Set(["ExitPlanMode"]);
  */
 export function isAlwaysAllowed(tool: string, blockedPath?: string): boolean {
   if (blockedPath) return false;
-  return READ_ONLY_TOOLS.has(tool) || ORCHESTRATOR_TOOLS.has(tool);
+  return READ_ONLY_TOOLS.has(tool) || CALANDRIA_TOOLS.has(tool);
 }
 
 // ---------- step 2: remembered rules ----------

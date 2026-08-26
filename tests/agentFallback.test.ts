@@ -3,7 +3,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 // Connected-first agent resolution: the utility agent for internal one-shots
 // (lib/agents/oneshots.ts), the connection record with its legacy-Claude
 // fallback (lib/agents/connections.ts), the client's new-task default
-// (app/orchestrator/agents.ts), and the onboarding completion adoption that
+// (app/shell/agents.ts), and the onboarding completion adoption that
 // makes a Codex-only first run work end to end (lib/onboarding.ts).
 
 import { setSetting, getSetting, createProject, createTask, getTask, updateTask } from "../lib/store";
@@ -12,8 +12,8 @@ import { setAgentConnection, isAgentConnected, firstConnectedAgent, resolveConne
 import { utilityDriver, resolveUtilityAgent } from "../lib/agents/oneshots";
 import { completeOnboarding } from "../lib/onboarding";
 import { createSuggestedTask } from "../lib/agentTools";
-import { agentPickerNeeded, defaultAgentFor } from "../app/orchestrator/agents";
-import type { AgentsBundle } from "../app/orchestrator/types";
+import { agentPickerNeeded, defaultAgentFor } from "../app/shell/agents";
+import type { AgentsBundle } from "../app/shell/types";
 
 // Settings persist across tests (one shared DB per suite run) — reset every key
 // the resolvers read so each test states its own world.

@@ -1,5 +1,5 @@
-import Orchestrator from "./Orchestrator";
+import Shell from "./Shell";
 
 export default function Page() {
-  return <Orchestrator />;
+  return <Shell />;
 }

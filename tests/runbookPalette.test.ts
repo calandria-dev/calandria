@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fuzzyScore } from "@/app/orchestrator/CommandPalette";
+import { fuzzyScore } from "@/app/shell/CommandPalette";
 
 // The palette is the accelerator that decides whether runbooks get used daily:
 // ⌘K, three letters, Enter. These pin that a runbook row wins on the letters

@@ -13,7 +13,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
 
-// Under the app's own 760px breakpoint (app/Orchestrator.tsx MOBILE_QUERY).
+// Under the app's own 760px breakpoint (app/Shell.tsx MOBILE_QUERY).
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 const PROJECT = `Mobile ${uid()}`;

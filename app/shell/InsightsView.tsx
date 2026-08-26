@@ -286,7 +286,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const [project, setProject] = useState<string>("all");
   const [agent, setAgent] = useState<string>("all");
   const [includeCache, setIncludeCache] = useState(false);
-  const [showOperator, setShowOperator] = useState(true);
+  const [showCalandria, setShowCalandria] = useState(true);
   const [menu, setMenu] = useState<"project" | "agent" | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [showAllGroups, setShowAllGroups] = useState(false);
@@ -526,8 +526,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     { label: "Active projects", value: <span className="kpi-big">{String(projectRows.length)}</span>, sub: "worked on this period", spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--ink-3)" />, d: { text: "", arrow: "", color: "var(--ink-4)" } },
   ];
 
-  const spendMax = Math.max(...rows.map((r) => r.spend + (showOperator ? r.overheadSpend : 0)), 1e-9);
-  const tokenMax = Math.max(...rows.map((r) => (includeCache ? r.tokens : r.inp + r.out) + (showOperator ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), 1e-9);
+  const spendMax = Math.max(...rows.map((r) => r.spend + (showCalandria ? r.overheadSpend : 0)), 1e-9);
+  const tokenMax = Math.max(...rows.map((r) => (includeCache ? r.tokens : r.inp + r.out) + (showCalandria ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), 1e-9);
   const taskMax = Math.max(...rows.map((r) => r.tasks), 1);
   const mergedMax = Math.max(...rows.map((r) => Math.max(r.add, r.del)), 1);
   const tokenCats: { k: "inp" | "out" | "cw" | "cr"; label: string }[] = includeCache
@@ -647,21 +647,21 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                 title="Daily spend" sub="API-equivalent, per day"
                 right={<div className="in-legend">
                   {chartAgents.map((a) => <LegendSwatch key={a} color={hues[a]} label={label(a)} />)}
-                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showCalandria} onClick={() => setShowCalandria((v) => !v)} />
                 </div>}
               >
                 <DailyChart
                   id="spend" rows={rows} max={spendMax} hover={hover} onHover={setHover}
                   segsFor={(r) => [
                     ...chartAgents.map((a) => ({ v: r.byAgent[a]?.spend ?? 0, color: hues[a] })),
-                    ...(showOperator ? [{ v: r.overheadSpend, color: CALANDRIA_HUE }] : []),
+                    ...(showCalandria ? [{ v: r.overheadSpend, color: CALANDRIA_HUE }] : []),
                   ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...chartAgents.map((a) => ({ label: label(a), val: `${estIds.has(a) ? "~" : ""}${fmtMoney(r.byAgent[a]?.spend ?? 0)}`, color: hues[a] })),
-                      ...(showOperator ? [{ label: "Calandria", val: `${overheadMark}${fmtMoney(r.overheadSpend)}`, color: CALANDRIA_HUE }] : []),
-                      { label: "Total", val: `${totalMark}${fmtMoney(r.spend + (showOperator ? r.overheadSpend : 0))}`, strong: true },
+                      ...(showCalandria ? [{ label: "Calandria", val: `${overheadMark}${fmtMoney(r.overheadSpend)}`, color: CALANDRIA_HUE }] : []),
+                      { label: "Total", val: `${totalMark}${fmtMoney(r.spend + (showCalandria ? r.overheadSpend : 0))}`, strong: true },
                     ],
                   })}
                 />
@@ -684,20 +684,20 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   {([{ k: "inp", label: "Input" }, { k: "out", label: "Output" }, { k: "cr", label: "Cache read" }, { k: "cw", label: "Cache write" }] as const).map((c) => (
                     <LegendSwatch key={c.k} color={TOKEN_HUES[c.k]} label={c.label} dim={!includeCache && c.k !== "inp" && c.k !== "out"} />
                   ))}
-                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showOperator} onClick={() => setShowOperator((v) => !v)} />
+                  <LegendSwatch color={CALANDRIA_HUE} label="Calandria" strong dim={!showCalandria} onClick={() => setShowCalandria((v) => !v)} />
                 </div>
                 <DailyChart
                   id="tokens" rows={rows} max={tokenMax} hover={hover} onHover={setHover}
                   segsFor={(r) => [
                     ...tokenCats.map((c) => ({ v: r[c.k], color: TOKEN_HUES[c.k] })),
-                    ...(showOperator ? [{ v: includeCache ? r.overheadTokens : r.overheadFresh, color: CALANDRIA_HUE }] : []),
+                    ...(showCalandria ? [{ v: includeCache ? r.overheadTokens : r.overheadFresh, color: CALANDRIA_HUE }] : []),
                   ]}
                   tip={(r) => ({
                     title: fmtDateLong(r.date),
                     rows: [
                       ...tokenCats.map((c) => ({ label: c.label, val: fmtCompact(r[c.k]), color: TOKEN_HUES[c.k] })),
-                      ...(showOperator ? [{ label: "Calandria", val: fmtCompact(includeCache ? r.overheadTokens : r.overheadFresh), color: CALANDRIA_HUE }] : []),
-                      { label: includeCache ? "Total" : "Fresh total", val: fmtCompact((includeCache ? r.tokens : r.inp + r.out) + (showOperator ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), strong: true },
+                      ...(showCalandria ? [{ label: "Calandria", val: fmtCompact(includeCache ? r.overheadTokens : r.overheadFresh), color: CALANDRIA_HUE }] : []),
+                      { label: includeCache ? "Total" : "Fresh total", val: fmtCompact((includeCache ? r.tokens : r.inp + r.out) + (showCalandria ? (includeCache ? r.overheadTokens : r.overheadFresh) : 0)), strong: true },
                     ],
                   })}
                 />

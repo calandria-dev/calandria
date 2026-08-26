@@ -13,9 +13,9 @@ import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups
 
 // update_task's cross-task policy, proved END TO END on the Codex path.
 //
-// tests/orchMcp.test.ts drives the same bridge against a FAKE app server, so it
+// tests/calandriaMcp.test.ts drives the same bridge against a FAKE app server, so it
 // can only show what the bridge forwards. This file closes the loop: the real
-// scripts/orch-mcp.mjs runs as its own process and its calls are served by the
+// scripts/calandria-mcp.mjs runs as its own process and its calls are served by the
 // REAL route handler against the REAL database.
 //
 // That matters because this is the one path where the MODEL names the write
@@ -26,7 +26,7 @@ import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups
 // checks the DB afterwards — a refusal that still wrote would pass a
 // text-only assertion.
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "orch-mcp.mjs");
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
 // The real handlers, keyed by the path the bridge posts to. Only the endpoints
 // these tests exercise are mounted: an unrouted path 404s loudly rather than
@@ -74,15 +74,15 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-/** Spawn the real bridge with `callerId` as its env-injected ORCH_TASK_ID. */
+/** Spawn the real bridge with `callerId` as its env-injected CALANDRIA_TASK_ID. */
 async function connectBridge(callerId: string, projectId: string) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SCRIPT],
     env: {
-      ORCH_TASK_ID: callerId,
-      ORCH_PROJECT_ID: projectId,
-      ORCH_BASE_URL: baseUrl,
+      CALANDRIA_TASK_ID: callerId,
+      CALANDRIA_PROJECT_ID: projectId,
+      CALANDRIA_BASE_URL: baseUrl,
       SERVICE_TOKEN: "policy-token",
       PATH: process.env.PATH || "",
     },
@@ -275,7 +275,7 @@ describe("group, end to end over the Codex bridge", () => {
       expect(landed.group_id).toBe(made[0].id);
       expect(landed.group_id).not.toBe(decoy.id);
       // Provenance is the CALLER's task id, which the model never sends — the
-      // bridge only forwards ORCH_TASK_ID.
+      // bridge only forwards CALANDRIA_TASK_ID.
       expect(made[0].origin_task_id).toBe(caller.id);
 
       // The second step of the plan reuses it rather than minting a twin.

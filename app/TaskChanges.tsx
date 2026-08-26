@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Skel, ErrNote } from "./orchestrator/shared";
-import { CollabDoc } from "./orchestrator/CollabDoc";
+import { Skel, ErrNote } from "./shell/shared";
+import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
 import type { TaskComment } from "@/lib/types";
 
@@ -155,7 +155,8 @@ function splitLines(patch: string): SplitRow[] {
 }
 
 // Persisted across sessions — flipping to Split shouldn't need re-doing per task.
-const VIEW_MODE_KEY = "orch:diffViewMode";
+const VIEW_MODE_KEY = "calandria:diffViewMode";
+const LEGACY_VIEW_MODE_KEY = "orch:diffViewMode";
 
 // Files past this many hunk lines start collapsed: a diff with many files near
 // the per-file patch cap would otherwise mount tens of thousands of line divs
@@ -566,7 +567,7 @@ export default function TaskChanges({
   // doesn't reset the user's choices.
   const [toggled, setToggled] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<"unified" | "split">(() => {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === "split" ? "split" : "unified"; } catch { return "unified"; }
+    try { return (localStorage.getItem(VIEW_MODE_KEY) ?? localStorage.getItem(LEGACY_VIEW_MODE_KEY)) === "split" ? "split" : "unified"; } catch { return "unified"; }
   });
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any

@@ -18,7 +18,7 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 // Read at import time by lib/config, so it has to be set before the static
 // imports below are evaluated — vi.hoisted is the only thing that runs earlier.
 vi.hoisted(() => {
-  process.env.ORCH_SCHEDULE_PROBE_MS = "150";
+  process.env.CALANDRIA_SCHEDULE_PROBE_MS = "150";
 });
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));

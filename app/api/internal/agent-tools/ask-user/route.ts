@@ -6,7 +6,7 @@ import type { AskQuestion, AskOption } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// Internal endpoint the stdio MCP bridge (scripts/orch-mcp.mjs) proxies the
+// Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
 // `ask_user` tool call to. Persists + publishes the interactive ask card and
 // parks a detached waiter on the user's answer; the bridge then polls the
 // sibling `wait` endpoint for the outcome. Auth is the per-instance

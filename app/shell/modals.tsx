@@ -197,7 +197,7 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
         <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
         {sendContext && <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>}
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
-          title="Uncheck to start this task's sessions without the saved project context. Task details and orchestrator tools are always included.">
+          title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
           <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
           Send saved project context to the agent
         </label>
@@ -870,7 +870,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
       <MoveProjectField task={task} tasks={tasks} groups={groups} projects={projects} agents={agents} onMove={onMove} />
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
-          This permanently removes “{task.title}”, its agent session and git worktree from the orchestrator. Any unmerged work in the worktree is discarded.
+          This permanently removes “{task.title}”, its agent session and git worktree from Calandria. Any unmerged work in the worktree is discarded.
         </div>
       )}
     </Modal>
@@ -1046,7 +1046,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           Include this context in new agent sessions
         </label>
         {!sendContext && (
-          <div className="hlp">New tasks will start without the saved context (task details and orchestrator tools are still included). Each task can override this when it starts.</div>
+          <div className="hlp">New tasks will start without the saved context (task details and Calandria tools are still included). Each task can override this when it starts.</div>
         )}
       </div>
       <div style={{ display: "flex", gap: 14 }}>
@@ -1076,7 +1076,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
             <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "—"}</code> injected as <code className="ctx-mono">PORT</code></span>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
-            The orchestrator supervises these in {repo ? repo.split("/").pop() : "the working dir"} — start/stop them from the Services panel; they outlive the tab.
+            Calandria supervises these in {repo ? repo.split("/").pop() : "the working dir"} — start/stop them from the Services panel; they outlive the tab.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <label className="svc-cfg-row">
@@ -1096,7 +1096,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       )}
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
-          This permanently removes “{project.name}”, its tasks and chat history from the orchestrator. Your code on disk{repo ? ` in ${repo}` : ""} is not touched.
+          This permanently removes “{project.name}”, its tasks and chat history from Calandria. Your code on disk{repo ? ` in ${repo}` : ""} is not touched.
         </div>
       )}
     </Modal>

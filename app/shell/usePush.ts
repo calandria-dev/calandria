@@ -8,7 +8,7 @@ import { jget, jsend } from "./api";
 // subscribe/unsubscribe calls Settings → Notifications makes, the re-sync every
 // page load runs for a browser that already subscribed, and the relay that
 // turns a notification click in the service worker into the app's own
-// orch:goto-task jump. The worker itself is public/sw.js.
+// calandria:goto-task jump. The worker itself is public/sw.js.
 
 export type PushSupportState = "insecure" | "unsupported" | "needs_install" | "ready";
 
@@ -172,8 +172,8 @@ export async function syncPushSubscription(): Promise<PushDevice | null> {
 
 /**
  * Mount-once: relay the worker's notificationclick into the app's task jump,
- * and re-sync this browser's subscription. Lives in useOrchestrator beside the
- * orch:goto-task listener it feeds.
+ * and re-sync this browser's subscription. Lives in useShell beside the
+ * calandria:goto-task listener it feeds.
  */
 export function usePushRelay(): void {
   useEffect(() => {
@@ -181,7 +181,7 @@ export function usePushRelay(): void {
     const onMessage = (e: MessageEvent) => {
       const d = e.data as { type?: string; projectId?: string; taskId?: string } | null;
       if (d?.type !== "goto-task" || !d.taskId) return;
-      window.dispatchEvent(new CustomEvent("orch:goto-task", { detail: { projectId: d.projectId ?? "", taskId: d.taskId } }));
+      window.dispatchEvent(new CustomEvent("calandria:goto-task", { detail: { projectId: d.projectId ?? "", taskId: d.taskId } }));
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     syncPushSubscription().catch((err) => console.warn("[push] subscription re-sync failed:", err));

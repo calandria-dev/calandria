@@ -5,12 +5,12 @@
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchAbort: Map<string, AbortController> | undefined;
+  var __calandriaAbort: Map<string, AbortController> | undefined;
 }
 
 function registry(): Map<string, AbortController> {
-  if (!global.__orchAbort) global.__orchAbort = new Map();
-  return global.__orchAbort;
+  if (!global.__calandriaAbort) global.__calandriaAbort = new Map();
+  return global.__calandriaAbort;
 }
 
 // Atomically claim the turn slot for a task: register a fresh controller and

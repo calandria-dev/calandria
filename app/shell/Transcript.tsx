@@ -298,7 +298,7 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
 // offer to queue anything): `queuedAt` is the task's start_at (0 = not
 // queued), `resetAt` the reset the plan meter currently reports (null = none
 // known — a Codex task, or no telemetry yet), and the two handlers set/clear
-// the deadline. See app/orchestrator/queuedStart.ts.
+// the deadline. See app/shell/queuedStart.ts.
 export interface LimitResume {
   queuedAt: number;
   resetAt: number | null;

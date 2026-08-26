@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Shrink the linger window BEFORE the module graph loads (lib/config.ts reads
 // env at import): the expiry test waits this long for real.
 const { queryMock } = vi.hoisted(() => {
-  process.env.ORCH_BACKGROUND_LINGER_MS = "500";
+  process.env.CALANDRIA_BACKGROUND_LINGER_MS = "500";
   return { queryMock: vi.fn() };
 });
 

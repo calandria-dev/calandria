@@ -9,7 +9,7 @@ import { SCLS, SLABEL, AWAIT_LABEL } from "./types";
 // Touch-device detection, shared by every surface that must behave differently
 // under a finger (TaskBoard drops draggable=true, the Composer's return key
 // inserts a newline instead of sending). SSR renders false and the effect
-// corrects on mount — the same pattern as useIsMobile in Orchestrator.tsx.
+// corrects on mount — the same pattern as useIsMobile in Shell.tsx.
 export function useCoarsePointer() {
   const [coarse, setCoarse] = useState(false);
   useEffect(() => {

@@ -2,7 +2,7 @@
 // served from this instance, no runtime CDN request (see app/layout.tsx,
 // which used to <link> fonts.googleapis.com directly). Each font exposes a
 // CSS custom property (its `variable`) that the token layer in globals.css
-// and the per-font metadata in orchestrator/types.ts both point at.
+// and the per-font metadata in shell/types.ts both point at.
 import {
   Spectral,
   Source_Sans_3,
@@ -39,7 +39,7 @@ export const jetbrainsMono = JetBrains_Mono({
 });
 
 // User-selectable code/terminal alternates (Settings → Appearance, once that
-// picker lands — see orchestrator/types.ts MonoFontId).
+// picker lands — see shell/types.ts MonoFontId).
 export const firaCode = Fira_Code({
   subsets: ["latin"],
   weight: ["400", "500"],
@@ -65,7 +65,7 @@ export const cascadiaCode = Cascadia_Code({
   display: "swap",
 });
 
-// User-selectable prompt-input alternates (orchestrator/types.ts PromptFontId).
+// User-selectable prompt-input alternates (shell/types.ts PromptFontId).
 export const literata = Literata({
   subsets: ["latin"],
   weight: ["400", "500"],

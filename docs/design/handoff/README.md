@@ -10,9 +10,9 @@ The files in this bundle are **design references created in HTML** — prototype
 **High-fidelity.** Colors, typography, spacing, and copy are final. Recreate pixel-perfectly. The one deliberately-mocked area: session data is fake; wire to real state.
 
 ## Target codebase pointers (from the design brief)
-- Wordmark markup: `app/Orchestrator.tsx` (~line 400)
+- Wordmark markup: `app/Shell.tsx` (~line 400)
 - Glyph + theme tokens: `app/globals.css` (`tb-logo` block; `--calandria` at lines 42 and 124)
-- Onboarding lockup: `app/orchestrator/OnboardingWizard.tsx`
+- Onboarding lockup: `app/shell/OnboardingWizard.tsx`
 - Page metadata / favicon: `app/layout.tsx`, `public/`
 
 ## Identity (brand/Identity.html)

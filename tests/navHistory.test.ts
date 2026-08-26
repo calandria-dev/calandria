@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileHistory, closeOneLevel, selectionUrl, type HistoryLike, type NavSel } from "../app/orchestrator/navHistory";
+import { reconcileHistory, closeOneLevel, selectionUrl, type HistoryLike, type NavSel } from "../app/shell/navHistory";
 
 // A stand-in for window.history: a stack of entries plus a cursor. pushState
 // truncates any forward entries (as real browsers do); back() moves the cursor.

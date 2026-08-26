@@ -18,21 +18,21 @@ is setup and architecture; this file is what to do when something's already wron
 durations, because they have no meaningful "unset" fallback to silently prefer (ports, buffer
 sizes). A typo'd value logs a named warning and falls back to the documented default instead of
 surfacing later as an opaque failure — before this validation existed, a bad
-`ORCH_SERVICE_PORT_BASE` showed up as a SQLite bind-type error on project creation, nowhere near
+`CALANDRIA_SERVICE_PORT_BASE` showed up as a SQLite bind-type error on project creation, nowhere near
 the env var that caused it. The warning format is `[<source>] <VAR>=<value> is not a number;
 using default <default>`, with `<source>` naming where the check ran:
 
 | Prefix | File | Vars checked |
 |-|-|-|
-| `[config]` | `lib/config.ts` | `ORCH_SERVICE_PORT_BASE`, `ORCH_SERVICE_LOG_LINES`, `ORCH_GIT_FETCH_TIMEOUT_MS`, `ORCH_GIT_FETCH_COOLDOWN_MS` |
-| `[db-lock]` | `lib/db-lock.mjs` | `ORCH_DB_LOCK_WAIT_MS` |
+| `[config]` | `lib/config.ts` | `CALANDRIA_SERVICE_PORT_BASE`, `CALANDRIA_SERVICE_LOG_LINES`, `CALANDRIA_GIT_FETCH_TIMEOUT_MS`, `CALANDRIA_GIT_FETCH_COOLDOWN_MS` |
+| `[db-lock]` | `lib/db-lock.mjs` | `CALANDRIA_DB_LOCK_WAIT_MS` |
 | `[server]` | `server.js` | `PORT`, `PTY_PORT` |
 | `[pty-server]` | `pty-server.js` | `PTY_PORT` |
 
 If you see one of these at boot, the app is running fine — on the *default* for that var, not
 the value you set. Fix the env var and restart; there's nothing else to recover. (A separate,
-older class of timeout knobs — `ORCH_PERMISSION_PROMPT_TIMEOUT_MS`,
-`ORCH_SCHEDULE_TICK_MS`, and similar — use the same fallback-to-default behavior but don't warn;
+older class of timeout knobs — `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS`,
+`CALANDRIA_SCHEDULE_TICK_MS`, and similar — use the same fallback-to-default behavior but don't warn;
 `lib/config.ts`'s `ms()` vs `num()` is the line between the two.)
 
 **"Another Calandria process is already running against this database."** A hard refusal to
@@ -40,7 +40,7 @@ boot, not a warning — the app is single-process by design (turns run detached,
 server, and boot clears wreckage a dead predecessor left behind). The error names the holder's
 pid, host, and start time when available. See **One process per database** in
 [`docs/SELF_HOSTING.md`](SELF_HOSTING.md#notes--caveats) for what causes it and how to resolve
-it — don't reach for `ORCH_DB_LOCK=off` as a fix; it disables the exact protection this error is
+it — don't reach for `CALANDRIA_DB_LOCK=off` as a fix; it disables the exact protection this error is
 giving you.
 
 ## WSL2 on Windows
@@ -49,7 +49,7 @@ WSL2 is the supported way to run Calandria on Windows ([setup](INSTALLATION.md#w
 native Windows is not supported yet. Inside WSL2 it is the ordinary Linux build, so everything
 else in this file applies unchanged. Three failures are specific to the WSL2 boundary.
 
-**Anything under `/mnt/c` or `\\wsl$`.** `ORCH_DB_DIR`, `ORCH_WORKTREES_DIR`, and project repos
+**Anything under `/mnt/c` or `\\wsl$`.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and project repos
 must live on the WSL2 ext4 root. Those cross-boundary filesystems (drvfs/9p) do not implement
 file locking, so `lib/db-lock.mjs`'s SQLite mutex cannot exclude a second process — two
 instances open the same database and the WAL can be corrupted rather than one boot being
@@ -67,7 +67,7 @@ agent from Settings → Agents. If a turn already failed, the recovery path is t
 
 **Service hostnames don't open from the Windows browser.** `localhost:3000` is forwarded
 automatically, but subdomains of `localhost` are not, and `<slug>--<host>` service URLs
-(`ORCH_SERVICE_HOSTS=1`, see [Managed services](SERVICES.md)) resolve through DNS like anywhere
+(`CALANDRIA_SERVICE_HOSTS=1`, see [Managed services](SERVICES.md)) resolve through DNS like anywhere
 else. Either use the port directly, or add each hostname to
 `C:\Windows\System32\drivers\etc\hosts` pointing at `127.0.0.1`. There is no wildcard-hosts-file
 equivalent — a real wildcard DNS record is the only way to avoid one entry per service.
@@ -76,10 +76,12 @@ equivalent — a real wildcard DNS record is the only way to avoid one entry per
 
 Everything the app knows — projects, tasks, transcripts, summaries, usage/cost history, merge
 records, schedules, runbooks, remembered permission rules, settings — lives in one SQLite
-database, `orchestrator.db` (+ its WAL-mode sidecars `orchestrator.db-wal` and
-`orchestrator.db-shm`) under `ORCH_DB_DIR` (default `~/.zen-orchestrator`; see "Where data
+database, `calandria.db` (+ its WAL-mode sidecars `calandria.db-wal` and
+`calandria.db-shm`) under `CALANDRIA_DB_DIR` (default `~/.calandria`; see "Where data
 lives" in the top-level `CLAUDE.md`). `lib/db.ts` opens it in `journal_mode = WAL` with a 5s
-`busy_timeout`.
+`busy_timeout`. An install predating the rename still has `orchestrator.db` under
+`~/.zen-orchestrator`, and the app keeps using it there — substitute that name in the commands
+below if that's what you have.
 
 **Symptoms.** The app fails to boot with a SQLite error, a route 500s referencing
 `better-sqlite3`, or (more insidious) the app runs but a task's history looks wrong — missing
@@ -91,13 +93,13 @@ corrupting the main file outright.
 inspection. Then, against the volume/directory:
 
 ```bash
-sqlite3 orchestrator.db "PRAGMA integrity_check;"
+sqlite3 calandria.db "PRAGMA integrity_check;"
 ```
 
 `ok` means the b-tree structure is sound (this does not prove application-level consistency, just
 that SQLite can read every page). Anything else is a list of the specific corruption found.
 Concurrent read-only inspection while the app is running is explicitly supported (that's why the
-boot mutex lives in a *separate* `orchestrator.lock.db` rather than locking the real file — see
+boot mutex lives in a *separate* `calandria.lock.db` rather than locking the real file — see
 `lib/db-lock.mjs`), but do the integrity check with the app stopped so a WAL checkpoint mid-scan
 can't produce a false read.
 
@@ -124,23 +126,23 @@ runs after the file has already opened successfully.
 1. **Restore from a backup.** There's no built-in backup/restore tooling yet — full
    backup/restore/upgrade-safety story is tracked in
    [issue #13](https://github.com/calandria-dev/calandria/issues/13). Until then, back up by
-   stopping the app and copying `orchestrator.db*` (all three files together, so the WAL isn't
+   stopping the app and copying `calandria.db*` (all three files together, so the WAL isn't
    left behind).
 2. **Recover what SQLite can still read.** With the app stopped:
    ```bash
-   sqlite3 orchestrator.db ".recover" | sqlite3 orchestrator-recovered.db
-   sqlite3 orchestrator-recovered.db "PRAGMA integrity_check;"
+   sqlite3 calandria.db ".recover" | sqlite3 calandria-recovered.db
+   sqlite3 calandria-recovered.db "PRAGMA integrity_check;"
    ```
    `.recover` walks every page it can and reconstructs a fresh database from what's salvageable
    — rows in a damaged page are lost, everything else survives. Once the recovered file passes
-   `integrity_check`, stop the app, replace `orchestrator.db` with it (removing the stale
+   `integrity_check`, stop the app, replace `calandria.db` with it (removing the stale
    `-wal`/`-shm` sidecars alongside it), and restart.
 3. **Start clean.** If nothing is recoverable, see below for what that costs.
 
-**What's lost if you delete the DB.** Deleting `orchestrator.db*` (or pointing `ORCH_DB_DIR` at
-an empty directory) does **not** touch your code: cloned repos (`ORCH_PROJECTS_DIR`, default
-`~/projects`) and task worktrees (`ORCH_WORKTREES_DIR`, default
-`~/.agent-orchestrator/worktrees`) live in separate directories and are untouched — but they
+**What's lost if you delete the DB.** Deleting `calandria.db*` (or pointing `CALANDRIA_DB_DIR` at
+an empty directory) does **not** touch your code: cloned repos (`CALANDRIA_PROJECTS_DIR`, default
+`~/projects`) and task worktrees (`CALANDRIA_WORKTREES_DIR`, default
+`~/.calandria/worktrees`) live in separate directories and are untouched — but they
 become orphaned, since nothing in a fresh database points at them. Your `claude`/`codex` CLI
 logins also survive (they live under `~/.claude` / `~/.codex`, not the app's DB), so agents
 reconnect with "Verify connection" rather than a fresh OAuth flow. What does **not** survive:
@@ -148,8 +150,8 @@ every project and task, every transcript and generation summary, session/thread 
 `claude` session on disk can no longer be resumed through the app), usage and cost history,
 merge records, schedules and their run ledger, runbooks, remembered permission rules, and the
 agent-connection/onboarding state in `settings` (cosmetic — re-verify to restore the "connected"
-badge). Chat attachments under `ORCH_DB_DIR/uploads` (`lib/uploads.ts`) sit inside the same
-directory tree as the DB by default, so a wholesale `ORCH_DB_DIR` wipe takes them too; deleting
+badge). Chat attachments under `CALANDRIA_DB_DIR/uploads` (`lib/uploads.ts`) sit inside the same
+directory tree as the DB by default, so a wholesale `CALANDRIA_DB_DIR` wipe takes them too; deleting
 only the `.db*` files leaves them on disk, orphaned. Orphaned worktrees aren't cleaned up
 automatically — find and remove them by hand (`git worktree list` in each project's repo).
 
@@ -157,15 +159,15 @@ automatically — find and remove them by hand (`git worktree list` in each proj
 
 Three things grow over the life of an instance, and only one of them is bounded automatically.
 
-**The database itself** (`orchestrator.db` + WAL) stays small in absolute terms — it holds text
-(transcripts, summaries, settings) and small numeric rows, no binaries. `orchestrator.db-wal`
+**The database itself** (`calandria.db` + WAL) stays small in absolute terms — it holds text
+(transcripts, summaries, settings) and small numeric rows, no binaries. `calandria.db-wal`
 grows between checkpoints; SQLite's default auto-checkpoint (~1000 pages) handles this on its
 own, with one caveat: a long-held read connection can defer a checkpoint, so a `sqlite3
-orchestrator.db` session left open for an inspection is worth closing when you're done. There's
+calandria.db` session left open for an inspection is worth closing when you're done. There's
 no scheduled `wal_checkpoint` or `VACUUM` in this app (tracked as part of
 [issue #13](https://github.com/calandria-dev/calandria/issues/13)).
 
-**Task worktrees** (`ORCH_WORKTREES_DIR`, default `~/.agent-orchestrator/worktrees`) are the real
+**Task worktrees** (`CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees`) are the real
 disk cost, and they're the one thing that does **not** shrink on its own. Every task gets its own
 full git worktree — effectively a second checkout of the project repo — for the life of the task,
 even after it's merged. On a repo with a large working tree (node_modules, build artifacts,
@@ -177,12 +179,12 @@ worktree counts too — a repo whose `npm install` alone is 500MB turns 20 old t
 Inspect it directly:
 
 ```bash
-du -sh "$ORCH_WORKTREES_DIR"/*        # per-worktree — worktree dirs are named by task id
+du -sh "$CALANDRIA_WORKTREES_DIR"/*   # per-worktree — worktree dirs are named by task id
 git -C <repo> worktree list           # cross-check against what git itself thinks exists
 ```
 
 **The maintenance UI worktree-reclaim path** is the built-in fix: Settings → Storage →
-"Reclaim task worktrees" (`app/orchestrator/WorktreePrune.tsx`, backed by `GET`/`POST
+"Reclaim task worktrees" (`app/shell/WorktreePrune.tsx`, backed by `GET`/`POST
 /api/maintenance/worktrees`). It lists every merged-or-Done task whose worktree is still on disk,
 with its measured size (`worktreeDiskUsage()` in `lib/git.ts`, via `du -sk`) and whether removing
 it is safe. "Safe" means no uncommitted changes and no commits on the task's branch that the base
@@ -195,7 +197,7 @@ the UI states the cost before you confirm it. Running turns are excluded and re-
 execution time under the task's lock, so a worktree can never disappear out from under an agent
 mid-turn.
 
-**Uploads** (`ORCH_DB_DIR/uploads/<taskId>`, `lib/uploads.ts`) are the smallest and most bounded
+**Uploads** (`CALANDRIA_DB_DIR/uploads/<taskId>`, `lib/uploads.ts`) are the smallest and most bounded
 of the three — 10MB per attachment (`MAX_UPLOAD_BYTES`) — and are removed automatically
 (`removeTaskUploads()`) whenever the task or its project is hard-deleted. They are **not** cleared
 by the worktree-reclaim path above, since a merged/Done task can still be opened to review its
@@ -205,7 +207,7 @@ history; they only disappear with the task itself.
 tasks you run in parallel before pruning, not with chat volume), a few hundred MB is plenty for
 the database on almost any instance, and uploads are self-limiting. If disk pressure is a
 recurring problem, the worktree-reclaim UI is the lever to pull first, and a smaller
-`ORCH_WORKTREES_DIR` retention habit (pruning merged tasks weekly) beats any config knob — there
+`CALANDRIA_WORKTREES_DIR` retention habit (pruning merged tasks weekly) beats any config knob — there
 isn't one to auto-prune on a schedule today.
 
 ## Headless re-authentication
@@ -229,7 +231,7 @@ run just reveals it first. Once detected:
 
 - The titlebar shows a persistent, non-dismissible banner: *"`<Agent>` has stopped working — the
   sign-in expired... No session can run until it's reconnected."* (`AgentAuthBanner` in
-  `app/orchestrator/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the
+  `app/shell/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the
   moment any task hits the failure.
 - The failing task's transcript gets a standing notice with a one-click **Reconnect** button.
 - Any message queued behind the failing turn (`pending_messages`) stays parked rather than

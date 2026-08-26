@@ -39,10 +39,10 @@ per-model weeks), reset times, and data freshness. The pill tints amber at 80% a
 
 Two data sources feed it. Percentages come from the same usage endpoint the Claude CLI's own
 `/usage` panel reads, fetched conservatively — only while a tab is open, at most once per
-five minutes (`ORCH_PLAN_USAGE_MIN_FETCH_MS`), backing off when Anthropic rate-limits it.
+five minutes (`CALANDRIA_PLAN_USAGE_MIN_FETCH_MS`), backing off when Anthropic rate-limits it.
 Between fetches it coasts on the cache plus the rate-limit telemetry every turn already
 carries for free, so an approaching or reached limit shows up immediately rather than on the
-next poll. Set `ORCH_PLAN_USAGE=off` to hide the meter and guarantee the app never calls the
+next poll. Set `CALANDRIA_PLAN_USAGE=off` to hide the meter and guarantee the app never calls the
 usage endpoint. The meter doesn't render for API-key auth (there is no plan to meter).
 
 ## Calandria overhead

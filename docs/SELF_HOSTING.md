@@ -10,7 +10,7 @@ corruption, disk fill, headless re-auth, boot failures).
 The [`Dockerfile`](../Dockerfile) builds a single-user image: a **production** Next.js
 build (a stopped container starts in seconds) bundling Node 22, git, and the `claude`
 CLI, with [`docker/entrypoint.sh`](../docker/entrypoint.sh) running both processes (app
-server + pty sidecar) under tini. All state lives under `/home/orch` — one named volume
+server + pty sidecar) under tini. All state lives under `/home/calandria` — one named volume
 captures the SQLite db, worktrees, project repos, and claude login.
 
 You don't have to build it yourself: the same image is published on every push to `main`.
@@ -81,7 +81,7 @@ Note the image tag carries **no leading `v`**, even though the git tag does:
 
 Pick one of:
 
-| You want | Set `ORCH_IMAGE` to |
+| You want | Set `CALANDRIA_IMAGE` to |
 |-|-|
 | A specific release, never changes | `ghcr.io/calandria-dev/calandria:X.Y.Z` |
 | The newest patch on a minor line, moves forward within it | `ghcr.io/calandria-dev/calandria:X.Y` |
@@ -93,7 +93,7 @@ both moving targets by design (see the tag table above). Pin `X.Y.Z` for anythin
 don't want to babysit; use `latest` only if you're fine re-reading the changelog after
 every unattended upgrade.
 
-**Rollback** is re-pinning: set `ORCH_IMAGE` back to the previous `X.Y.Z` and
+**Rollback** is re-pinning: set `CALANDRIA_IMAGE` back to the previous `X.Y.Z` and
 `docker compose pull && up -d --no-build` again. There's no separate rollback mechanism —
 every past release tag stays pullable indefinitely, so "roll back" and "pin an older
 version" are the same operation.
@@ -101,21 +101,21 @@ version" are the same operation.
 ### Running it
 
 [`docker-compose.yml`](../docker-compose.yml) is the parameterized runner. It builds from
-this checkout by default; set `ORCH_IMAGE` to run the published image instead.
+this checkout by default; set `CALANDRIA_IMAGE` to run the published image instead.
 
 ```bash
-export ORCH_USER=alice ORCH_PORT=10001 ORCH_RUNTIME=runc
+export CALANDRIA_USER=alice CALANDRIA_PORT=10001 CALANDRIA_RUNTIME=runc
 
 # A) build from this checkout (the default)
 docker build -t calandria .
-docker compose -p orch-alice up -d
+docker compose -p calandria-alice up -d
 
 # B) or run the published image, nothing to build. :latest is the newest
 # release; pin :0.2.0 (no leading v) to hold one; :edge is nightly main.
 # See "Pinning a version" above.
-export ORCH_IMAGE=ghcr.io/calandria-dev/calandria:latest
-docker compose -p orch-alice pull
-docker compose -p orch-alice up -d --no-build
+export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:latest
+docker compose -p calandria-alice pull
+docker compose -p calandria-alice up -d --no-build
 
 # open http://127.0.0.1:10001
 ```
@@ -171,7 +171,7 @@ boundary: loopback hosts are accepted, cross-site requests are rejected, and `/p
 WebSocket upgrades require a matching browser `Origin`. This prevents an unrelated
 website from driving the local shell and blocks DNS-rebinding hostnames. `PUBLIC_BASE_URL`
 is accepted automatically; intentional LAN access must list its exact origin in
-`ORCH_ALLOWED_ORIGINS`. This remains a single-user mode, not authentication — never expose
+`CALANDRIA_ALLOWED_ORIGINS`. This remains a single-user mode, not authentication — never expose
 it raw to the internet.
 
 The one Access-mode exception is `SERVICE_TOKEN`: a shared secret letting health probes
@@ -183,13 +183,13 @@ mode something has to present one — it is also how the three callers that live
 box authenticate, none of which has an Access JWT: the image's `HEALTHCHECK`, the boot
 restore of managed services, and the stdio MCP bridge the non-Claude agents' tool calls go
 through. So [`docker/entrypoint.sh`](../docker/entrypoint.sh) mints a per-boot token into
-`/tmp/orch-service-token` when `CF_ACCESS_*` is set and you supplied none; the
+`/tmp/calandria-service-token` when `CF_ACCESS_*` is set and you supplied none; the
 `HEALTHCHECK` reads env-or-file (a healthcheck runs as a separate exec with the *image's*
 environment, so the file is the only way a generated token reaches it). Supply your own
 when a monitor outside the container needs to poll. Running bare Node behind Access with
 no token, `server.js` warns loudly at startup instead.
 
-`ORCH_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
+`CALANDRIA_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
 shared fleet-wide so one dashboard can poll many boxes without learning each one's private
 `SERVICE_TOKEN`. It is deliberately **not** accepted on the mutating internal agent-tool
 endpoints. Unset — the default — it grants nothing.
@@ -201,45 +201,143 @@ relocates an instance (fresh container, different user, different ports) with **
 code edits**. [`.env.example`](../.env.example) is the same list in copyable form.
 Export the variables in the environment that launches `npm run dev` / `npm start` —
 `server.js` and `pty-server.js` are plain Node and read them before Next boots, so a
-`.env` file alone doesn't cover `PORT`/`ORCH_HOSTNAME`/`PTY_*`.
+`.env` file alone doesn't cover `PORT`/`CALANDRIA_HOSTNAME`/`PTY_*`.
+
+Variables below were renamed from an earlier `ORCH_*` naming; every old name still works
+as a fallback (a `CALANDRIA_*` value wins if both are set), and the server prints one
+boot-time warning naming whichever old names are still in use — that warning is your
+upgrade signal to move a self-hosted `.env`/systemd unit/compose file over on your own
+schedule.
+
+### Upgrading from `ORCH_*` names
+
+Three groups, and only one of them can break you.
+
+**App variables — nothing to do.** Everything in the table below reads `CALANDRIA_X` first
+and falls back to `ORCH_X`, so an existing `.env`, systemd unit or `docker run -e` keeps
+working untouched. An empty value counts as unset on both sides, so a blank
+`CALANDRIA_X` never shadows a real `ORCH_X`. The boot line naming the old names still in
+use is a nudge, not a deadline.
+
+**Compose variables — a hard rename.** `ORCH_USER`, `ORCH_PORT`, `ORCH_CPUS`, `ORCH_MEM`,
+`ORCH_IMAGE` and `ORCH_RUNTIME` are interpolated by `docker compose` itself, which has no
+aliasing mechanism, so there is nowhere to put a fallback. Rename them in your shell or
+`.env`:
+
+```bash
+sed -i 's/^ORCH_\(USER\|PORT\|CPUS\|MEM\|IMAGE\|RUNTIME\)=/CALANDRIA_\1=/' .env
+```
+
+The two required ones fail loudly if you miss them (`set CALANDRIA_USER (e.g. alice)`)
+rather than starting a second, empty instance. The `-p` project name is your own label,
+not something the app reads — an existing stack can stay on `-p orch-alice` (its
+`container_name` is pinned either way); the docs just show `-p calandria-alice` for new
+ones.
+
+**Docker resource names — unchanged on purpose.** The home volume is still
+`orch-u-<user>-home` and the network still `orch-u-<user>-net`. Those are storage ids, not
+branding: renaming the volume would strand every existing instance's database, cloned
+repos and agent logins behind a name nothing mounts any more. Only the mount *path* moved,
+`/home/orch` -> `/home/calandria`, and a named volume follows its mount.
+
+That path move is invisible to a fresh instance and handled for an existing one: absolute
+`/home/orch/...` strings are baked into rows the app cannot re-derive (`projects.repo_path`,
+`tasks.worktree_path`) and into each repo's git worktree metadata, so the image keeps
+`/home/orch` as a symlink to the new home. Old paths keep resolving; new ones are written
+under `/home/calandria`.
+
+If you would rather have the volume named for the product, do it deliberately while the
+container is down — Docker has no rename, so it is a copy:
+
+```bash
+docker compose -p calandria-alice down
+docker volume create calandria-u-alice-home
+docker run --rm -v orch-u-alice-home:/from -v calandria-u-alice-home:/to alpine \
+  sh -c 'cd /from && cp -a . /to'
+# then point the compose `volumes:` stanza at the new name and bring it back up
+```
+
+Verify the copy (the database and `projects/` are there) before `docker volume rm` on the
+old one. There is no undo.
 
 | Variable | Default | What it does |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
-| `ORCH_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `ORCH_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
+| `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
-| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://orch.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
-| `ORCH_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
+| `PUBLIC_BASE_URL` | *(empty)* | The origin users reach the app on (e.g. `https://calandria.example.com` behind a tunnel). The client builds its `ws(s)://` terminal URL from it; empty = the browser's own origin, correct for any single-hostname deployment, Access mode included. Set it if your proxy rewrites the `Host` header, which would make the origin gate's `Origin`-vs-`Host` comparison disagree |
+| `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins additionally allowed in no-login local mode, for intentional LAN/reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. This is not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that is https, else `mailto:admin@localhost`. **iOS push needs a real one** — Apple rejects `localhost` with `403 BadJwtToken`; set your https origin or a real `mailto:` |
-| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<ORCH_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
-| `ORCH_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
+| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
+| `CALANDRIA_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
-| `ORCH_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
-| `ORCH_DB_DIR` | `~/.zen-orchestrator` | Directory holding `orchestrator.db` (SQLite app data). Absolute path; created on first run |
-| `ORCH_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
-| `ORCH_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
-| `ORCH_WORKTREES_DIR` | `~/.agent-orchestrator/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
-| `ORCH_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
-| `ORCH_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
-| `ORCH_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
-| `ORCH_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
-| `ORCH_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
+| `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
+| `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
+| `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
+| `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
+| `CALANDRIA_WORKTREES_DIR` | `~/.calandria/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
+| `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
+| `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
+| `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
+| `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
+| `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned because Next's server may run with a trimmed `PATH`) |
-| `ORCH_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
+| `CALANDRIA_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty = bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`). The server never reads a shell profile, so a gh that works in your terminal can be invisible here — set this if the probe misses yours |
 
 Example — relocate an instance entirely via env:
 
 ```bash
 PORT=8080 PTY_PORT=8081 \
-PUBLIC_BASE_URL=https://orch.example.com \
-ORCH_DB_DIR=/data/orchestrator \
-ORCH_WORKTREES_DIR=/data/worktrees \
+PUBLIC_BASE_URL=https://calandria.example.com \
+CALANDRIA_DB_DIR=/data/calandria \
+CALANDRIA_WORKTREES_DIR=/data/worktrees \
 CLAUDE_CLI_PATH=/usr/local/bin/claude \
 npm start
 ```
+
+### Upgrading from the pre-rename default paths
+
+`CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` used to default to `~/.zen-orchestrator`
+and `~/.agent-orchestrator/worktrees`. Nothing is ever moved automatically — relocating a
+live instance's database behind its back is indistinguishable, from your side, from losing
+every project and task, and a worktree is registered by *absolute path* in its parent repo's
+`.git/worktrees/<id>/gitdir`, so relocating the directory needs a `git worktree repair` run
+inside every affected project repo, not a file move. So the resolver falls back instead:
+with `CALANDRIA_DB_DIR` unset, if `~/.calandria` holds no database but
+`~/.zen-orchestrator/orchestrator.db` exists, the old path keeps being used, and boot prints
+one hint line naming it and where to move it. Inside an explicit `CALANDRIA_DB_DIR`,
+`calandria.db` is preferred and an existing `orchestrator.db` there is the fallback —
+resolution never leaves a directory you named. The check is against the database *file*,
+not the directory, so a container entrypoint pre-creating an empty `~/.calandria` can never
+strand existing data. Worktrees follow their own, simpler rule: a populated legacy
+`~/.agent-orchestrator/worktrees` is kept as-is, and only an empty one is abandoned in
+favor of the new default.
+
+To migrate on your own schedule:
+
+```bash
+# Move a pre-rename install to the new default location. Stop the app first —
+# copying a live SQLite database mid-write gives you a corrupt one.
+mkdir -p ~/.calandria
+mv ~/.zen-orchestrator/orchestrator.db     ~/.calandria/calandria.db
+mv ~/.zen-orchestrator/orchestrator.db-wal ~/.calandria/calandria.db-wal 2>/dev/null || true
+mv ~/.zen-orchestrator/orchestrator.db-shm ~/.calandria/calandria.db-shm 2>/dev/null || true
+# The boot lock is a pure mutex holding no data — delete it rather than move it.
+rm -f ~/.zen-orchestrator/orchestrator.lock.*
+# Anything else the app keeps beside the database (API keys, VAPID keys, uploads):
+mv ~/.zen-orchestrator/* ~/.calandria/ 2>/dev/null || true
+# Then start the app. The boot hint line stops printing once nothing legacy is left.
+```
+
+The `-wal`/`-shm` files must move *together* with the database, or be checkpointed away
+first — a stale `-wal` left behind next to a moved `.db` loses the most recent writes. Note
+what this recipe deliberately leaves out: the per-task **worktrees** aren't part of it —
+either leave `CALANDRIA_WORKTREES_DIR` pointing at the old directory, or relocate it
+yourself and run `git worktree repair <new-path>/<task-id>` inside each affected project
+repo.
 
 ## Notes & caveats
 
@@ -256,21 +354,24 @@ npm start
   Settings → Run defaults → Remembered approvals — which also takes a rule typed
   in ahead of time, through the same Bash-only, prefix-checked policy, so an
   unattended task doesn't have to trip a card you'll never see. A prompt nobody answers denies
-  itself (`ORCH_PERMISSION_UNATTENDED_MS` when no tab is open,
-  `ORCH_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
+  itself (`CALANDRIA_PERMISSION_UNATTENDED_MS` when no tab is open,
+  `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started task can't
   wedge a turn overnight. Calandria is a control layer, not a sandbox — the
   isolated worktree is still the real boundary.
 - **One process per database:** Calandria is single-process by design — turns run detached
   and owned by the server, and boot opens by clearing what a crash left behind (running
   flags, queued follow-ups, unanswered permission cards, in-flight schedule runs). Point a
-  second process at the same `orchestrator.db` and that recovery pass runs against a *live*
+  second process at the same `calandria.db` and that recovery pass runs against a *live*
   instance. So the app takes a lock on the database at boot and **refuses to start** if
   another process holds it, naming the holder's pid and host; crash recovery only ever runs
   for the process that owns the database. The lock is a kernel file lock on a separate
-  `orchestrator.lock.db`, so a killed instance releases it immediately and the next boot
-  takes over with no waiting — and a read-only `sqlite3 orchestrator.db` inspection is
-  unaffected, since the real database is never exclusively locked. Two instances need two
-  `ORCH_DB_DIR`s. `ORCH_DB_LOCK=off` disables the check; it is unsupported.
+  `calandria.lock.db`, so a killed instance releases it immediately and the next boot
+  takes over with no waiting — and a read-only `sqlite3 calandria.db` inspection is
+  unaffected, since the real database is never exclusively locked. The lock file is named
+  after the database it guards, so a pre-rename `orchestrator.db` is still guarded by
+  `orchestrator.lock.db` — that pairing is what keeps mutual exclusion working across an
+  upgrade from an older build. Two instances need two `CALANDRIA_DB_DIR`s.
+  `CALANDRIA_DB_LOCK=off` disables the check; it is unsupported.
   One limit worth stating: the lock coordinates processes that share a kernel. Two
   *containers* mounting one volume may not see each other's locks (a sandboxed runtime like
   gVisor need not share a lock table), but that configuration is already unsafe — SQLite's

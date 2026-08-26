@@ -4,26 +4,42 @@ import path from "node:path";
 import { afterAll } from "vitest";
 
 // This file runs before each test file's module graph is loaded, so env set
-// here is seen by lib/config.ts (which reads ORCH_WORKTREES_DIR at import time).
-// Everything here is a default the whole suite depends on; env that only a fork
-// or one machine needs goes in the optional tests/setup.local.ts layer instead
-// (see vitest.config.ts).
+// here is seen by lib/config.ts (which reads CALANDRIA_WORKTREES_DIR at import
+// time). Everything here is a default the whole suite depends on; env that
+// only a fork or one machine needs goes in the optional tests/setup.local.ts
+// layer instead (see vitest.config.ts).
 
 // realpathSync: os.tmpdir() is a symlink on macOS (/var -> /private/var) and git
 // reports realpaths, so resolve it up front to keep path comparisons exact.
-const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "orch-git-test-"));
-process.env.ORCH_TEST_TMP = root;
-process.env.ORCH_WORKTREES_DIR = path.join(root, "worktrees");
+const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "calandria-git-test-"));
+process.env.CALANDRIA_TEST_TMP = root;
+process.env.CALANDRIA_WORKTREES_DIR = path.join(root, "worktrees");
 // Point the SQLite store at a throwaway dir so store-backed tests get a fresh,
-// isolated orchestrator.db instead of the user's real one. Read at import time
+// isolated calandria.db instead of the user's real one. Read at import time
 // by lib/config.ts, so it must be set here (before the module graph loads).
-process.env.ORCH_DB_DIR = path.join(root, "db");
+process.env.CALANDRIA_DB_DIR = path.join(root, "db");
 
 // Hermetic agent credentials: a developer's real API key exported in their
 // shell would otherwise leak into the suite — hasApiKey()/hasOpenAiKey() are
 // env-aware (they report the effective billing credential; see lib/env-keys.mjs)
-// and would flip status assertions. Same list the boot strip covers.
-for (const v of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "ORCH_ALLOW_API_KEY_ENV"]) {
+// and would flip status assertions. Same list the boot strip covers. Both
+// spellings, since lib/env.mjs now also honors the deprecated ORCH_ name.
+for (const v of [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "OPENAI_API_KEY",
+  "CALANDRIA_ALLOW_API_KEY_ENV",
+  "ORCH_ALLOW_API_KEY_ENV",
+]) {
+  delete process.env[v];
+}
+
+// Hermetic env aliasing: the suite sets CALANDRIA_DB_DIR/CALANDRIA_WORKTREES_DIR
+// above, but a developer with the OLD ORCH_ names exported in their shell would
+// otherwise still have them ambient (readEnv only falls back when the new name
+// is unset, which it isn't here — but deleting the legacy spelling keeps this
+// hermetic and explicit rather than relying on that precedence silently).
+for (const v of ["ORCH_DB_DIR", "ORCH_WORKTREES_DIR"]) {
   delete process.env[v];
 }
 
@@ -62,8 +78,8 @@ fs.writeFileSync(
   gitconfig,
   [
     "[user]",
-    "\tname = Orchestrator Test",
-    "\temail = test@orchestrator.local",
+    "\tname = Calandria Test",
+    "\temail = test@calandria.local",
     "[init]",
     "\tdefaultBranch = main",
     "[commit]",

@@ -48,12 +48,12 @@ function withWatcher<T>(fn: () => T): T {
 }
 
 describe("the built-in allowlist", () => {
-  it("passes read-only tools and the orchestrator's own MCP tools", () => {
+  it("passes read-only tools and Calandria's own MCP tools", () => {
     for (const t of ["Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "AskUserQuestion"]) {
       expect(isAlwaysAllowed(t)).toBe(true);
     }
-    expect(isAlwaysAllowed("mcp__orchestrator__suggest_task")).toBe(true);
-    expect(isAlwaysAllowed("mcp__orchestrator__expose_service")).toBe(true);
+    expect(isAlwaysAllowed("mcp__calandria__suggest_task")).toBe(true);
+    expect(isAlwaysAllowed("mcp__calandria__expose_service")).toBe(true);
   });
 
   it("does not pass anything that writes, shells out, or leaves the machine", () => {
@@ -62,8 +62,8 @@ describe("the built-in allowlist", () => {
     }
   });
 
-  it("never trusts a future tool just because it sits on the orchestrator MCP server", () => {
-    expect(isAlwaysAllowed("mcp__orchestrator__delete_everything")).toBe(false);
+  it("never trusts a future tool just because it sits on the Calandria MCP server", () => {
+    expect(isAlwaysAllowed("mcp__calandria__delete_everything")).toBe(false);
   });
 
   it("prompts even for a read when the CLI flagged a blocked path", () => {

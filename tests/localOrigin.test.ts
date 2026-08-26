@@ -64,13 +64,13 @@ describe("local origin boundary", () => {
   });
 
   it("trusts PUBLIC_BASE_URL exactly for reverse-proxied deployments", () => {
-    const env = { PUBLIC_BASE_URL: "https://operator.example.com" };
+    const env = { PUBLIC_BASE_URL: "https://calandria.example.com" };
     expect(localWebSocketRequestAllowed(
-      { host: "operator.example.com", origin: "https://operator.example.com" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com" },
       env,
     )).toBe(true);
     expect(localWebSocketRequestAllowed(
-      { host: "operator.example.com", origin: "http://operator.example.com" },
+      { host: "calandria.example.com", origin: "http://calandria.example.com" },
       env,
     )).toBe(false);
     expect(localHttpRequestAllowed(
@@ -81,14 +81,14 @@ describe("local origin boundary", () => {
 
   it("supports explicit comma-separated origins for intentional LAN access", () => {
     const env = {
-      ORCH_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://operator.internal",
+      CALANDRIA_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://calandria.internal",
     };
     expect(localWebSocketRequestAllowed(
       { host: "192.168.1.50:3000", origin: "http://192.168.1.50:3000" },
       env,
     )).toBe(true);
     expect(localHttpRequestAllowed(
-      { host: "operator.internal", origin: "https://operator.internal", secFetchSite: "same-origin" },
+      { host: "calandria.internal", origin: "https://calandria.internal", secFetchSite: "same-origin" },
       env,
     )).toBe(true);
     expect(localWebSocketRequestAllowed(
@@ -99,10 +99,10 @@ describe("local origin boundary", () => {
 
   it("ignores malformed or path-bearing allowlist entries", () => {
     const env = {
-      ORCH_ALLOWED_ORIGINS: "not-a-url, https://operator.example.com/path",
+      CALANDRIA_ALLOWED_ORIGINS: "not-a-url, https://calandria.example.com/path",
     };
     expect(localHttpRequestAllowed(
-      { host: "operator.example.com", origin: "https://operator.example.com", secFetchSite: "same-origin" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com", secFetchSite: "same-origin" },
       env,
     )).toBe(false);
   });
@@ -124,49 +124,49 @@ describe("authenticated (Access) mode WebSocket origin boundary", () => {
   it("accepts the tunnel hostname with no PUBLIC_BASE_URL configured", () => {
     // The regression: this is the documented default Access setup.
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "https://orch.example.com" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com" },
       emptyEnv,
     )).toBe(true);
     // And the local rule, for contrast — it is why the terminal used to fail.
     expect(localWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "https://orch.example.com" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com" },
       emptyEnv,
     )).toBe(false);
   });
 
   it("refuses a cross-site handshake even though the JWT would be valid", () => {
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "https://evil.example" },
+      { host: "calandria.example.com", origin: "https://evil.example" },
       emptyEnv,
     )).toBe(false);
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: null },
+      { host: "calandria.example.com", origin: null },
       emptyEnv,
     )).toBe(false);
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "null" },
+      { host: "calandria.example.com", origin: "null" },
       emptyEnv,
     )).toBe(false);
   });
 
   it("distinguishes scheme and port, both of which are part of an origin", () => {
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com:8443", origin: "https://orch.example.com" },
+      { host: "calandria.example.com:8443", origin: "https://calandria.example.com" },
       emptyEnv,
     )).toBe(false);
     // Scheme is not carried by Host, so http:// vs https:// on the same
     // host:port is same-origin as far as this check can tell; the tunnel
     // terminates TLS anyway. Pinned so the asymmetry is deliberate.
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "http://orch.example.com" },
+      { host: "calandria.example.com", origin: "http://calandria.example.com" },
       emptyEnv,
     )).toBe(true);
   });
 
   it("falls back to PUBLIC_BASE_URL when the proxy rewrites Host", () => {
-    const env = { PUBLIC_BASE_URL: "https://orch.example.com" };
+    const env = { PUBLIC_BASE_URL: "https://calandria.example.com" };
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "internal-app:3000", origin: "https://orch.example.com" },
+      { host: "internal-app:3000", origin: "https://calandria.example.com" },
       env,
     )).toBe(true);
     expect(sameOriginWebSocketRequestAllowed(
@@ -199,13 +199,13 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
     // what local mode rejects. Rejecting it here would be a real UX regression
     // (people do link to a tunnel hostname; nobody links to localhost).
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: null },
+      { host: "calandria.example.com", origin: null },
       emptyEnv,
     )).toBe(true);
     // The local rule, for contrast — this is the "fix" the next person will be
     // tempted by, and this line is what it would cost.
     expect(localHttpRequestAllowed(
-      { host: "orch.example.com", origin: null, secFetchSite: "cross-site" },
+      { host: "calandria.example.com", origin: null, secFetchSite: "cross-site" },
       emptyEnv,
     )).toBe(false);
   });
@@ -214,34 +214,34 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
     // curl, the Docker HEALTHCHECK, and the stdio MCP bridge's server-to-server
     // calls into /api/internal/agent-tools/*.
     expect(sameOriginHttpRequestAllowed({ host: "127.0.0.1:3000", origin: null }, emptyEnv)).toBe(true);
-    expect(sameOriginHttpRequestAllowed({ host: "orch.example.com", origin: undefined }, emptyEnv)).toBe(true);
+    expect(sameOriginHttpRequestAllowed({ host: "calandria.example.com", origin: undefined }, emptyEnv)).toBe(true);
   });
 
   it("allows the app's own same-origin XHR", () => {
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: "https://orch.example.com" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com" },
       emptyEnv,
     )).toBe(true);
   });
 
   it("rejects the cross-site form post that needs no preflight", () => {
-    // <form method="post" action="https://orch.example.com/api/tasks/X/merge">
+    // <form method="post" action="https://calandria.example.com/api/tasks/X/merge">
     // — the body is ignored by that route, so the form needs no fields at all.
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: "https://evil.example" },
+      { host: "calandria.example.com", origin: "https://evil.example" },
       emptyEnv,
     )).toBe(false);
   });
 
   it("rejects the text/plain fetch that smuggles JSON past CORS", () => {
-    // fetch("https://orch.example.com/api/tasks/X/messages", {method:"POST",
+    // fetch("https://calandria.example.com/api/tasks/X/messages", {method:"POST",
     //   mode:"no-cors", credentials:"include",
     //   headers:{"content-type":"text/plain"}, body:'{"text":"…"}'})
     // text/plain is CORS-safelisted so this never preflights, and req.json()
     // parses it regardless of Content-Type. Same header shape as above — which
     // is the point: one Origin check covers every simple-request variant.
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: "http://localhost:5173" },
+      { host: "calandria.example.com", origin: "http://localhost:5173" },
       emptyEnv,
     )).toBe(false);
   });
@@ -251,7 +251,7 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
     // present-but-unattributable, so it must fall on the reject side of the
     // absent-Origin allowance above.
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: "null" },
+      { host: "calandria.example.com", origin: "null" },
       emptyEnv,
     )).toBe(false);
   });
@@ -259,7 +259,7 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
   it("distinguishes port, and is scheme-blind by construction", () => {
     // Port is part of the comparison: another service on the same host is not us.
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com:3000", origin: "https://orch.example.com:4173" },
+      { host: "calandria.example.com:3000", origin: "https://calandria.example.com:4173" },
       emptyEnv,
     )).toBe(false);
     // Scheme is NOT, and cannot be: the Host header carries no scheme, so there
@@ -269,11 +269,11 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
     // which defeats Access itself long before this check matters. An operator
     // who wants the scheme pinned sets PUBLIC_BASE_URL, which is a full origin.
     expect(sameOriginHttpRequestAllowed(
-      { host: "orch.example.com", origin: "http://orch.example.com" },
+      { host: "calandria.example.com", origin: "http://calandria.example.com" },
       emptyEnv,
     )).toBe(true);
     expect(sameOriginWebSocketRequestAllowed(
-      { host: "orch.example.com", origin: "http://orch.example.com" },
+      { host: "calandria.example.com", origin: "http://calandria.example.com" },
       emptyEnv,
     )).toBe(true);
   });
@@ -281,9 +281,9 @@ describe("authenticated (Access) mode HTTP origin boundary", () => {
   it("falls back to PUBLIC_BASE_URL when the proxy rewrites Host", () => {
     // Same httpHostHeader escape hatch the WebSocket rule has; the two must not
     // disagree about which deployments work.
-    const env = { PUBLIC_BASE_URL: "https://orch.example.com" };
+    const env = { PUBLIC_BASE_URL: "https://calandria.example.com" };
     expect(sameOriginHttpRequestAllowed(
-      { host: "internal-app:3000", origin: "https://orch.example.com" },
+      { host: "internal-app:3000", origin: "https://calandria.example.com" },
       env,
     )).toBe(true);
     expect(sameOriginHttpRequestAllowed(
@@ -311,7 +311,7 @@ describe("isLoopbackPeer", () => {
   });
 
   it("can be opted out of for a deliberately split deployment", () => {
-    expect(isLoopbackPeer("192.168.1.20", { ORCH_PTY_ALLOW_REMOTE: "1" })).toBe(true);
+    expect(isLoopbackPeer("192.168.1.20", { CALANDRIA_PTY_ALLOW_REMOTE: "1" })).toBe(true);
   });
 });
 

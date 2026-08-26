@@ -32,7 +32,7 @@ const isExecutable = (p: string): boolean => {
 };
 
 /**
- * The gh binary to spawn: ORCH_GH_BIN if set (taken verbatim — a wrong path
+ * The gh binary to spawn: CALANDRIA_GH_BIN if set (taken verbatim — a wrong path
  * should fail loudly, not be silently papered over by the probe), else bare
  * "gh" when the server's PATH can resolve it, else the first hit in the
  * well-known install dirs. Falls back to "gh" so the ENOENT lands in the
@@ -63,9 +63,9 @@ export function resolveGhBin(
  */
 export function ghMissingMessage(configured: string = GH_BIN): string {
   if (configured)
-    return `GitHub CLI not found: ORCH_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
+    return `GitHub CLI not found: CALANDRIA_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
   return (
-    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set ORCH_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
+    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set CALANDRIA_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
   );
 }
 
@@ -127,7 +127,7 @@ interface LoginState extends LoginSession {
 // One session per app instance (= per user: each user runs their own container).
 // Kept on globalThis so every route chunk that imports this module sees the
 // same session regardless of how Next bundles them.
-const g = globalThis as unknown as { __orchGhLogin?: LoginState };
+const g = globalThis as unknown as { __calandriaGhLogin?: LoginState };
 
 // CSI sequences (colors, cursor moves), OSC sequences (titles), save/restore
 // cursor (ESC 7 / ESC 8 — strip the digit too, or it leaks into the text),
@@ -167,17 +167,17 @@ const publicView = (st: LoginState): LoginSession => ({
 });
 
 export function getLogin(): LoginSession | null {
-  return g.__orchGhLogin ? publicView(g.__orchGhLogin) : null;
+  return g.__calandriaGhLogin ? publicView(g.__calandriaGhLogin) : null;
 }
 
 export function cancelLogin(): void {
-  const st = g.__orchGhLogin;
+  const st = g.__calandriaGhLogin;
   if (!st) return;
   if (st.timer) clearTimeout(st.timer);
   try {
     st.proc?.kill();
   } catch {}
-  delete g.__orchGhLogin;
+  delete g.__calandriaGhLogin;
 }
 
 /**
@@ -187,7 +187,7 @@ export function cancelLogin(): void {
  * background until the user authorizes on github.com (poll with getLogin).
  */
 export async function startLogin(): Promise<LoginSession> {
-  const cur = g.__orchGhLogin;
+  const cur = g.__calandriaGhLogin;
   if (cur && (cur.status === "starting" || cur.status === "awaiting")) return awaitCode();
   cancelLogin(); // clear any finished (success/error) session
 
@@ -202,7 +202,7 @@ export async function startLogin(): Promise<LoginSession> {
     answered: new Set(),
     timer: null,
   };
-  g.__orchGhLogin = st;
+  g.__calandriaGhLogin = st;
 
   try {
     // BROWSER=true: gh "opens" the verification URL with /bin/true instead of
@@ -289,7 +289,7 @@ export async function startLogin(): Promise<LoginSession> {
 async function awaitCode(): Promise<LoginSession> {
   const deadline = Date.now() + 15_000;
   for (;;) {
-    const st = g.__orchGhLogin;
+    const st = g.__calandriaGhLogin;
     if (!st) return { status: "error", code: null, url: null, user: null, error: "login session vanished" };
     if (st.status !== "starting" || Date.now() > deadline) return publicView(st);
     await new Promise((r) => setTimeout(r, 150));
@@ -394,7 +394,7 @@ export function buildPrBody(input: { description?: string; summary?: string; tas
   const parts: string[] = [];
   if (input.description?.trim()) parts.push(input.description.trim());
   if (input.summary?.trim()) parts.push(`## Session summary\n\n${input.summary.trim()}`);
-  parts.push(`---\n_Opened by Agent Orchestrator (task ${input.taskId})._`);
+  parts.push(`---\n_Opened by Calandria (task ${input.taskId})._`);
   return parts.join("\n\n");
 }
 

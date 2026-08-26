@@ -4,7 +4,7 @@ import type { TaskRow } from "./types";
 
 // Board-card / task-row footer: worktree branch, live diff totals, and a
 // sparkline of diff_add+diff_del sampled over the last ~30 task-list updates
-// (see useOrchestrator's sparklines map). Renders nothing until the server has
+// (see useShell's sparklines map). Renders nothing until the server has
 // attached diff stats — i.e. only for in_progress tasks with a worktree (see
 // withDiffStats in app/api/projects/[id]/route.ts).
 export function DiffFooter({ task, points }: { task: TaskRow; points?: number[] }) {

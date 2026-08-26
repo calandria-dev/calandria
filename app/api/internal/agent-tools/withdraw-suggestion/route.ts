@@ -6,13 +6,13 @@ import { maybeAutoStartDependents } from "@/lib/autoStart";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `withdraw_suggestion` tool for the stdio MCP
-// bridge (scripts/orch-mcp.mjs) — the same write the Claude driver mounts
+// bridge (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts
 // in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //
 // Same two-id split as update-task, and for the same reason:
 //
-//   body.taskId  the CALLER. ORCH_TASK_ID, injected into the bridge's env by
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
 //                lib/agents/codex/driver.ts — never a field the model can set.
 //   body.task    the TARGET the MODEL named, and therefore untrusted. Required
 //                here: there is no "my own row" default, because a task with a

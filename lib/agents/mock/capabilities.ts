@@ -4,7 +4,7 @@
 // header there and tests/importGraph.test.ts). The driver imports this back, so
 // there is still exactly one definition.
 //
-// Registered only when ORCH_E2E_MOCK_AGENT=1, matching registry.ts.
+// Registered only when CALANDRIA_E2E_MOCK_AGENT=1, matching registry.ts.
 
 import type { AgentCapabilities } from "../types";
 

@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Container entrypoint: run BOTH orchestrator processes (Next.js custom server
+# Container entrypoint: run BOTH Calandria processes (Next.js custom server
 # + node-pty sidecar) and die if either dies — the container's restart policy
 # brings the pair back as a unit. tini is PID 1 above us and reaps orphans.
 set -euo pipefail
 
-# Recreate the per-user state layout. Named volumes copy the image's /home/orch
+# Recreate the per-user state layout. Named volumes copy the image's /home/calandria
 # skeleton on first mount, but an empty bind mount (or a pre-created volume)
 # starts blank — this makes either work.
+# Only ever the NEW layout: an image that predates the rename left its database
+# at $HOME/.zen-orchestrator/orchestrator.db, and lib/storage.mjs keeps using it
+# wherever it exists. Pre-creating an empty $HOME/.calandria can't strand it —
+# that fallback tests for the database FILE, not the directory.
 mkdir -p \
-  "$HOME/.zen-orchestrator" \
-  "${ORCH_WORKTREES_DIR:-$HOME/worktrees}" \
+  "$HOME/.calandria" \
+  "${CALANDRIA_WORKTREES_DIR:-${ORCH_WORKTREES_DIR:-$HOME/worktrees}}" \
   "$HOME/projects" \
   "$HOME/.claude"
 
@@ -17,16 +21,20 @@ mkdir -p \
 # `claude`/`codex` CLIs (and the Agent SDK child processes, and every pty shell
 # — all inherit this environment) prefer it over the volume's stored login and
 # silently switch to per-token API billing. Strip them so a stray `-e` on
-# `docker run` can never do that — unless ORCH_ALLOW_API_KEY_ENV=1 explicitly
+# `docker run` can never do that — unless CALANDRIA_ALLOW_API_KEY_ENV=1 explicitly
 # opts in to env-provided keys. Both node entrypoints repeat this strip
 # in-process (lib/env-keys.mjs) so bare-node deploys get the same guard; this
 # is the container backstop. See docs/DEPLOY.md → "Per-user claude login".
-if [[ "${ORCH_ALLOW_API_KEY_ENV:-}" != "1" && "${ORCH_ALLOW_API_KEY_ENV:-}" != "true" ]]; then
+# CALANDRIA_* wins, the deprecated ORCH_* spelling still answers — the same
+# precedence lib/env.mjs applies in-process, hand-rolled because this runs
+# before node does.
+_allow_key_env="${CALANDRIA_ALLOW_API_KEY_ENV:-${ORCH_ALLOW_API_KEY_ENV:-}}"
+if [[ "$_allow_key_env" != "1" && "$_allow_key_env" != "true" ]]; then
   for _v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY; do
     if [[ -n "${!_v:-}" ]]; then
       echo "WARN: $_v was set in the container environment — unsetting it." \
            "Instances authenticate via the connected agent login (or a key saved in Settings);" \
-           "set ORCH_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose." >&2
+           "set CALANDRIA_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose." >&2
       unset "$_v"
     fi
   done
@@ -45,11 +53,11 @@ fi
 # The HEALTHCHECK reads the same path because it runs as a separate exec with
 # the image's environment and never sees what we export here — keep the two in
 # step. An operator-supplied SERVICE_TOKEN always wins.
-ORCH_SERVICE_TOKEN_FILE=/tmp/orch-service-token
+CALANDRIA_SERVICE_TOKEN_FILE=/tmp/calandria-service-token
 if [[ -z "${SERVICE_TOKEN:-}" && -n "${CF_ACCESS_TEAM_DOMAIN:-}" && -n "${CF_ACCESS_AUD:-}" ]]; then
   SERVICE_TOKEN="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
   export SERVICE_TOKEN
-  ( umask 077 && printf '%s' "$SERVICE_TOKEN" > "$ORCH_SERVICE_TOKEN_FILE" )
+  ( umask 077 && printf '%s' "$SERVICE_TOKEN" > "$CALANDRIA_SERVICE_TOKEN_FILE" )
   echo "Cloudflare Access is on and no SERVICE_TOKEN was supplied — generated a per-boot one" \
        "for the health probe, service restore, and the agent-tool bridge." >&2
 fi

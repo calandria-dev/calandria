@@ -51,8 +51,8 @@ Palette, typography, glyph concept, tone, degree of literalism toward any of the
 
 ## Pointers
 
-- Wordmark markup: `app/Orchestrator.tsx` (~line 400)
+- Wordmark markup: `app/Shell.tsx` (~line 400)
 - Glyph + theme tokens: `app/globals.css` (`tb-logo` block; `--calandria` at lines 42 and 124)
-- Onboarding lockup: `app/orchestrator/OnboardingWizard.tsx`
+- Onboarding lockup: `app/shell/OnboardingWizard.tsx`
 - Page metadata: `app/layout.tsx`
 - Lineage and naming story: `README.md` (Lineage section), `NOTICE`

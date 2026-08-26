@@ -28,6 +28,8 @@ const PINNED = [
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",
   "lib/db-lock.mjs", //          the boot lock; server.js loads it in plain Node, before Next exists
+  "lib/env.mjs", //              the CALANDRIA_*/ORCH_* alias reader; env-only, no imports, loaded by server.js in plain Node before Next exists
+  "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)

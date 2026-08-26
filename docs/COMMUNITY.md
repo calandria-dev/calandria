@@ -1,15 +1,12 @@
 # Calandria community
 
 Calandria's community lives on GitHub so decisions remain searchable and connected to the
-work; GitHub is the canonical record for bugs, proposals, and releases. The upstream
-project also runs an [Operator (upstream) Discord](https://discord.gg/p4aaXvzJq2) for real-time chat —
-it is upstream's community, not this fork's, and nothing here is supported there.
+work; GitHub is the canonical record for bugs, proposals, and releases.
 
 ## Where to go
 
 | You want to… | Use |
 |-|-|
-| Chat with upstream users and contributors | [Operator (upstream) Discord](https://discord.gg/p4aaXvzJq2) |
 | Propose or vote on a feature | [Ideas in GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/ideas) |
 | Ask for help | [Q&A in GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/q-a) |
 | Show what you built | [Show and tell](https://github.com/calandria-dev/calandria/discussions/categories/show-and-tell) |

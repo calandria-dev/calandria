@@ -9,13 +9,14 @@ import { Modal } from "./Modal";
 // deliberately keep OUT of the Claude-facing project context — so the concepts
 // live where the user reads them, not where the agent does.
 
-const COACH_KEY = "orch:welcomeCoach:dismissed";
+const COACH_KEY = "calandria:welcomeCoach:dismissed";
+const LEGACY_COACH_KEY = "orch:welcomeCoach:dismissed";
 
 // A slim, dismissible bar above the tutorial session. Names the three-column loop
 // and the three beats of the task the user is about to run.
 export function WelcomeCoach() {
   const [gone, setGone] = useState<boolean>(() => {
-    try { return localStorage.getItem(COACH_KEY) === "1"; } catch { return false; }
+    try { return localStorage.getItem(COACH_KEY) === "1" || localStorage.getItem(LEGACY_COACH_KEY) === "1"; } catch { return false; }
   });
   if (gone) return null;
   const dismiss = () => {

@@ -24,7 +24,7 @@
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchTurnInput: Map<string, TurnInputHandle> | undefined;
+  var __calandriaTurnInput: Map<string, TurnInputHandle> | undefined;
 }
 
 export type TurnInputHandle = {
@@ -41,8 +41,8 @@ export type TurnInputHandle = {
 };
 
 function registry(): Map<string, TurnInputHandle> {
-  if (!global.__orchTurnInput) global.__orchTurnInput = new Map();
-  return global.__orchTurnInput;
+  if (!global.__calandriaTurnInput) global.__calandriaTurnInput = new Map();
+  return global.__calandriaTurnInput;
 }
 
 /** Register the live turn's input channel. Replaces any stale occupant — a

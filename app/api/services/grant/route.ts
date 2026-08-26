@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // lives on the APP hostname, so middleware.ts has already enforced the
 // instance's normal session auth before we get here — reaching this handler IS
 // the proof of identity. We mint a short-lived slug-bound token and bounce the
-// browser to <slug>--<host>/__orch/auth, where the service router swaps it for
+// browser to <slug>--<host>/__calandria/auth, where the service router swaps it for
 // a host-scoped gate cookie (lib/service-router.mjs). The token never outlives
 // the hop by much, and only ever admits to the one service.
 const HOP_TTL_MS = 5 * 60 * 1000;
@@ -30,6 +30,6 @@ export async function GET(req: Request) {
   const base = new URL(process.env.PUBLIC_BASE_URL!);
   const portSuffix = base.port ? `:${base.port}` : "";
   const safeNext = safeRedirectPath(next);
-  const target = `${base.protocol}//${host}${portSuffix}/__orch/auth?t=${encodeURIComponent(token)}&next=${encodeURIComponent(safeNext)}`;
+  const target = `${base.protocol}//${host}${portSuffix}/__calandria/auth?t=${encodeURIComponent(token)}&next=${encodeURIComponent(safeNext)}`;
   return NextResponse.redirect(target, 302);
 }

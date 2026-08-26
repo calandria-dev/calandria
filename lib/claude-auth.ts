@@ -65,7 +65,7 @@ const SIZE = { rows: 50, cols: 200 };
 
 // One session per app instance (= per user). Kept on globalThis so every route
 // chunk that imports this module shares the same live session.
-const g = globalThis as unknown as { __orchClaudeLogin?: LoginState };
+const g = globalThis as unknown as { __calandriaClaudeLogin?: LoginState };
 
 const tail = (buf: string) => buf.split("\n").slice(-14).join("\n").trim();
 
@@ -79,17 +79,17 @@ const publicView = (st: LoginState): ClaudeLoginSession => ({
 });
 
 export function getClaudeLogin(): ClaudeLoginSession | null {
-  return g.__orchClaudeLogin ? publicView(g.__orchClaudeLogin) : null;
+  return g.__calandriaClaudeLogin ? publicView(g.__calandriaClaudeLogin) : null;
 }
 
 export function cancelClaudeLogin(): void {
-  const st = g.__orchClaudeLogin;
+  const st = g.__calandriaClaudeLogin;
   if (!st) return;
   if (st.timer) clearTimeout(st.timer);
   try {
     st.proc?.kill();
   } catch {}
-  delete g.__orchClaudeLogin;
+  delete g.__calandriaClaudeLogin;
 }
 
 /**
@@ -98,7 +98,7 @@ export function cancelClaudeLogin(): void {
  * the CLI keeps running, parked on its paste-code prompt, until submitClaudeCode().
  */
 export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
-  const cur = g.__orchClaudeLogin;
+  const cur = g.__calandriaClaudeLogin;
   if (cur && (cur.status === "starting" || cur.status === "awaiting" || cur.status === "submitting")) {
     return awaitUrl();
   }
@@ -116,7 +116,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
     answered: new Set(),
     timer: null,
   };
-  g.__orchClaudeLogin = st;
+  g.__calandriaClaudeLogin = st;
 
   try {
     // BROWSER=true: when the CLI tries to open the URL it runs /bin/true on a
@@ -204,7 +204,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
 
 /** Hand the pasted authorization code to the waiting CLI prompt. */
 export async function submitClaudeCode(code: string): Promise<ClaudeLoginSession> {
-  const st = g.__orchClaudeLogin;
+  const st = g.__calandriaClaudeLogin;
   if (!st || !st.proc) return { status: "error", url: null, email: null, plan: null, error: "no login in progress", log: "" };
   const clean = code.trim();
   if (!clean) return publicView(st);
@@ -242,7 +242,7 @@ async function finishSuccess(st: LoginState) {
 async function awaitUrl(): Promise<ClaudeLoginSession> {
   const deadline = Date.now() + 20_000;
   for (;;) {
-    const st = g.__orchClaudeLogin;
+    const st = g.__calandriaClaudeLogin;
     if (!st) return { status: "error", url: null, email: null, plan: null, error: "login session vanished", log: "" };
     if (st.status !== "starting" || Date.now() > deadline) return publicView(st);
     await new Promise((r) => setTimeout(r, 150));

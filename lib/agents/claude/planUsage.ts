@@ -76,19 +76,19 @@ interface State {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __orchClaudePlanUsage: State | undefined;
+  var __calandriaClaudePlanUsage: State | undefined;
 }
 
 function state(): State {
-  if (!global.__orchClaudePlanUsage) {
-    global.__orchClaudePlanUsage = { fetched: null, passive: null, lastError: null, backoffUntil: 0, inflight: null };
+  if (!global.__calandriaClaudePlanUsage) {
+    global.__calandriaClaudePlanUsage = { fetched: null, passive: null, lastError: null, backoffUntil: 0, inflight: null };
   }
-  return global.__orchClaudePlanUsage;
+  return global.__calandriaClaudePlanUsage;
 }
 
 /** Tests only — the state is process-global and tests must not share it. */
 export function resetPlanUsageStateForTests(): void {
-  global.__orchClaudePlanUsage = undefined;
+  global.__calandriaClaudePlanUsage = undefined;
 }
 
 // Epoch normalization: the endpoint reports ISO strings, the SDK event epoch
