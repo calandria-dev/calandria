@@ -12,7 +12,7 @@
 // the fallback installed and renders something plausible). So pin the two lists
 // against each other.
 //
-// The rebrand (Operator → Calandria) also replaced the runtime Google Fonts CDN
+// The rebrand also replaced the runtime Google Fonts CDN
 // <link> with next/font/google, which downloads once at build time and serves
 // the fonts from this instance — no CDN request at runtime.
 //

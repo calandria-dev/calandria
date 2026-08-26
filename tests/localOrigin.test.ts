@@ -64,13 +64,13 @@ describe("local origin boundary", () => {
   });
 
   it("trusts PUBLIC_BASE_URL exactly for reverse-proxied deployments", () => {
-    const env = { PUBLIC_BASE_URL: "https://operator.example.com" };
+    const env = { PUBLIC_BASE_URL: "https://calandria.example.com" };
     expect(localWebSocketRequestAllowed(
-      { host: "operator.example.com", origin: "https://operator.example.com" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com" },
       env,
     )).toBe(true);
     expect(localWebSocketRequestAllowed(
-      { host: "operator.example.com", origin: "http://operator.example.com" },
+      { host: "calandria.example.com", origin: "http://calandria.example.com" },
       env,
     )).toBe(false);
     expect(localHttpRequestAllowed(
@@ -81,14 +81,14 @@ describe("local origin boundary", () => {
 
   it("supports explicit comma-separated origins for intentional LAN access", () => {
     const env = {
-      CALANDRIA_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://operator.internal",
+      CALANDRIA_ALLOWED_ORIGINS: "http://192.168.1.50:3000, https://calandria.internal",
     };
     expect(localWebSocketRequestAllowed(
       { host: "192.168.1.50:3000", origin: "http://192.168.1.50:3000" },
       env,
     )).toBe(true);
     expect(localHttpRequestAllowed(
-      { host: "operator.internal", origin: "https://operator.internal", secFetchSite: "same-origin" },
+      { host: "calandria.internal", origin: "https://calandria.internal", secFetchSite: "same-origin" },
       env,
     )).toBe(true);
     expect(localWebSocketRequestAllowed(
@@ -99,10 +99,10 @@ describe("local origin boundary", () => {
 
   it("ignores malformed or path-bearing allowlist entries", () => {
     const env = {
-      CALANDRIA_ALLOWED_ORIGINS: "not-a-url, https://operator.example.com/path",
+      CALANDRIA_ALLOWED_ORIGINS: "not-a-url, https://calandria.example.com/path",
     };
     expect(localHttpRequestAllowed(
-      { host: "operator.example.com", origin: "https://operator.example.com", secFetchSite: "same-origin" },
+      { host: "calandria.example.com", origin: "https://calandria.example.com", secFetchSite: "same-origin" },
       env,
     )).toBe(false);
   });

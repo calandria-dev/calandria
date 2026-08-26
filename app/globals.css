@@ -1433,7 +1433,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field:last-child{margin-bottom:0;}
 /* Body-face caps, matching the design language's section headers (.ap-h2 /
    handoff Settings.html .sec h2) — the mono-caps version was the pre-revamp
-   operator style. */
+   style. */
 .field .lab{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:8px;}
 .field .lab svg{width:13px;height:13px;}
 .field .lab .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--ink-4);}
