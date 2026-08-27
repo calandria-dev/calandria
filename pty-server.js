@@ -10,6 +10,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const os = require("node:os");
+const path = require("node:path");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
 
@@ -31,6 +32,55 @@ function numEnv(name, raw, def) {
 // proxies /pty upgrades to it on the same machine.
 const PORT = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
 const HOST = process.env.PTY_HOST || "127.0.0.1";
+
+const IS_WINDOWS = process.platform === "win32";
+
+/** First name in `names` that exists in a PATH directory, or null. */
+function onPath(names) {
+  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const name of names) {
+    for (const dir of dirs) {
+      try {
+        const candidate = path.join(dir, name);
+        if (fs.existsSync(candidate)) return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+/** First path in `candidates` that exists, or the last one as a last resort. */
+function firstExisting(candidates) {
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {}
+  }
+  return candidates[candidates.length - 1];
+}
+
+// The shell every terminal tab spawns. CALANDRIA_PTY_SHELL -> $SHELL -> a
+// platform default. The knob is read here rather than in lib/config.ts because
+// this plain-Node entrypoint can't import TS; it is documented in .env.example
+// and docs/SELF_HOSTING.md's configuration table like every other env var.
+//
+// $SHELL alone was the whole resolution and it is only a POSIX convention: it
+// is unset on native Windows and under systemd/trimmed environments, and the
+// old `/bin/zsh` fallback exists on neither Windows nor most Linux boxes, so
+// the drawer just failed to spawn. The defaults are therefore probed rather
+// than assumed. On win32 that means a real PowerShell if one is on PATH
+// (pwsh.exe is the nicer shell) falling back to COMSPEC, which is the
+// guaranteed one; on POSIX, zsh then bash then sh.
+function resolveShell() {
+  if (process.env.CALANDRIA_PTY_SHELL) return process.env.CALANDRIA_PTY_SHELL;
+  if (process.env.SHELL) return process.env.SHELL;
+  if (IS_WINDOWS) {
+    return onPath(["pwsh.exe", "powershell.exe"]) || process.env.COMSPEC || "cmd.exe";
+  }
+  return firstExisting(["/bin/zsh", "/bin/bash", "/bin/sh"]);
+}
+
+const SHELL = resolveShell();
 
 // Last-resort process guards, the same backstop server.js installs and for the
 // same reason — except the blast radius here is bigger than it looks. `npm
@@ -116,14 +166,16 @@ wss.on("connection", (ws, req) => {
     cwd = os.homedir();
   }
 
-  const shell = process.env.SHELL || "/bin/zsh";
   // The project's deterministic port (projects.port), injected as PORT so a dev
   // server the user launches by hand in this shell binds the same address the
   // Calandria's managed services + future subdomain routing expect.
   const port = Number(url.searchParams.get("port"));
-  const env = { ...process.env, TERM: "xterm-256color" };
+  const env = { ...process.env };
+  // POSIX only: ConPTY doesn't read TERM, and setting it leaks a variable that
+  // makes cross-platform tooling believe it's talking to a POSIX terminal.
+  if (!IS_WINDOWS) env.TERM = "xterm-256color";
   if (port > 0) env.PORT = String(port);
-  const term = pty.spawn(shell, [], {
+  const term = pty.spawn(SHELL, [], {
     name: "xterm-256color",
     cols: Number(url.searchParams.get("cols")) || 80,
     rows: Number(url.searchParams.get("rows")) || 24,
