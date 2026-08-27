@@ -265,6 +265,7 @@ old one. There is no undo.
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
 | `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated and hands out a shell, and the origin gate is a header check that a LAN client can forge past, so only the bind closes that. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is deliberately **not** read — shells and container runtimes inject it. The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct inside a container whose port is published on the host's loopback |
+| `CALANDRIA_LOG_FORMAT` | `text` | How log lines are rendered. `text` is the human-readable `[component] message key=value` form this app has always printed; `json` emits one JSON object per line (`ts`, `level`, `component`, `msg`, plus that line's own fields) for shipping at a collector. Read independently by `server.js`, `pty-server.js` and the app, so set it in the environment that launches all three. See [Reading the logs](TROUBLESHOOTING.md#reading-the-logs) |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar **and** the proxy's upstream. Keep it on loopback — the browser never connects directly; `server.js` proxies `/pty` to it |
 | `CALANDRIA_PTY_SHELL` | *(empty)* | The shell every terminal tab spawns. Empty falls back to `$SHELL`, then to a platform default: the first of `/bin/zsh`, `/bin/bash`, `/bin/sh` that exists on POSIX; `pwsh.exe`/`powershell.exe` if either is on PATH, else `%COMSPEC%`, on Windows. `$SHELL` is a POSIX convention — unset on native Windows and under systemd/trimmed environments — so set this if the terminal drawer can't spawn a shell, or to get a different one than your login shell |
@@ -585,5 +586,37 @@ Three things to expect from a restored instance, none of them a fault:
   disk. Note the limit on every platform — a local administrator (or root) can take
   ownership regardless; this protects the key from *other* users of the machine, not
   from its owner.
+- **Retention:** the database is not append-only forever. A sweep rides the schedule
+  ticker (same process — Calandria never starts a second daemon) and ages out the record
+  of tasks that are **finished**: terminal (`done`/`cancelled`), idle, not snoozed, with
+  no queued follow-up and no in-flight scheduled run behind them. A live task is never
+  touched, however old. Two windows, both in days:
+  `CALANDRIA_RETENTION_DAYS` (default **180**) covers a finished task's own record —
+  transcript, diff/document review comments, the sessions a `/clear` retired, and its
+  uploaded attachments — and `CALANDRIA_USAGE_RETENTION_DAYS` (default **400**) covers
+  the spend rows (`task_usage`, `task_merges`, `internal_usage`). The second is longer on
+  purpose: those feed the Insights dashboard, which reads 180 days back and asks for the
+  same width again to compute prior-period deltas, so a shorter window would carve a hole
+  in a chart you are looking at. Two things a sweep changes that are worth knowing before
+  you shorten either: an aged-out task shows an **empty transcript** (it stays resumable —
+  the session it would resume into is the one row deliberately kept — but the record of
+  what it did is gone, bar its `/clear` summaries, which are never pruned), and its
+  all-time cost reads **$0.00** rather than a smaller wrong number. Set
+  `CALANDRIA_RETENTION=off` to keep everything forever; set either window to `0` to keep
+  just that half. Cadence is `CALANDRIA_RETENTION_SWEEP_MS` (default 6h), and the first
+  sweep runs on the tick after boot, so an instance that is only up for part of the day
+  still gets one. Anything deleted is named in one server log line.
+- **Reclaiming the disk:** a sweep that deleted anything follows with
+  `PRAGMA wal_checkpoint(TRUNCATE)`. That matters more than it sounds: in WAL mode the
+  deletes themselves land in `calandria.db-wal`, which *grows* to hold them, so without a
+  checkpoint a big prune makes the on-disk footprint go up before it comes down. What a
+  checkpoint cannot do is shrink `calandria.db` itself — freed pages go on the freelist
+  and get reused by later writes rather than returned to the filesystem, so the file
+  plateaus instead of falling. Only `VACUUM` shrinks it, by rewriting the whole database
+  under a write lock, which is seconds on a small database and a visible stall on a large
+  one. So it is opt-in: `CALANDRIA_RETENTION_VACUUM=1` runs one after any sweep that
+  deleted rows, or run `VACUUM;` yourself against a stopped instance. Per-task git
+  worktrees are a separate and larger disk story with its own reclaim path —
+  Settings → Storage.
 - **Delete is hard delete:** a removed project's chat history is gone (your code on disk
   is untouched).

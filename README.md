@@ -204,6 +204,14 @@ refuses to start if another process already owns it, naming the holder. Two
 servers sharing one database overwrite each other's running tasks; give a
 second instance its own `CALANDRIA_DB_DIR`.
 
+The database does not grow forever. A retention sweep rides the schedule
+ticker and ages out the record of **finished** tasks — transcript, review
+comments, retired sessions and uploaded attachments after 180 days, spend rows
+after 400 (longer, so Insights keeps its full 180-day range), then checkpoints
+the WAL so the space is actually reclaimed. Live tasks are never touched, and
+`CALANDRIA_RETENTION=off` keeps everything forever. Windows and the opt-in
+`VACUUM` are in the [self-hosting guide](docs/SELF_HOSTING.md).
+
 `npm run backup` takes a hot backup with the app running — a WAL-safe
 `VACUUM INTO` snapshot of the database plus uploads, keys and the agent CLI
 logins, in one timestamped archive. Don't `cp` a live SQLite database; see

@@ -15,7 +15,8 @@
 // lib/dispatch.ts, shared with runbooks — a runbook is this feature with the
 // clock taken off, and two copies of that sequence would have drifted.
 
-import { SCHEDULER_ENABLED, SCHEDULE_TICK_MS } from "@/lib/config";
+import { RETENTION_ENABLED, SCHEDULER_ENABLED, SCHEDULE_TICK_MS } from "@/lib/config";
+import { maybeSweepRetention, retentionHealth } from "@/lib/retention";
 import { adjudicate } from "@/lib/schedule/due";
 import {
   activeRun, getSchedule, listEnabledSchedules, refreshNextFire, claimRun, settleRun, startRun, specOf,
@@ -55,11 +56,18 @@ const state = (): SchedulerState =>
 export const schedulerHealth = () => {
   const s = state();
   return {
-    started: !!s.timer,
+    // "the schedule half is running", not "a timer exists" — the timer also
+    // ticks for retention alone, and the card ages this into a "looks stuck"
+    // banner about SCHEDULES.
+    started: !!s.timer && SCHEDULER_ENABLED,
     startedAt: s.startedAt,
     lastTickAt: s.lastTickAt,
     lastError: s.lastError,
     tickMs: SCHEDULE_TICK_MS,
+    // Retention rides this ticker (lib/retention.ts) and has no card of its
+    // own, so its cadence is reported here — otherwise "did the prune run?" has
+    // no answer short of reading the log.
+    retention: retentionHealth(),
   };
 };
 
@@ -69,15 +77,22 @@ export const schedulerHealth = () => {
  */
 export function startScheduler(): void {
   const s = state();
-  if (s.timer || !SCHEDULER_ENABLED) return;
+  // The ticker is also retention's clock (lib/retention.ts), so it starts for
+  // EITHER job. An instance that turned scheduled work off — a shared box, a
+  // second container on a copy of the DB — is exactly the one that still wants
+  // its disk swept, and coupling the two would have made CALANDRIA_SCHEDULER=off
+  // silently disable a policy nobody set.
+  if (s.timer || (!SCHEDULER_ENABLED && !RETENTION_ENABLED)) return;
   // A restart can land mid-slot, and a tzdata update can move a cached
   // next_fire_at. Revalidate every enabled schedule against its spec before the
   // first tick, so boot catch-up adjudicates from a correct position.
-  for (const schedule of listEnabledSchedules()) {
-    try {
-      if (schedule.next_fire_at <= 0) refreshNextFire(schedule);
-    } catch (err) {
-      console.error(`[scheduler] schedule ${schedule.id} has an unusable spec:`, err);
+  if (SCHEDULER_ENABLED) {
+    for (const schedule of listEnabledSchedules()) {
+      try {
+        if (schedule.next_fire_at <= 0) refreshNextFire(schedule);
+      } catch (err) {
+        console.error(`[scheduler] schedule ${schedule.id} has an unusable spec:`, err);
+      }
     }
   }
   s.startedAt = Date.now();
@@ -110,7 +125,9 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
   // is the same disease as a schedule that cries wolf every morning.
   let failure = "";
   try {
-    for (const schedule of listEnabledSchedules()) {
+    // Empty when scheduled work is switched off — the sweep below still runs,
+    // which is the whole reason the ticker starts for retention alone.
+    for (const schedule of SCHEDULER_ENABLED ? listEnabledSchedules() : []) {
       try {
         const verdict = adjudicate(schedule, now, isScheduleBusy);
         if (verdict.kind !== "fire") continue;
@@ -127,6 +144,16 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
       }
     }
     s.lastError = failure;
+    // Retention piggybacks on this ticker rather than starting a second one:
+    // this process owns the database (lib/db-lock.mjs), so a prune belongs in
+    // the one loop that already runs here. It keeps its own much longer clock
+    // and returns immediately when it isn't due, and it is wrapped because a
+    // failed prune must never stop tomorrow's 08:30 firing.
+    try {
+      maybeSweepRetention(Date.now());
+    } catch (err) {
+      console.error("[retention] sweep failed:", err);
+    }
     s.lastTickAt = Date.now();
   } finally {
     s.ticking = false;
