@@ -8,7 +8,7 @@ import {
   GIT_FETCH_TIMEOUT_MS,
   GIT_FETCH_COOLDOWN_MS,
 } from "./config";
-import { withRepoLock } from "./repoLock";
+import { repoLockKey, withRepoLock } from "./repoLock";
 
 const run = promisify(execFile);
 
@@ -253,23 +253,29 @@ function fetchState() {
  */
 export async function fetchBase(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
   const st = fetchState();
-  const last = st.last.get(repoPath) ?? 0;
+  // Keyed on the repo's IDENTITY (its common git dir, the same resolution
+  // lib/repoLock.ts uses) rather than the configured path, so a symlinked
+  // spelling, a trailing slash, or two projects pointed at one checkout share a
+  // cooldown instead of each fetching on their own clock — and on the branch,
+  // because a fetch of `main` says nothing about `release` (issue #41).
+  const key = `${await repoLockKey(repoPath)}\0${baseBranch}`;
+  const last = st.last.get(key) ?? 0;
   // Turned off is not the same as failed: the user may still fetch by hand, so
   // the remote-tracking ref can be perfectly current. Report nothing to report.
   if (!GIT_FETCH_ENABLED) return { attempted: false, ok: false, fetchedAt: last };
   if (last && Date.now() - last < GIT_FETCH_COOLDOWN_MS) return { attempted: true, ok: true, fetchedAt: last };
 
-  const inflight = st.inflight.get(repoPath);
+  const inflight = st.inflight.get(key);
   if (inflight) return inflight;
 
-  const p = runFetch(repoPath, baseBranch).finally(() => st.inflight.delete(repoPath));
-  st.inflight.set(repoPath, p);
+  const p = runFetch(key, repoPath, baseBranch).finally(() => st.inflight.delete(key));
+  st.inflight.set(key, p);
   return p;
 }
 
-async function runFetch(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
+async function runFetch(key: string, repoPath: string, baseBranch: string): Promise<FetchOutcome> {
   const st = fetchState();
-  const prior = () => st.last.get(repoPath) ?? 0;
+  const prior = () => st.last.get(key) ?? 0;
   let up: BaseRemote | null = null;
   try {
     up = await baseRemote(repoPath, baseBranch);
@@ -290,7 +296,7 @@ async function runFetch(repoPath: string, baseBranch: string): Promise<FetchOutc
       `+refs/heads/${up.remoteBranch}:${up.trackingRef}`,
     ]);
     const at = Date.now();
-    st.last.set(repoPath, at);
+    st.last.set(key, at);
     return { attempted: true, ok: true, fetchedAt: at };
   } catch (e) {
     return { attempted: true, ok: false, fetchedAt: prior(), error: gitErrorLine(e, "git fetch failed") };
