@@ -23,9 +23,9 @@ import type {
   PermissionOutcome,
   PermissionRequest,
 } from "../../types";
-import type { AgentDriver, OneShotResult } from "../types";
+import type { AgentDriver, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
-import { listClaudeCommands } from "./commands";
+import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
@@ -239,7 +239,11 @@ function calandriaServer(
   project: Project,
   task: Task,
   onSuggest: (s: { title: string; projectId: string }) => void,
-  onExpose: (info: { name: string; url: string }) => void
+  onExpose: (info: { name: string; url: string }) => void,
+  // Injected, never imported: see TurnHooks in lib/agents/types.ts for why this
+  // file must not name lib/autoStart.ts. Absent = nothing to notify (a driver
+  // run outside the runner), so the sweep is simply skipped.
+  hooks?: TurnHooks
 ) {
   // Titles created this session, so `blocked_by` can reference earlier suggestions
   // by title (not just id) — friendlier for the model when planning a roadmap.
@@ -380,13 +384,9 @@ function calandriaServer(
           // be written and re-reads both rows first, so a task deleted or
           // started mid-turn is a refusal rather than a stale write.
           const { task: updated, text, autoStartDependents } = updateTaskForAgent(task, args.task, args);
-          if (autoStartDependents && updated) {
-            // Imported at CALL time, not module load: lib/autoStart reaches
-            // lib/runner, which imports the driver registry, which imports this
-            // file — a static import would close that cycle at init.
-            const { maybeAutoStartDependents } = await import("../../autoStart");
-            maybeAutoStartDependents(updated.id);
-          }
+          // Reported to the launcher, not acted on here: the sweep lives in
+          // lib/autoStart.ts and this file must not reach it (TurnHooks).
+          if (autoStartDependents && updated) hooks?.onTaskCleared(updated.id);
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
@@ -403,12 +403,8 @@ function calandriaServer(
           // Eligibility is the shared isInertSuggestion, so a row this tool will
           // withdraw is exactly a row update_task would edit.
           const { task: updated, text, autoStartDependents } = withdrawSuggestionForAgent(task, args.task, args.reason);
-          if (autoStartDependents && updated) {
-            // Cancelling cleared a blocker. Imported at CALL time for the same
-            // cycle reason as update_task's copy above.
-            const { maybeAutoStartDependents } = await import("../../autoStart");
-            maybeAutoStartDependents(updated.id);
-          }
+          // Cancelling cleared a blocker — same hand-off as update_task's above.
+          if (autoStartDependents && updated) hooks?.onTaskCleared(updated.id);
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
@@ -532,7 +528,8 @@ async function* runTurn(
   task: Task,
   project: Project,
   userText: string,
-  abortController?: AbortController
+  abortController?: AbortController,
+  hooks?: TurnHooks
 ): AsyncGenerator<StreamEvent> {
   let sessionId: string | null = task.session_id;
   // AskUserQuestion tool_use ids — surfaced as interactive "ask" cards by the
@@ -882,10 +879,14 @@ async function* runTurn(
     lingerTimer.unref?.();
   };
 
+  // Hoisted because the init handler below records this session's MCP prompt
+  // commands against it, and the menu's cache is keyed by exactly this cwd.
+  const cwd = sessionCwd(task, project);
+
   const response = query({
     prompt: promptStream(),
     options: {
-      cwd: sessionCwd(task, project),
+      cwd,
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.
@@ -908,7 +909,8 @@ async function* runTurn(
           // would keep the receiving tray stale for as long as the turn runs —
           // hours, if it parks on a question.
           ({ title, projectId }) => queue.push({ type: "suggested", title, projectId }),
-          ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` })
+          ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
+          hooks
         ),
       },
       // Lets the Stop button interrupt the stream mid-turn (see lib/abort.ts).
@@ -1058,6 +1060,12 @@ async function* runTurn(
           }
           sessionId = message.session_id;
           queue.push({ type: "session", sessionId });
+          // The composer's "/" menu can't discover MCP prompt commands on its
+          // own — they exist only on this message, and getting them any other
+          // way means spawning the user's whole MCP fleet on a keystroke
+          // (lib/agents/claude/commands.ts). This session already paid for that
+          // fleet, so hand its list to the menu's cache on the way past.
+          recordMcpPrompts(cwd, SETTING_SOURCES, message.slash_commands);
           // The init message reports the model the SDK actually resolved (e.g. when
           // "default" maps to Opus). Surface it so the UI can badge the live model.
           const resolved = (message as { model?: string }).model;

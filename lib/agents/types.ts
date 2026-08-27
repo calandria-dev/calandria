@@ -191,6 +191,39 @@ export interface AgentApiKeyAuth {
 }
 
 /**
+ * Side effects a turn's TOOL CALLS need, handed to the driver by whoever
+ * launched the turn (lib/runner.ts's startTurn, from its caller) instead of
+ * being imported by the driver itself.
+ *
+ * There is exactly one, and it exists because of the module graph rather than
+ * because drivers wanted a plugin point. `update_task`/`withdraw_suggestion`
+ * can move a task to a terminal status, which stops it blocking its
+ * dependents, and launching those is lib/autoStart.ts's job — a module that
+ * reaches lib/runner.ts, which resolves this driver through
+ * lib/agents/registry.ts. A driver importing it back closes the cycle
+ *
+ *   autoStart → runner → agents/registry → agents/claude/driver → autoStart
+ *
+ * that broke EVERY auto-start in production once already (issue #40; the
+ * dynamic import that stopped the symptom left the cycle in place). Naming a
+ * callback instead of the module keeps the graph a DAG: the driver knows "a
+ * task went terminal", not what the app does about it — and the layer that
+ * does know is the one that already owns the launch. The Codex path has always
+ * worked this way, with lib/agentTools.ts returning an `autoStartDependents`
+ * flag its route acts on; this is the same split for the in-process driver,
+ * whose "route" is the runner. Pinned by tests/importGraph.test.ts.
+ */
+export interface TurnHooks {
+  /**
+   * `taskId` just reached a terminal status (done or cancelled) via one of this
+   * turn's tool calls, so anything waiting on it may now be startable.
+   * Fire-and-forget: not awaited, and whatever it starts must swallow its own
+   * failures — a tool result must never depend on a launch succeeding.
+   */
+  onTaskCleared(taskId: string): void;
+}
+
+/**
  * A pluggable coding-agent backend.
  *
  * `runTurn` is THE contract: one user turn in, a stream of normalized
@@ -212,8 +245,13 @@ export interface AgentDriver {
    * Run one user turn. Resumes task.session_id when set, otherwise starts a
    * fresh session seeded with the project context. `abort` (the Stop button)
    * must end the stream without emitting an error event.
+   *
+   * `hooks` carries the side effects a driver must not import for itself (see
+   * TurnHooks). Optional in the signature so a driver that mounts no Calandria
+   * tools can ignore it entirely; the runner always passes what its caller
+   * gave it.
    */
-  runTurn(task: Task, project: Project, userText: string, abort?: AbortController): AsyncGenerator<StreamEvent>;
+  runTurn(task: Task, project: Project, userText: string, abort?: AbortController, hooks?: TurnHooks): AsyncGenerator<StreamEvent>;
 
   /**
    * The slash commands a turn on this task WOULD expand, so the composer's "/"

@@ -28,18 +28,32 @@
 // composer's menu and the schedule validator come to disagree, and a
 // disagreement there means the editor rejects a command the menu offers.
 //
-// One thing the mechanism genuinely cannot see, measured rather than assumed
-// (CLI 2.1.228, a machine with four MCP servers exposing 16 prompts): MCP
-// PROMPT commands — the `/mcp__<server>__<prompt>` form — are absent from
-// `supportedCommands()` and present in the init message's `slash_commands`. Not
-// a timing artifact and not strictMcpConfig: re-asking at 3s, 8s and 15s with
-// the user's whole fleet inheritable returned the same 59 commands, byte for
-// byte, and the init message never arrives at all while the prompt generator
-// withholds (no turn, no init). Getting those names therefore costs a real
-// prompt and a real MCP fleet spawn, which is the whole thing this path exists
-// not to do — so callers that must not produce a false negative treat an absent
-// `mcp__` command as unverifiable rather than unknown (see the schedule
-// validator).
+// MCP PROMPT commands — the `/mcp__<server>__<prompt>` form — are the one thing
+// this probe cannot see, and that is a CONSEQUENCE OF THE ISOLATION rather than
+// a gap in the SDK. Measured on CLI 2.1.240 / SDK 0.3.159, in a checkout with
+// fifteen MCP servers configured:
+//
+//   - A probe that inherits the user's MCP config DOES report them, but under a
+//     display label — `stash:analyze-performer (MCP)`, not the token a session
+//     expands. Verified with a UserPromptExpansion hook:
+//     `/mcp__stash__discover-performers` expands (`expansion_type: "mcp_prompt"`)
+//     while `/stash:discover-performers` answers "Unknown command".
+//   - The list is FROZEN AT INITIALIZATION. Asked again at 4s, 9s and 20s on one
+//     long-lived session it stayed at the same 82 commands while eleven more
+//     servers finished connecting — MCP startup is non-blocking, so only the
+//     servers that connect inside the ~700ms startup window contribute prompts
+//     at all (three of fifteen did).
+//
+// So loosening the isolation would spawn the user's whole fleet on a menu read
+// AND still answer with a racy subset of it. The names come from the sessions
+// that already paid for that fleet instead: a real turn's `init` message
+// carries `slash_commands` with the `mcp__` forms in it, and the driver hands
+// them to recordMcpPrompts() below, which listClaudeCommands() merges in. Free,
+// exactly the token the CLI expands — and bounded by what it is: a task offers
+// no MCP prompts until its first turn has run, and offers whatever that turn's
+// session saw. The schedule validator's probe is keyed to the project's repo,
+// where no turn runs, so it still treats an absent `mcp__` command as
+// unverifiable rather than unknown.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
@@ -86,11 +100,33 @@ type Entry = { at: number; commands: AgentCommand[] };
 const g = globalThis as unknown as {
   __calandriaClaudeCommands?: Map<string, Entry>;
   __calandriaClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[] | null>>;
+  __calandriaClaudeMcpPrompts?: Map<string, Entry>;
 };
 const cache = (g.__calandriaClaudeCommands ??= new Map());
 const inFlight = (g.__calandriaClaudeCommandsInFlight ??= new Map());
+// The MCP prompts observed on real turns, same key, same cap — see the header.
+// Deliberately WITHOUT a TTL: the probe's entries expire because a fresh probe
+// can always be run, and nothing can refresh these but another turn, so expiry
+// would only ever throw away the single source there is.
+const mcpPrompts: Map<string, Entry> = (g.__calandriaClaudeMcpPrompts ??= new Map());
 
 const cacheKey = (cwd: string, settingSources: SettingSource[]) => `${settingSources.join(",")} @ ${cwd}`;
+
+/** The `(MCP)` display label the CLI reports for a prompt when MCP is loaded. */
+const MCP_LABEL = / \(MCP\)$/;
+const MCP_PREFIX = "mcp__";
+
+/**
+ * An `mcp__<server>__<prompt>` name as a menu row. The init message carries the
+ * name and nothing else, so the description is synthesized — in the CLI's own
+ * idiom for a command that came from somewhere (`(claude-mem) Watch a pull
+ * request…`), since the one thing worth saying about these is which server the
+ * prompt belongs to.
+ */
+function mcpPromptCommand(name: string): AgentCommand {
+  const server = name.slice(MCP_PREFIX.length).split("__")[0];
+  return { name, description: server ? `(${server}) MCP prompt` : "MCP prompt" };
+}
 
 async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<AgentCommand[]> {
   const abort = new AbortController();
@@ -116,12 +152,15 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
         settingSources,
         pathToClaudeCodeExecutable: CLAUDE_CLI_PATH,
         abortController: abort,
-        // No MCP for a question about commands. Verified against CLI 2.1.228
-        // that this changes NOTHING about the answer — the same 59 commands
-        // come back with and without it, so plugin *commands* don't travel with
-        // plugin MCP config — while keeping a keystroke-triggered call from
-        // spawning the user's whole server fleet (measured elsewhere in this
-        // driver at 10 servers / ~8s).
+        // No MCP for a question about commands, so a keystroke-triggered call
+        // never spawns the user's server fleet (measured elsewhere in this
+        // driver at 10 servers / ~8s). What that costs is exactly the MCP
+        // prompt rows and nothing else: re-measured on CLI 2.1.240, the same
+        // list comes back with and without it apart from those (a checkout with
+        // no MCP prompts published: 70 commands either way; one with four:
+        // 78 against 82, the diff being those four). Plugin *commands* still
+        // don't travel with plugin MCP config. See the header for why the fleet
+        // is not the way to get the prompts back.
         strictMcpConfig: true,
         mcpServers: {},
         // A SessionStart hook fires on initialization whether or not a turn
@@ -133,7 +172,15 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
       },
     });
     const commands = await q.supportedCommands();
-    return commands.map((c) => ({
+    return commands
+      // A `… (MCP)` row can only appear if the isolation above stopped working
+      // (a future SDK ignoring strictMcpConfig, a fork that drops it), and it is
+      // a DISPLAY label, not a command: typing `/stash:discover-performers` gets
+      // "Unknown command" from the same CLI that reports it. Dropping it costs
+      // nothing — the invocable form arrives via recordMcpPrompts — while
+      // keeping it would put a name in the menu that inserting can only break.
+      .filter((c) => !MCP_LABEL.test(c.name))
+      .map((c) => ({
       name: c.name.replace(/^\//, ""),
       description: c.description ?? "",
       ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}),
@@ -147,6 +194,53 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
     abort.abort();
     q?.close();
   }
+}
+
+/**
+ * Record the MCP prompt commands a REAL session reported on its `init` message,
+ * so the menu can offer what the probe structurally cannot see (header).
+ *
+ * Called by the driver for every turn, which is what keeps this honest: the
+ * newest observation replaces the previous one wholesale, so a server the user
+ * removed stops being offered after the next turn rather than lingering until a
+ * restart. An empty list IS an observation — a session with no MCP prompts is a
+ * fact worth recording — but a message without the field at all is not, since
+ * that's an SDK shape we didn't expect rather than a session without prompts.
+ */
+export function recordMcpPrompts(
+  cwd: string,
+  settingSources: SettingSource[],
+  slashCommands: readonly string[] | undefined
+): void {
+  if (!Array.isArray(slashCommands)) return;
+  const commands = slashCommands
+    .map((c) => String(c).replace(/^\//, "").trim())
+    .filter((c) => c.startsWith(MCP_PREFIX))
+    .map(mcpPromptCommand);
+  const key = cacheKey(cwd, settingSources);
+  // Re-insert so the eviction below drops the least recently OBSERVED entry —
+  // most keys here are task worktrees, and an instance up for weeks would
+  // otherwise accumulate one per task ever run, deleted ones included.
+  mcpPrompts.delete(key);
+  mcpPrompts.set(key, { at: Date.now(), commands });
+  while (mcpPrompts.size > MAX_ENTRIES) mcpPrompts.delete(mcpPrompts.keys().next().value as string);
+}
+
+/**
+ * The probe's answer plus any MCP prompts observed for the same key.
+ *
+ * Merged at READ time rather than into the cache entry, so a prompt observed on
+ * a turn shows up in the very next menu instead of waiting out the probe's TTL.
+ * `null` is passed straight through: it means "we could not find out", and an
+ * observation from an earlier session is not an answer to that question — the
+ * validator would read the list as complete and refuse a real command.
+ */
+function withMcpPrompts(key: string, commands: AgentCommand[] | null): AgentCommand[] | null {
+  if (!commands) return null;
+  const observed = mcpPrompts.get(key)?.commands ?? [];
+  const have = new Set(commands.map((c) => c.name));
+  const extra = observed.filter((c) => !have.has(c.name));
+  return extra.length ? [...commands, ...extra] : commands;
 }
 
 /**
@@ -194,6 +288,9 @@ function startEnumeration(
  * empty registry there settles a scheduled run `failed` and mints nothing,
  * every morning, for a command that is in fact registered.
  *
+ * MCP prompts are folded in from what real turns in the same cwd reported (see
+ * recordMcpPrompts), because no probe cheap enough to run here can see them.
+ *
  * Cached with a short TTL and deduped while in flight, because this is called
  * from a UI keystroke: several tabs opening the same task must not each spawn a
  * CLI, and several schedules on one project must not each spawn one inside a
@@ -211,10 +308,10 @@ export async function listClaudeCommands(
   const key = cacheKey(cwd, settingSources);
   if (!refresh) {
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < TTL_MS) return hit.commands;
+    if (hit && Date.now() - hit.at < TTL_MS) return withMcpPrompts(key, hit.commands);
   }
 
   const commands = await startEnumeration(key, cwd, settingSources);
-  if (commands) return commands;
-  return refresh ? null : (cache.get(key)?.commands ?? null);
+  if (commands) return withMcpPrompts(key, commands);
+  return refresh ? null : withMcpPrompts(key, cache.get(key)?.commands ?? null);
 }

@@ -26,22 +26,30 @@
 // import, and that is load-bearing in the production build. The runner imports
 // the driver registry and therefore both ESM-only agent SDKs, which Turbopack
 // emits as ASYNC externals — so lib/runner.ts compiles to an async module,
-// whose `module.namespaceObject` is a PROMISE until its factory settles. Every
-// static importer of it must therefore be compiled async too, and Turbopack
-// does that for the other two (POST /messages, lib/scheduler.ts) but NOT for
-// this file, because this file sits in a cycle with the async graph:
+// whose `module.namespaceObject` is a PROMISE until its factory settles, and
+// so does every static importer of it. This module's own importers are
+// ordinary route entries (PATCH /api/tasks/[id], the agent-edits route, the
+// two internal agent-tools routes), and a route entry Turbopack compiled sync
+// reading an async dependency is exactly how /api/services/grant 500'd: every
+// export back as undefined. So the rule here is the same one the PINNED list
+// in tests/importGraph.test.ts enforces elsewhere — this file must have NO
+// STATIC path to an agent SDK — and the dynamic import is how it keeps one
+// while still launching turns. Pinned by the DYNAMIC_ONLY case in that test.
 //
-//   autoStart → runner → agents/registry → agents/claude/driver
-//             → (call-time import) autoStart
+// It used to be justified by a CYCLE instead, and that cycle is now gone
+// (issue #40). The Claude driver's update_task/withdraw_suggestion tools
+// imported this module back at call time:
 //
-// The driver's edge is already dynamic so the cycle isn't closed at init, but
-// Turbopack still sees it and bails out of propagating async-ness here: every
-// emitted copy of this module was a plain sync factory, so `startTurn` was read
-// off a pending Promise and auto-start died with "startTurn is not a function"
-// on every single launch. A dynamic import is immune — Turbopack's asyncModule
-// resolves its promise WITH the populated namespace — which is the same reason
-// /api/instance/scheduler reaches lib/scheduler.ts that way. Pinned by the
-// dynamic-only case in tests/importGraph.test.ts.
+//   autoStart → runner → agents/registry → agents/claude/driver → autoStart
+//
+// Turbopack saw the cycle and bailed out of propagating async-ness to this
+// file even along its then-static runner edge: every emitted copy was a plain
+// sync factory, so `startTurn` was read off a pending Promise and auto-start
+// died with "startTurn is not a function" on every single launch, while dev
+// and vitest stayed green. A dynamic import was immune and stopped the
+// symptom; what removed the cycle is AUTO_START_HOOKS below — the driver is
+// handed a callback by whoever launched the turn instead of importing the
+// module (lib/agents/types.ts's TurnHooks).
 
 import fs from "node:fs";
 import {
@@ -58,6 +66,7 @@ import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import { DEPENDENCY_RUN_CONTEXT } from "@/lib/runContext";
+import type { TurnHooks } from "@/lib/agents/types";
 import type { Task } from "@/lib/types";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
@@ -107,6 +116,21 @@ export function maybeAutoStartDependents(clearedTaskId: string): void {
     });
   }
 }
+
+/**
+ * What every turn launch hands the driver so a tool call that clears a blocker
+ * can reach this sweep — the one thing a driver needs from this module and
+ * must never import (lib/agents/types.ts's TurnHooks explains why; the header
+ * note above records what happened when one did). Every startTurn /
+ * startResumeTurn caller passes this same object: POST /api/tasks/[id]/messages,
+ * lib/dispatch.ts (runbooks + schedules), lib/deferredStart.ts, and the launch
+ * below. A new launch path that forgets it doesn't break its turn — the tools
+ * still work — it just leaves the dependents of anything the agent marks done
+ * sitting unstarted, so pass it.
+ */
+export const AUTO_START_HOOKS: TurnHooks = {
+  onTaskCleared: (taskId) => maybeAutoStartDependents(taskId),
+};
 
 /**
  * Start a never-started task's first turn, exactly like the POST /messages
@@ -184,7 +208,7 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
       updateTask(taskId, { running: 1, awaiting_input: 0 });
       publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
       // Declared, not inferred: nobody clicked this launch (issue #37).
-      startTurn(fresh, project, userText, note, controller, { ...DEPENDENCY_RUN_CONTEXT });
+      startTurn(fresh, project, userText, note, controller, { ...DEPENDENCY_RUN_CONTEXT }, AUTO_START_HOOKS);
       launched = true;
     });
     return launched;

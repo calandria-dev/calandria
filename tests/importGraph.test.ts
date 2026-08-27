@@ -66,23 +66,42 @@ const PINNED = [
 // Different failure from the one above, same async externals. lib/runner.ts
 // statically imports the driver registry, so it IS an async module — and under
 // Turbopack an async module's `namespaceObject` is a PROMISE until its factory
-// settles, so every static importer of it must be compiled async too. Turbopack
-// does that for POST /messages and lib/scheduler.ts but NOT for lib/autoStart.ts,
-// because that file closes a cycle back into the async graph:
+// settles, so every static importer of it must be compiled async too. These two
+// are launchers reached from ORDINARY ROUTE ENTRIES (PATCH /api/tasks/[id], the
+// agent-edits route, the two internal agent-tools routes), which is the same
+// position lib/store.ts was in when /api/services/grant 500'd: a sync-compiled
+// route entry reading every export of an async dependency back as undefined.
+// So the requirement is PINNED's — no static path to an SDK — and the dynamic
+// `await import("@/lib/runner")` is how a module that must launch turns still
+// meets it. Turbopack's asyncModule resolves that promise with the populated
+// namespace, so it never depends on propagation at all.
 //
-//   autoStart → runner → agents/registry → agents/claude/driver
-//             → (call-time import) autoStart
+// The historic reason was narrower and is now gone: lib/autoStart.ts used to
+// close a cycle back into the async graph, because the Claude driver's
+// update_task/withdraw_suggestion tools imported it at call time —
 //
-// Every emitted copy of autoStart came out a plain sync factory, so `startTurn`
-// was read off a pending Promise and EVERY auto-start launch died with
-// "(0 , n.startTurn) is not a function" in production while dev worked fine.
-// A dynamic import doesn't depend on that propagation — Turbopack's asyncModule
-// resolves its promise with the populated namespace — so these entries must not
-// grow a STATIC path to an SDK, even though a dynamic one is expected and fine.
+//   autoStart → runner → agents/registry → agents/claude/driver → autoStart
+//
+// — and Turbopack, seeing the cycle, skipped propagating async-ness into
+// autoStart even along its then-STATIC runner edge. Every emitted copy came out
+// a plain sync factory, so `startTurn` was read off a pending Promise and EVERY
+// auto-start launch died with "(0 , n.startTurn) is not a function" in
+// production while dev and vitest stayed green. The driver now takes the sweep
+// as an injected callback (TurnHooks in lib/agents/types.ts), so the cycle is
+// gone — pinned by the acyclicity test below, which is what stops it growing
+// back and turning these entries into that bug again.
 const DYNAMIC_ONLY = [
-  "lib/autoStart.ts", // in the driver's cycle; must not rely on async propagation
+  "lib/autoStart.ts", // launches turns, but its importers are sync route entries
   "lib/deferredStart.ts", // imports lib/autoStart statically and reaches the runner the same way
 ];
+
+// The other half of the same rule, in the other direction: nothing the driver
+// registry can reach — statically OR dynamically — may import a launcher back.
+// A dynamic edge counts, because Turbopack's cycle detection counted the
+// driver's `await import("../../autoStart")` and bailed out of async-ness
+// propagation on the strength of it. What a driver needs from a launcher is
+// injected (lib/agents/types.ts's TurnHooks), never imported.
+const LAUNCHERS = ["lib/runner.ts", "lib/autoStart.ts", "lib/deferredStart.ts", "lib/dispatch.ts"];
 
 // import/export/require specifiers, coarse but sufficient for this repo's
 // plain static imports.
@@ -130,6 +149,30 @@ function reachablePackages(entry: string, staticOnly = false): Map<string, strin
   return packages;
 }
 
+/**
+ * All repo-local modules reachable from `entry`, with one witness path each.
+ * Dynamic `import()` edges included, deliberately — see LAUNCHERS.
+ */
+function reachableFiles(entry: string): Map<string, string[]> {
+  const files = new Map<string, string[]>();
+  const queue: { file: string; trail: string[] }[] = [{ file: path.join(ROOT, entry), trail: [entry] }];
+  while (queue.length) {
+    const { file, trail } = queue.shift()!;
+    const rel = path.relative(ROOT, file);
+    if (files.has(rel)) continue;
+    files.set(rel, trail);
+    const src = fs.readFileSync(file, "utf8");
+    for (const re of [SPECIFIER_RE, IMPORT_BARE_RE]) {
+      re.lastIndex = 0;
+      for (let m; (m = re.exec(src)); ) {
+        const local = resolveLocal(file, m[1]);
+        if (local) queue.push({ file: local, trail: [...trail, path.relative(ROOT, local)] });
+      }
+    }
+  }
+  return files;
+}
+
 describe("import-graph layering (async-external poisoning)", () => {
   for (const entry of PINNED) {
     it(`${entry} never reaches an agent SDK`, () => {
@@ -164,6 +207,22 @@ describe("import-graph layering (async-external poisoning)", () => {
       expect(FORBIDDEN.some((sdk) => all.has(sdk))).toBe(true);
     });
   }
+
+  it("no driver imports a turn launcher back (the cycle that killed auto-start)", () => {
+    const reachable = reachableFiles("lib/agents/registry.ts");
+    for (const launcher of LAUNCHERS) {
+      const trail = reachable.get(launcher);
+      expect(
+        trail,
+        trail && `lib/agents/registry.ts reaches ${launcher} via:\n  ${trail.join("\n  → ")}\n` +
+          `That closes a cycle back into the async graph. A dynamic import() hides the symptom but ` +
+          `not the cycle — take what you need as an injected callback (TurnHooks in ` +
+          `lib/agents/types.ts), the way the driver's tool callbacks report a cleared blocker.`
+      ).toBeUndefined();
+    }
+    // Not vacuous: the walker really does traverse the drivers behind the registry.
+    expect(reachable.has("lib/agents/claude/driver.ts")).toBe(true);
+  });
 
   it("the walker itself sees the SDKs where they ARE used (sanity)", () => {
     const packages = reachablePackages("lib/agents/registry.ts");
