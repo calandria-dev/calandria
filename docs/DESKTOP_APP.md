@@ -131,9 +131,9 @@ process-group kills, and `lib/git.ts` compares realpaths case-sensitively. Also:
 degrades to a hard stop — an in-flight turn would be interrupted rather than
 settled. Fixing that properly means a graceful-shutdown channel that is not a
 signal (e.g. the shell POSTing `/api/instance/drain` itself before killing).
-Note too that `npm start`'s inline `NODE_ENV=production` prefix is POSIX-only;
-the supervisor sidesteps it by spawning `node` directly with an env, which is one
-small reason the wrapper is *easier* on Windows than the documented CLI flow.
+(`npm start` used to carry a POSIX-only inline `NODE_ENV=production` prefix; it
+now goes through `cross-env`, and the supervisor spawns `node` directly with an
+env regardless.)
 
 **Linux** — works as-is under X11/Wayland. `chrome-sandbox` must be
 root-owned/4755 when running from a plain directory (packaged builds handle it);
