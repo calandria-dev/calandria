@@ -119,8 +119,19 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
   g.__calandriaClaudeLogin = st;
 
   try {
-    // BROWSER=true: when the CLI tries to open the URL it runs /bin/true on a
-    // headless box instead of erroring — the user opens the link we surface.
+    // BROWSER=true: the CLI execs $BROWSER with the URL as its only argument
+    // (falling back to the platform opener), so on a headless box it runs
+    // /bin/true instead of erroring — the user opens the link we surface.
+    //
+    // Windows has no `true`, which looked like it needed a different no-op, but
+    // reading the shipped CLI (2.1.240) says otherwise on both counts: a
+    // missing opener is classified `opener_missing` and RETURNED, never thrown,
+    // and the CLI sets `BROWSER: "true"` itself in the environment it gives its
+    // own background sessions — in the same object literal that carries its
+    // `platform === "windows"` special-case — while a separate check treats
+    // `BROWSER === "true"` as "not a real browser". So the value is a sentinel
+    // the CLI already expects, and the worst case on Windows is the benign
+    // no-browser path we're asking for anyway. Left platform-independent.
     st.proc = ptySpawn(CLAUDE, ["auth", "login"], {
       name: "xterm-256color",
       cols: SIZE.cols,

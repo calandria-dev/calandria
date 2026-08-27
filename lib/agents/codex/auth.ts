@@ -9,11 +9,17 @@
 //
 // Unlike Claude's login (lib/claude-auth.ts) codex device-auth needs no pty:
 // it writes to a plain pipe even without a TTY, so we use child_process.spawn.
+//
+// The concrete binary to shell out to is resolved per call by ./bin.ts: the
+// CODEX_CLI_PATH pin, else `codex` found on PATH (the Docker image installs it
+// globally next to `claude`), with an npm `.cmd` shim wrapped in cmd.exe on
+// Windows. The turn driver additionally lets the SDK auto-resolve its bundled
+// binary, but both read the same ~/.codex/auth.json so auth state is shared.
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
-import { CODEX_CLI_PATH } from "../../config";
+import { codexSpawn } from "./bin";
 import { hasOpenAiKey, looksLikeOpenAiKey, setOpenAiKey, clearOpenAiKey } from "../../openai-key";
 import type { AgentApiKeyAuth, AgentAuthStatus, AgentLoginSession, AgentVerifyResult } from "../types";
 import type { TurnUsage } from "../../types";
@@ -22,12 +28,6 @@ import { resolveCodexModel } from "./pricing";
 import { codexUsage, type CodexTokenUsage } from "./usage";
 
 const run = promisify(execFile);
-
-// The concrete binary to shell out to. When CODEX_CLI_PATH is unset we rely on
-// `codex` being on PATH (the Docker image installs it globally next to
-// `claude`); the turn driver additionally lets the SDK auto-resolve its bundled
-// binary, but both read the same ~/.codex/auth.json so auth state is shared.
-const CODEX = CODEX_CLI_PATH || "codex";
 
 // Strip ANSI colour/escape sequences so our regexes see plain text.
 const stripAnsi = (s: string) =>
@@ -54,7 +54,12 @@ export async function codexStatus(): Promise<AgentAuthStatus> {
   // is present the honest status is API-key billing, whatever the CLI says.
   if (hasOpenAiKey()) return apiKeyStatus();
   try {
-    const { stdout, stderr } = await run(CODEX, ["login", "status"], { timeout: 20_000, env: process.env });
+    const status = codexSpawn(["login", "status"]);
+    const { stdout, stderr } = await run(status.command, status.args, {
+      timeout: 20_000,
+      env: process.env,
+      windowsVerbatimArguments: status.windowsVerbatimArguments,
+    });
     const text = stripAnsi(`${stdout}\n${stderr}`);
     if (/logged in|signed in/i.test(text)) {
       const method = text.match(/(?:logged|signed) in (?:using|with)\s*(.+)/i)?.[1]?.trim() ?? null;
@@ -91,11 +96,16 @@ export const codexApiKey: AgentApiKeyAuth = {
 export async function verifyCodexTurn(): Promise<AgentVerifyResult> {
   const started = Date.now();
   try {
-    const pending = run(
-      CODEX,
-      ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "Reply with exactly: OK"],
-      { timeout: 90_000, env: process.env, maxBuffer: 4 * 1024 * 1024, cwd: os.homedir() }
-    );
+    const verify = codexSpawn([
+      "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "Reply with exactly: OK",
+    ]);
+    const pending = run(verify.command, verify.args, {
+      timeout: 90_000,
+      env: process.env,
+      maxBuffer: 4 * 1024 * 1024,
+      cwd: os.homedir(),
+      windowsVerbatimArguments: verify.windowsVerbatimArguments,
+    });
     // `codex exec` treats a non-TTY stdin as pending input ("Reading additional
     // input from stdin...") and blocks on the read before running the turn.
     // execFile always gives the child a stdin pipe, so without this EOF it waits
@@ -209,10 +219,12 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
   g.__calandriaCodexLogin = st;
 
   try {
-    st.proc = spawn(CODEX, ["login", "--device-auth"], {
+    const login = codexSpawn(["login", "--device-auth"]);
+    st.proc = spawn(login.command, login.args, {
       cwd: os.homedir(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsVerbatimArguments: login.windowsVerbatimArguments,
     });
   } catch (e) {
     st.status = "error";
