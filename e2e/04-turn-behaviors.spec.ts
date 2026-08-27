@@ -186,7 +186,11 @@ test("a second turn resumes the same session", async ({ request }) => {
 // lib/runner.ts, which Turbopack compiles as an async module (the agent SDKs
 // are async ESM externals), and a static import of one reads every export off
 // a pending Promise, so every single auto-start died on `startTurn` not being
-// a function. Dev and vitest were both green throughout.
+// a function. Dev and vitest were both green throughout. The cycle that made
+// Turbopack skip the propagation is gone (the Claude driver takes the sweep as
+// an injected callback now — TurnHooks), and tests/importGraph.test.ts pins
+// both that acyclicity and the dynamic runner import; this stays the only
+// check that the LAUNCH itself still works in a real production bundle.
 test("a blocker marked done auto-starts its dependent's first turn", async ({ request }) => {
   const blocker = await createTask(request, { projectId, title: `Blocker ${uid()}` });
   const dependent = await createTask(request, { projectId, title: "Waits for the blocker" });
