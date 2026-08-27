@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -37,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: project.branch,
+      baseBranch: resolveBaseBranch(task, project),
       message: taskCommitMessage(task),
       stashDirty,
     });

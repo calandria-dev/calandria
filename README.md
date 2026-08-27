@@ -34,6 +34,10 @@ covers it.
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code, and it tells you when your own checkout has fallen
   behind.
+- **Point a task at any branch.** A task can be based on a branch of its own
+  rather than the project's default — cut from it, synced to it, merged into it
+  and PR'd against it — so several tasks can land on one feature branch while
+  the rest keep shipping to `main`.
 
 ## How it works
 

@@ -20,6 +20,8 @@ interface DiffResp {
   reason?: string;
   branch?: string;
   baseLabel?: string;
+  baseBranch?: string; // the base in force for this task (lib/baseBranch.ts)
+  projectBranch?: string; // the project's default — the badge appears only when they differ
   merged_at?: number;
   alreadyMerged?: boolean;
   files: DiffFile[];
@@ -878,6 +880,14 @@ export default function TaskChanges({
       <div className="tc-bar">
         <code className="tc-branch">{data.branch}</code>
         <span className="tc-arrow">→ {data.baseLabel}</span>
+        {/* A task on a base of its own is the exception worth pointing at; one
+            following the project's default already reads correctly as the arrow
+            above, and badging every task with "main" would be pure noise. */}
+        {!!data.baseBranch && data.baseBranch !== data.projectBranch && (
+          <span className="tc-base" title={`This task is based on ${data.baseBranch}, not the project's default (${data.projectBranch}). It was cut from it, syncs to it and merges into it.`}>
+            own base
+          </span>
+        )}
         {!nothing && (
           <span className="tc-stat">
             <b className="add">+{totalAdd}</b> <b className="del">−{totalDel}</b>

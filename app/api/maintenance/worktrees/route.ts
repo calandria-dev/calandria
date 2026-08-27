@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listReclaimableWorktrees, getTask, getProject, updateTask } from "@/lib/store";
 import { removeWorktree, worktreeDiskUsage, worktreePruneSafety } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
         repoPath: project.repo_path,
         worktreePath: task.worktree_path,
         workBranch: task.work_branch,
-        baseBranch: project.branch,
+        baseBranch: resolveBaseBranch(task, project),
       });
       const destructive = !safety.safe;
       if (destructive && (task.status !== "done" || !discardChanges)) {

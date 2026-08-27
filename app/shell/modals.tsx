@@ -289,6 +289,65 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
   return { switching, contextFlip };
 }
 
+/**
+ * The branch this task is based on — what its worktree was cut from, what Sync
+ * catches it up to, and what Merge lands it into (lib/baseBranch.ts). Empty
+ * means "inherit", and the placeholder says what that inherits to, so the field
+ * never has to be filled in to be understood.
+ *
+ * Deliberately NOT part of the dialog's Save: retargeting a started task can
+ * create a local ref and re-cut its worktree, and it reports what it did. That
+ * is its own endpoint (POST /api/tasks/[id]/base-branch) and its own button,
+ * exactly like the move field below — a field whose blast radius is a git
+ * operation shouldn't ride along on "Save changes".
+ */
+function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRow }) {
+  const [value, setValue] = useState(task.base_branch ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const inherited = project?.branch || "main";
+  const current = task.base_branch || inherited;
+  const dirty = value.trim() !== (task.base_branch ?? "");
+
+  const apply = async () => {
+    setBusy(true); setErr(null); setNote(null);
+    try {
+      const r = await jsend<{ message?: string; baseBranch?: string }>(`/api/tasks/${task.id}/base-branch`, "POST", { branch: value.trim() });
+      setNote(r.message ?? `Now based on ${r.baseBranch ?? inherited}.`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="field">
+      <div className="lab">Base branch <span className="opt">— cut from, synced to, merged into</span></div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={value}
+          placeholder={`${inherited} — from the project`}
+          onChange={(e) => { setValue(e.target.value); setErr(null); setNote(null); }} disabled={busy} />
+        <button className="btn btn-line" disabled={!dirty || busy} onClick={apply}
+          title={value.trim() ? `Point this task at ${value.trim()}` : `Go back to inheriting ${inherited}`}>
+          {busy ? "Working…" : value.trim() ? "Retarget" : "Inherit"}
+        </button>
+      </div>
+      {err ? <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote> : note ? (
+        <div className="hlp" style={{ color: "var(--blue)" }}>{note}</div>
+      ) : task.started === 1 ? (
+        <div className="hlp">
+          Currently {current}. Changing it never rewrites anything: a task that has already committed keeps every commit
+          and is told how far behind the new base it is — one Sync catches it up.
+        </div>
+      ) : (
+        <div className="hlp">Leave empty to follow the project&rsquo;s default. The worktree is cut from this branch on the first turn.</div>
+      )}
+    </div>
+  );
+}
+
 // Re-parent a misfiled task. Acts immediately (like Delete below it) rather
 // than riding along with Save: a move isn't a field set — it renumbers the
 // task's order in the destination, re-derives what it inherited from the old
@@ -891,6 +950,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
       <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
+      <BaseBranchField task={task} project={projects.find((p) => p.id === task.project_id)} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {/* Unlike the agent picker above, this is NOT gated on the task being
           unstarted: a started one can move by discarding the worktree it cut

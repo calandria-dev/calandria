@@ -70,6 +70,7 @@ export interface TaskRow {
   context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
   start_at: number; // queued to start/resume on its own at this instant (ms epoch; 0 = not queued) — see ./queuedStart.ts
+  base_branch: string; // the branch this task is based on ("" = inherit the project's default) — see lib/baseBranch.ts
   work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
   diff_del?: number; // same, deletions
