@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DB_DIR } from "./config";
+import { writeSecretFile } from "./secretFile";
 
 /**
  * "I have an API key instead" path for the Codex agent — the OpenAI mirror of
  * lib/anthropic-key.ts. Most instances connect Codex as the user's own ChatGPT
  * plan (lib/agents/codex/auth.ts, `codex login`), but a user can choose to bill
- * per-token with an OpenAI API key instead. We persist it to a 0600 file on the
- * volume — NOT the settings table, which is read wholesale by the client
+ * per-token with an OpenAI API key instead. We persist it to an owner-only file
+ * on the volume — NOT the settings table, which is read wholesale by the client
  * `/api/settings` endpoint — and mirror it into process.env so the `codex`
  * children and SDK inherit it. loadPersistedOpenAiKey() re-applies it on boot
  * (production entrypoints strip OPENAI_API_KEY from the container env as a
@@ -33,13 +34,13 @@ export function looksLikeOpenAiKey(key: string): boolean {
   return /^sk-[A-Za-z0-9_-]{20,}$/.test(key.trim());
 }
 
+/**
+ * Throws rather than storing the key if the file could not be made owner-only —
+ * on win32 that is an ACL, since a POSIX mode is a no-op there (lib/secretFile.ts).
+ */
 export function setOpenAiKey(key: string): void {
   const k = key.trim();
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  fs.writeFileSync(KEY_PATH, k, { mode: 0o600 });
-  try {
-    fs.chmodSync(KEY_PATH, 0o600);
-  } catch {}
+  writeSecretFile(KEY_PATH, k);
   process.env.OPENAI_API_KEY = k;
 }
 

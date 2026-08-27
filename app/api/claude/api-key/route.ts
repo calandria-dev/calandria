@@ -15,7 +15,14 @@ export async function POST(req: Request) {
   if (!looksLikeApiKey(key)) {
     return NextResponse.json({ error: "that doesn't look like an Anthropic API key (expected sk-ant-…)" }, { status: 400 });
   }
-  setApiKey(key);
+  // Storing the key can legitimately fail: on Windows it is only stored if the
+  // file could be locked to this account (lib/secretFile.ts), and reporting a
+  // connected agent over a key we never wrote would be the worst outcome.
+  try {
+    setApiKey(key);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
   setOnboardingMethod("api_key");
   setOnboardingAccount(null, "API");
   setAgentConnection("claude", { method: "api_key", email: null, plan: "API" });

@@ -386,5 +386,20 @@ repo.
   prebuilt helper.
 - **Keep `ANTHROPIC_API_KEY` unset** unless you deliberately chose the wizard's API-key
   path — set, it takes precedence and bills per-use instead of using your subscription.
+- **A stored API key is locked to the account that runs the app.** The wizard's
+  "I have an API key instead" path writes the key to `anthropic-api-key` /
+  `openai-api-key` beside the database, never to the settings table (which the browser
+  reads wholesale). On Linux and macOS that file is mode `0600`. **On Windows a POSIX
+  mode is a no-op** — Node's `chmod` only toggles the read-only attribute on NTFS — so
+  the file is restricted with an ACL instead: `icacls <file> /inheritance:r /grant:r
+  <you>:(R,W)`, which drops the permissions inherited from your profile directory and
+  replaces the whole list, leaving your account alone with the key. If that call fails
+  (no `icacls`, an unresolvable account name, a filesystem with no ACLs such as FAT32 or
+  a mapped network drive) **the key is deleted and the save returns an error** rather
+  than leaving a credential at permissions nobody checked. The fallback in that case is
+  the environment: start the app with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` set and
+  `CALANDRIA_ALLOW_API_KEY_ENV=1`, and nothing is written to disk. Note the limit on
+  every platform — a local administrator (or root) can take ownership regardless; this
+  protects the key from *other* users of the machine, not from its owner.
 - **Delete is hard delete:** a removed project's chat history is gone (your code on disk
   is untouched).

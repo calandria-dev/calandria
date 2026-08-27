@@ -24,7 +24,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
 | 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
 | 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` on Windows kills via `taskkill /F` (unverified) | Process mgmt | S–M | Degradation, not a crash |
-| 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) | Files | S | Security downgrade |
+| 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) — **fixed**, §3 | Files | S | Security downgrade |
 | 10 | `worktreeDiskUsage()` shells out to `du` (`lib/git.ts:642`) — silently reports 0 | Paths | S | Cosmetic |
 | 11 | `gh` probe dirs are all POSIX (`lib/github.ts:17`); `GIT_SSH_COMMAND` assumes `ssh` on PATH | Agent CLIs | S | Degradation |
 | 12 | Unit suite: `tests/setup.ts:77` pins `GIT_CONFIG_SYSTEM=/dev/null` (e2e already branches to `NUL`); pty tests force `SHELL=/bin/sh` and group-kill; services tests use `sleep 30` through `cmd.exe`; `ghBin`/`diff` tests assert exec-bit semantics | Tests | M | For CI, yes |
@@ -154,6 +154,30 @@ own the pty sidecar as a child.
   would surface a hard failure. Fix: on win32, `rmSync` with `maxRetries`/
   `retryDelay` (Node supports both) and a `git worktree remove --force` retry,
   with a message that names the likely holder.
+- **File modes are not permissions.** The persisted API keys were written with
+  `mode: 0o600` plus a `chmodSync` and comments promising owner-only
+  (`lib/anthropic-key.ts`, `lib/openai-key.ts`). On NTFS Node's `chmod` maps
+  onto the read-only attribute and nothing else, so the DACL stayed whatever the
+  profile directory handed down and every other local account could read the
+  key. **Fixed**: both go through `writeSecretFile()` (`lib/secretFile.ts`),
+  which keeps the POSIX path byte-for-byte and on win32 runs
+  `icacls <file> /inheritance:r /grant:r <owner>:(R,W)` through `execFile` — no
+  shell, and pinned to `%SystemRoot%\System32\icacls.exe` rather than PATH
+  order, since a PATH-resolved helper is one writable directory away from being
+  someone else's program that exits 0. `/grant:r` replaces the DACL, so
+  re-saving repairs a file an older build left open. **A failure is fatal**: the
+  file is deleted and the error reaches the API-key route, because a credential
+  at permissions we could not set is worse than no credential — the wizard would
+  otherwise report a connected agent over a world-readable key. The escape hatch
+  is the existing one (`ANTHROPIC_API_KEY` in the env plus
+  `CALANDRIA_ALLOW_API_KEY_ENV=1`, which writes nothing to disk), and the same
+  applies to a key directory on FAT32 or a mapped drive, where there is no DACL
+  to set. The owner is `os.userInfo().username`, qualified with `%USERDOMAIN%`
+  when it names something other than this machine — icacls resolves a bare name
+  through `LookupAccountName`, which checks the local machine before the domain,
+  so a domain account can be shadowed by a local one of the same name. Stated in
+  `docs/SELF_HOSTING.md`; `lib/push/vapid.ts:86` writes the VAPID private key the
+  same 0600 way and is **not** covered.
 - **Service router** (`lib/service-router.mjs`, `lib/service-host.mjs`) is pure
   Host-header string logic + loopback proxying. Nothing filesystem-bound; the
   `<slug>--<host>` wildcard-DNS requirement is the same on every OS.

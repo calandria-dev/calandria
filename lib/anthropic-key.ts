@@ -1,14 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DB_DIR } from "./config";
+import { writeSecretFile } from "./secretFile";
 
 /**
  * "I have an API key instead" path of the onboarding wizard. Most instances
  * authenticate as the user's own Claude Max/Pro subscription (lib/claude-auth.ts,
  * `claude auth login`), but a user can choose to bill per-token with an Anthropic
- * API key instead. We persist it to a 0600 file on the volume — NOT the settings
- * table, which is read wholesale by the client `/api/settings` endpoint — and
- * mirror it into process.env so the SDK's `claude` children and every pty shell
+ * API key instead. We persist it to an owner-only file on the volume — NOT the
+ * settings table, which is read wholesale by the client `/api/settings` endpoint
+ * — and mirror it into process.env so the SDK's `claude` children and every pty shell
  * spawned afterward inherit it. loadPersistedApiKey() re-applies it on boot
  * (production entrypoints strip ANTHROPIC_API_KEY from the container env as a
  * hardening backstop, so the running process is the only place it lives).
@@ -33,13 +34,13 @@ export function looksLikeApiKey(key: string): boolean {
   return /^sk-ant-[\w-]{20,}$/.test(key.trim());
 }
 
+/**
+ * Throws rather than storing the key if the file could not be made owner-only —
+ * on win32 that is an ACL, since a POSIX mode is a no-op there (lib/secretFile.ts).
+ */
 export function setApiKey(key: string): void {
   const k = key.trim();
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  fs.writeFileSync(KEY_PATH, k, { mode: 0o600 });
-  try {
-    fs.chmodSync(KEY_PATH, 0o600);
-  } catch {}
+  writeSecretFile(KEY_PATH, k);
   process.env.ANTHROPIC_API_KEY = k;
 }
 
