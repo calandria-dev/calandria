@@ -103,6 +103,15 @@ servers, plugins and skills, plus the repository's `CLAUDE.md` — so it behaves
 `claude` CLI you already use, with Calandria's own tools added on top. Your MCP servers'
 tools go through the permission modes above like everything else.
 
+Skills follow the same inheritance: a Claude session sees `~/.claude/skills` and the
+repository's `.claude/skills`, a Codex session sees `~/.agents/skills` and the
+repository's `.agents/skills`. Neither reads the other's directory, and neither reads
+the other's instruction file — Claude Code reads `CLAUDE.md`, Codex reads `AGENTS.md`.
+A project you might open with either agent needs both files present, even if one is a
+stub pointing at the other. Calandria ships a skill of its own for preparing a repo to
+be worked on in many worktrees at once; `skills/README.md` covers installing it for
+both agents.
+
 Calandria's own background jobs deliberately do not. A `/clear` handoff note, a project
 recap and a "Refresh with AI" context draft are internal transformations, not sessions you
 are sitting in, so they run with your MCP servers, plugins, skills and hooks switched off —
