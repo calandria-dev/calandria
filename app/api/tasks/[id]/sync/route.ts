@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge, syncCommitMessage } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { buildConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -19,13 +20,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
   if (!task.worktree_path || !task.work_branch) return NextResponse.json({ isolated: false });
 
+  // The task's own base when it has one — this response is what the session's
+  // sync banner renders, so a task on feature/auth says feature/auth.
+  const baseBranch = resolveBaseBranch(task, project);
   const status = await worktreeSyncStatus({
     repoPath: project.repo_path,
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
-    baseBranch: project.branch,
+    baseBranch,
   });
-  return NextResponse.json({ isolated: true, baseBranch: project.branch, ...status });
+  return NextResponse.json({ isolated: true, baseBranch, projectBranch: project.branch, ...status });
 }
 
 // POST: actually bring the worktree up to date with the base branch. Triggered by
@@ -46,11 +50,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
+    const baseBranch = resolveBaseBranch(task, project);
     const status = await worktreeSyncStatus({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: project.branch,
+      baseBranch,
     });
     if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true, behind: 0 });
 
@@ -58,7 +63,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // branch == base tip, so reset the diff base there too (the branch's changes
     // are all in the base now — nothing task-specific to show).
     if (status.canFastForward) {
-      const ok = await fastForwardWorktree(task.worktree_path, project.branch);
+      const ok = await fastForwardWorktree(task.worktree_path, baseBranch);
       if (ok && status.baseTip) updateTask(id, { base_sha: status.baseTip });
       return NextResponse.json(
         { ok, fastForwarded: ok, behind: status.behind, ...(ok ? {} : { error: "fast-forward failed" }) },
@@ -70,11 +75,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // worktree — the same prepareWorktreeMerge used for conflict resolution, but
     // WITHOUT the auto-land step (a sync brings the worktree up to date; it does
     // not push the task's work into main).
-    const message = syncCommitMessage(project, task);
+    const message = syncCommitMessage(baseBranch, task);
     const prep = await prepareWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
-      baseBranch: project.branch,
+      baseBranch,
       message,
     });
     if (!prep.ok) return NextResponse.json({ ok: false, error: prep.error }, { status: 409 });
@@ -91,7 +96,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // worktree. Hand back the file lists + a resolution prompt so the client can
     // escalate to the existing Fix-with-AI flow.
     return NextResponse.json(
-      { ok: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts, prompt: buildConflictPrompt(project.branch, prep.conflicts) },
+      { ok: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts, prompt: buildConflictPrompt(baseBranch, prep.conflicts) },
       { status: 200 }
     );
   }));

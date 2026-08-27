@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { taskDiff, worktreeMergeStatus } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 
 export const dynamic = "force-dynamic";
 
@@ -45,13 +46,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
+  const baseBranch = resolveBaseBranch(task, project);
+
   try {
     // An in-progress trial merge (conflict resolution) means the branch isn't
     // really "already merged" yet — report its state so the UI can show the
     // accept/discard review instead of a done badge. Both are read-only, so
     // they run concurrently.
     const [diff, mergeState, head] = await Promise.all([
-      taskDiff(project.repo_path, task.worktree_path, task.base_sha, project.branch),
+      taskDiff(project.repo_path, task.worktree_path, task.base_sha, baseBranch),
       worktreeMergeStatus(task.worktree_path),
       currentHead(task.worktree_path),
     ]);
@@ -82,6 +85,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       isolated: true,
       branch: task.work_branch,
+      // The base in force, and the project's default beside it: the Changes tab
+      // badges a task's own base ONLY when the two differ — every task showing
+      // `main` is noise, the one showing `feature/auth` is the whole point.
+      baseBranch,
+      projectBranch: project.branch,
       merged_at,
       head,
       ...diff,

@@ -71,6 +71,7 @@ export interface TaskRow {
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
   unread_run_at: number; // an unattended run finished cleanly and nobody has acknowledged it (ms epoch; 0 = nothing outstanding) — see isUnreadRun in ./format.ts
   start_at: number; // queued to start/resume on its own at this instant (ms epoch; 0 = not queued) — see ./queuedStart.ts
+  base_branch: string; // the branch this task is based on ("" = inherit the project's default) — see lib/baseBranch.ts
   work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
   diff_del?: number; // same, deletions

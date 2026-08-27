@@ -449,6 +449,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    by TasksColumn's TaskCard (list) and TaskBoard's BoardCard (kanban). */
 .diff-foot{display:flex;align-items:center;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2);font-family:var(--mono);font-size:11px;color:var(--dim);}
 .diff-branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+/* Shown only when the task is based on something other than the project's
+   default base branch (lib/baseBranch.ts) — otherwise every card repeats "main". */
+.diff-base{flex:0 0 auto;white-space:nowrap;color:var(--blue);}
 .diff-stat{flex:0 0 auto;white-space:nowrap;}
 .diff-stat .a{color:var(--run);}
 .diff-stat .d{color:var(--dim);}
@@ -963,6 +966,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 0 auto;}
 .tc-branch{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px;color:var(--ink);}
 .tc-arrow{font-size:12px;color:var(--ink-3);}
+/* "own base": this task is based on a branch that isn't the project's default
+   (lib/baseBranch.ts). Absent on every task that follows the default. */
+.tc-base{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue);border-radius:99px;padding:1px 8px;}
 .tc-stat{font-family:var(--mono);font-size:12px;}
 .tc-stat .add,.tc-cnt .add{color:var(--green);}
 .tc-stat .del,.tc-cnt .del{color:var(--red);}

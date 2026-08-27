@@ -39,7 +39,7 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
   );
 }
 
-function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparkline, tagsById, onSelectTag }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void }) {
+function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparkline, tagsById, onSelectTag, projectBranch }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting: the whole point of parking a task that's asking you
@@ -131,7 +131,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         </div>
       )}
       {task.description && <div className="tdesc">{task.description}</div>}
-      <DiffFooter task={task} points={sparkline} />
+      <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />
       <div className="task-foot">
         <span className="activity">{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
         <span className="spacer" />
@@ -176,13 +176,13 @@ const canPick = (t: TaskRow) => t.running === 0;
 // they're passed explicitly rather than derived from SCLS.
 type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z" | "u";
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparklines, tagsById, onSelectTag, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
   const cards = tasks.map((t) => (
     <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
       blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick}
       onSnooze={onSnooze} onUnsnooze={onUnsnooze} onAckRun={onAckRun} sparkline={sparklines[t.id]}
-      tagsById={tagsById} onSelectTag={onSelectTag} />
+      tagsById={tagsById} onSelectTag={onSelectTag} projectBranch={projectBranch} />
   ));
   const dotEl = dot && <span className={`sdot sm ${dot}`} />;
   if (collapsible) {
@@ -478,7 +478,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           <TaskBoard
             tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
             running={running} blockedBy={blockedBy} sparklines={sparklines}
-            tagsById={tagsById} onSelectTag={selectTag}
+            tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch}
             onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
             onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
             onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun}
@@ -498,19 +498,19 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} accent dot="c" />
+          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
           {/* Between the two for a reason: a clean run wants reading, which is
               less than answering a question and more than a task that is
               simply still open. */}
-          <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="u" />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="a" />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="h" />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="r" />
+          <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="u" />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" />
           {/* Parked work sits between the live groups and the terminal ones —
               it isn't finished, but it isn't asking for anything either. */}
-          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="z" />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">

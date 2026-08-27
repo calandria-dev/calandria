@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import { getProject, getTask, moveTaskBlockedReason, moveTasks, type TaskMoveBatch } from "./store";
 import { removeWorktree, worktreePruneSafety } from "./git";
+import { resolveBaseBranch } from "./baseBranch";
 import { withTaskLocks } from "./taskLock";
 import { withRepoLock } from "./repoLock";
 import { hasTurn } from "./abort";
@@ -190,7 +191,7 @@ async function discardCheckout(
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: project.branch,
+      baseBranch: resolveBaseBranch(task, project),
     });
     // Re-read here rather than trusting the caller's preview: between the modal
     // rendering "this worktree is clean" and the user confirming, the tree can
@@ -268,7 +269,7 @@ export async function previewDiscard(taskId: string): Promise<DiscardPreview | n
     repoPath: project.repo_path,
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
-    baseBranch: project.branch,
+    baseBranch: resolveBaseBranch(task, project),
   });
   return {
     has_worktree: true,

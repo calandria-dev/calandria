@@ -78,6 +78,10 @@ export function init(db: Database.Database) {
       worktree_path TEXT NOT NULL DEFAULT '',
       work_branch   TEXT NOT NULL DEFAULT '',
       base_sha      TEXT NOT NULL DEFAULT '',
+      -- The branch this task is based on: cut from, synced to, merged into.
+      -- '' = inherit the project's default (projects.branch). Pinned by the
+      -- launch paths at the moment the worktree is cut (lib/baseBranch.ts).
+      base_branch   TEXT NOT NULL DEFAULT '',
       merged_at     INTEGER NOT NULL DEFAULT 0,
       pr_url        TEXT NOT NULL DEFAULT '',
       generation  INTEGER NOT NULL DEFAULT 1,
@@ -715,6 +719,11 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("worktree_path")) db.exec("ALTER TABLE tasks ADD COLUMN worktree_path TEXT NOT NULL DEFAULT ''");
   if (!taskCols.includes("work_branch")) db.exec("ALTER TABLE tasks ADD COLUMN work_branch TEXT NOT NULL DEFAULT ''");
   if (!taskCols.includes("base_sha")) db.exec("ALTER TABLE tasks ADD COLUMN base_sha TEXT NOT NULL DEFAULT ''");
+  // Per-task base branch (see the CREATE TABLE note). '' on every pre-existing
+  // row reads as "inherit from the project", so an existing database keeps
+  // behaving exactly as it did: there is no data to move and no index to add,
+  // since nothing queries by base branch.
+  if (!taskCols.includes("base_branch")) db.exec("ALTER TABLE tasks ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''");
   if (!taskCols.includes("merged_at")) db.exec("ALTER TABLE tasks ADD COLUMN merged_at INTEGER NOT NULL DEFAULT 0");
   if (!taskCols.includes("awaiting_input")) db.exec("ALTER TABLE tasks ADD COLUMN awaiting_input INTEGER NOT NULL DEFAULT 0");
   // Background-linger state (see BACKGROUND_LINGER_MS in lib/config.ts).

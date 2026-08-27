@@ -148,8 +148,8 @@ function dayBucket(ts: number): string {
   return "Earlier";
 }
 
-function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, onAckRun, actions, sparkline, tagsById, onSelectTag }: {
-  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
+function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, onAckRun, actions, sparkline, tagsById, onSelectTag, projectBranch }: {
+  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string;
   mini?: boolean; dragging: boolean; canDrag: boolean;
   onSelect: () => void; onDragStart: () => void; onDragOverCard: (e: React.DragEvent) => void;
   onDropOnCard: (e: React.DragEvent) => void; onDragEnd: () => void;
@@ -241,7 +241,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           )}
         </div>
       )}
-      {!mini && <DiffFooter task={task} points={sparkline} />}
+      {!mini && <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />}
       {(!!task.agent_edited_at || blocked || queued || sessionCount > 0) && !mini && (
         <div className="bc-foot">
           <AgentEditedChip task={task} variant="board" />
@@ -267,10 +267,11 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze, onAckRun }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, projectBranch, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze, onAckRun }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
+  projectBranch: string; // the project's DEFAULT base — cards badge a task's own base only when it differs
   onSelect: (id: string) => void; onEditTask: (id: string) => void;
   onMove: (id: string, patch: TaskMovePatch) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
@@ -384,6 +385,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       sparkline={sparklines[t.id]}
                       tagsById={tagsById}
                       onSelectTag={onSelectTag}
+                      projectBranch={projectBranch}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
                           <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
@@ -483,7 +485,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTas
         <TaskBoard
           tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
           running={running} blockedBy={blockedBy} sparklines={sparklines}
-          tagsById={tagsById} onSelectTag={selectTag}
+          tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
           onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun}

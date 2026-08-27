@@ -861,9 +861,14 @@ export function moveTasks(
       rekey.run(projectId, name, tagPos++, origin, now, g.id);
       carried.push({ id: g.id, name, renamed_from: name === g.name ? null : g.name });
     }
+    // base_branch is cleared for EVERY mover, started or not, and unlike the
+    // checkout columns below it isn't an exception: a branch name means nothing
+    // in a different repository, and a task carrying `feature/auth` into a repo
+    // that has no such branch would silently fall back to HEAD at its next cut.
+    // Empty is the honest answer — inherit the destination project's default.
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
+        reasoning = ?, permission_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
     );
     // The tags a row leaves behind, when the rest of their members stayed. Not
     // folded into the reparent above: a whole selection now KEEPS its tags, so
@@ -993,9 +998,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -1019,6 +1024,10 @@ export interface ReclaimableWorktree {
   project_id: string;
   project_name: string;
   repo_path: string;
+  // The task's RESOLVED base — its own when it has one, else the project's
+  // default. Expressed as SQL because this sweep has no Task in hand; the
+  // COALESCE order must stay the twin of resolveBaseBranch() in
+  // lib/baseBranch.ts, and tests/baseBranch.test.ts asserts they agree.
   base_branch: string;
   worktree_path: string;
   work_branch: string;
@@ -1029,7 +1038,8 @@ export interface ReclaimableWorktree {
 export function listReclaimableWorktrees(): ReclaimableWorktree[] {
   return getDb()
     .prepare(
-      `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path, p.branch AS base_branch,
+      `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path,
+              COALESCE(NULLIF(t.base_branch, ''), p.branch) AS base_branch,
               t.worktree_path, t.work_branch, t.merged_at, t.status, t.updated_at
          FROM tasks t JOIN projects p ON p.id = t.project_id
         WHERE t.worktree_path != '' AND (t.merged_at > 0 OR t.status = 'done')

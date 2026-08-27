@@ -14,7 +14,7 @@ export interface Project {
   building: string; // legacy — kept for back-compat, folded into context
   conventions: string; // legacy — kept for back-compat, folded into context
   repo_path: string; // working dir for Claude Code
-  branch: string; // git branch (context only)
+  branch: string; // the project's DEFAULT base branch: what a task is cut from, syncs to and merges into unless the task names its own (lib/baseBranch.ts)
   dev_command: string; // long-running dev server command supervised by lib/services.ts ("" = none)
   setup_command: string; // optional one-shot setup command (install/migrate/etc.)
   test_command: string; // optional one-shot test command
@@ -53,6 +53,13 @@ export interface Task {
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
   work_branch: string; // the worktree's branch (e.g. "calandria/<id>")
   base_sha: string; // commit the worktree branched from — the stable diff/merge base
+  // The branch this task is based on — what it was cut from, what Sync catches
+  // it up to, and what Merge lands it into. "" = inherit the project's default
+  // (projects.branch). Written back by the launch paths at the moment the
+  // worktree is CUT, because from then on base_sha came from that branch and
+  // nothing else can be true; changing it afterwards is a retarget with the
+  // reconciliation that implies. Resolution and policy: lib/baseBranch.ts.
+  base_branch: string;
   merged_at: number; // when this task's branch was merged back (0 = not merged)
   pr_url: string; // GitHub PR opened from this task's branch via "Create PR" ("" = none)
   generation: number; // increments on each /clear

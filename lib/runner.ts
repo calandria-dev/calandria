@@ -15,6 +15,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
@@ -276,12 +277,21 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // ever reaching this function, so this branch is its safety net, not its
     // primary path.)
     if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
-      const wt = await ensureWorktree(project.repo_path, id, project.branch);
+      const wt = await ensureWorktree(project.repo_path, id, resolveBaseBranch(task, project));
       if (wt) {
         task.worktree_path = wt.path;
         task.work_branch = wt.branch;
         task.base_sha = wt.baseSha;
-        updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+        // Pin the base at the cut (lib/baseBranch.ts). This path is the self-heal
+        // rather than a first launch, but a cut is a cut: base_sha now comes from
+        // that branch, so the task owns the answer from here on. Skipped when
+        // ensureWorktree fell back to HEAD (baseBranch "") — pinning a branch the
+        // worktree wasn't actually cut from would be a lie the merge would honor.
+        if (wt.baseBranch) task.base_branch = wt.baseBranch;
+        updateTask(id, {
+          worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
+          ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+        });
       }
     }
     // Catch the worktree up to base when it's a clean, zero-conflict fast-forward
@@ -290,19 +300,22 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // hiccup must never block the turn — just skip the catch-up.
     let syncNote = "";
     if (task.worktree_path && task.work_branch) {
+      // The task's own base, not the project's: a task on feature/auth catches
+      // up to feature/auth, which is the entire point of the feature.
+      const base = resolveBaseBranch(task, project);
       try {
         const s = await worktreeSyncStatus({
           repoPath: project.repo_path,
           worktreePath: task.worktree_path,
           workBranch: task.work_branch,
-          baseBranch: project.branch,
+          baseBranch: base,
         });
-        if (s.canFastForward && s.behind > 0 && (await fastForwardWorktree(task.worktree_path, project.branch))) {
+        if (s.canFastForward && s.behind > 0 && (await fastForwardWorktree(task.worktree_path, base))) {
           if (s.baseTip) {
             task.base_sha = s.baseTip;
             updateTask(id, { base_sha: s.baseTip });
           }
-          syncNote = `✓ Caught up to ${project.branch} (was ${s.behind} behind).`;
+          syncNote = `✓ Caught up to ${base} (was ${s.behind} behind).`;
         }
       } catch {
         // skip the catch-up
@@ -894,7 +907,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // Re-read the project at dequeue time, not the snapshot captured at the
         // START of the turn we're finishing. The base branch, repo_path, or
         // context may have changed while this turn ran; the dequeued follow-up
-        // fast-forwards against project.branch/repo_path and seeds its system
+        // fast-forwards against its resolved base branch / repo_path and seeds its system
         // prompt from project.context, so a stale snapshot would sync it to the
         // wrong base and run it with outdated context.
         const freshProject = fresh ? getProject(fresh.project_id) : undefined;
