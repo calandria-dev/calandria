@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: (name: string, description: string, schema: unknown, handler: unknown) => ({ name, description, schema, handler }),
 }));
 
-import { listClaudeCommands } from "@/lib/agents/claude/commands";
+import { listClaudeCommands, recordMcpPrompts } from "@/lib/agents/claude/commands";
 import { claudeDriver, SETTING_SOURCES } from "@/lib/agents/claude/driver";
 import { uid } from "./helpers";
 import type { Project, Task } from "@/lib/types";
@@ -174,6 +174,16 @@ describe("the claude command probe", () => {
     }
   });
 
+  it("drops a `(MCP)` display label, which is not a name any session expands", async () => {
+    // Only reachable if the isolation above stops working — but then it matters:
+    // the CLI reports MCP prompts as `stash:analyze-performer (MCP)` and answers
+    // "Unknown command" to `/stash:analyze-performer` (measured, CLI 2.1.240).
+    // The invocable form comes from recordMcpPrompts instead.
+    answer([{ name: "simplify" }, { name: "stash:analyze-performer (MCP)" }]);
+    const commands = await listClaudeCommands(cwd(), SETTING_SOURCES);
+    expect(commands!.map((c) => c.name)).toEqual(["simplify"]);
+  });
+
   it("refresh bypasses a live cache entry", async () => {
     const dir = cwd();
     answer([{ name: "simplify" }], [{ name: "simplify" }, { name: "just-installed" }]);
@@ -184,6 +194,25 @@ describe("the claude command probe", () => {
 });
 
 describe("the driver's view of it", () => {
+  it("records what a real turn's init reported, so the next menu has it", async () => {
+    // The end of the wire this whole mechanism hangs on: a turn is the only
+    // thing that ever sees an MCP prompt name, and it sees it here.
+    const dir = cwd();
+    const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
+    const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: dir } as unknown as Task;
+    queryMock.mockImplementationOnce(() =>
+      (async function* () {
+        yield { type: "system", subtype: "init", session_id: "s1", slash_commands: ["clear", "mcp__stash__discover-performers"] };
+      })()
+    );
+    for await (const _ev of claudeDriver.runTurn(task, project, "hello")) void _ev;
+
+    answer([{ name: "simplify" }]);
+    const commands = await listClaudeCommands(dir, SETTING_SOURCES);
+    expect(commands!.map((c) => c.name)).toEqual(["simplify", "mcp__stash__discover-performers"]);
+  });
+
+
   it("degrades a failed probe to an empty menu, not a null", async () => {
     // The composer's contract is unchanged by the null above: a missing CLI
     // costs the menu its long tail and nothing else.
@@ -191,5 +220,82 @@ describe("the driver's view of it", () => {
     const project = { id: "p1", repo_path: cwd() } as Project;
     const task = { id: "t1", agent: "claude", worktree_path: null } as unknown as Task;
     expect(await claudeDriver.listCommands!(task, project)).toEqual([]);
+  });
+});
+
+describe("MCP prompts observed on real turns", () => {
+  // The probe cannot see these at all: they exist only on a session's init
+  // message, and reading one means spawning the user's MCP fleet. A turn has
+  // already spawned it, so the driver hands its list over and the menu merges
+  // it in — see the header of lib/agents/claude/commands.ts.
+  const SLASH = ["clear", "mcp__stash__discover-performers", "mcp__ha-mcp__ha_overview"];
+
+  it("adds the mcp__ names to the menu, and only those", async () => {
+    const dir = cwd();
+    answer([{ name: "simplify" }]);
+    recordMcpPrompts(dir, SETTING_SOURCES, SLASH);
+    const commands = await listClaudeCommands(dir, SETTING_SOURCES);
+    expect(commands).toEqual([
+      { name: "simplify", description: "" },
+      // Named exactly as the CLI expands them, and described by the server they
+      // came from — the init message carries no description of its own.
+      { name: "mcp__stash__discover-performers", description: "(stash) MCP prompt" },
+      { name: "mcp__ha-mcp__ha_overview", description: "(ha-mcp) MCP prompt" },
+    ]);
+    // "clear" was in the same list and is NOT merged: everything the probe can
+    // see is the probe's to report, with its real description.
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges into a cached list without waiting out its TTL", async () => {
+    const dir = cwd();
+    answer([{ name: "simplify" }]);
+    expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(1);
+    // The first turn of a task lands after the menu has already been opened
+    // once; making the user wait a minute for it would be the same bug.
+    recordMcpPrompts(dir, SETTING_SOURCES, SLASH);
+    expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(3);
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the observation keyed to the cwd it was seen in", async () => {
+    // MCP config is per-project as well as per-user, and every task worktree is
+    // its own cwd — one task's servers are not another's.
+    const mine = cwd();
+    const theirs = cwd();
+    recordMcpPrompts(mine, SETTING_SOURCES, SLASH);
+    answer([{ name: "simplify" }], [{ name: "simplify" }]);
+    expect(await listClaudeCommands(mine, SETTING_SOURCES)).toHaveLength(3);
+    expect(await listClaudeCommands(theirs, SETTING_SOURCES)).toHaveLength(1);
+  });
+
+  it("replaces the previous observation, so a removed server stops being offered", async () => {
+    const dir = cwd();
+    recordMcpPrompts(dir, SETTING_SOURCES, SLASH);
+    // The next turn's session no longer has stash configured. An empty list is
+    // an observation like any other; the newest one wins outright.
+    recordMcpPrompts(dir, SETTING_SOURCES, ["clear"]);
+    answer([{ name: "simplify" }]);
+    expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(1);
+  });
+
+  it("does not turn a failed probe into an answer", async () => {
+    // null means "could not find out". The schedule validator turns a complete
+    // list into a refusal, so a list that is only the MCP prompts we happen to
+    // remember would refuse every real command in it.
+    const dir = cwd();
+    recordMcpPrompts(dir, SETTING_SOURCES, SLASH);
+    fail();
+    expect(await listClaudeCommands(dir, SETTING_SOURCES)).toBeNull();
+  });
+
+  it("ignores a message with no slash_commands field at all", async () => {
+    // Not the same as a session with no MCP prompts: it's a shape we did not
+    // expect, and forgetting what we know on account of it helps nobody.
+    const dir = cwd();
+    recordMcpPrompts(dir, SETTING_SOURCES, SLASH);
+    recordMcpPrompts(dir, SETTING_SOURCES, undefined);
+    answer([{ name: "simplify" }]);
+    expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(3);
   });
 });

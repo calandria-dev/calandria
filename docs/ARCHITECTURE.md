@@ -77,7 +77,10 @@ The app talks to coding agents only through the `AgentDriver` interface.
   implementation reads the SDK's initialization response without sending a model request,
   under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`). It is the
   app's only command enumeration: the schedule editor's prompt validation asks the same
-  function, so the menu and the validator cannot disagree about what a session expands.
+  function, so the menu and the validator cannot disagree about what a session expands. MCP
+  prompt commands are the exception the isolation buys: reading them means starting the
+  user's MCP fleet, so they're harvested from the `init` message of the task's real turns
+  (`recordMcpPrompts`) and merged into the same answer.
 - **`GET /api/agents`** serves each driver's capability descriptor **plus its persisted
   connection state** to the client, which renders every run-control picker (model /
   reasoning / permission), the per-task agent picker, agent badges, and the cost/ask
