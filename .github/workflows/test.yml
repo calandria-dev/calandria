@@ -1,7 +1,7 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Five jobs, deliberately on different schedules:
+# Six jobs, deliberately on different schedules:
 #
 #   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
@@ -28,6 +28,14 @@
 #           POSIX-only path spelling, a `/bin/sh` assumption or a process-group
 #           kill sails through green. This lane is what makes the support claim
 #           in README/INSTALLATION a fact rather than an intention.
+#   windows-e2e — `npm run test:e2e` on windows-latest. Same suite as `e2e`,
+#           and gated by the SAME expression, on the same reasoning doubled:
+#           a full `next build` plus a browser download plus a browser-driven
+#           suite, on the slowest runner we rent, billed at 2x. It is the only
+#           job that boots the Windows launcher (`scripts/start.mjs` ties
+#           server.js and the pty sidecar together where there is no process
+#           group to kill), so it is where the shipped `npm start` path is
+#           exercised at all rather than only read.
 #
 # The Ubuntu three are independent jobs, not steps in one: they run
 # concurrently, each reports its own red/green, and a type error does not hide
@@ -38,9 +46,13 @@
 # 2x and its `npm ci` (native module install, no Docker layer cache, slow
 # filesystem) costs more than either check it is setting up for. Splitting it
 # would pay that twice to shave a minute off a lane that is already the slow one.
-# e2e is NOT on Windows yet: it wants a full `next build` plus a browser install
-# on the slowest runner we have, and none of it has ever run there. It gets its
-# own follow-up once this lane has a track record.
+#
+# `windows-e2e` is NOT folded into `windows` for the opposite reason: that same
+# argument only holds while the extra check is cheap next to the install it
+# shares. e2e is not — it adds a full production build and a browser download —
+# and it runs on a narrower schedule, so merging them would either serialize the
+# two fast checks behind ~15 minutes on every push or drag them down to e2e's
+# gate. Two jobs, each on its own schedule, is what that buys.
 #
 # `npm run preflight` (unit + e2e) is the documented pre-push gate locally; this
 # file is the same pair plus the typecheck, split so the fast parts report fast.
@@ -286,6 +298,68 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows-e2e:
+    name: End-to-end (Playwright, Windows)
+    # Byte-for-byte the same expression as `e2e` above, on purpose. A third
+    # schedule (main-only, or always-on) would mean the `e2e` label no longer
+    # answers "run the slow suites on this PR", and a Windows-specific
+    # regression would surface on a different push than the Linux one it shares
+    # a cause with. Keep the two in lockstep when either changes.
+    if: >-
+      ${{ inputs.e2e == 'on'
+          || (inputs.e2e != 'off'
+              && (github.event_name == 'push'
+                  || github.event_name == 'workflow_dispatch'
+                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+    runs-on: windows-latest
+    # Twice `e2e`'s 30. Same suite, but every process spawn, file write and
+    # module load costs more here, and it pays for a production build on top.
+    timeout-minutes: 60
+    steps:
+      # Same pair, same reasons, as the `windows` job — see there. They govern
+      # the checkout, so they come before it.
+      - name: Pin git's Windows checkout semantics
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # No `--with-deps`, unlike the Ubuntu lane: that flag installs the shared
+      # libraries a bare Linux container lacks, and on Windows it is either a
+      # no-op or a Media Pack install for WebKit, which this suite does not use
+      # (playwright.config.ts declares Chromium only).
+      - name: Install the Playwright browser
+        run: npx playwright install chromium
+
+      # The whole point of this job. `npm start` here is scripts/start.mjs, the
+      # Windows launcher that ties server.js and the pty sidecar together
+      # without a process group to kill — CI has never executed it, only
+      # type-checked and unit-tested around it. Everything else is as on Ubuntu:
+      # e2e/env.ts makes a hermetic temp root (through realpathSync.native, so a
+      # runner's 8.3-short-form %TEMP% resolves to the spelling the server
+      # persists) and CALANDRIA_E2E_MOCK_AGENT=1 swaps in the mock driver.
+      - name: Build and run the e2e suite
+        run: npm run test:e2e
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-artifacts-windows-${{ github.run_attempt }}
           path: |
             test-results/
             playwright-report/
