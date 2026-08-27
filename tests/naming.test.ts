@@ -101,6 +101,8 @@ const ALLOWED: Record<string, RegExp[]> = {
   "lib/storage.mjs": [LEGACY_STORAGE, LEGACY_ENV, SYSADMIN, /"orchestrator" : "calandria"/],
   "lib/db.ts": [LEGACY_STORAGE],
   "lib/db-lock.mjs": [LEGACY_STORAGE],
+  "scripts/backup.mjs": [LEGACY_STORAGE], //  follows lib/storage.mjs to a pre-rename db name
+  "tests/backup.test.ts": [LEGACY_STORAGE, SYSADMIN], // asserts that, for a fixture named orchestrator.db
   "lib/config.ts": [LEGACY_STORAGE],
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE, SYSADMIN],
   ".gitignore": [/orchestrator\.db/], //   a pre-rename db sitting in the repo root
@@ -129,7 +131,14 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
 
+  // (b) again: CALANDRIA_LOG_FORMAT is a knob born AFTER the rename, so it
+  // deliberately does NOT answer to an ORCH_ spelling — the code and its test
+  // both have to name the prefix they refuse to mint.
+  "lib/log.mjs": [LEGACY_ENV],
+  "tests/log.test.ts": [LEGACY_ENV, SYSADMIN],
+
   // (e) the ordinary noun.
+  "tests/turnLogging.test.ts": [SYSADMIN],
   "app/api/instance/usage/route.ts": [SYSADMIN],
   "lib/agents/claude/capabilities.ts": [SYSADMIN],
   "lib/agents/claude/driver.ts": [SYSADMIN],

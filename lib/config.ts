@@ -406,6 +406,13 @@ export const RETENTION_ENABLED = !["0", "off", "false", "no"].includes(
   String(readEnv("CALANDRIA_RETENTION") || "").toLowerCase(),
 );
 
+const gib = (name: string, raw: string | undefined, def: number): number => {
+  const n = num(name, raw, def);
+  // Negative is meaningless (a threshold nothing can be under); 0 is the
+  // documented "off", so only negatives fall back to the default.
+  return (n >= 0 ? n : def) * 1024 ** 3;
+};
+
 const days = (name: string, raw: string | undefined, def: number): number => {
   const n = num(name, raw, def);
   // A negative window would delete rows from the future. 0 is meaningful — it
@@ -457,6 +464,54 @@ export const RETENTION_SWEEP_MS = ms(readEnv("CALANDRIA_RETENTION_SWEEP_MS"), 6 
  */
 export const RETENTION_VACUUM = ["1", "on", "true", "yes"].includes(
   String(readEnv("CALANDRIA_RETENTION_VACUUM") || "").toLowerCase(),
+);
+
+/*
+ * ---- worktree retention + disk warning (lib/worktreeSweep.ts) ----
+ *
+ * The other half of issue #15: per-task worktrees are a full checkout of the
+ * project repo EACH, so they are the biggest disk-growth vector in the product
+ * and the only one measured in gigabytes rather than rows.
+ */
+
+/**
+ * Opt-in, unlike the table prune above, and that asymmetry is deliberate. The
+ * table windows (180/400 days) are longer than most instances have existed, so
+ * defaulting them ON changes nothing on an upgrade; a worktree window measured
+ * in WEEKS would start removing checkouts on the first tick after an upgrade
+ * nobody asked for. Set to 1/on/true/yes to sweep automatically — the manual
+ * path (Settings -> Storage) is unaffected either way.
+ */
+export const WORKTREE_SWEEP_ENABLED = ["1", "on", "true", "yes"].includes(
+  String(readEnv("CALANDRIA_WORKTREE_RETENTION") || "").toLowerCase(),
+);
+
+/**
+ * How long a FINISHED task keeps its git worktree once the sweep is on. Weeks,
+ * not months: the checkout is regenerable (`ensureWorktree` re-cuts it from the
+ * task's branch on the next turn) and its branch is never deleted here, so what
+ * ages out is disk, not history. Only terminal, idle, cold tasks are ever
+ * touched — the sweep reuses prunableTaskIds() rather than owning a predicate —
+ * and a checkout with uncommitted edits or unmerged commits is always skipped,
+ * however old. 0 keeps them forever.
+ */
+export const WORKTREE_RETENTION_MS = days(
+  "CALANDRIA_WORKTREE_RETENTION_DAYS",
+  readEnv("CALANDRIA_WORKTREE_RETENTION_DAYS"),
+  14,
+);
+
+/**
+ * Warn in the server log when WORKTREES_DIR crosses this size. Independent of
+ * the switch above on purpose: the instance that has NOT opted into automatic
+ * reclaim is exactly the one that needs telling, since the only remedy there is
+ * a human opening Settings -> Storage. In gigabytes; 0 disables the check (and
+ * with the sweep off too, the ticker no longer has to start at all).
+ */
+export const WORKTREES_DISK_WARN_BYTES = gib(
+  "CALANDRIA_WORKTREES_DISK_WARN_GB",
+  readEnv("CALANDRIA_WORKTREES_DISK_WARN_GB"),
+  20,
 );
 
 /**
