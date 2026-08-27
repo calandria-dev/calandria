@@ -96,7 +96,8 @@ The app talks to coding agents only through the `AgentDriver` interface.
 
 `runTurn()` via the Claude Agent SDK (resume or fresh session, project context appended to
 the Claude Code system prompt), the Calandria MCP tools (`suggest_task` + `list_tasks` +
-`get_task` + `update_task` + `withdraw_suggestion` + `list_projects` + `expose_service`),
+`get_task` + `update_task` + `withdraw_suggestion` + `set_base_branch` + `update_tag` +
+`list_projects` + `expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()` (a read-only agent loop
 that explores the repo to refresh a project's saved context). Auth delegates to
 `lib/claude-auth.ts`.
@@ -214,14 +215,15 @@ controls show their run count and API-price-equivalent cost without polling.
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
-`list_tags` / `list_projects` / `expose_service` / `ask_user` are the same Calandria
+`set_base_branch` / `list_tags` / `update_tag` / `list_projects` / `expose_service` /
+`ask_user` are the same Calandria
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/calandria-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `CALANDRIA_TASK_ID` / `CALANDRIA_PROJECT_ID` / `CALANDRIA_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-tags,list-projects,expose-service,ask-user}`,
+(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,set-base-branch,list-tags,update-tag,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort

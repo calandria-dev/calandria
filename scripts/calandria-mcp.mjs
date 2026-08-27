@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
  * future one) Calandria's task tools (suggest_task / list_tasks /
- * get_task / update_task / withdraw_suggestion), its runbook tools
+ * get_task / update_task / withdraw_suggestion / set_base_branch / update_tag),
+ * its runbook tools
  * (create_runbook / list_runbooks / update_runbook), list_projects,
  * expose_service and ask_user.
  *
@@ -26,7 +27,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
@@ -224,6 +225,45 @@ server.registerTool(
     // policy here either. The endpoint decides whether that target is an inert
     // tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("withdraw-suggestion", { task, reason });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  SET_BASE_BRANCH.name,
+  {
+    description: SET_BASE_BRANCH.description,
+    inputSchema: {
+      branch: z.string().describe(SET_BASE_BRANCH.params.branch),
+      task: z.string().optional().describe(SET_BASE_BRANCH.params.task),
+    },
+  },
+  async ({ branch, task }) => {
+    // `task` is the MODEL's target and is forwarded unvalidated — the bridge
+    // holds no policy. The endpoint decides which rows may be retargeted
+    // (any task in the SAME project; never one with a live turn that isn't the
+    // caller's own), against CALANDRIA_TASK_ID as the trusted caller identity.
+    const data = await callInternal("set-base-branch", { branch, task });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  UPDATE_TAG.name,
+  {
+    description: UPDATE_TAG.description,
+    inputSchema: {
+      tag: z.string().describe(UPDATE_TAG.params.tag),
+      name: z.string().optional().describe(UPDATE_TAG.params.name),
+      description: z.string().optional().describe(UPDATE_TAG.params.description),
+      color: z.string().optional().describe(UPDATE_TAG.params.color),
+      base_branch: z.string().optional().describe(UPDATE_TAG.params.base_branch),
+    },
+  },
+  async (args) => {
+    // No `project`: a tag never spans repositories, so the endpoint resolves the
+    // ref inside CALANDRIA_PROJECT_ID and nothing here can point it elsewhere.
+    const data = await callInternal("update-tag", args);
     return { content: [{ type: "text", text: data.text }] };
   }
 );

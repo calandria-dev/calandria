@@ -103,6 +103,20 @@ resolution order is: the task's own base, then the first of its tags that sets o
 project's default. Moving tasks to another project clears both, since a branch name means
 nothing in another repository.
 
+**Agents get both halves as their own verbs.** `set_base_branch(branch, task?)` retargets — by
+default the session's own task, mid-turn, which is what it is mostly for: an agent that works
+out the change belongs on the integration branch can move itself there and carry on. It can
+also name any other task in the same project, and it runs exactly the retarget the edit dialog
+does, refusals included. It is deliberately *not* a field on `update_task`: that tool is an
+instant field write, while this one moves a real worktree and can fail halfway. Retargeting
+somebody else's task is recorded, so it shows on the board as a change made by an agent with a
+one-click revert — and reverting re-runs the retarget rather than writing the old name back, so
+the diff snapshot follows the branch. `update_tag(tag, {name?, description?, color?,
+base_branch?})` is the other half: it edits the tag *itself* — the plan's brief as the agent
+learns what the work really is, and the branch its tasks are cut from — where `update_task`'s
+`tags` only sets which tags a task carries. There is no delete verb for a tag, the same line
+runbooks draw: hard delete with no undo stays yours.
+
 ### Staying level with the remote
 
 Work does not only arrive through the merge button — a pull request merged on GitHub, a

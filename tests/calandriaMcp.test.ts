@@ -58,6 +58,10 @@ beforeAll(async () => {
         res.end(JSON.stringify({ ok: true, task: { id: body.task || body.taskId, title: "Mine", description: "my brief" } }));
       } else if (req.url?.endsWith("/update-task")) {
         res.end(JSON.stringify({ ok: true, id: body.taskId, title: body.title, text: `Updated "${body.title}".` }));
+      } else if (req.url?.endsWith("/set-base-branch")) {
+        res.end(JSON.stringify({ ok: true, id: body.task || body.taskId, base_branch: body.branch, text: `Now based on ${body.branch}.` }));
+      } else if (req.url?.endsWith("/update-tag")) {
+        res.end(JSON.stringify({ ok: true, id: body.tag, name: body.name, base_branch: body.base_branch, text: `Updated tag "${body.tag}".` }));
       } else if (req.url?.endsWith("/withdraw-suggestion")) {
         res.end(JSON.stringify({ ok: true, id: body.task, status: "cancelled", text: `Withdrew "${body.task}".` }));
       } else if (req.url?.endsWith("/create-runbook")) {
@@ -117,8 +121,10 @@ describe("calandria-mcp stdio bridge", () => {
         "list_runbooks",
         "list_tags",
         "list_tasks",
+        "set_base_branch",
         "suggest_task",
         "update_runbook",
+        "update_tag",
         "update_task",
         "withdraw_suggestion",
       ]);

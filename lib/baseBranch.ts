@@ -259,3 +259,42 @@ export async function retargetTaskBase(
 }
 
 const createdNote = (label?: string) => (label ? ` Created the local branch from ${label}.` : "");
+
+/**
+ * `retargetTaskBase` plus the one case it can't express: an EMPTY branch, i.e.
+ * "stop naming a base of my own and go back to inheriting".
+ *
+ * Shared by `POST /api/tasks/[id]/base-branch` and the `set_base_branch` agent
+ * tool, because clearing the field is not a column write. The task may be pinned
+ * to a branch it is now leaving, so it still has to RECONCILE — under the name
+ * it inherits (a tag's default if one of its tags sets one, else the project's)
+ * — or `base_sha` would be left describing a branch the task is no longer on.
+ * The pin is then cleared to "", so a later change to the tag's or the project's
+ * default still reaches the task while it is uncut; the pin exists for a worktree
+ * that has been cut, not for a user or an agent clearing the field.
+ *
+ * The one exception is having nothing to inherit at all: there is nothing to
+ * reconcile against, and refusing on `retargetTaskBase`'s name check would make
+ * the field impossible to clear.
+ */
+export async function setTaskBaseBranch(
+  task: Task,
+  project: Project,
+  branch: string,
+  opts: { callerTaskId?: string } = {}
+): Promise<RetargetResult & { inherited?: boolean }> {
+  const want = branch.trim();
+  if (want) return retargetTaskBase(task, project, want, opts);
+
+  const inherited = (tagBaseBranch(task.id) || project.branch).trim();
+  if (!inherited) {
+    updateTask(task.id, { base_branch: "" });
+    publishGlobal(task.id, { type: "task_edited" });
+    return { ok: true, inherited: true, baseBranch: "", behind: 0, message: "Now following the project, which has no base branch set." };
+  }
+  const result = await retargetTaskBase(task, project, inherited, opts);
+  if (!result.ok) return result;
+  updateTask(task.id, { base_branch: "" });
+  publishGlobal(task.id, { type: "task_edited" });
+  return { ...result, baseBranch: inherited, inherited: true };
+}

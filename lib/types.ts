@@ -105,8 +105,16 @@ export interface Task {
   updated_at: number;
 }
 
-/** A field `update_task` can rewrite on a task the user already accepted. */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by";
+/**
+ * A field an agent tool can rewrite on a task the user already accepted.
+ *
+ * `base_branch` is the one that isn't `update_task`'s — it belongs to
+ * `set_base_branch`, which moves a real worktree — but it lands in the same
+ * audit trail so the "Changed by agent" chip covers a retarget too. Its Revert
+ * goes back through `retargetTaskBase`, never a raw column write (see
+ * app/api/tasks/[id]/agent-edits/route.ts).
+ */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
 
 /** One field's before/after inside a recorded agent edit. */
 export interface AgentEditChange {

@@ -1,7 +1,7 @@
 # What Calandria does to a worktree
 
 Read this when the repo is run under Calandria. The advice in `SKILL.md` holds
-for any orchestrator; these are the specifics that decide *which* fixes matter
+for any such tool; these are the specifics that decide *which* fixes matter
 most here.
 
 Contents: [Worktree creation](#worktree-creation) · [What does not

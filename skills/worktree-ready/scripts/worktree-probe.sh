@@ -256,7 +256,7 @@ done
 if [ -n "$boot" ]; then
   ok "a bootstrap entry point exists: $boot"
 else
-  bad "no single bootstrap command found — nothing prepares a bare checkout, and no orchestrator hook will"
+  bad "no single bootstrap command found — nothing prepares a bare checkout, and no setup hook will"
 fi
 named=0
 for f in AGENTS.md CLAUDE.md README.md CONTRIBUTING.md; do

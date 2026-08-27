@@ -12,7 +12,7 @@
 // the TS/SQLite graph.
 
 import { nanoid } from "nanoid";
-import { PRIORITIES, tagIsDone } from "./types";
+import { PRIORITIES, parseTagColor, tagIsDone } from "./types";
 import type { Project, Task, Tag, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData, AgentEditChange } from "./types";
 import {
   createTask,
@@ -32,12 +32,20 @@ import {
   resolveTag,
   sameDepSet,
   setTaskTags,
+  TagNameConflictError,
+  updateTag,
 } from "./store";
 import { topoMembers } from "./tagContext";
-// The resolved-base helper only (SDK-free, and already pinned that way): task
-// rows carry the effective answer rather than the raw column, so an agent never
-// reimplements the fallback chain.
-import { resolveBaseBranch } from "./baseBranch";
+// SDK-free, and already pinned that way. `resolveBaseBranch` is what puts the
+// EFFECTIVE base on every task row an agent reads (never the raw column, so it
+// never reimplements the fallback chain); `setTaskBaseBranch` is the whole
+// retarget policy behind `set_base_branch`, shared with the route.
+import { resolveBaseBranch, setTaskBaseBranch } from "./baseBranch";
+// One name check, shared with PATCH /api/tags/[id]: a tag's base branch is a
+// string that reaches a `git` argv later, and `--upload-pack=evil` is a
+// perfectly ordinary-looking one.
+import { refNameSafe } from "./git";
+import { withTaskLock } from "./taskLock";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
@@ -1019,6 +1027,230 @@ export function withdrawSuggestionForAgent(
     // Cancelling is a blocker clearing. Anything auto-starting behind this
     // suggestion is now unblocked and must actually launch, or it waits forever.
     autoStartDependents: true,
+  };
+}
+
+/**
+ * The `set_base_branch` tool: point a task at the git branch its worktree is
+ * cut from, catches up to, and merges into.
+ *
+ * A dedicated verb rather than a field on `update_task`, and the split is the
+ * design's, not an accident: `updateTaskForAgent` is a synchronous, atomic
+ * better-sqlite3 write with an audit trail, while this is asynchronous, touches
+ * git, can create a local ref, can `reset --hard` a worktree and can fail
+ * halfway. Folding it in would either make the field-writer async and
+ * non-atomic for every other field, or open a second policy path for the same
+ * verb. `update_task` says so in its own description and names this tool.
+ *
+ * The trust split is `updateTaskForAgent`'s exactly: `caller` is the server's
+ * word (the driver closes over it; the bridge's endpoint reads the env-injected
+ * CALANDRIA_TASK_ID) and `targetRef` is the model's — undefined meaning "my own
+ * row". Two rules on the target:
+ *   - it must be in the CALLER'S OWN PROJECT, unlike update_task's any-project
+ *     reach. A branch name means nothing in another repository, so a
+ *     cross-project retarget could only ever be a mistake.
+ *   - a live turn in it that isn't the caller's own is refused, mirroring
+ *     update_task — enforced inside `retargetTaskBase`, which re-reads the row
+ *     rather than trusting this one, because a retarget can reset a worktree
+ *     out from under a running session.
+ * A task retargeting ITSELF mid-turn is the tool's main use and is allowed.
+ *
+ * Recorded in `task_agent_edits` whenever the target ISN'T the caller's own
+ * row, so the "Changed by agent" chip covers a retarget the way it covers a
+ * rewritten description. Its Revert goes back through this same reconciliation
+ * (app/api/tasks/[id]/agent-edits/route.ts), never a raw column write — undoing
+ * a retarget with an UPDATE would leave `base_sha` describing a branch the task
+ * is no longer on.
+ */
+export async function setBaseBranchForAgent(
+  caller: Task,
+  targetRef: string | undefined,
+  branch: string
+): Promise<{ task: Task | null; text: string }> {
+  const wanted = targetRef?.trim() ?? "";
+  const own = !wanted || wanted === caller.id;
+  const fail = (text: string) => ({ task: null, text });
+
+  const cur = getTask(own ? caller.id : wanted);
+  if (!cur)
+    return own
+      ? fail("Could not change the base branch: this task's row no longer exists.")
+      : fail(`No task with id "${wanted}". Call list_tasks for the ids. Nothing was changed.`);
+  // Same project only. update_task reaches any board because a title is a title
+  // anywhere; a branch is a name in ONE repository, so a task in another project
+  // could not be based on it even in principle.
+  if (!own && cur.project_id !== caller.project_id)
+    return fail(
+      `Could not change the base branch of "${cur.title}": it's in a different project, and a branch name means nothing in ` +
+        `another repository. Base branches are set from a session in the same project. Nothing was changed.`
+    );
+  const project = getProject(cur.project_id);
+  if (!project) return fail(`Could not change the base branch of "${cur.title}": its project no longer exists.`);
+
+  const what = own ? "this task" : `"${cur.title}"`;
+  const before = cur.base_branch;
+  const beforeResolved = resolveBaseBranch(cur, project);
+
+  // The whole policy — name check, self, liveness, paused merge, existence,
+  // occupancy, and the three reconciliation cases — lives in lib/baseBranch.ts,
+  // shared with POST /api/tasks/[id]/base-branch. `callerTaskId` is what lets
+  // this session retarget ITSELF while its own turn is running.
+  //
+  // Under the TARGET's task lock, exactly as that route runs it: the
+  // reconciliation can `reset --hard` a worktree, and the liveness check inside
+  // has to stay true for the whole operation rather than only at the instant it
+  // was read. Taken HERE rather than in the two endpoints so the in-process
+  // Claude server and the bridge's route can't differ on it. Safe on the
+  // caller's own row — a streaming turn does not hold this lock (lib/taskLock.ts).
+  const result = await withTaskLock(cur.id, () => setTaskBaseBranch(cur, project, branch, { callerTaskId: caller.id }));
+  if (!result.ok) return fail(`Could not change the base branch of ${what}: ${result.error} Nothing was changed.`);
+
+  const after = getTask(cur.id);
+  if (!after) return fail(`Could not change the base branch of ${what}: its row no longer exists.`);
+  // Nothing moved — the task was already on this branch and the reconciliation
+  // found nothing to do. Not an edit, so nothing is recorded either.
+  if (after.base_branch === before)
+    return { task: after, text: own ? result.message! : `"${after.title}": ${result.message}` };
+
+  let task = after;
+  if (!own) {
+    recordAgentEdit({
+      task_id: cur.id,
+      project_id: cur.project_id,
+      actor_task_id: caller.id,
+      actor_title: caller.title,
+      actor_agent: caller.agent,
+      // The RESOLVED names are what's readable ("main", not ""), while the raw
+      // column is what Revert has to put back: clearing the pin and pinning it
+      // to the value it was inheriting are different rows with the same label.
+      changes: [
+        {
+          field: "base_branch",
+          before: beforeResolved || "(none)",
+          after: resolveBaseBranch(after, project) || "(none)",
+          before_value: before,
+          after_value: after.base_branch,
+        },
+      ],
+    });
+    task = getTask(cur.id) ?? after;
+  }
+
+  return {
+    task,
+    text:
+      (own ? result.message! : `"${task.title}": ${result.message}`) +
+      (own
+        ? ""
+        : " The user can see this on their board as a change made by an agent, with a one-click revert that retargets it back."),
+  };
+}
+
+/**
+ * The `update_tag` tool: edit the TAG ITSELF — its name, its brief, its badge
+ * colour, and the git branch the tasks carrying it are based on.
+ *
+ * The editing verb tags never had. `update_task`'s `tags` parameter sets
+ * MEMBERSHIP (which tags a task carries); this is the other axis, and without it
+ * an agent that files a plan under a tag can never correct the plan's own brief
+ * as it learns what the work actually is.
+ *
+ * Project-scoped and resolved exactly like every other tag reference — an id or
+ * an EXACT name, strict, because this tool cannot create one and a miss that
+ * fell back to creating would mint a near-duplicate of the tag the user filters
+ * their board by. A rename onto a name another tag already holds is refused BY
+ * NAME (TagNameConflictError) rather than merging the two.
+ *
+ * `base_branch: ""` clears the default back to "members follow the project".
+ * No git runs here, unlike `set_base_branch`: a tag has no worktree, and its
+ * value is a default for cuts that HAVEN'T HAPPENED YET — so the integration
+ * branch a plan is about to create must be settable before it exists. The name
+ * check is what stops a `--upload-pack=evil` string reaching a `git` argv later.
+ *
+ * There is no delete verb, the same line runbooks draw: hard delete with no undo
+ * stays the user's call.
+ */
+export function updateTagForAgent(
+  project: Project,
+  tagRef: string,
+  input: { name?: string; description?: string; color?: string; base_branch?: string }
+): { tag: Tag | null; text: string } {
+  const fail = (text: string) => ({ tag: null, text });
+  const ref = tagRef?.trim() ?? "";
+  if (!ref) return fail("Could not update the tag: `tag` is required — pass a tag id or its exact name from `list_tags`. Nothing was changed.");
+
+  const hit = resolveTagRefs(project, [ref]);
+  if ("error" in hit) return fail(`Could not update the tag: ${hit.error}. Nothing was changed.`);
+  const cur = hit.tags[0];
+  if (!cur) return fail("Could not update the tag: `tag` is required — pass a tag id or its exact name from `list_tags`. Nothing was changed.");
+
+  const fields: { name?: string; description?: string; color?: string | null; base_branch?: string } = {};
+  const changed: string[] = [];
+
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) return fail(`Could not update "${cur.name}": \`name\` was empty. Nothing was changed.`);
+    if (name !== cur.name) {
+      fields.name = name;
+      changed.push(`renamed to "${name}"`);
+    }
+  }
+  if (input.description !== undefined && input.description !== cur.description) {
+    fields.description = input.description;
+    changed.push("description rewritten");
+  }
+  if (input.color !== undefined) {
+    const parsed = parseTagColor(input.color);
+    // The palette is closed, and the refusal carries it — there's no list_tags
+    // field to read the accepted values off, so naming them here is the only
+    // way a retry can succeed.
+    if (!parsed.ok) return fail(`Could not update "${cur.name}": ${parsed.error}. Nothing was changed.`);
+    if (parsed.color !== cur.color) {
+      fields.color = parsed.color;
+      changed.push(parsed.color ? `colour → ${parsed.color}` : "colour cleared");
+    }
+  }
+  if (input.base_branch !== undefined) {
+    const want = input.base_branch.trim();
+    if (want && !refNameSafe(want)) return fail(`Could not update "${cur.name}": "${want}" isn't a usable git branch name. Nothing was changed.`);
+    if (want !== cur.base_branch) {
+      fields.base_branch = want;
+      changed.push(want ? `tasks are based on ${want}` : "tasks follow the project's default branch again");
+    }
+  }
+
+  if (!changed.length)
+    return {
+      tag: cur,
+      text: `No change: "${cur.name}" already matches what you passed${cur.base_branch ? ` (based on ${cur.base_branch})` : ""}.`,
+    };
+
+  let updated: Tag | undefined;
+  try {
+    updated = updateTag(cur.id, fields);
+  } catch (e) {
+    if (e instanceof TagNameConflictError)
+      return fail(
+        `Could not update "${cur.name}": ${e.message}. Two tags can't share a name — pick a different one, or tag the tasks ` +
+          `with the existing "${e.tagName}" via update_task instead of renaming this one onto it. Nothing was changed.`
+      );
+    return fail(`Could not update "${cur.name}": ${(e as Error).message}. Nothing was changed.`);
+  }
+  if (!updated) return fail(`Could not update "${cur.name}": it no longer exists. Nothing was changed.`);
+
+  // Project-keyed, like every other tag write: no single task row changed, so
+  // the per-task re-read on /api/events has nothing to read and the client
+  // refetches the project's tags instead.
+  publishGlobal("", { type: "tags_changed", projectId: updated.project_id });
+
+  return {
+    tag: updated,
+    text:
+      `Updated tag "${updated.name}": ${changed.join(", ")}.` +
+      (fields.base_branch
+        ? ` Tasks tagged with it are cut from ${fields.base_branch} from now on; members whose worktree already exists keep the ` +
+          `branch their work is built on — retarget those with set_base_branch.`
+        : ""),
   };
 }
 
