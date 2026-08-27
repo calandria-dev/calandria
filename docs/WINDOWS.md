@@ -26,6 +26,19 @@ every user who doesn't have Visual Studio build tools, so it fails the job inste
 Not yet in CI: **e2e on Windows**. It wants a full `next build` plus a browser install on
 the slowest runner available, and has never run there. It is a follow-up, not a claim.
 
+The lane earned its place on its first run. Everything below had been written, reviewed and
+merged as portable, with the Ubuntu suite green throughout; 83 of 135 test files failed the
+first time it actually ran on Windows. Two were product bugs in the document-collaboration
+file route — `worktreeRelative()` read a drive-letter path as *relative*, so a file plainly
+inside the worktree 404'd and the containment check never ran, and the route's own
+malformed-path test (`rel.startsWith("/")`) reported an absolute Windows path as an
+ordinary missing file rather than a bad request. One was the refusal message that names the
+worktree blocking a rebase, quoting git's `C:/Users/...` while every other path the app
+shows is `C:\Users\...`. The rest were the suite's own: a teardown that deleted the temp
+root with the SQLite handle still open (EBUSY, 79 files), a runner `%TEMP%` in 8.3 short
+form that `fs.realpathSync` doesn't expand, and three assertions that pinned a POSIX
+spelling rather than a behaviour. None of it was visible from Linux.
+
 ## Where each platform difference lives
 
 Every row is code that behaves differently on `win32`. Nothing here is a Windows-only
@@ -65,10 +78,11 @@ module: each takes the platform as an input so the POSIX suite pins both branche
 
 ## Still owed a real machine
 
-CI covers the unit suite and typecheck. Two things it structurally cannot, both about the
-shutdown path — `child.kill()` is a `TerminateProcess` on Windows, so no stub can observe
-*which* signal a process was sent, and `tests/startLauncher.test.ts` skips its SIGINT case
-there for exactly that reason. Five minutes on a Windows box would settle both:
+CI covers the unit suite and typecheck — 1462 tests, on a real Windows runner, green. Two
+things it structurally cannot, both about the shutdown path: `child.kill()` is a
+`TerminateProcess` on Windows, so no stub can observe *which* signal a process was sent, and
+`tests/startLauncher.test.ts` skips its SIGINT case there for exactly that reason. Five
+minutes on a Windows box would settle both:
 
 1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the transcript carries
    the interrupted-state notice rather than the next boot's crash recovery clearing a raw
