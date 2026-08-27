@@ -7,6 +7,7 @@
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
 import { tagContextBlock } from "../tagContext";
+import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS } from "../config";
 
@@ -32,7 +33,17 @@ export function buildProjectContext(project: Project, task: Task): string {
   const lines: string[] = [];
   lines.push(`You are working inside the project "${project.name}".`);
   if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
-  if (project.branch) lines.push(`\nGit branch: ${project.branch}`);
+  // The base branch, not "the project's branch": what this worktree was cut
+  // from is also what Sync catches it up to and what Merge lands it into, and a
+  // task on a feature branch has to know that before it reasons about any of the
+  // three. The parenthetical only when the task has a base of its own — on every
+  // other task it would just restate the line above it.
+  const base = resolveBaseBranch(task, project);
+  if (base)
+    lines.push(
+      `\nBase branch: ${base} — this worktree was cut from it, Sync catches up to it, and Merge lands into it.` +
+        (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
+    );
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
 

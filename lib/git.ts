@@ -101,9 +101,14 @@ const FALLBACK_IDENTITY = ["-c", "user.name=Calandria", "-c", "user.email=caland
 export const taskCommitMessage = (task: { id: string; title: string }) =>
   `${task.title} (calandria task ${task.id})`;
 
-/** The message for the commit that syncs a project's base branch into a task. */
-export const syncCommitMessage = (project: { branch: string }, task: { id: string; title: string }) =>
-  `Sync ${project.branch} into ${taskCommitMessage(task)}`;
+/**
+ * The message for the commit that syncs a task's base branch into it. Takes the
+ * branch rather than the project because a task can be based on a branch of its
+ * own (lib/baseBranch.ts) — naming the project's default here would label the
+ * commit with a branch the merge never touched.
+ */
+export const syncCommitMessage = (baseBranch: string, task: { id: string; title: string }) =>
+  `Sync ${baseBranch} into ${taskCommitMessage(task)}`;
 
 // Commit whatever is currently in the repo as the project baseline. Writes a
 // sensible default .gitignore first (so a base commit doesn't swallow
@@ -164,9 +169,12 @@ export interface BaseRemote {
 }
 
 // Refuse anything that can't be a branch name before it goes into a refspec.
-// `project.branch` is user input, and while execFile never involves a shell, a
-// name starting with "-" would still be read by git as a flag.
-function refNameSafe(name: string): boolean {
+// The base branch is user input — the project's, or a task's own
+// (lib/baseBranch.ts) — and while execFile never involves a shell, a name
+// starting with "-" would still be read by git as a flag. Exported because
+// retargeting a task has to refuse an unusable name BY NAME, before any git
+// runs, rather than letting the first subprocess fail with git's wording.
+export function refNameSafe(name: string): boolean {
   return (
     !!name &&
     /^[A-Za-z0-9._\-/]+$/.test(name) &&
@@ -467,7 +475,7 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
 // --porcelain` prints one blank-line-separated block per worktree, the main one
 // first. Moving a branch that some worktree has checked out would leave that
 // worktree's index and files describing a commit the branch no longer points at.
-async function worktreeForBranch(repoPath: string, branch: string): Promise<{ path: string; isMain: boolean } | null> {
+export async function worktreeForBranch(repoPath: string, branch: string): Promise<{ path: string; isMain: boolean } | null> {
   const out = await git(repoPath, ["worktree", "list", "--porcelain"]).catch(() => "");
   let current = "";
   let seen = -1;
@@ -567,6 +575,101 @@ export async function pushBaseBranch(repoPath: string, baseBranch: string): Prom
   }
 }
 
+// ---------- base-branch retargeting primitives (lib/baseBranch.ts) ----------
+//
+// The git half of pointing an existing task at a different base branch. The
+// POLICY — which refusals, in what order, and what the user is told — lives in
+// lib/baseBranch.ts so the route and the agent tool share one copy of it; these
+// are the operations it composes.
+
+/** What `ensureLocalBaseBranch` found (or made) for a branch a task wants to be based on. */
+export interface LocalBaseBranch {
+  found: "local" | "created" | "missing";
+  /** For "created": the remote-tracking ref it was cut from and now tracks ("origin/feature/auth"). */
+  label?: string;
+  /** For "missing": where we looked on the remote, or "" when the repo has no remote at all. */
+  remoteLabel?: string;
+}
+
+/**
+ * Make sure `branch` exists locally, creating it at the remote's tip when it
+ * exists only there.
+ *
+ * Refusing a branch the user can plainly see on GitHub is the failure mode this
+ * exists to avoid: a feature branch a colleague pushed is exactly the branch a
+ * task most wants to be based on, and it has no local ref until someone asks
+ * for one. Created with `--track`, so the new local branch behaves like one the
+ * user had checked out by hand — which is also what makes `baseRemote()` resolve
+ * it correctly for every later fetch, sync and PR.
+ */
+export async function ensureLocalBaseBranch(repoPath: string, branch: string): Promise<LocalBaseBranch> {
+  if (!refNameSafe(branch)) return { found: "missing", remoteLabel: "" };
+  if (await branchExists(repoPath, branch)) return { found: "local" };
+
+  const up = await baseRemote(repoPath, branch).catch(() => null);
+  if (!up) return { found: "missing", remoteLabel: "" };
+  // Best-effort, exactly like every other fetch here: no network is a reason to
+  // fall back to whatever tracking ref is already on disk, not to fail.
+  await fetchBase(repoPath, branch).catch(() => {});
+  const tip = await git(repoPath, ["rev-parse", "--verify", `${up.trackingRef}^{commit}`]).catch(() => "");
+  if (!tip) return { found: "missing", remoteLabel: up.label };
+  try {
+    await git(repoPath, ["branch", "--track", branch, up.trackingRef]);
+  } catch (e) {
+    return { found: "missing", remoteLabel: gitErrorLine(e, up.label) };
+  }
+  return { found: "created", label: up.label };
+}
+
+/**
+ * The commit a task retargeted onto `baseBranch` should be re-cut at — the very
+ * choice `ensureWorktree` makes for a fresh task, so a re-cut task lands exactly
+ * where one created now would. "" when the branch doesn't exist.
+ */
+export async function baseStartPoint(repoPath: string, baseBranch: string): Promise<string> {
+  if (!(await branchExists(repoPath, baseBranch))) return "";
+  return selectStartPoint(repoPath, baseBranch).catch(() => "");
+}
+
+/** Move the worktree's branch to `sha`, discarding index and tree. Returns false if git refuses. */
+export async function resetWorktreeTo(worktreePath: string, sha: string): Promise<boolean> {
+  try {
+    await git(worktreePath, ["reset", "--hard", sha]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Uncommitted changes present in the worktree (tracked or not). */
+export async function worktreeIsDirty(worktreePath: string): Promise<boolean> {
+  if (!worktreePath) return false;
+  return (await git(worktreePath, ["status", "--porcelain"]).catch(() => "")).trim().length > 0;
+}
+
+/**
+ * How many commits the worktree's HEAD carries beyond the commit it was cut
+ * from — "what this task has made of its own". `null` when that can't be
+ * determined (no recorded base_sha, or one git no longer has), which callers
+ * must read as "assume there IS work": the answer gates a `reset --hard`.
+ */
+export async function commitsSinceCut(worktreePath: string, baseSha: string): Promise<number | null> {
+  if (!worktreePath || !baseSha) return null;
+  try {
+    await git(worktreePath, ["cat-file", "-e", `${baseSha}^{commit}`]);
+  } catch {
+    return null;
+  }
+  const out = await git(worktreePath, ["rev-list", "--count", `${baseSha}..HEAD`]).catch(() => "");
+  const n = parseInt(out, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** merge-base of two refs, or "" when they share no history (or either is missing). */
+export async function mergeBaseSha(repoPath: string, a: string, b: string): Promise<string> {
+  return git(repoPath, ["merge-base", a, b]).catch(() => "");
+}
+
 // The commit a NEW task should branch from. The remote tip when the local base
 // branch is merely behind it; the local tip in every other case — diverged (no
 // automatically correct answer), ahead (local has unpublished work the remote
@@ -608,6 +711,12 @@ async function forkPointSha(repoPath: string, branch: string, localBase: string)
  * from the fetched remote tip instead — see `selectStartPoint`. The user's local
  * base branch is never moved as a side effect of launching a task.
  *
+ * `baseBranch` in the result is the branch the cut ACTUALLY used — the requested
+ * one, or "" when it didn't exist and the fallback to HEAD applied. That's what
+ * the launch paths pin into `tasks.base_branch`: after the cut the task owns the
+ * answer, because `baseSha` came from that branch and nothing else can be true
+ * (see lib/baseBranch.ts).
+ *
  * Every failure comes out as a `WorktreePrepError` carrying its classification
  * (stale lock / stale registration / full disk / detached HEAD, and whether
  * `repairWorktree` can plausibly fix it), so the four callers that fail closed
@@ -619,7 +728,7 @@ export async function ensureWorktree(
   repoPath: string,
   taskId: string,
   baseBranch?: string
-): Promise<{ path: string; branch: string; baseSha: string } | null> {
+): Promise<{ path: string; branch: string; baseSha: string; baseBranch: string } | null> {
   // Refresh the remote-tracking ref BEFORE taking the lock. A fetch only writes
   // refs/remotes/*, so it's safe alongside anything else in the repo, and holding
   // the per-repo lock across a network round trip would park every other task
@@ -676,7 +785,7 @@ async function ensureWorktreeLocked(
   repoPath: string,
   taskId: string,
   baseBranch?: string
-): Promise<{ path: string; branch: string; baseSha: string } | null> {
+): Promise<{ path: string; branch: string; baseSha: string; baseBranch: string } | null> {
   // Greenfield (non-git) or commitless repo: initialize it so the task can be
   // isolated. Without this, every Calandria-created project — which starts
   // as a bare folder — would silently skip isolation and have nothing to diff.
@@ -712,7 +821,7 @@ async function ensureWorktreeLocked(
   // the task just left, and diff and merge against it too. A leftover that
   // isn't registered here is an orphan by definition: clear it and cut fresh.
   if (fs.existsSync(wtPath)) {
-    if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha };
+    if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha, baseBranch: localBase };
     try {
       fs.rmSync(wtPath, { recursive: true, force: true });
     } catch {
@@ -728,7 +837,7 @@ async function ensureWorktreeLocked(
     // Branch may already exist from a prior generation; attach to it instead.
     await git(repoPath, ["worktree", "add", wtPath, branch]);
   }
-  return { path: wtPath, branch, baseSha };
+  return { path: wtPath, branch, baseSha, baseBranch: localBase };
 }
 
 // ---------- repair ----------
@@ -768,8 +877,11 @@ function removeLockFile(file: string, minAgeMs: number): boolean {
 export interface WorktreeRepair {
   /** What was actually done, in order — shown to the user, so phrased for them. */
   actions: string[];
-  /** The repaired (or freshly cut) worktree, or null when isolation isn't possible at all. */
-  worktree: { path: string; branch: string; baseSha: string } | null;
+  /** The repaired (or freshly cut) worktree, or null when isolation isn't possible
+   *  at all. Same shape `ensureWorktree` returns, `baseBranch` included: a repair
+   *  re-cuts, so it settles the same "which base is this task really on" question
+   *  the launch paths pin (lib/baseBranch.ts). */
+  worktree: { path: string; branch: string; baseSha: string; baseBranch: string } | null;
 }
 
 /**
@@ -1210,7 +1322,7 @@ export async function taskDiff(
 
 // ---------- merge ----------
 
-async function branchExists(repoPath: string, branch: string): Promise<boolean> {
+export async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   if (!branch) return false;
   try {
     await git(repoPath, ["rev-parse", "--verify", `refs/heads/${branch}`]);

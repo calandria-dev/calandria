@@ -136,8 +136,10 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
 
 /**
  * Is this schedule's previous run still live? Turn liveness comes from the
- * abort registry, not task.status — a task stays "in progress" long after its
- * turn ends, and every finished turn sets awaiting_input.
+ * abort registry, not from the task row — the row's resting state after a turn
+ * says nothing about whether anything is running: a task stays "in progress"
+ * long after its turn ends, a finished turn either sets awaiting_input or (on a
+ * clean scheduled run) the unread_run_at mark, and both outlive the turn.
  */
 function isScheduleBusy(scheduleId: string): boolean {
   const active = activeRun(scheduleId);

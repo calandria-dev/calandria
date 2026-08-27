@@ -34,6 +34,10 @@ covers it.
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code, and it tells you when your own checkout has fallen
   behind.
+- **Point a task at any branch.** A task can be based on a branch of its own
+  rather than the project's default — cut from it, synced to it, merged into it
+  and PR'd against it — so several tasks can land on one feature branch while
+  the rest keep shipping to `main`.
 
 ## How it works
 
@@ -111,7 +115,9 @@ straight in and starts the next turn.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
   own timezone, with nobody logged in. Each firing mints a fresh task you
   review like any other, and can fire a runbook so one recipe serves both
-  the clock and the button.
+  the clock and the button. A run that finished cleanly rests in **Ran clean**
+  — its own group, out of the "needs you" pill because there's nothing to
+  answer, with a Mark done button for once you've read it.
 - **Notifications:** when a task stops and waits for you, when a turn fails,
   or when a scheduled run fails — as a browser notification in any open tab,
   and as a push to your phone with the app closed. Quiet only when you're

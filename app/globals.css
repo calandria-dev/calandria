@@ -449,6 +449,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    by TasksColumn's TaskCard (list) and TaskBoard's BoardCard (kanban). */
 .diff-foot{display:flex;align-items:center;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2);font-family:var(--mono);font-size:11px;color:var(--dim);}
 .diff-branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+/* Shown only when the task is based on something other than the project's
+   default base branch (lib/baseBranch.ts) — otherwise every card repeats "main". */
+.diff-base{flex:0 0 auto;white-space:nowrap;color:var(--blue);}
 .diff-stat{flex:0 0 auto;white-space:nowrap;}
 .diff-stat .a{color:var(--run);}
 .diff-stat .d{color:var(--dim);}
@@ -538,6 +541,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .snz-chip svg{width:11px;height:11px;flex:0 0 auto;}
 .bc-chip.snz{margin-top:7px;align-self:flex-start;color:var(--ink-3);}
 
+/* "Ran clean" — a scheduled run that finished unattended with nothing to
+   answer, and the one action that state offers (issue #28). Green like Done
+   because it succeeded, outlined rather than filled because it isn't finished
+   with until somebody says so. */
+.ran-chip{display:flex;align-items:center;gap:5px;margin-top:7px;padding:2px 4px 2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--green);background:var(--green-soft);border:1px solid var(--green);}
+.ran-chip svg{width:11px;height:11px;flex:0 0 auto;}
+.ran-ack{background:transparent;border:1px solid var(--green);border-radius:999px;padding:1px 8px;font:inherit;font-size:10px;color:var(--green);cursor:pointer;}
+.ran-ack:hover{background:color-mix(in oklab, var(--green) 26%, transparent);}
+.bc-chip.ran{margin-top:7px;align-self:flex-start;color:var(--green);border-color:var(--green);background:var(--green-soft);cursor:pointer;}
+.bc-chip.ran:hover{background:color-mix(in oklab, var(--green) 26%, transparent);}
+
 /* Board: the corner affordance, out of the card's content flow. */
 .bc-snz{position:absolute;top:8px;right:8px;}
 .bcard.snoozed .bc-act{color:var(--ink-3);}
@@ -585,6 +599,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you — waiting/review, not error */
 .sdot.lg{width:12px;height:12px;}
 .sdot.z{background:var(--dim);}  /* snoozed group header — parked, not a real status */
+.sdot.u{background:transparent;border:1.5px solid var(--green);box-sizing:border-box;}  /* ran clean, unread — succeeded, but hollow: nobody has read it */
 /* Small flat variant for group headers (mobile board's status-grouped list) — no glow/pulse at 6px. */
 .sdot.sm{width:6px;height:6px;box-shadow:none;}
 .sdot.pulse::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;box-shadow:none;animation:ping 1.6s cubic-bezier(0,0,.2,1) infinite;}
@@ -951,6 +966,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 0 auto;}
 .tc-branch{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px;color:var(--ink);}
 .tc-arrow{font-size:12px;color:var(--ink-3);}
+/* "own base": this task is based on a branch that isn't the project's default
+   (lib/baseBranch.ts). Absent on every task that follows the default. */
+.tc-base{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue);border-radius:99px;padding:1px 8px;}
 .tc-stat{font-family:var(--mono);font-size:12px;}
 .tc-stat .add,.tc-cnt .add{color:var(--green);}
 .tc-stat .del,.tc-cnt .del{color:var(--red);}

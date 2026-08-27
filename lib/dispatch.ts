@@ -32,6 +32,7 @@ import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { isAgentConnected } from "@/lib/agents/connections";
 import type { RunContext } from "@/lib/runContext";
 import type { Priority, Task } from "@/lib/types";
@@ -136,10 +137,12 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
         // dispatch failure — fireSchedule settles the run "failed" with this
         // same message, the runbook route turns it into a visible 400 — so
         // nothing new is needed here, just not swallowing it first.
-        const wt = await ensureWorktree(project.repo_path, fresh.id, project.branch);
+        const wt = await ensureWorktree(project.repo_path, fresh.id, resolveBaseBranch(fresh, project));
         if (wt) {
-          fresh = { ...fresh, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha };
-          updateTask(fresh.id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+          // Pin the base at the cut — see lib/baseBranch.ts.
+          const pin = wt.baseBranch ? { base_branch: wt.baseBranch } : {};
+          fresh = { ...fresh, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha, ...pin };
+          updateTask(fresh.id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha, ...pin });
         }
         const userMsg = addMessage(fresh.id, fresh.generation, "user", input.prompt);
         updateTask(fresh.id, { running: 1, awaiting_input: 0 });

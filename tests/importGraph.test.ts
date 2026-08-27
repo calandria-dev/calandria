@@ -35,6 +35,8 @@ const PINNED = [
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
+  "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice — the client imports it to render the button

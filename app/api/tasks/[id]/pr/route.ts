@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, listSummaries } from "@/lib/store";
 import { commitWorktree, taskCommitMessage } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { createTaskPr, buildPrBody } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const result = await createTaskPr({
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
-    baseBranch: project.branch,
+    baseBranch: resolveBaseBranch(task, project),
     title: task.title,
     body: buildPrBody({ description: task.description, summary: summaries[summaries.length - 1]?.summary, taskId: id }),
   });

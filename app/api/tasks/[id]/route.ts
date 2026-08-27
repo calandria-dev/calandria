@@ -142,8 +142,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       allowed.session_id = null;
     }
   }
-  // A manual status change is the user taking the wheel — clear the "your turn" flag.
-  if ("status" in allowed) allowed.awaiting_input = 0;
+  // A manual status change is the user taking the wheel — clear the "your turn"
+  // flag, and with it the ran-clean mark an unattended run left behind. The two
+  // go together because they answer the same question ("does this row still
+  // want something from you"), and because the mark's ONLY way out is a status
+  // write: clearing it on its own would drop the task straight back into the
+  // undifferentiated "In progress" pile it was pulled out of (issue #28).
+  if ("status" in allowed) {
+    allowed.awaiting_input = 0;
+    allowed.unread_run_at = 0;
+  }
   // Cancelling means "stop working on this": kill any in-flight turn. The
   // runner's finally block settles running=0 and discards the parked queue.
   // (The worktree is kept — Cancelled ≠ Delete — so the diff stays reviewable

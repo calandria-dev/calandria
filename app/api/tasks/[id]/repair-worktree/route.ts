@@ -6,6 +6,7 @@ import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
 import { worktreePrepNotice, classifyWorktreePrep } from "@/lib/worktreeFailure";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -41,9 +42,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "this project has no working directory to repair" }, { status: 400 });
 
     try {
-      const { actions, worktree } = await repairWorktree(project.repo_path, id, project.branch);
+      // The task's OWN base if it has one, not the project default — a repair
+      // re-cuts, and re-cutting a task retargeted to `feature/auth` from `main`
+      // would silently move the work it's meant to be restoring.
+      const { actions, worktree } = await repairWorktree(project.repo_path, id, resolveBaseBranch(task, project));
       if (worktree) {
-        updateTask(id, { worktree_path: worktree.path, work_branch: worktree.branch, base_sha: worktree.baseSha });
+        updateTask(id, {
+          worktree_path: worktree.path, work_branch: worktree.branch, base_sha: worktree.baseSha,
+          // Pin the base at the cut, exactly as the launch paths do
+          // (lib/baseBranch.ts). "" = the branch didn't exist and the cut fell
+          // back to HEAD, which isn't a base to record.
+          ...(worktree.baseBranch ? { base_branch: worktree.baseBranch } : {}),
+        });
       }
       // Say what was done on the transcript, not just in the response: the
       // launch that failed left a durable ⚠ line there, and a repair that
