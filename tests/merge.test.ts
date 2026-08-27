@@ -567,3 +567,63 @@ describe("conflict resolution: complete / abort", () => {
     await expect(abortWorktreeMerge("")).resolves.toBeUndefined();
   });
 });
+
+// Landing on a branch that ISN'T what the main checkout has open — the shape a
+// task with a base of its own has (lib/baseBranch.ts). mergeTask already routes
+// `target !== current` through the object-level path, so nothing new is being
+// built here; what these pin is that the user's checkout is left completely
+// alone, which is the promise the feature makes.
+describe("merging into a non-default base branch", () => {
+  it("lands on the task's own base while the main checkout stays on main", async () => {
+    const repo = await makeRepo();
+    await git(repo, "branch", "feature/x");
+    const wt = await ensureWorktree(repo, uid(), "feature/x");
+    if (!wt) throw new Error("ensureWorktree returned null");
+    const mainTip = await git(repo, "rev-parse", "main");
+    await commitFile(wt.path, "feature.txt", "feature\n", "task work");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch,
+      baseBranch: "feature/x", message: "land on feature/x",
+    });
+
+    expect(res).toMatchObject({ ok: true, targetBranch: "feature/x" });
+    // mergedSha is the work branch's tip (the new diff base), and feature/x now
+    // carries the merge commit that absorbed it.
+    expect(res.mergedSha).toBe(await git(wt.path, "rev-parse", "HEAD"));
+    expect(await git(repo, "log", "-1", "--format=%s", "feature/x")).toBe("land on feature/x");
+    // The user's checkout never moved and never saw the file: no branch switch,
+    // no working tree materialized, main exactly where it was.
+    expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(repo, "rev-parse", "main")).toBe(mainTip);
+    expect(await git(repo, "status", "--porcelain")).toBe("");
+    expect(fs.existsSync(path.join(repo, "feature.txt"))).toBe(false);
+  });
+
+  it("serializes two tasks landing on the same non-default base", async () => {
+    const repo = await makeRepo();
+    await git(repo, "branch", "feature/x");
+    const mainTip = await git(repo, "rev-parse", "main");
+    const a = await ensureWorktree(repo, uid(), "feature/x");
+    const b = await ensureWorktree(repo, uid(), "feature/x");
+    if (!a || !b) throw new Error("ensureWorktree returned null");
+    await commitFile(a.path, "a.txt", "a\n", "task a");
+    await commitFile(b.path, "b.txt", "b\n", "task b");
+
+    const [ra, rb] = await Promise.all([
+      mergeTask({ repoPath: repo, worktreePath: a.path, workBranch: a.branch, baseBranch: "feature/x", message: "land a" }),
+      mergeTask({ repoPath: repo, worktreePath: b.path, workBranch: b.branch, baseBranch: "feature/x", message: "land b" }),
+    ]);
+
+    // withRepoLock serializes them and update-ref carries the old tip, so the
+    // second merge sees the first rather than overwriting it.
+    expect(ra.ok).toBe(true);
+    expect(rb.ok).toBe(true);
+    const landed = await git(repo, "log", "--format=%s", "feature/x");
+    expect(landed).toContain("land a");
+    expect(landed).toContain("land b");
+    expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(repo, "rev-parse", "main")).toBe(mainTip);
+    expect(fs.existsSync(path.join(repo, "a.txt"))).toBe(false);
+  });
+});

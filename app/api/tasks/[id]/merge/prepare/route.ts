@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { prepareWorktreeMerge, completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { buildConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -28,10 +29,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
     const message = taskCommitMessage(task);
+    const baseBranch = resolveBaseBranch(task, project);
     const prep = await prepareWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
-      baseBranch: project.branch,
+      baseBranch,
       message,
     });
 
@@ -43,7 +45,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         repoPath: project.repo_path,
         worktreePath: task.worktree_path,
         workBranch: task.work_branch,
-        baseBranch: project.branch,
+        baseBranch,
         message,
       });
       if (result.ok) {
@@ -61,7 +63,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // Conflicts present — hand back the file lists plus a ready-to-send prompt for
     // an AI resolution turn (the client streams it through the normal turn path).
     return NextResponse.json(
-      { ...prep, prompt: buildConflictPrompt(project.branch, prep.conflicts) },
+      { ...prep, prompt: buildConflictPrompt(baseBranch, prep.conflicts) },
       { status: 200 }
     );
   }));

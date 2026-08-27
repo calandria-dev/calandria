@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { abortWorktreeMerge, completeWorktreeMerge, ensureWorktree, fastForwardWorktree, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
-import { commitFile, git, makeRepoWithWorktree, tmpDir, writeFile } from "./helpers";
+import fs from "node:fs";
+import path from "node:path";
+import { commitFile, git, makeRepo, makeRepoWithWorktree, tmpDir, uid, writeFile } from "./helpers";
 
 describe("worktreeSyncStatus", () => {
   it("reports an up-to-date branch with nothing to do", async () => {
@@ -182,5 +184,35 @@ describe("fastForwardWorktree", () => {
 
   it("returns false for a directory that is not a git repo", async () => {
     expect(await fastForwardWorktree(tmpDir(), "main")).toBe(false);
+  });
+});
+
+// A task with a base of its own (lib/baseBranch.ts) follows THAT branch, not the
+// project's default. The git layer already takes the base as a parameter, so
+// what these pin is that a non-default base behaves identically — and, more to
+// the point, that main moving is not something such a task ever picks up.
+describe("sync against a non-default base branch", () => {
+  it("catches up to the task's own base and ignores the project default", async () => {
+    const repo = await makeRepo();
+    await git(repo, "checkout", "-b", "feature/x");
+    await git(repo, "checkout", "main");
+    const wt = await ensureWorktree(repo, uid(), "feature/x");
+    if (!wt) throw new Error("ensureWorktree returned null");
+    expect(wt.baseBranch).toBe("feature/x");
+
+    // Both branches move on, each with a file of its own.
+    await git(repo, "checkout", "feature/x");
+    const featureTip = await commitFile(repo, "feature.txt", "feature\n", "feature edit");
+    await git(repo, "checkout", "main");
+    await commitFile(repo, "main.txt", "main\n", "main edit");
+
+    const s = await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "feature/x" });
+    expect(s).toMatchObject({ behind: 1, ahead: 0, canFastForward: true, baseTip: featureTip });
+
+    expect(await fastForwardWorktree(wt.path, "feature/x")).toBe(true);
+    expect(await git(wt.path, "rev-parse", "HEAD")).toBe(featureTip);
+    // main's commit is nowhere near this worktree — that is the whole point.
+    expect(fs.existsSync(path.join(wt.path, "feature.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(wt.path, "main.txt"))).toBe(false);
   });
 });
