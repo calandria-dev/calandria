@@ -15,6 +15,7 @@
 // agent SDK. tests/importGraph.test.ts pins this.
 
 import type { AgentCapabilities } from "./types";
+import { contextWindowFor } from "@/lib/contextWindow";
 import { claudeCapabilities } from "./claude/capabilities";
 import { CODEX_CAPABILITIES } from "./codex/capabilities";
 import { MOCK_CAPABILITIES } from "./mock/capabilities";
@@ -60,17 +61,10 @@ export function getCapabilities(id: string | null | undefined): AgentCapabilitie
 
 // Context window for an (agent, model) pair, from the capability descriptor
 // (models[].contextWindow) — so a Codex task's ~272k window and a Fable task's
-// 1M window are both correct, with no per-agent table here. Unknown/inherited
-// (null) model falls back to the widest window the agent offers, then a
-// conservative constant. Mirrored in app/shell/format.ts
-// (contextWindowOf) so the live SSE update matches the server.
-const DEFAULT_CONTEXT_WINDOW = 200_000;
+// 1M window are both correct, with no per-agent table here. The miss policy
+// (widest for an inherited model, narrowest for an unknown id) lives in
+// lib/contextWindow.ts, shared with app/shell/format.ts (contextWindowOf) so
+// the live SSE update matches the server.
 export function modelContextWindow(agent: string | null | undefined, model: string | null | undefined): number {
-  const models = getCapabilities(agent).models;
-  if (model) {
-    const hit = models.find((m) => m.value === model);
-    if (hit) return hit.contextWindow;
-  }
-  const widest = models.reduce((mx, m) => Math.max(mx, m.contextWindow), 0);
-  return widest || DEFAULT_CONTEXT_WINDOW;
+  return contextWindowFor(getCapabilities(agent).models, model);
 }

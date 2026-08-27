@@ -62,4 +62,18 @@ describe("claude model list", () => {
     expect(contextWindowOf("opus[1m]", claude)).toBe(1_000_000);
     expect(contextWindowOf("fable", claude)).toBe(1_000_000);
   });
+
+  // Issue #39: the two misses are different questions. An inherited (null)
+  // model may be the 1M variant, so the gauge assumes the widest window; an id
+  // the catalog doesn't know gets the NARROWEST, so it over-reports fullness
+  // rather than promising headroom it can't vouch for.
+  it("assumes the widest window for an inherited model and the narrowest for an unknown id", () => {
+    const widest = Math.max(...claude.models.map((m) => m.contextWindow));
+    const narrowest = Math.min(...claude.models.map((m) => m.contextWindow));
+    expect(widest).toBeGreaterThan(narrowest);
+    expect(contextWindowOf(null, claude)).toBe(widest);
+    expect(contextWindowOf("claude-from-the-future", claude)).toBe(narrowest);
+    expect(contextWindowOf("anything", { ...claude, models: [] })).toBe(200_000);
+    expect(contextWindowOf(null, undefined)).toBe(200_000);
+  });
 });
