@@ -5,6 +5,9 @@
 // lands under this root, so an e2e run never touches ~/.calandria or the
 // developer's real projects, and every run starts from a truly fresh instance
 // (which is what makes the onboarding spec deterministic).
+//
+// Removing it again is e2e/cleanup-reporter.ts's job, and only on a green run —
+// a failure's DB and worktrees are the post-mortem.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -22,6 +25,14 @@ function ensureRoot(): string {
       path.join(fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""), "calandria-e2e-")
     );
     process.env.CALANDRIA_E2E_ROOT = root;
+    // Ownership, not just the path: e2e/cleanup-reporter.ts only deletes a root
+    // THIS run minted. It travels as an env var rather than a module-scoped
+    // boolean because the reporter is a separate module (and the workers
+    // re-import this file with CALANDRIA_E2E_ROOT already inherited, where the
+    // in-process flag would read false anyway). A developer who exports
+    // CALANDRIA_E2E_ROOT to reuse a root never has it set, so their directory
+    // is never removed.
+    process.env.CALANDRIA_E2E_ROOT_OWNED = "1";
   }
   for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
@@ -57,6 +68,8 @@ function ensureRoot(): string {
 }
 
 export const E2E_ROOT = ensureRoot();
+/** True only in the process that minted `E2E_ROOT` — see `ensureRoot`. */
+export const E2E_ROOT_OWNED = process.env.CALANDRIA_E2E_ROOT_OWNED === "1";
 export const E2E_PORT = Number(process.env.CALANDRIA_E2E_PORT || 4711);
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
 export const FIXTURES_DIR = path.join(E2E_ROOT, "fixtures");
