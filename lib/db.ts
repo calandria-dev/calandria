@@ -252,7 +252,8 @@ export function init(db: Database.Database) {
       actor_agent   TEXT NOT NULL DEFAULT '',
       changes       TEXT NOT NULL,
       created_at    INTEGER NOT NULL,
-      reverted_at   INTEGER NOT NULL DEFAULT 0
+      reverted_at   INTEGER NOT NULL DEFAULT 0,
+      acknowledged_at INTEGER NOT NULL DEFAULT 0
     );
 
     -- Remembered "always allow" answers to a tool-permission prompt (the
@@ -715,6 +716,11 @@ export function migrate(db: Database.Database) {
   // honest value for every pre-existing row: nothing was recorded before this
   // column existed, so there's nothing outstanding to flag.
   if (!taskCols.includes("agent_edited_at")) db.exec("ALTER TABLE tasks ADD COLUMN agent_edited_at INTEGER NOT NULL DEFAULT 0");
+  // Per-row "Keep changes" stamp (see TaskAgentEdit.acknowledged_at). 0 on
+  // every pre-existing row: an edit acked before the column existed reads as
+  // outstanding again, which costs one extra ack and loses nothing.
+  const editCols = (db.prepare("PRAGMA table_info(task_agent_edits)").all() as { name: string }[]).map((c) => c.name);
+  if (!editCols.includes("acknowledged_at")) db.exec("ALTER TABLE task_agent_edits ADD COLUMN acknowledged_at INTEGER NOT NULL DEFAULT 0");
   // Measured context-window occupancy (see the schema comment). No backfill:
   // NULL is the honest value for every pre-existing row, and is exactly what
   // routes the gauge to the usage-derived estimate it showed before.

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, listAgentEdits, getAgentEdit, markAgentEditReverted, hasUnrevertedAgentEdits, clearAgentEditFlag, updateTask, setTaskDeps } from "@/lib/store";
+import { getTask, getTaskDeps, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import type { AgentEditChange, Priority, Status, Task } from "@/lib/types";
@@ -49,6 +49,35 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
   }
 }
 
+const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
+
+/**
+ * The fields of an edit whose live value no longer matches what the edit left
+ * behind, each rendered for the refusal. Scalars compare through `after` (raw
+ * there); group and blocked_by need `after_value`, and a row recorded before
+ * that existed is reverted unchecked for those two, as it always was.
+ */
+function staleFields(task: Task, changes: AgentEditChange[]): string[] {
+  const out: string[] = [];
+  for (const c of changes) {
+    switch (c.field) {
+      case "title":
+      case "description":
+      case "priority":
+      case "status":
+        if (task[c.field] !== c.after) out.push(`${c.field} is now "${task[c.field]}"`);
+        break;
+      case "group":
+        if (c.after_value !== undefined && (task.group_id ?? null) !== (c.after_value ?? null)) out.push("group has changed");
+        break;
+      case "blocked_by":
+        if (Array.isArray(c.after_value) && !sameSet(getTaskDeps(task.id), c.after_value)) out.push("blocked_by has changed");
+        break;
+    }
+  }
+  return out;
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -59,7 +88,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Acknowledging clears the chip WITHOUT touching history — the audit trail
     // (task_agent_edits) always outlives it, so "I've seen this" and "undo
     // this" stay two separate actions even though both can clear the badge.
-    clearAgentEditFlag(id);
+    acknowledgeAgentEdits(id);
     publishGlobal(id, { type: "task_edited" });
     return NextResponse.json({ task: getTask(id) });
   }
@@ -71,11 +100,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (edit.task_id !== id) return NextResponse.json({ error: "that edit belongs to another task" }, { status: 400 });
     if (edit.reverted_at > 0) return NextResponse.json({ error: "already reverted" }, { status: 400 });
 
-    // Revert writes `before_value` UNCONDITIONALLY, never checking the field
-    // still holds `after` — the user is looking at the CURRENT value in the
-    // diff panel when they press the button, so their intent is "make it this
-    // again", not a compare-and-swap against whatever this one edit changed.
-    //
+    // Compare-and-swap, not an unconditional write. The panel shows what THIS
+    // edit changed, not the live row, so a field the user (or a later agent
+    // edit) has since moved on would be silently overwritten by an older
+    // before_value — a rename to C lost to a revert of A→B, or two stacked
+    // edits A→B→C reverted oldest-first landing on B with both rows marked
+    // reverted. Refuse with the current value instead; reverting newest-first
+    // still walks the whole stack back.
+    const stale = staleFields(getTask(id)!, edit.changes);
+    if (stale.length) {
+      return NextResponse.json(
+        { error: `${stale.join("; ")} — changed since this edit, so reverting it would overwrite a later change. Revert newer edits first, or edit the task directly.` },
+        { status: 409 }
+      );
+    }
+
     // Deps first, exactly like updateTaskForAgent orders edges before fields:
     // a cycle can have appeared since this edit landed (a later edit, or a
     // manual change), and a refusal here must leave the row completely
@@ -103,8 +142,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // leave every auto_start dependent unblocked but never launched.
     if (isTerminal(getTask(id)!.status) && !isTerminal(prevStatus)) maybeAutoStartDependents(id);
     // Only the LAST outstanding edit reverting clears the chip — an earlier
-    // one in the history may still be applied and unacknowledged.
-    if (!hasUnrevertedAgentEdits(id)) clearAgentEditFlag(id);
+    // one in the history may still be applied and unacknowledged. (Acked rows
+    // don't count: that's what acknowledged_at is for.)
+    if (!hasOutstandingAgentEdits(id)) clearAgentEditFlag(id);
 
     publishGlobal(id, { type: "task_edited" });
     // One response carries both the refreshed row and the refreshed history,
