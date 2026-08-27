@@ -120,7 +120,8 @@ const ALLOWED: Record<string, RegExp[]> = {
 
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
-  "CHANGELOG.md": [/\(orchestrator task [\w-]+\)/, /ORCH_GH_BIN/],
+  // (a) too: the preamble names the upstream project the way NOTICE does.
+  "CHANGELOG.md": [/\(orchestrator task [\w-]+\)/, /ORCH_GH_BIN/, /Operator/, /operator-oss/],
 
   // (e) the ordinary noun.
   "app/api/instance/usage/route.ts": [SYSADMIN],

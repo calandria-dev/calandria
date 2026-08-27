@@ -1,5 +1,13 @@
 # Changelog
 
+Calandria began as a fork of [Operator](https://github.com/iishyfishyy/operator-oss)
+by [@iishyfishyy](https://github.com/iishyfishyy), under the Apache License 2.0.
+Releases up to and including 0.2.0 were cut while this repository was still a
+GitHub fork of that project; 0.3.0 is the first release after the divergence —
+detached from the upstream fork network, with the codebase renamed end to end.
+Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
+in README's "Name and lineage" section; this changelog only covers Calandria.
+
 ## [0.2.0](https://github.com/calandria-dev/calandria/compare/v0.1.0...v0.2.0) (2026-08-25)
 
 
