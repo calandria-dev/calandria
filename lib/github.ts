@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
+import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
 import { gitErrorDetail } from "./git";
 
 const run = promisify(execFile);
@@ -15,22 +16,26 @@ const run = promisify(execFile);
 // The server process never reads a shell profile (systemd unit, container,
 // `npm start` from a non-login context), so linuxbrew/Homebrew/snap installs
 // that work fine in the user's terminal ENOENT here without this probe.
-const GH_PROBE_DIRS = [
-  "/home/linuxbrew/.linuxbrew/bin",
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  "/snap/bin",
-  path.join(os.homedir(), ".local", "bin"),
-];
-
-const isExecutable = (p: string): boolean => {
-  try {
-    fs.accessSync(p, fs.constants.X_OK);
-    return fs.statSync(p).isFile();
-  } catch {
-    return false;
-  }
-};
+//
+// The Windows entries are the same story with different package managers:
+// winget links and the MSI's Program Files dir are on the PATH of a fresh
+// interactive shell but not necessarily of a service, and scoop's shims dir is
+// only ever on the user's own PATH. All three ship `gh.exe`, so the PATHEXT
+// expansion in lib/binPath.ts is what actually finds them.
+const GH_PROBE_DIRS =
+  process.platform === "win32"
+    ? [
+        path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Microsoft", "WinGet", "Links"),
+        path.join(process.env.ProgramFiles || "C:\\Program Files", "GitHub CLI"),
+        path.join(os.homedir(), "scoop", "shims"),
+      ]
+    : [
+        "/home/linuxbrew/.linuxbrew/bin",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/snap/bin",
+        path.join(os.homedir(), ".local", "bin"),
+      ];
 
 /**
  * The gh binary to spawn: CALANDRIA_GH_BIN if set (taken verbatim — a wrong path
@@ -39,21 +44,24 @@ const isExecutable = (p: string): boolean => {
  * well-known install dirs. Falls back to "gh" so the ENOENT lands in the
  * callers' existing not-installed handling. Re-resolved per call on purpose
  * (a handful of stat()s): installing gh mid-session works on the next click.
+ *
+ * Bare "gh" stays the answer for a PATH hit on Windows too — CreateProcess
+ * repeats the PATH+PATHEXT search itself and finds the same `gh.exe`. What the
+ * PATHEXT-aware lookup buys is the probe-dir half: without it every Windows
+ * candidate missed (the file is `gh.exe`, never `gh`) and the fallback happened
+ * to work only because gh is on PATH. gh ships as a real executable from every
+ * Windows package manager, so the `.cmd`-shim problem the codex/claude paths
+ * have doesn't arise here.
  */
 export function resolveGhBin(
   configured: string = GH_BIN,
   pathEnv: string = process.env.PATH || "",
   probeDirs: string[] = GH_PROBE_DIRS,
+  lookup: BinLookupOptions = {},
 ): string {
   if (configured) return configured;
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (dir && isExecutable(path.join(dir, "gh"))) return "gh";
-  }
-  for (const dir of probeDirs) {
-    const candidate = path.join(dir, "gh");
-    if (isExecutable(candidate)) return candidate;
-  }
-  return "gh";
+  if (findOnPath("gh", { ...lookup, pathEnv })) return "gh";
+  return findInDirs("gh", probeDirs, lookup) ?? "gh";
 }
 
 /**

@@ -196,36 +196,57 @@ Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
   — it runs its Bash tool through Git Bash even when launched from PowerShell.
   So "Git for Windows on PATH" is a hard prerequisite of Calandria-on-Windows
   either way, which also covers our `execFile("git")` calls.
-- **`CLAUDE_CLI_PATH`** defaults to `~/.local/bin/claude` with no extension
-  (`lib/config.ts:29-30`), passed straight to the SDK's
-  `pathToClaudeCodeExecutable` on every turn, one-shot and `/`-command probe
-  (`lib/agents/claude/driver.ts:220,759`, `commands.ts:117`) and to node-pty
-  for `claude auth login` (`lib/claude-auth.ts:124`). Node's shell-less spawn
-  resolves `.exe` via `CreateProcess` but never npm's `.cmd` shim. Fix: win32
-  default of `path.join(homedir, ".local", "bin", "claude.exe")`, and resolve
-  `PATHEXT` for a bare name.
+- **`CLAUDE_CLI_PATH`** defaulted to `~/.local/bin/claude` with no extension,
+  passed straight to the SDK's `pathToClaudeCodeExecutable` on every turn,
+  one-shot and `/`-command probe (`lib/agents/claude/driver.ts`,
+  `commands.ts`) and to node-pty for `claude auth login` (`lib/claude-auth.ts`).
+  Node's shell-less spawn resolves `.exe` via `CreateProcess` but never npm's
+  `.cmd` shim. **Fixed**: on win32 the default is the native installer's
+  `claude.exe` under `%USERPROFILE%\.local\bin`, then a `PATHEXT`-aware PATH
+  lookup, then that path literally so a failure names something plausible
+  (`lib/config.ts`). `.exe` is ordered ahead of `.cmd` because the SDK spawns
+  this value directly, as does node-pty for the login — neither offers a
+  cmd.exe wrapper, so a real `claude.exe` is a requirement on Windows, not a
+  preference. The codex helpers differ only because they shell out through
+  `child_process`, where the wrapper works.
 - **`claude auth login` sets `BROWSER=true`** to no-op the browser open by
-  exec'ing `/bin/true`. There is no `true` on Windows; verify against the
-  native CLI whether it treats the value as a flag or a command.
+  exec'ing `/bin/true`, and there is no `true` on Windows. **Checked against
+  the shipped CLI (2.1.240) and left as-is**: `$BROWSER` is exec'd as a command
+  with the URL as its only argument, a missing opener is classified
+  `opener_missing` and *returned* rather than thrown, the CLI sets
+  `BROWSER: "true"` itself in the environment it builds for its own background
+  sessions — in the same object literal carrying its `platform === "windows"`
+  case — and a separate check reads `BROWSER === "true"` as "not a real
+  browser". So the value is a sentinel the CLI expects, and the Windows worst
+  case is the benign no-browser path the flag is asking for.
 - **Codex CLI**: OpenAI shipped a native Windows sandbox in March 2026
   (restricted tokens + dedicated sandbox users + `codex-command-runner.exe`),
   so `sandboxMode: "workspace-write" | "read-only"` in
   `lib/agents/codex/driver.ts` maps through the SDK; first-run sandbox setup is
   heavier than Landlock/Seatbelt and may need elevation Calandria doesn't
   prompt for. The bare `"codex"` spawns in `lib/agents/codex/auth.ts:22,212` and
-  `codex/mcp.ts:38` have the same `.cmd` problem as Claude — `mcp.ts` fails
+  `codex/mcp.ts:38` had the same `.cmd` problem as Claude — and `mcp.ts` fails
   silently (leaves inherited MCP servers mounted, the exact context-waste it
-  exists to prevent). `codexPathOverride` via `CODEX_CLI_PATH` already works as
-  an escape hatch.
+  exists to prevent), so a Windows instance would have paid that cost on every
+  turn with nothing logged. **Fixed**: both go through `resolveCodexBin()` /
+  `codexSpawn()` (`lib/agents/codex/bin.ts`), which applies `PATHEXT` and wraps
+  a `.cmd` shim in `cmd.exe` — Node refuses to spawn one shell-less since
+  CVE-2024-27980. `codexPathOverride` via `CODEX_CLI_PATH` still works as the
+  escape hatch, and the driver's own SDK-bundled binary is unaffected.
 - **`scripts/calandria-mcp.mjs`** is launched as `{ command: process.execPath,
   args: [CALANDRIA_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
   `path.join(process.cwd(), …)` script path and talks to the app over loopback
   HTTP. Already portable; the shebang is inert.
-- **`gh`** probe dirs (`lib/github.ts:17-23`) are all POSIX; bare `gh` on PATH
-  is tried first so winget/scoop installs usually work. Add
-  `%LOCALAPPDATA%\Microsoft\WinGet\Links` and `C:\Program Files\GitHub CLI`.
-  `resolveGhBin`'s `X_OK` check (`lib/github.ts:27`) is meaningless on Windows —
-  it passes for any existing file, which is acceptable.
+- **`gh`** probe dirs were all POSIX; bare `gh` on PATH is tried first so
+  winget/scoop installs usually worked by accident. **Fixed**: win32 probes
+  `%LOCALAPPDATA%\Microsoft\WinGet\Links`, `%ProgramFiles%\GitHub CLI` and
+  `~\scoop\shims`, and the lookup applies `PATHEXT` so the `gh.exe` in them is
+  actually seen (every extension-less candidate missed before). A PATH hit still
+  answers bare `"gh"` — `CreateProcess` repeats the PATH+PATHEXT search itself.
+  `resolveGhBin`'s `X_OK` check is meaningless on Windows — it passes for any
+  existing file — so `isExecutableFile()` skips it there and asks only "is this
+  a file", which the extension candidates already answer. Accepted, and noted in
+  `lib/binPath.ts`.
 
 ### 7. Tests and CI
 
@@ -287,7 +308,7 @@ Filed in the Suggested tray, in dependency order:
 1. Docs: WSL2 as the supported Windows path (README, INSTALLATION, TROUBLESHOOTING; the `/mnt/c` locking and login caveats). No blockers. **Do first.**
 2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`). — **Done** (`1314a34`).
 3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
-4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check).
+4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check). — **Done** (`lib/binPath.ts` + callers).
 5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
 6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics).
 7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade).

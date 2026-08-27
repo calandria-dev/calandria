@@ -25,17 +25,21 @@
 // CODEX_INHERIT_MCP in lib/config.ts for the escape hatch, and "Agent MCP
 // inheritance" in CLAUDE.md for the product-level statement.
 //
+// The binary itself is resolved by ./bin.ts rather than spawned as a bare
+// "codex": that name resolves nowhere on native Windows, where npm installs a
+// `codex.cmd` shim, and the best-effort contract below would have turned that
+// into a permanent silent regression — every turn paying for uncallable
+// inherited tools, with nothing logged.
+//
 // SDK-free on purpose (child_process + config only) so it can be unit-tested
 // without @openai/codex-sdk.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { CODEX_CLI_PATH, CODEX_INHERIT_MCP } from "../../config";
+import { CODEX_INHERIT_MCP } from "../../config";
+import { codexSpawn } from "./bin";
 
 const run = promisify(execFile);
-
-// Same resolution the auth helpers use: an explicit pin, else `codex` on PATH.
-const CODEX = CODEX_CLI_PATH || "codex";
 
 // The name our own bridge is mounted under. Never disabled, and never treated
 // as an inherited server even if the user happens to have one by that name —
@@ -62,7 +66,12 @@ const BARE_KEY = /^[A-Za-z0-9_-]+$/;
  */
 export async function listUserMcpServers(): Promise<string[]> {
   try {
-    const { stdout } = await run(CODEX, ["mcp", "list", "--json"], { timeout: 15_000, env: process.env });
+    const list = codexSpawn(["mcp", "list", "--json"]);
+    const { stdout } = await run(list.command, list.args, {
+      timeout: 15_000,
+      env: process.env,
+      windowsVerbatimArguments: list.windowsVerbatimArguments,
+    });
     const parsed: unknown = JSON.parse(stdout);
     if (!Array.isArray(parsed)) return [];
     return parsed

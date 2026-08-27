@@ -39,6 +39,8 @@ const PINNED = [
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
+  "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice — the client imports it to render the button
   "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving

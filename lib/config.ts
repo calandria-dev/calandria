@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { readEnv } from "./env.mjs";
+import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 
 /**
@@ -38,9 +39,35 @@ export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.ho
  * Path to the user's logged-in `claude` binary (Max subscription). The SDK
  * auto-detects it on PATH, but Next's server may run with a trimmed PATH, so
  * we pin it.
+ *
+ * The default is extension-less, which is correct on POSIX and unspawnable on
+ * Windows: Node's shell-less spawn hands the name to CreateProcess, which only
+ * finds a file that actually exists under one of the PATHEXT extensions. So
+ * win32 looks for the real thing — the native installer's `claude.exe` under
+ * `%USERPROFILE%\.local\bin`, the same directory the POSIX default names, then
+ * PATH — and only falls back to a literal `claude.exe` there so a "not
+ * installed" failure names a plausible path instead of an extension-less one.
+ * Resolved once at import like every other constant here; the escape hatch for
+ * an install that appears later is the env var.
+ *
+ * An npm-shim install (`claude.cmd`) is found by the PATHEXT expansion but is
+ * NOT usable, so a real `claude.exe` is the requirement on Windows rather than
+ * a preference: this value goes to the Agent SDK's
+ * `pathToClaudeCodeExecutable` and to node-pty for the login, and neither
+ * offers a cmd.exe wrapper we could route a batch shim through (unlike the
+ * codex helpers, which shell out through child_process — lib/binPath.ts's
+ * spawnSpec). `.exe` is ordered ahead of `.cmd` in DEFAULT_PATHEXT for that
+ * reason, and .env.example says so.
  */
-export const CLAUDE_CLI_PATH =
-  process.env.CLAUDE_CLI_PATH || path.join(os.homedir(), ".local", "bin", "claude");
+const claudeDefaultPath = () => {
+  const localBin = path.join(os.homedir(), ".local", "bin");
+  if (process.platform !== "win32") return path.join(localBin, "claude");
+  return (
+    findInDirs("claude", [localBin]) ?? findOnPath("claude") ?? path.join(localBin, "claude.exe")
+  );
+};
+
+export const CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH || claudeDefaultPath();
 
 /**
  * Path to the `codex` binary the Codex driver drives (via @openai/codex-sdk).

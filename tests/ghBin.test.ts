@@ -22,6 +22,15 @@ function dir(withGh: { executable: boolean } | false): string {
   return d;
 }
 
+/** A directory holding `gh.exe` — what every Windows package manager installs. */
+function winDir(withGh = true): string {
+  const d = path.join(tmpRoot, `w${n++}`);
+  fs.mkdirSync(d);
+  if (withGh) fs.writeFileSync(path.join(d, "gh.exe"), "");
+  return d;
+}
+const WIN = { platform: "win32" as const, pathext: ".COM;.EXE;.BAT;.CMD" };
+
 describe("resolveGhBin", () => {
   it("uses CALANDRIA_GH_BIN verbatim when set, even over a PATH hit", () => {
     const onPath = dir({ executable: true });
@@ -52,6 +61,25 @@ describe("resolveGhBin", () => {
 
   it("returns bare gh when nothing is found, so callers' ENOENT handling fires", () => {
     expect(resolveGhBin("", dir(false), [dir(false)])).toBe("gh");
+  });
+
+  // On Windows the file is gh.exe, never gh, so every candidate the old
+  // extension-less probe built missed — a winget/scoop/MSI install invisible to
+  // a server whose PATH doesn't carry it would have reported "not installed".
+  // Bare "gh" is still the answer for a PATH hit (CreateProcess repeats the
+  // PATH+PATHEXT search itself); the probe half is what needed the extension.
+  it("finds gh.exe on a win32 PATH and still answers bare gh", () => {
+    expect(resolveGhBin("", [winDir(false), winDir()].join(";"), [], WIN)).toBe("gh");
+  });
+
+  it("finds gh.exe in a win32 probe dir when PATH misses", () => {
+    const hit = winDir();
+    expect(resolveGhBin("", winDir(false), [winDir(false), hit], WIN)).toBe(path.join(hit, "gh.exe"));
+  });
+
+  it("does not split a win32 PATH on ':' — a drive letter is not a separator", () => {
+    const hit = winDir();
+    expect(resolveGhBin("", `C:\\Windows;${hit}`, [], WIN)).toBe("gh");
   });
 });
 
