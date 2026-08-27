@@ -12,6 +12,7 @@ import { deferredStartFor } from "@/lib/usageReset";
 import { wakeLabel } from "./snooze";
 import { resetClock } from "./queuedStart";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
+import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
 
@@ -306,7 +307,36 @@ export interface LimitResume {
   onCancel: () => void;
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onCollaborate, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onCollaborate?: (file: string) => void; limitResume?: LimitResume }) {
+/**
+ * The "Repair worktree" affordance on a worktree-prep failure. Owns its own
+ * busy/error state because its handler does two round trips (repair, then the
+ * resend) and the first can fail on its own terms — the other recovery buttons
+ * are one fire-and-forget send, and their failure comes back as a fresh
+ * transcript line. Not memoized: it's rendered once, on one message.
+ */
+function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?: boolean; onRepair: (msgId: string) => Promise<string | null> }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <div className="overflow-actions">
+      <button
+        className="btn btn-sm"
+        disabled={busy || running}
+        title="Clear the stale lock, prune the stale registration, cut the worktree again, and send the message"
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try { setErr(await onRepair(msgId)); } finally { setBusy(false); }
+        }}
+      >
+        {Icon.restore()} {busy ? "Repairing…" : "Repair worktree"}
+      </button>
+      {err && <span className="queued-note">{err}</span>}
+    </div>
+  );
+}
+
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -420,6 +450,25 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      );
+    }
+    // The worktree couldn't be prepared, in one of the two ways stale git
+    // bookkeeping causes (a crashed git's lock file, a registration pointing at
+    // a directory that's gone): same shape as the cases above, with a "Repair
+    // worktree" button. Unlike them the action isn't a resend — it clears the
+    // lock, prunes and re-cuts first (POST /repair-worktree), then sends the
+    // failed message — so it reports its own failure inline rather than handing
+    // the user a second dead end (see lib/worktreeFailure.ts). The
+    // non-recoverable classifications (full disk, detached HEAD) carry their
+    // explanation without this notice, and fall through to the plain ⚠ line.
+    if (m.content.includes(WORKTREE_REPAIR_NOTICE)) {
+      return (
+        <div className="msg system overflow">
+          <div className="msg-body">
+            {m.content}
+            {onRepairWorktree && <RepairWorktree msgId={m.id} running={running} onRepair={onRepairWorktree} />}
           </div>
         </div>
       );

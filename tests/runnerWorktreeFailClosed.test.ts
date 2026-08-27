@@ -45,6 +45,7 @@ import { startTurn } from "@/lib/runner";
 import { hasTurn } from "@/lib/abort";
 import { subscribe } from "@/lib/events";
 import { removeWorktree } from "@/lib/git";
+import { WORKTREE_REPAIR_NOTICE, WorktreePrepError } from "@/lib/worktreeFailure";
 import { clearAgentAuthBroken } from "@/lib/agents/connections";
 import { makeRepo, git } from "./helpers";
 import type { TaskStreamEvent } from "@/lib/types";
@@ -111,8 +112,10 @@ describe("queue drain fails closed on a throwing ensureWorktree", () => {
     // Turn 2 runs fine (worktree_path is empty, so it falls back to repo_path —
     // that part is unaffected); it's turn 3, the drained follow-up, whose
     // self-heal throws.
+    // The shape ensureWorktree really throws now: classified, so the failure
+    // line the drain writes can carry a recovery (issue #44).
     ensureWorktreeMock.mockImplementationOnce(async () => {
-      throw new Error(LOCK_ERROR);
+      throw new WorktreePrepError(new Error(LOCK_ERROR));
     });
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-1" };
@@ -133,6 +136,9 @@ describe("queue drain fails closed on a throwing ensureWorktree", () => {
       const msgs = listMessages(task.id);
       expect(msgs.some((m) => m.role === "system" && m.content.includes(LOCK_ERROR))).toBe(true);
     });
+    // Nobody was watching this launch, so the transcript line IS the recovery:
+    // it explains the stale lock and carries the "Repair worktree" affordance.
+    expect(listMessages(task.id).find((m) => m.content.includes(LOCK_ERROR))!.content).toContain(WORKTREE_REPAIR_NOTICE);
     expect(listPendingMessages(task.id)).toHaveLength(0);
     await vi.waitFor(() => expect(hasTurn(task.id)).toBe(false));
     await vi.waitFor(() => expect(getTask(task.id)!.running).toBe(0));
