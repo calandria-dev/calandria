@@ -20,6 +20,7 @@ import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
 import { worktreeRelative } from "@/lib/collab";
@@ -407,7 +408,14 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
  *   - an approval-policy block (enterprise-managed Codex downgraded our
  *     "never" to an approval-requiring policy that exec mode can't service) →
  *     APPROVAL_BLOCKED_NOTICE, which becomes a "Retry" button — the Codex
- *     driver has already self-healed to "on-request" for the next turn.
+ *     driver has already self-healed to "on-request" for the next turn;
+ *   - a worktree that could not be prepared (a crashed git's stale index.lock, a
+ *     registration pointing at a directory that's gone, a full disk, a detached
+ *     HEAD) → the classified hint from lib/worktreeFailure.ts, plus, for the two
+ *     kinds a repair pass can fix, WORKTREE_REPAIR_NOTICE — a "Repair worktree"
+ *     button. This is the path an UNATTENDED launch failure takes (the queue
+ *     drain below, lib/autoStart.ts, lib/dispatch.ts), so a scheduled run that
+ *     fails the same way every morning now says what to do about it.
  * Either way the raw provider text stays visible above the hint, so token counts
  * and the actual wording remain legible. The persisted message is the durable
  * channel — it survives SSE reconnects because the snapshot replays from SQLite.
@@ -421,7 +429,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
         ? USAGE_LIMIT_NOTICE
         : isApprovalBlocked(errText)
           ? APPROVAL_BLOCKED_NOTICE
-          : null;
+          : worktreePrepNotice(errText);
   const content = notice ? `⚠ ${errText}\n\n${notice}` : `⚠ ${errText}`;
   // The persist can itself throw — most importantly when the task row is gone
   // (project/task deleted mid-turn): addMessage then hits a FOREIGN KEY error.
