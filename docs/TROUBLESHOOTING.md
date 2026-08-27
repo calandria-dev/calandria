@@ -55,6 +55,9 @@ actually run":
 
 Those are the same four outcomes a scheduled run is settled with in the ledger, deliberately:
 a run recorded `failed` on the Schedules card and logged `ok` would be worse than no line.
+They are also the label values on `calandria_turns_finished_total`, incremented from this
+very statement — if you want these lines as a graph rather than as text, that endpoint is
+[Metrics](SELF_HOSTING.md#metrics).
 
 Token counts are per **turn**, summed from the same usage reports that write the `task_usage`
 table — an agent that reports no usage logs zeros rather than the task's running total. Some
