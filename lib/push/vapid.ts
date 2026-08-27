@@ -10,12 +10,14 @@
 // minted on first use. It sits beside the database on purpose — a subscription
 // is bound to the key it was created under (the push service rejects a push
 // signed by any other), so the key must travel with the subscriptions or every
-// phone goes quiet with nothing in the UI to say why.
+// phone goes quiet with nothing in the UI to say why. The file is written
+// owner-only through lib/secretFile.ts, best-effort — see vapidKeys() below.
 
 import { createECDH, createPrivateKey, sign, type KeyObject } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DB_DIR, VAPID_PRIVATE_KEY, VAPID_SUBJECT } from "@/lib/config";
+import { writeSecretFile } from "@/lib/secretFile";
 
 export const b64url = {
   encode: (b: Buffer | Uint8Array): string => Buffer.from(b).toString("base64url"),
@@ -82,8 +84,15 @@ export function vapidKeys(): VapidKeys {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
   const keys = generateVapidKeys();
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ ...keys, createdAt: new Date().toISOString() }, null, 2) + "\n", { mode: 0o600 });
+  // Owner-only, and on Windows that means an ACL: `mode: 0o600` there only
+  // toggles the read-only attribute, leaving the signing key readable by every
+  // other local account (docs/WINDOWS.md §3). Non-fatal, unlike a pasted API
+  // key — nobody is in the loop when this is minted, so failing closed on a
+  // filesystem with no ACLs would silently turn off push for the whole instance.
+  writeSecretFile(file, JSON.stringify({ ...keys, createdAt: new Date().toISOString() }, null, 2) + "\n", {
+    fatal: false,
+    advice: "Set VAPID_PRIVATE_KEY in the environment to keep the signing key off disk.",
+  });
   global.__calandriaVapid = { keys, source: "file" };
   return keys;
 }

@@ -8,7 +8,9 @@
  * `chmod 0o600` on NTFS toggles the read-only attribute and nothing else
  * (docs/WINDOWS.md §3, finding 9). What matters most is the failure path — a
  * key file that outlived a failed ACL call would sit readable by every account
- * on the machine while the wizard reported a connected agent.
+ * on the machine while the wizard reported a connected agent. The generated
+ * VAPID keypair takes the opposite failure policy for a stated reason — see the
+ * `fatal: false` case below.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -23,6 +25,7 @@ import {
 } from "../lib/secretFile";
 import { setApiKey, clearApiKey } from "../lib/anthropic-key";
 import { setOpenAiKey, clearOpenAiKey } from "../lib/openai-key";
+import { resetVapidCache, vapidKeys } from "../lib/push/vapid";
 import { DB_DIR } from "../lib/config";
 
 let dir = "";
@@ -98,6 +101,48 @@ describe("writeSecretFile on win32", () => {
     expect(fs.existsSync(file)).toBe(false);
   });
 
+  it("names the caller's escape hatch in the error", () => {
+    // The route surfaces this string to the wizard, so it has to say what to do
+    // next — the key modules pass the env fallback they already document.
+    expect(() =>
+      writeSecretFile(path.join(dir, "key"), "sk-ant-secret", {
+        ...opts(() => {
+          throw new Error("boom");
+        }),
+        advice: "Pass the key in the environment with CALANDRIA_ALLOW_API_KEY_ENV=1 instead.",
+      }),
+    ).toThrow(/It was NOT stored\. Pass the key in the environment with CALANDRIA_ALLOW_API_KEY_ENV=1/);
+  });
+
+  it("keeps the file and warns under fatal: false", () => {
+    // The VAPID keypair's policy (lib/push/vapid.ts): the app mints it with no
+    // user in the loop, so throwing here would take push notifications out
+    // entirely on a filesystem with no ACLs. Smaller blast radius than an API
+    // key — forged pushes to this instance's own subscribers, and unlike the
+    // API keys it is not readable through /api/settings either.
+    const file = path.join(dir, "vapid.json");
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (m: string) => warnings.push(m);
+    try {
+      expect(() =>
+        writeSecretFile(file, '{"privateKey":"x"}', {
+          ...opts(() => {
+            throw new Error("Command failed: icacls.exe … The system cannot find the path specified.");
+          }),
+          fatal: false,
+          advice: "Set VAPID_PRIVATE_KEY in the environment to keep the signing key off disk.",
+        }),
+      ).not.toThrow();
+    } finally {
+      console.warn = warn;
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe('{"privateKey":"x"}');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/could not restrict/);
+    expect(warnings[0]).toMatch(/Set VAPID_PRIVATE_KEY in the environment/);
+  });
+
   it("deletes the key and throws when icacls exits non-zero", () => {
     const file = path.join(dir, "key");
     expect(() =>
@@ -141,7 +186,7 @@ describe("secretFileOwner", () => {
   });
 });
 
-describe("the persisted keys go through it", () => {
+describe("the secrets on the volume go through it", () => {
   afterEach(() => {
     clearApiKey();
     clearOpenAiKey();
@@ -154,5 +199,18 @@ describe("the persisted keys go through it", () => {
     expect(modeOf(path.join(DB_DIR, "openai-api-key"))).toBe(SECRET_FILE_MODE);
     expect(process.env.ANTHROPIC_API_KEY).toBe("sk-ant-test-key");
     expect(process.env.OPENAI_API_KEY).toBe("sk-test-key");
+  });
+
+  it("writes the generated VAPID keypair owner-only too", () => {
+    // Same NTFS no-op, one directory over: the private half signs every Web
+    // Push JWT this instance sends. Only the POSIX mode is observable from
+    // here; the win32 ACL it now also gets is pinned structurally above.
+    const file = path.join(DB_DIR, "vapid.json");
+    fs.rmSync(file, { force: true });
+    resetVapidCache();
+    const keys = vapidKeys();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).privateKey).toBe(keys.privateKey);
+    expect(modeOf(file)).toBe(SECRET_FILE_MODE);
+    resetVapidCache();
   });
 });
