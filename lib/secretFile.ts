@@ -15,12 +15,19 @@
 // still take ownership; that is not defensible from user space and is not what
 // this is defending against.
 //
-// **Failure is fatal, deliberately.** A credential on disk with permissions we
-// could not set is worse than no credential: the wizard would report a
-// connected agent while the key sat world-readable. If the ACL step fails the
-// file is removed and the error propagates to the route, which surfaces it; the
-// escape hatch is the one that already exists — pass the key in the process
-// environment and set CALANDRIA_ALLOW_API_KEY_ENV (lib/env-keys.mjs).
+// **Failure is fatal by default, deliberately.** A credential on disk with
+// permissions we could not set is worse than no credential: the wizard would
+// report a connected agent while the key sat world-readable. If the ACL step
+// fails the file is removed and the error propagates to the route, which
+// surfaces it; the escape hatch is the one that already exists — pass the key in
+// the process environment and set CALANDRIA_ALLOW_API_KEY_ENV (lib/env-keys.mjs).
+//
+// `fatal: false` is for the one secret that is NOT pasted in by a user: the
+// generated VAPID keypair (lib/push/vapid.ts). Nobody is in the loop when it is
+// minted on first use, refusing to write it turns off push notifications
+// entirely on a filesystem with no ACLs (FAT32, a mapped drive), and its blast
+// radius is forged pushes to this instance's own subscribers rather than
+// billable API access — so it warns and keeps the key instead of failing closed.
 //
 // Every function takes its platform/env as arguments so the win32 rules are
 // unit-testable from the Linux/macOS suite, the same way lib/binPath.ts does it.
@@ -45,6 +52,14 @@ export interface SecretFileOptions {
   owner?: string;
   /** Seam for the suite: runs a command, throwing on ENOENT or a non-zero exit. */
   run?: (command: string, args: string[]) => void;
+  /**
+   * Default true: a file that could not be made owner-only is deleted and the
+   * error thrown. False keeps it and logs a warning — only for a secret the app
+   * generated itself, where refusing breaks a feature and nobody is watching.
+   */
+  fatal?: boolean;
+  /** One sentence naming this caller's way to keep the secret off disk, appended to the error or warning. */
+  advice?: string;
 }
 
 const isWin = (platform?: NodeJS.Platform) => (platform ?? process.platform) === "win32";
@@ -118,9 +133,7 @@ export function restrictSecretFile(filePath: string, opts: SecretFileOptions = {
     const detail = e instanceof Error ? e.message : String(e);
     throw new Error(
       `could not restrict ${filePath} to ${opts.owner ?? "the current user"} (${command}): ${detail}. ` +
-        `Windows ignores POSIX file modes, so the key was NOT stored — it would have been readable ` +
-        `by every account on this machine. Pass the key in the environment with ` +
-        `CALANDRIA_ALLOW_API_KEY_ENV=1 instead.`,
+        `Windows ignores POSIX file modes, so this file is readable by every account on this machine.`,
     );
   }
 }
@@ -128,7 +141,8 @@ export function restrictSecretFile(filePath: string, opts: SecretFileOptions = {
 /**
  * Write `contents` to `filePath` readable only by this account, creating the
  * parent directory. On a failure to restrict it, the file is removed before the
- * error propagates — never leave a credential behind at unknown permissions.
+ * error propagates — never leave a credential behind at unknown permissions —
+ * unless the caller passed `fatal: false`, which keeps it and warns instead.
  */
 export function writeSecretFile(filePath: string, contents: string, opts: SecretFileOptions = {}): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -136,11 +150,17 @@ export function writeSecretFile(filePath: string, contents: string, opts: Secret
   try {
     restrictSecretFile(filePath, opts);
   } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    const advice = opts.advice ? ` ${opts.advice}` : "";
+    if (opts.fatal === false) {
+      console.warn(`[secret-file] ${detail} Keeping it anyway — the alternative is losing the feature it belongs to.${advice}`);
+      return;
+    }
     try {
       fs.rmSync(filePath, { force: true });
     } catch {
       /* nothing more we can do; the throw below is what matters */
     }
-    throw e;
+    throw new Error(`${detail} It was NOT stored.${advice}`);
   }
 }

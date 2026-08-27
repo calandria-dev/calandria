@@ -398,8 +398,13 @@ repo.
   a mapped network drive) **the key is deleted and the save returns an error** rather
   than leaving a credential at permissions nobody checked. The fallback in that case is
   the environment: start the app with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` set and
-  `CALANDRIA_ALLOW_API_KEY_ENV=1`, and nothing is written to disk. Note the limit on
-  every platform — a local administrator (or root) can take ownership regardless; this
-  protects the key from *other* users of the machine, not from its owner.
+  `CALANDRIA_ALLOW_API_KEY_ENV=1`, and nothing is written to disk. The **VAPID private
+  key** (`vapid.json`, which signs your Web Push notifications) is written the same way
+  but **fails open**: you never pasted it in — the app mints it on first use with nobody
+  in the loop — so a failed ACL logs a warning and keeps the key rather than taking push
+  notifications out of the instance entirely. Set `VAPID_PRIVATE_KEY` to keep it off
+  disk. Note the limit on every platform — a local administrator (or root) can take
+  ownership regardless; this protects the key from *other* users of the machine, not
+  from its owner.
 - **Delete is hard delete:** a removed project's chat history is gone (your code on disk
   is untouched).

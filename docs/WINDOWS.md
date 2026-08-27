@@ -183,8 +183,15 @@ and what is still unverified are in the addendum below.
   when it names something other than this machine — icacls resolves a bare name
   through `LookupAccountName`, which checks the local machine before the domain,
   so a domain account can be shadowed by a local one of the same name. Stated in
-  `docs/SELF_HOSTING.md`; `lib/push/vapid.ts:86` writes the VAPID private key the
-  same 0600 way and is **not** covered.
+  `docs/SELF_HOSTING.md`. The generated VAPID private key (`lib/push/vapid.ts`)
+  had the same 0600-on-NTFS hole and now goes through `writeSecretFile()` too,
+  with the **opposite failure policy** (`fatal: false`): the app mints that key
+  itself on first use with no user in the loop, so throwing would take push
+  notifications out of the whole instance on a filesystem with no ACLs, and the
+  blast radius is forged pushes to this instance's own subscribers rather than
+  billable API access — unlike the API keys it is also not readable through
+  `/api/settings`. A failed ACL there warns, keeps the key, and points at
+  `VAPID_PRIVATE_KEY` in the env.
 - **Service router** (`lib/service-router.mjs`, `lib/service-host.mjs`) is pure
   Host-header string logic + loopback proxying. Nothing filesystem-bound; the
   `<slug>--<host>` wildcard-DNS requirement is the same on every OS.
