@@ -373,6 +373,80 @@ export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
   String(readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase(),
 );
 
+/*
+ * ---- retention (lib/retention.ts) ----
+ *
+ * Everything except `schedule_runs` used to grow forever — rows only ever left
+ * by FK cascade behind a manual delete (issue #15). The sweep rides the
+ * schedule ticker; these are its knobs.
+ *
+ * Windows are in DAYS because that is the unit this policy is thought about in
+ * ("keep six months"), unlike every other duration here, which is a deadline.
+ */
+
+/**
+ * Master switch. On by default: an off-by-default retention policy leaves every
+ * instance exactly where the issue found it. Set to off/0/false/no to keep
+ * everything forever — the pre-retention behavior, and the right choice for an
+ * instance whose transcripts are a record somebody audits.
+ */
+export const RETENTION_ENABLED = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_RETENTION") || "").toLowerCase(),
+);
+
+const days = (name: string, raw: string | undefined, def: number): number => {
+  const n = num(name, raw, def);
+  // A negative window would delete rows from the future. 0 is meaningful — it
+  // turns that half of the sweep off — so only negatives fall back.
+  return n >= 0 ? n * 24 * 60 * 60 * 1000 : def * 24 * 60 * 60 * 1000;
+};
+
+/**
+ * How long a FINISHED task keeps its own record: transcript, review comments,
+ * the sessions a `/clear` retired, and its uploaded attachments. Six months, so
+ * that "what did that task do?" is still answerable for anything within a
+ * release cycle or two. 0 keeps them forever.
+ *
+ * Only terminal, idle, cold tasks are ever touched — see prunableTaskIds().
+ */
+export const RETENTION_MS = days("CALANDRIA_RETENTION_DAYS", readEnv("CALANDRIA_RETENTION_DAYS"), 180);
+
+/**
+ * How long the SPEND rows live: task_usage, task_merges, internal_usage. A
+ * separate and deliberately longer window, because these are not a task's
+ * record but the Insights dashboard's — /api/insights reads 180 days back and
+ * asks for the same width again to compute prior-period deltas, so anything
+ * under ~360 days would let a sweep carve a hole in a chart on screen. 400 days
+ * clears that with a margin; 0 keeps them forever.
+ */
+export const USAGE_RETENTION_MS = days(
+  "CALANDRIA_USAGE_RETENTION_DAYS",
+  readEnv("CALANDRIA_USAGE_RETENTION_DAYS"),
+  400,
+);
+
+/**
+ * How often the sweep runs. Not the ticker's interval — the ticker wakes every
+ * 30s to adjudicate firings, and re-scanning every task for retention that often
+ * would be pure waste on a policy measured in months. Six hours means an
+ * instance that is only up for part of the day still sweeps.
+ */
+export const RETENTION_SWEEP_MS = ms(readEnv("CALANDRIA_RETENTION_SWEEP_MS"), 6 * 60 * 60 * 1000);
+
+/**
+ * Run a full VACUUM after a sweep that deleted something. Off by default.
+ *
+ * The sweep always checkpoints the WAL (TRUNCATE), which is what actually
+ * reclaims the file that grows during a big delete. It cannot shrink
+ * `calandria.db` itself — freed pages go on the freelist and are reused by
+ * later writes — and only VACUUM does, by rewriting the whole database under a
+ * write lock. That is a fine trade on a small database and a stall on a large
+ * one, so it is opted into rather than assumed.
+ */
+export const RETENTION_VACUUM = ["1", "on", "true", "yes"].includes(
+  String(readEnv("CALANDRIA_RETENTION_VACUUM") || "").toLowerCase(),
+);
+
 /**
  * Subscription plan-usage display (the titlebar session/week meter). On by
  * default. Set to off/0/false to hide it and never touch the provider's usage
