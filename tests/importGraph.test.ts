@@ -50,6 +50,7 @@ const PINNED = [
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
   "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
+  "lib/metrics.ts", //           the /metrics series; imported BY lib/runner.ts and by a route entry, so it must never reach an SDK itself
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only
   "lib/runbooks/store.ts", //    saved task-launch presets; DB only, no driving
@@ -70,6 +71,7 @@ const PINNED = [
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
+  "app/api/instance/metrics/route.ts", // the scrape target — a "which agents are configured?" series later must use capabilities.ts
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.

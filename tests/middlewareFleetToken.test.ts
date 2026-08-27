@@ -64,7 +64,9 @@ describe("middleware: fleet token stays read-only", () => {
   });
 
   it("still accepts the fleet token on read-only paths", async () => {
-    for (const path of ["/api/version", "/api/instance/usage"]) {
+    // /api/instance/metrics is here for the fleet token's whole reason to
+    // exist: one secret a dashboard can scrape every box with.
+    for (const path of ["/api/version", "/api/instance/usage", "/api/instance/metrics"]) {
       const res = await middleware(req(path, "GET", "fleet-secret"));
       expect(res.status).toBe(200);
     }

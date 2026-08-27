@@ -190,7 +190,7 @@ environment, so the file is the only way a generated token reaches it). Supply y
 when a monitor outside the container needs to poll. Running bare Node behind Access with
 no token, `server.js` warns loudly at startup instead.
 
-`CALANDRIA_FLEET_TOKEN` is a second, optional secret for the same two read-only routes,
+`CALANDRIA_FLEET_TOKEN` is a second, optional secret for the same read-only routes,
 shared fleet-wide so one dashboard can poll many boxes without learning each one's private
 `SERVICE_TOKEN`. It is deliberately **not** accepted on the mutating internal agent-tool
 endpoints. Unset — the default — it grants nothing.
@@ -276,8 +276,8 @@ old one. There is no undo.
 | `CALANDRIA_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. It otherwise requires a loopback peer, since `server.js` proxies to it from the same host — an address check the caller cannot forge, unlike a header. Only for a deliberately split deployment; anything reaching the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
-| `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
-| `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same two read-only routes so one dashboard can poll many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
+| `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage/metrics routes **and** for the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if you leave it empty |
+| `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide **read** token, accepted on the same read-only routes (`/api/version`, `/api/instance/usage`, `/api/instance/metrics`, `GET /api/instance/scheduler`) so one dashboard can scrape many instances with one secret. Never accepted on the mutating internal endpoints. Unset = no such bypass |
 | `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
 | `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns — unsupported, and the exact corruption the lock exists to prevent; see **One process per database** below |
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
@@ -521,6 +521,117 @@ Three things to expect from a restored instance, none of them a fault:
   sitting in the old worktree are not in the backup — which is the argument for `--worktrees`
   if you run tasks that idle for days with work in progress.
 
+## Metrics
+
+`GET /api/instance/metrics` serves [Prometheus text exposition][promfmt] — a handful of
+series, hand-rolled rather than pulled from a client library, covering the two questions a
+running instance can't otherwise answer from outside: *is it doing work, and is it eating
+the disk?* It is always on.
+
+[promfmt]: https://prometheus.io/docs/instrumenting/exposition_formats/
+
+Auth is the same read-only service-token exemption `/api/version` and `/api/instance/usage`
+take. In no-login local mode a loopback scrape needs nothing; under Cloudflare Access a
+scraper has no JWT, so it presents `SERVICE_TOKEN` — or `CALANDRIA_FLEET_TOKEN`, which is
+the point of that token, one secret for a dashboard polling every box.
+
+```bash
+# local mode, from the host
+curl -s localhost:3000/api/instance/metrics
+
+# behind Access
+curl -s -H "x-service-token: $CALANDRIA_FLEET_TOKEN" \
+  https://calandria.example.com/api/instance/metrics
+```
+
+| Series | Type | What it is |
+|-|-|-|
+| `calandria_build_info{version,sha}` | gauge | Always `1`; read the labels. The same provenance `/api/version` reports, so a change in behaviour can be lined up against a deploy |
+| `calandria_process_start_time_seconds` | gauge | When this process booted. The counters below reset here — graph it alongside them |
+| `calandria_turns_started_total` | counter | Agent turns started |
+| `calandria_turns_finished_total{outcome}` | counter | Turns that ended, by outcome: `ok`, `failed`, `stopped` (a human pressed Stop), `interrupted` (the agent session never opened, so the turn produced nothing) |
+| `calandria_turns_active` | gauge | Turns running right now, read from the in-process registry rather than from `tasks.running` — the only source that is right after a crash |
+| `calandria_db_size_bytes{file}` | gauge | `calandria.db` and its `wal` / `shm` sidecars, separately |
+| `calandria_worktrees_size_bytes` | gauge | Everything under `CALANDRIA_WORKTREES_DIR` |
+| `calandria_schedule_runs{status}` | gauge | Rows in the schedule run ledger by status (`succeeded`, `failed`, `missed`, `skipped_overlap`, `claimed`, `running`, `stopped`, `interrupted`) |
+
+Two of those have a sharp edge worth knowing before you write an alert on them.
+
+**The turn counters are per-process.** They live in memory and reset when the app restarts,
+which is what a Prometheus counter means and what `rate()` handles — but a raw
+`calandria_turns_started_total` panel will sawtooth on every deploy. Graph rates, not
+totals, and keep `calandria_process_start_time_seconds` on the same board.
+
+**`calandria_schedule_runs` is a gauge, not a counter.** The ledger is capped per schedule,
+so these numbers *fall* as old runs age out. It answers "is anything stuck or failing right
+now", not "how many runs have ever failed". Read as a counter, a prune looks like a
+negative rate.
+
+Every label a metric can take is emitted on every scrape, including the ones sitting at
+zero, so an alert on `{outcome="failed"}` has data to be false about before the first
+failure. The one series that can be *absent* is `calandria_worktrees_size_bytes`, and only
+until the first successful measurement — a disk gauge that read `0` after every restart
+would resolve a firing alert without a byte having been reclaimed.
+
+### Scraping it
+
+```yaml
+# prometheus.yml — a collector running on the same host, local mode.
+# Nothing to authenticate: loopback is already an allowed origin.
+scrape_configs:
+  - job_name: calandria
+    metrics_path: /api/instance/metrics
+    static_configs:
+      - targets: ["127.0.0.1:3000"]
+```
+
+That is the deployment to reach for first. Scraping a box behind Access means getting
+`x-service-token` onto the request, which Prometheus 2.49+ can do directly:
+
+```yaml
+scrape_configs:
+  - job_name: calandria-fleet
+    scheme: https
+    metrics_path: /api/instance/metrics
+    http_headers:
+      x-service-token:
+        files: [/etc/prometheus/calandria-fleet-token]
+    static_configs:
+      - targets: ["calandria.example.com"]
+```
+
+On an older Prometheus, put a proxy in front that injects the header — the token is a
+plain shared secret, so any of the usual mechanisms work.
+
+A first Grafana row, and the two alerts worth having on day one:
+
+```promql
+# panel: turn throughput and failure rate
+sum(rate(calandria_turns_started_total[5m]))
+sum by (outcome) (rate(calandria_turns_finished_total[5m]))
+
+# panel: disk footprint
+calandria_db_size_bytes{file="db"} + calandria_worktrees_size_bytes
+
+# alert: turns are failing, not just running
+sum(rate(calandria_turns_finished_total{outcome="failed"}[15m]))
+  / sum(rate(calandria_turns_finished_total[15m])) > 0.5
+
+# alert: a scheduled run is wedged (claimed/running is a transient state)
+sum(calandria_schedule_runs{status=~"claimed|running"}) > 0    # for: 1h
+
+# alert: the WAL isn't being checkpointed
+calandria_db_size_bytes{file="wal"} > 512e6                    # for: 30m
+```
+
+Everything on the endpoint is free to compute except the worktrees measurement, which is a
+`du` over every task checkout on the box. It is cached for
+`CALANDRIA_METRICS_SIZE_TTL_MS` (default **60000**, one minute) so a 15s scrape interval
+doesn't walk every `node_modules` on the instance four times a minute; raise it if you
+carry many large worktrees. A scrape never *waits* on that walk beyond the first one after
+a restart — later scrapes serve the last measurement while a new one runs.
+
+
 ## Notes & caveats
 
 - **Permissions:** tasks default to Claude Code's **auto** mode, where a
@@ -638,7 +749,9 @@ Three things to expect from a restored instance, none of them a fault:
   directory crosses `CALANDRIA_WORKTREES_DISK_WARN_GB` (default **20**, `0` disables)
   a line goes to the server log each pass while it is over, the reading is served on
   `GET /api/instance/scheduler` under `worktrees`, and Settings → Storage shows it
-  above the reclaim list. That total counts the checkouts of tasks still in flight,
+  above the reclaim list. (The same directory is also a `/metrics` gauge —
+  `calandria_worktrees_size_bytes` — if you would rather alert on it than read a log;
+  see [Metrics](#metrics).) That total counts the checkouts of tasks still in flight,
   which nothing here will touch — so on a busy instance the honest reading is "you
   have 40 GB of worktrees, 6 GB of it reclaimable", and the remaining 34 GB is
   answered by finishing or deleting tasks, not by a sweep.

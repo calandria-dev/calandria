@@ -78,6 +78,12 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (b) the alias table itself, plus everything that documents or tests it.
   "lib/env.mjs": [LEGACY_ENV],
   "tests/env.test.ts": [LEGACY_ENV],
+  // The shared log emitter and its test, which document why CALANDRIA_LOG_FORMAT
+  // is read straight off process.env: a knob born AFTER the rename has no old
+  // spelling to honor, and routing it through the table would mint a deprecated
+  // `ORCH_LOG_FORMAT` alias for a variable that never existed.
+  "lib/log.mjs": [LEGACY_ENV],
+  "tests/log.test.ts": [LEGACY_ENV, SYSADMIN],
   "tests/setup.ts": [LEGACY_ENV], //        clears stale ORCH_* out of a developer's shell
   "tests/importGraph.test.ts": [LEGACY_ENV], // one comment naming lib/env.mjs's job
   "lib/resolveHostname.js": [LEGACY_ENV], // hand-rolls the alias (plain-Node, can't import .mjs freely)
@@ -101,10 +107,12 @@ const ALLOWED: Record<string, RegExp[]> = {
   "lib/storage.mjs": [LEGACY_STORAGE, LEGACY_ENV, SYSADMIN, /"orchestrator" : "calandria"/],
   "lib/db.ts": [LEGACY_STORAGE],
   "lib/db-lock.mjs": [LEGACY_STORAGE],
-  "scripts/backup.mjs": [LEGACY_STORAGE], //  follows lib/storage.mjs to a pre-rename db name
-  "tests/backup.test.ts": [LEGACY_STORAGE, SYSADMIN], // asserts that, for a fixture named orchestrator.db
   "lib/config.ts": [LEGACY_STORAGE],
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE, SYSADMIN],
+  // The backup script follows lib/storage.mjs rather than assuming a filename,
+  // so both it and its test name the pre-rename database they have to archive.
+  "scripts/backup.mjs": [LEGACY_STORAGE],
+  "tests/backup.test.ts": [LEGACY_STORAGE, SYSADMIN],
   ".gitignore": [/orchestrator\.db/], //   a pre-rename db sitting in the repo root
   ".env.example": [LEGACY_ENV, LEGACY_STORAGE],
   "docs/ARCHITECTURE.md": [LEGACY_STORAGE],
@@ -131,19 +139,13 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
 
-  // (b) again: CALANDRIA_LOG_FORMAT is a knob born AFTER the rename, so it
-  // deliberately does NOT answer to an ORCH_ spelling — the code and its test
-  // both have to name the prefix they refuse to mint.
-  "lib/log.mjs": [LEGACY_ENV],
-  "tests/log.test.ts": [LEGACY_ENV, SYSADMIN],
-
   // (e) the ordinary noun.
-  "tests/turnLogging.test.ts": [SYSADMIN],
   "app/api/instance/usage/route.ts": [SYSADMIN],
   "lib/agents/claude/capabilities.ts": [SYSADMIN],
   "lib/agents/claude/driver.ts": [SYSADMIN],
   "lib/auth/local-origin.mjs": [SYSADMIN],
   "tests/localOrigin.test.ts": [SYSADMIN],
+  "tests/turnLogging.test.ts": [SYSADMIN], // the turn lifecycle lines exist for that person
   "server.js": [SYSADMIN, LEGACY_ENV, LEGACY_STORAGE],
 
   // This guard, which has to spell out everything it forbids…

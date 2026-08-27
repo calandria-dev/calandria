@@ -515,6 +515,17 @@ export const WORKTREES_DISK_WARN_BYTES = gib(
 );
 
 /**
+ * How long /api/instance/metrics reuses one measurement of the worktrees
+ * directory (lib/metrics.ts). Everything else on that endpoint is a counter, a
+ * Map size or three `stat` calls; this one is a `du` over every task checkout on
+ * the box, and a scraper set to 15s would otherwise walk every `node_modules`
+ * on the instance four times a minute for a number that moves in megabytes per
+ * hour. A minute is short enough that a disk alert still fires promptly; raise
+ * it on an instance carrying many large worktrees. 0 measures on every scrape.
+ */
+export const METRICS_SIZE_TTL_MS = ms(readEnv("CALANDRIA_METRICS_SIZE_TTL_MS"), 60_000);
+
+/**
  * Subscription plan-usage display (the titlebar session/week meter). On by
  * default. Set to off/0/false to hide it and never touch the provider's usage
  * API — for an instance that shares a rate-limited plan with many other
