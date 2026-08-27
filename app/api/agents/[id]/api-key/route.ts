@@ -20,7 +20,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!driver.apiKey.looksValid(key)) {
     return NextResponse.json({ error: `that doesn't look like a valid key (expected ${driver.apiKey.hint})` }, { status: 400 });
   }
-  driver.apiKey.set(key);
+  // Storing the key can legitimately fail: on Windows it is only stored if the
+  // file could be locked to this account (lib/secretFile.ts), and reporting a
+  // connected agent over a key we never wrote would be the worst outcome.
+  try {
+    driver.apiKey.set(key);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
   setAgentConnection(id, { method: "api_key", email: null, plan: "API" });
   return NextResponse.json({ ok: true });
 }

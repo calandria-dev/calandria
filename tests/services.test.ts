@@ -30,6 +30,12 @@ import { resolveFeatures } from "../lib/features";
 
 const APP_HOST = "ishan.calandria.example.com";
 
+// A dev command that just sits there, spelled so it parses under BOTH shells
+// managed services run through: `sh -c` on POSIX and `cmd.exe /d /s /c` on
+// Windows, which has no `sleep`. Double quotes because that is the only quoting
+// cmd.exe understands (see docs/SERVICES.md on Windows command syntax).
+const SLEEP_COMMAND = `node -e "setTimeout(()=>{},30000)"`;
+
 // The registry lives on globalThis (survives HMR by design); tests reset it to
 // simulate a server restart without recycling the process.
 type Reg = { services: Map<string, unknown>; listeners: Map<string, unknown>; restored?: boolean; gateSecret?: string };
@@ -157,7 +163,7 @@ describe("service registry persistence", () => {
     const repo = (await import("./helpers")).tmpDir("svc-");
     const project = updateProject(createProject({ name: "Web App" }).id, {
       repo_path: repo,
-      dev_command: "sleep 30",
+      dev_command: SLEEP_COMMAND,
     })!;
     const started = await startService(project, "dev");
     expect(started.status).toBe("running");
@@ -184,7 +190,7 @@ describe("service registry persistence", () => {
     const repo = (await import("./helpers")).tmpDir("svc-orphan-");
     const project = updateProject(createProject({ name: "Orphan App" }).id, {
       repo_path: repo,
-      dev_command: "sleep 30",
+      dev_command: SLEEP_COMMAND,
     })!;
     const started = await startService(project, "dev");
     const oldPid = started.pid!;
@@ -208,7 +214,7 @@ describe("service registry persistence", () => {
     const repo = (await import("./helpers")).tmpDir("svc-port-");
     const project = updateProject(createProject({ name: "Clash" }).id, {
       repo_path: repo,
-      dev_command: "sleep 30",
+      dev_command: SLEEP_COMMAND,
     })!;
     // An unmanaged process squats on the project's port.
     const squatter = http.createServer(() => {});
