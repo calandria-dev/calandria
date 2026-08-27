@@ -60,6 +60,7 @@ export interface Task {
   started: number; // 1 once the initial prompt has been sent
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done (lib/autoStart.ts)
   withdrawn_reason: string; // why an agent retracted this suggestion ("" = not withdrawn); only meaningful with status "cancelled" + suggested 1
+  agent_edited_at: number; // ms epoch of the most recent unreviewed agent edit (task_agent_edits); 0 = nothing outstanding
   running: number; // 1 while a Claude turn is actively streaming
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   background_pending: number; // 1 while the turn lingers on background work (model turn ended, run_in_background tasks still running; the session wakes itself when they settle) — running stays 1 the whole time
@@ -88,6 +89,44 @@ export interface Task {
   context_measured: number | null;
   created_at: number;
   updated_at: number;
+}
+
+/** A field `update_task` can rewrite on a task the user already accepted. */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "group" | "blocked_by";
+
+/** One field's before/after inside a recorded agent edit. */
+export interface AgentEditChange {
+  field: AgentEditField;
+  /** Rendered for the diff panel — a title, a priority, a group name, "3 tasks". */
+  before: string;
+  after: string;
+  /**
+   * What Revert writes back: a string for the scalar fields, the group id (or
+   * null) for `group`, the complete blocker id list for `blocked_by`. Kept
+   * separate from `before` because the readable form is lossy — a group NAME
+   * can't be written back, and "2 tasks" names no ids.
+   */
+  before_value: string | string[] | null;
+}
+
+/**
+ * One `update_task` write that used to be refused (not the caller's own row,
+ * not an unreviewed tray suggestion) and now goes through, on a task the user
+ * already accepted. The audit trail behind the "changed since you accepted
+ * it" chip, its diff panel, and its per-edit Revert.
+ */
+export interface TaskAgentEdit {
+  id: string;
+  task_id: string;
+  project_id: string;
+  /** The task whose session made the change; "" if that row is gone. */
+  actor_task_id: string;
+  actor_title: string;
+  actor_agent: string;
+  changes: AgentEditChange[];
+  created_at: number;
+  /** ms epoch the user reverted this edit; 0 = still applied. */
+  reverted_at: number;
 }
 
 export interface Message {

@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, TaskGroup, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind } from "./types";
+import type { Project, Task, TaskGroup, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -426,6 +426,77 @@ export function setTaskDeps(taskId: string, dependsOn: string[]): void {
     const ins = db.prepare("INSERT INTO task_dependencies (task_id, depends_on_id, created_at) VALUES (?, ?, ?)");
     for (const id of valid) ins.run(taskId, id, now);
   })();
+}
+
+// ---------- agent-edit audit trail (task_agent_edits) ----------
+//
+// The record behind the "changed since you accepted it" chip: one row per
+// update_task write that used to be refused by the old ownership gate and now
+// goes through instead (lib/agentTools.ts updateTaskForAgent). The chip is
+// `tasks.agent_edited_at` — reverting the LAST outstanding edit clears it,
+// acknowledging (POST .../agent-edits { action: "ack" }) clears it WITHOUT
+// touching history, so the audit trail always outlives the chip.
+
+/** Record one agent edit and (re-)raise the target task's chip. One transaction. */
+export function recordAgentEdit(input: {
+  task_id: string;
+  project_id: string;
+  actor_task_id: string;
+  actor_title: string;
+  actor_agent: string;
+  changes: AgentEditChange[];
+}): TaskAgentEdit {
+  const db = getDb();
+  const id = nanoid();
+  const now = Date.now();
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO task_agent_edits (id, task_id, project_id, actor_task_id, actor_title, actor_agent, changes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, input.task_id, input.project_id, input.actor_task_id, input.actor_title, input.actor_agent, JSON.stringify(input.changes), now);
+    db.prepare("UPDATE tasks SET agent_edited_at = ? WHERE id = ?").run(now, input.task_id);
+  })();
+  return getAgentEdit(id)!;
+}
+
+function parseAgentEdit(r: Omit<TaskAgentEdit, "changes"> & { changes: string }): TaskAgentEdit {
+  let changes: AgentEditChange[] = [];
+  try {
+    changes = JSON.parse(r.changes);
+  } catch {
+    // Tolerate a corrupt row rather than throwing the whole list/panel away —
+    // an edit with no readable diff is still worth flagging as having happened.
+  }
+  return { ...r, changes };
+}
+
+/** An edit's history, newest first — what the diff panel renders. */
+export function listAgentEdits(taskId: string): TaskAgentEdit[] {
+  return (
+    getDb().prepare("SELECT * FROM task_agent_edits WHERE task_id = ? ORDER BY created_at DESC, rowid DESC").all(taskId) as (Omit<
+      TaskAgentEdit,
+      "changes"
+    > & { changes: string })[]
+  ).map(parseAgentEdit);
+}
+
+export function getAgentEdit(id: string): TaskAgentEdit | undefined {
+  const r = getDb().prepare("SELECT * FROM task_agent_edits WHERE id = ?").get(id) as (Omit<TaskAgentEdit, "changes"> & { changes: string }) | undefined;
+  return r ? parseAgentEdit(r) : undefined;
+}
+
+export function markAgentEditReverted(id: string): void {
+  getDb().prepare("UPDATE task_agent_edits SET reverted_at = ? WHERE id = ?").run(Date.now(), id);
+}
+
+/** Any edit on this task still applied (not reverted) — what Revert re-checks before clearing the chip. */
+export function hasUnrevertedAgentEdits(taskId: string): boolean {
+  return !!getDb().prepare("SELECT 1 FROM task_agent_edits WHERE task_id = ? AND reverted_at = 0 LIMIT 1").get(taskId);
+}
+
+/** Clear the chip without touching history — Ack, or the last outstanding edit reverted. */
+export function clearAgentEditFlag(taskId: string): void {
+  getDb().prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
 }
 
 export function getTask(id: string): Task | undefined {
@@ -896,9 +967,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, group_id=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, group_id=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.group_id ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.group_id ?? null, n.updated_at, id);
   return getTask(id);
 }
 

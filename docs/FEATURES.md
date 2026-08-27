@@ -251,19 +251,25 @@ in. Project recaps help restore your mental context when you return later.
 
 Agents can read the board as well as add to it: they can list the tasks in a project, see
 what each one is blocked by, and open any task in full — including the brief they were
-started with. Changing a task is deliberately narrower. An agent can retitle, re-describe,
-reprioritize or close **its own** task, and beyond that only a suggestion still sitting
-unreviewed in a Suggested tray — in any project — so a planning turn can go back and sharpen
-the roadmap it just filed. Anything you've accepted, or another session has started, is
-refused: no session rearranges the board around it, and cancelling stays your call.
+started with. Agents can also correct any task on the board, in any project — including one
+you've already accepted or started, not just their own — retitling it, rewriting its brief,
+reprioritizing it, moving it into or out of a group, closing it, or rewiring what it's
+blocked by. The one thing that still stops them is a task with a turn running in it right
+now (that session may be mid-read of the very fields being changed), and cancelling is always
+your call. An edit like this is never silent: the task's card picks up a **"Changed by
+agent"** chip, and opening it shows exactly what changed field by field — old value next to
+new, who made the edit and when — with a **Revert** button on each change and a **Keep
+changes** button that clears the chip once you've looked it over. Correcting your own row, or
+a suggestion still sitting unreviewed in the tray, works the same as before and doesn't raise
+the chip — those were already the agent's to shape freely.
 
-Sharpening a suggestion includes **ordering** it. A plan whose steps have to happen in
-sequence is half a plan until the sequence is written down, so an agent asked to break work
-down files the tasks first, then goes back and sets what each one is blocked by — the same
-links you'd tick in the edit dialog, arriving already drawn. It can only do that to
-suggestions still sitting in a tray, it can't chain a task to one in another project, and it
-can't mark its own running task as blocked by anything (blockers decide whether a task may
-*start*, and that one already has).
+Sharpening a plan includes **ordering** it. A plan whose steps have to happen in sequence is
+half a plan until the sequence is written down, so an agent asked to break work down files
+the tasks first, then goes back and sets what each one is blocked by — the same links you'd
+tick in the edit dialog, arriving already drawn (and, on a task you'd already accepted,
+raising the same "Changed by agent" chip as any other correction). It can't chain a task to
+one in another project, and it can't mark its own task as blocked by anything (blockers
+decide whether a task may *start*, and its own already has).
 
 An agent that decides one of its own suggestions was redundant can **withdraw** it, and has
 to say why. The card stays in your tray, struck through with the reason underneath and

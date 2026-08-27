@@ -202,10 +202,14 @@ describe("update_task (writes, scoped to the calling task)", () => {
   });
 });
 
-describe("update_task (writes to another row, scoped to inert tray suggestions)", () => {
-  // The caller and an inert suggestion sharing a board. `suggested=1` is the
-  // whole eligibility story: starting a task clears it in the same write, so a
-  // suggestion has no session, no worktree and no turn that could be running.
+describe("update_task (writes to another row — any task, minus a live turn)", () => {
+  // The caller and a task it doesn't own. Eligibility used to be `suggested=1`
+  // (an inert tray suggestion, nothing else); now the only refusal left is a
+  // LIVE turn in the target. Writing to a row the old gate would have refused
+  // — anything already accepted or started — is now allowed but RECORDED
+  // (tasks.agent_edited_at / task_agent_edits); the recording rule itself is
+  // covered in depth by tests/agentTaskEdits.test.ts, this file keeps the
+  // coverage for the write's own shape and the one remaining refusal.
   const board = (name: string) => {
     const project = createProject({ name });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
@@ -237,14 +241,18 @@ describe("update_task (writes to another row, scoped to inert tray suggestions)"
     expect(getTask(theirs.id)!.priority).toBe("lo");
   });
 
-  it("refuses a STARTED task — another session owns it", () => {
+  it("edits a STARTED (but not running) task the user already accepted, and records it", () => {
+    // What starting a suggestion does (POST /api/tasks/[id]/messages). The old
+    // policy refused this outright; now it's writable, but the write is on the
+    // record — this is exactly the class of edit wasAccepted flags.
     const { caller, inert } = board("Foreign-Started");
-    // What starting a suggestion does (POST /api/tasks/[id]/messages).
     updateTask(inert.id, { suggested: 0, started: 1 });
     const { task: updated, text } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
-    expect(updated).toBeNull();
-    expect(text).toContain("Nothing was changed");
-    expect(getTask(inert.id)!.title).toBe("Proposed");
+    expect(updated!.title).toBe("Hijacked");
+    expect(getTask(inert.id)!.title).toBe("Hijacked");
+    // The chip: agent_edited_at is 0 until a write like this one raises it.
+    expect(getTask(inert.id)!.agent_edited_at).toBeGreaterThan(0);
+    expect(text).toContain("flagged as changed");
   });
 
   it("refuses a RUNNING task even if it somehow still reads as a suggestion", () => {
@@ -253,16 +261,20 @@ describe("update_task (writes to another row, scoped to inert tray suggestions)"
     const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
     expect(updated).toBeNull();
     expect(getTask(inert.id)!.title).toBe("Proposed");
+    // Refused entirely — nothing to record for a write that never happened.
+    expect(getTask(inert.id)!.agent_edited_at).toBe(0);
   });
 
-  it("refuses an accepted (no longer suggested) task that never started", () => {
-    // "Add" in the tray clears `suggested` without starting anything. The row is
-    // still inert, but the user has adopted it — it's their backlog item now.
+  it("edits an accepted (no longer suggested) task that never started, and records it", () => {
+    // "Add" in the tray clears `suggested` without starting anything. The row
+    // is still inert on the RUN side, but the user has adopted it as their own
+    // backlog item — an outside write is allowed now, and visible.
     const { caller, inert } = board("Foreign-Accepted");
     updateTask(inert.id, { suggested: 0 });
     const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
-    expect(updated).toBeNull();
-    expect(getTask(inert.id)!.title).toBe("Proposed");
+    expect(updated!.title).toBe("Hijacked");
+    expect(getTask(inert.id)!.title).toBe("Hijacked");
+    expect(getTask(inert.id)!.agent_edited_at).toBeGreaterThan(0);
   });
 
   it("refuses to cancel another row, exactly as it refuses to cancel its own", () => {

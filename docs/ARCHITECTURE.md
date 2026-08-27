@@ -243,18 +243,22 @@ Reading and writing EXISTING tasks splits along blast radius. Reads are inert, s
 as widely as suggestion filing does: `list_tasks` takes the same optional `project` (resolved
 by the same strict `resolveTargetProject`) and flags the caller's own row `current: true`;
 `get_task` reads any row by id, defaulting to the session's own — that's how an agent
-re-reads the brief it was started with. Writes are bounded by what nobody else is holding:
-`update_task` writes the **calling task's own row** (the default, when its optional `task`
-param is omitted) and, beyond that, only an **inert tray suggestion** — `suggested = 1 AND
-started = 0 AND running = 0` — in any project. That second target is what lets a planning
-turn go back and sharpen the roadmap it just filed; it ranges across projects because
-`suggest_task` already files across them, and a task you can create in project B but not fix
-there is a seam rather than a boundary. Everything else on the board is refused: a task the
-user has accepted, or one another session has started, belongs to them. `suggested` carries
-that whole rule because every path that puts a task to work clears it in the same write
-(`POST /api/tasks/[id]/messages` sets `suggested: 0, running: 1` together), though
-`updateTaskForAgent()` checks `started`/`running` anyway rather than trusting the
-implication — the user-facing PATCH can write `suggested` directly.
+re-reads the brief it was started with. Writes are bounded by only one thing: whether somebody
+else is holding the row right now. `update_task` writes **any task, in any project** — the
+caller's own row by default (its optional `task` param omitted), or any id from `list_tasks`
+otherwise, including one the user has already accepted or another session has started. The
+sole refusal is `running = 1`: a turn streaming into that row this instant may be mid-read of
+the very fields the call would rewrite. Everything else lands, because the gate that used to
+stop there — `suggested = 1 AND started = 0 AND running = 0` — punished exactly the case that
+matters most: a chain of accepted tasks going stale the moment one fact underneath it changes,
+with no way for an agent to fix what it had already worked out. The replacement for that gate
+isn't a wider permission with no cost — a write that the OLD rule would have refused (not the
+caller's own row, not an unreviewed tray suggestion) is recorded in `task_agent_edits`
+(actor, per-field before/after, timestamp) and stamps `tasks.agent_edited_at`, which the task
+card surfaces as a "Changed by agent" chip; opening it shows the diff with a per-edit Revert
+and a Keep-changes action that clears the flag (`GET`/`POST /api/tasks/[id]/agent-edits`).
+Writes on the caller's own row, or on an untouched tray suggestion, are unchanged from before
+and are not recorded — those were already the agent's to make freely.
 
 Fields are title, description, priority and status, minus `cancelled` — on the caller's own
 row that calls `abortTurn()` and would tear down the very turn making the call, and on
@@ -304,7 +308,7 @@ never a create — because the task exists already and a typo would split a feat
 filtering by; an unknown ref fails the WHOLE call, the same fail-closed rule an unusable
 `blocked_by` ref gets, so a rename sharing that call can't land under a refusal saying
 nothing did. It resolves in the TARGET's project, not the caller's, for the same reason the
-tool can write a tray suggestion anywhere. `list_tasks` gains a `group` filter (resolved
+tool can write any task anywhere. `list_tasks` gains a `group` filter (resolved
 strictly — an unrecognized one is an error, never a silently unfiltered board) and every row
 carries `group: {id, name}` either way, and **`list_groups(project?)`** returns each group's
 description, derived counts and members with titles and statuses, so "how is the migration

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createGroup, createProject, createTask, getTask, getTaskDeps, listGroups, listTasks, updateTask } from "@/lib/store";
+import { createGroup, createProject, createTask, getTask, getTaskDeps, listAgentEdits, listGroups, listTasks, updateTask } from "@/lib/store";
 import { createSuggestedTask } from "@/lib/agentTools";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { POST as suggestTaskEp } from "@/app/api/internal/agent-tools/suggest-task/route";
@@ -98,7 +98,7 @@ interface ToolResult {
 }
 
 describe("update_task policy, end to end over the Codex bridge", () => {
-  it("writes an inert tray suggestion the model names, and refuses everything else", async () => {
+  it("writes any task the model names, records the ones the user had accepted, and refuses only a live turn", async () => {
     const project = createProject({ name: "Codex-Policy" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 
@@ -113,25 +113,49 @@ describe("update_task policy, end to end over the Codex bridge", () => {
 
     const { client, close } = await connectBridge(caller.id, project.id);
     try {
-      // The permitted cross-task write: an unreviewed suggestion.
+      // An unreviewed suggestion was always writable — the old gate's one
+      // permitted cross-task case. It still writes, but this class of write
+      // never raises the "changed since you accepted it" chip: nobody has
+      // accepted it yet, so there is nothing to warn them changed.
       const ok = (await client.callTool({
         name: "update_task",
         arguments: { task: inert.id, title: "Sharpened", priority: "hi" },
       })) as ToolResult;
       expect(ok.isError).toBeFalsy();
       expect(getTask(inert.id)).toMatchObject({ title: "Sharpened", priority: "hi" });
+      expect(listAgentEdits(inert.id)).toEqual([]);
+      expect(getTask(inert.id)!.agent_edited_at).toBe(0);
 
-      // Everything the model must not reach. The bridge surfaces the endpoint's
-      // 400 as a tool error, and the row is byte-identical afterwards.
-      for (const row of [started, running, accepted]) {
-        const before = getTask(row.id)!;
+      // The old gate refused these outright. Now they're writable, but the
+      // write is RECORDED — attributed to the caller's session, naming the
+      // fields that moved — because the user already accepted this row and
+      // has to find out something changed underneath them.
+      for (const row of [started, accepted]) {
         const res = (await client.callTool({
           name: "update_task",
           arguments: { task: row.id, title: "Hijacked", status: "done" },
         })) as ToolResult;
-        expect(res.isError, `${row.title} should have been refused`).toBe(true);
-        expect(getTask(row.id)).toEqual(before);
+        expect(res.isError, `${row.title} should have succeeded`).toBeFalsy();
+        expect(getTask(row.id)).toMatchObject({ title: "Hijacked", status: "done" });
+        expect(getTask(row.id)!.agent_edited_at).toBeGreaterThan(0);
+        const edits = listAgentEdits(row.id);
+        expect(edits, `${row.title} should have recorded exactly one edit`).toHaveLength(1);
+        expect(edits[0].actor_task_id).toBe(caller.id);
+        expect(edits[0].changes.map((c) => c.field).sort()).toEqual(["status", "title"]);
       }
+
+      // The one refusal left: a live turn in the target, since that session may
+      // be mid-read of the very fields this call would rewrite. Byte-identical
+      // afterwards and nothing recorded — a refused write is not an edit.
+      const before = getTask(running.id)!;
+      const res = (await client.callTool({
+        name: "update_task",
+        arguments: { task: running.id, title: "Hijacked", status: "done" },
+      })) as ToolResult;
+      expect(res.isError, "a running task should have been refused").toBe(true);
+      expect(res.content[0].text).toContain("a turn is streaming in it right now");
+      expect(getTask(running.id)).toEqual(before);
+      expect(listAgentEdits(running.id)).toEqual([]);
 
       // A row that doesn't exist is a refusal, never a fallback to the caller.
       const ghost = (await client.callTool({
@@ -145,7 +169,7 @@ describe("update_task policy, end to end over the Codex bridge", () => {
     }
   });
 
-  it("still defaults to the caller's own row, which the model cannot redirect", async () => {
+  it("defaults to the caller's own row, and keeps caller identity separate from the named target", async () => {
     const project = createProject({ name: "Codex-Own" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const bystander = createTask({ project_id: project.id, title: "Bystander", description: "" });
@@ -155,16 +179,37 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       await client.callTool({ name: "update_task", arguments: { title: "Renamed", status: "in_progress" } });
       expect(getTask(caller.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
 
-      // `taskId` is not in the tool's schema, so the model can't send one — but
-      // prove the endpoint ignores a stray one rather than trusting it, since
-      // that field is what decides whose row counts as "own".
+      // `taskId` is not in the tool's schema, so the model can't send one — the
+      // bridge always forwards its own CALANDRIA_TASK_ID there. Post directly to
+      // the endpoint to prove `taskId` (the trusted CALLER) and `task` (the
+      // untrusted TARGET) are not interchangeable, now that the cross-task gate
+      // is gone and the write to `task` succeeds: the request lands on the
+      // NAMED row, not on the identity in `taskId`, and the edit it leaves
+      // behind is attributed to `taskId` regardless of which row it touched.
       const res = await fetch(`${baseUrl}/api/internal/agent-tools/update-task`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ taskId: caller.id, task: bystander.id, title: "Hijacked" }),
       });
-      expect(res.status).toBe(400);
-      expect(getTask(bystander.id)!.title).toBe("Bystander");
+      expect(res.status).toBe(200);
+      expect(getTask(bystander.id)!.title).toBe("Hijacked");
+      // The caller's own row is untouched by a call that named a different
+      // target — `taskId` decides who gets credited, not who gets written.
+      expect(getTask(caller.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
+      const edits = listAgentEdits(bystander.id);
+      expect(edits).toHaveLength(1);
+      expect(edits[0].actor_task_id).toBe(caller.id);
+
+      // `taskId` still can't be faked into existence: the endpoint reads it
+      // with getTask before it ever reaches updateTaskForAgent, so an unknown
+      // caller id is a 404, not a write attributed to nobody.
+      const ghostRes = await fetch(`${baseUrl}/api/internal/agent-tools/update-task`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ taskId: "ghost", task: bystander.id, title: "Nope" }),
+      });
+      expect(ghostRes.status).toBe(404);
+      expect(getTask(bystander.id)!.title).toBe("Hijacked");
     } finally {
       await close();
     }
