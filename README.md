@@ -204,6 +204,14 @@ refuses to start if another process already owns it, naming the holder. Two
 servers sharing one database overwrite each other's running tasks; give a
 second instance its own `CALANDRIA_DB_DIR`.
 
+The database does not grow forever. A retention sweep rides the schedule
+ticker and ages out the record of **finished** tasks — transcript, review
+comments, retired sessions and uploaded attachments after 180 days, spend rows
+after 400 (longer, so Insights keeps its full 180-day range), then checkpoints
+the WAL so the space is actually reclaimed. Live tasks are never touched, and
+`CALANDRIA_RETENTION=off` keeps everything forever. Windows and the opt-in
+`VACUUM` are in the [self-hosting guide](docs/SELF_HOSTING.md).
+
 ## Privacy
 
 Calandria contains no telemetry and no analytics. It makes no outbound

@@ -47,6 +47,7 @@ const PINNED = [
   "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
+  "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only
   "lib/runbooks/store.ts", //    saved task-launch presets; DB only, no driving
