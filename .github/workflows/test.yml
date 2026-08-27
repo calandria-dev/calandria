@@ -11,7 +11,7 @@
 #           Runs on everything, always. This repo has no lint script, so tsc IS
 #           the static gate — and it otherwise only runs as a side effect of
 #           `next build` (next.config.mjs does not set ignoreBuildErrors). That
-#           build happens only in `e2e` below, which is main-only/label-gated,
+#           build happens only in the two e2e jobs, which are label-gated,
 #           and in the Docker build. Without this job an ordinary PR goes fully
 #           green with a type error in it and the failure lands after merge, on
 #           main, in a job that takes twenty times as long to tell you.
