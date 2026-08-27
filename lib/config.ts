@@ -33,6 +33,18 @@ export const DB_PATH = dbLocation.path;
 /** Where per-task git worktrees are created (must be outside any project repo). */
 export const WORKTREES_DIR = resolveWorktreesDir().dir;
 
+/**
+ * Where `scripts/backup.mjs` writes its archives (default `<DB_DIR>/backups`).
+ *
+ * Declared here rather than only in the script because that is this repo's rule
+ * for every per-instance knob — one documented default, one place to look — even
+ * though the app itself never reads it: the backup runs as a plain-Node script
+ * that can't import TS and reads the same env name directly, exactly as
+ * server.js does. Point it at a different volume to keep backups off the disk
+ * they are backing up.
+ */
+export const BACKUP_DIR = readEnv("CALANDRIA_BACKUP_DIR") || path.join(dbLocation.dir, "backups");
+
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
 export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");
 

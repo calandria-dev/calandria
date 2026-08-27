@@ -224,11 +224,12 @@ runs after the file has already opened successfully.
 
 **Manual recovery, in order of preference:**
 
-1. **Restore from a backup.** There's no built-in backup/restore tooling yet — full
-   backup/restore/upgrade-safety story is tracked in
-   [issue #13](https://github.com/calandria-dev/calandria/issues/13). Until then, back up by
-   stopping the app and copying `calandria.db*` (all three files together, so the WAL isn't
-   left behind).
+1. **Restore from a backup.** `npm run backup` takes a WAL-safe hot snapshot (`VACUUM INTO`,
+   no downtime, no application lock) plus uploads, the VAPID key and the agent CLI logins;
+   the restore procedure is in
+   [SELF_HOSTING.md — Backup & restore](SELF_HOSTING.md#backup--restore). If you are here
+   without one, note what NOT to do next time: `cp calandria.db` alone drops everything still
+   in the write-ahead log, and copying the pair from under a running app can tear it.
 2. **Recover what SQLite can still read.** With the app stopped:
    ```bash
    sqlite3 calandria.db ".recover" | sqlite3 calandria-recovered.db
@@ -258,15 +259,18 @@ automatically — find and remove them by hand (`git worktree list` in each proj
 
 ## Disk usage and sizing
 
-Three things grow over the life of an instance, and only one of them is bounded automatically.
+Three things grow over the life of an instance. Two are bounded automatically; the middle one
+is the one that will fill your disk.
 
 **The database itself** (`calandria.db` + WAL) stays small in absolute terms — it holds text
 (transcripts, summaries, settings) and small numeric rows, no binaries. `calandria.db-wal`
 grows between checkpoints; SQLite's default auto-checkpoint (~1000 pages) handles this on its
 own, with one caveat: a long-held read connection can defer a checkpoint, so a `sqlite3
-calandria.db` session left open for an inspection is worth closing when you're done. There's
-no scheduled `wal_checkpoint` or `VACUUM` in this app (tracked as part of
-[issue #13](https://github.com/calandria-dev/calandria/issues/13)).
+calandria.db` session left open for an inspection is worth closing when you're done. The
+retention sweep ages out finished tasks' rows and checkpoints the WAL after it deletes, so
+the space is actually reclaimed; `VACUUM` — the only thing that shrinks the FILE rather than
+freeing pages inside it — stays opt-in behind `CALANDRIA_RETENTION_VACUUM`. Both are covered
+in [SELF_HOSTING.md](SELF_HOSTING.md#notes--caveats) under **Retention**.
 
 **Task worktrees** (`CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees`) are the real
 disk cost, and they're the one thing that does **not** shrink on its own. Every task gets its own
@@ -365,7 +369,10 @@ pending state.
 
 ## Upgrade rollback
 
-Not covered here — pulling an older image tag against a database written by a newer one has no
-defined-safe path today (no schema version stamp, no compatibility check; migrations are
-additive-only by convention, not enforced). Full backup/restore/upgrade-safety design is tracked
-in [issue #13](https://github.com/calandria-dev/calandria/issues/13).
+Pulling an older image tag against a database written by a newer one has no defined-safe path
+today (no schema version stamp, no compatibility check; migrations are additive-only by
+convention, not enforced) — that half is still tracked in
+[issue #13](https://github.com/calandria-dev/calandria/issues/13). What exists now is the
+thing that makes a rollback survivable rather than safe: take a backup first
+([SELF_HOSTING.md — Backup & restore](SELF_HOSTING.md#backup--restore)) so a downgrade that
+does go wrong is a restore rather than a loss.

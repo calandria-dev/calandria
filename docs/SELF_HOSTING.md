@@ -283,6 +283,7 @@ old one. There is no undo.
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
 | `CALANDRIA_WORKTREES_DIR` | `~/.calandria/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
+| `CALANDRIA_BACKUP_DIR` | `<CALANDRIA_DB_DIR>/backups` | Where `npm run backup` writes its archives. Read by [`scripts/backup.mjs`](../scripts/backup.mjs), not by the app; point it at a different volume than the one being backed up. See **Backup & restore** below |
 | `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
 | `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Separate opt-in from the services feature itself; also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
@@ -341,6 +342,184 @@ what this recipe deliberately leaves out: the per-task **worktrees** aren't part
 either leave `CALANDRIA_WORKTREES_DIR` pointing at the old directory, or relocate it
 yourself and run `git worktree repair <new-path>/<task-id>` inside each affected project
 repo.
+
+## Backup & restore
+
+`npm run backup` ([`scripts/backup.mjs`](../scripts/backup.mjs)) takes a **hot** backup —
+run it with the app up, no downtime, no drain. The DB half is not a file copy, and that is
+the whole point of the script.
+
+### Never `cp` a live database
+
+`calandria.db` is in WAL mode, so recent transactions live in `calandria.db-wal` until a
+checkpoint folds them back. Copying the `.db` on its own gives you a file that opens fine,
+has a schema, has *most* of your data, and is silently missing exactly the newest work;
+copying the pair while the app is mid-write can tear it outright. The script instead runs
+`VACUUM INTO`, which reads the live database inside one read transaction and writes a
+self-contained, already-checkpointed copy — so a turn committing mid-backup lands wholly
+inside the snapshot or wholly after it, and the result has no `-wal`/`-shm` sidecars to
+forget to move. It then re-opens the snapshot and runs `PRAGMA integrity_check` before
+calling the backup a backup. (`tests/backup.test.ts` pins this against a naive copy of the
+same moment.)
+
+The connection is **read-only and takes no application lock**: the single-instance boot
+mutex is a separate `*.lock.db` file precisely so an out-of-band reader can work while the
+app owns the database. A backup can never stop the app from booting.
+
+### What state lives where
+
+| What | Where | In the backup |
+|-|-|-|
+| Projects, tasks, transcripts, summaries, usage, schedules, runbooks, permission rules | `<CALANDRIA_DB_DIR>/calandria.db` (+ `-wal`/`-shm`) | `db/` — one snapshot, no sidecars |
+| Chat attachments | `<CALANDRIA_DB_DIR>/uploads/<taskId>` | `db-dir/` |
+| Web Push signing key | `<CALANDRIA_DB_DIR>/vapid.json` | `db-dir/` |
+| A persisted API key (only if you used the wizard's key path) | `<CALANDRIA_DB_DIR>/anthropic-api-key`, `openai-api-key` | `db-dir/` |
+| Boot mutex | `<CALANDRIA_DB_DIR>/*.lock.db`, `*.lock.json` | **excluded** — a pure lock holding no data; restoring one restores a stale claim |
+| Agent CLI logins | `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude/settings.json`, `~/.codex/auth.json`, `~/.codex/config.toml` | `agent-login/home/…` (`--no-logins` to skip) |
+| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR` (default `~/.calandria/worktrees`) | **opt-in** (`--worktrees`) |
+| Cloned project repos | `CALANDRIA_PROJECTS_DIR` (default `~/projects`) | **opt-in** (`--projects`) |
+| Your own repos | wherever you told the project they are | never — they're yours |
+
+`db-dir/` is captured by *exclusion* (everything in the DB dir that isn't a SQLite file, the
+lock pair, the backup directory itself, or a nested worktrees dir), so something added
+beside the database in a later version is picked up without anyone editing a list.
+
+The last two rows are opt-in because they are reconstructible and they are the two that turn
+a nightly backup into a disk problem: a worktree is a checkout of a branch that already lives
+in the project repo, and a clone is a clone. What you actually lose by skipping them is a
+task's **uncommitted** working-tree edits; committed work is on the task branch in the repo.
+
+**Docker vs local.** In the container everything above is one named volume mounted at
+`/home/calandria` — database, worktrees, project clones and both CLI logins together, which
+is what makes the cold-copy option below a real option. Running locally, the same state is
+spread across your `$HOME` (`~/.calandria`, `~/projects`, `~/.claude`, `~/.codex`) and only
+the env vars say where; the manifest records the resolved paths for that reason.
+
+Note the database **file name is resolved, not assumed**: a fresh install writes
+`calandria.db`, an install that predates the rename keeps `orchestrator.db` where it is and
+is never migrated ([above](#upgrading-from-the-pre-rename-default-paths)). The script asks
+`lib/storage.mjs` the same question the app asks at boot, so it backs up the database your
+instance is actually using, under its real name.
+
+### Hot backup
+
+```bash
+npm run backup                        # -> <CALANDRIA_DB_DIR>/backups/calandria-backup-<UTC>.tar.gz
+npm run backup -- --out /mnt/backups  # somewhere that isn't the disk you're backing up
+docker exec -u calandria calandria-alice npm run backup -- --out /home/calandria/backups
+```
+
+| Flag | Effect |
+|-|-|
+| `--out DIR` | Where to write. Default `CALANDRIA_BACKUP_DIR`, else `<CALANDRIA_DB_DIR>/backups` |
+| `--worktrees` | Also archive per-task worktrees (large, slow) |
+| `--projects` | Also archive cloned project repos (large, slow) |
+| `--no-logins` | Omit the agent CLI credentials |
+| `--no-archive` | Leave the staging directory instead of tarring it |
+| `--quiet` | Print only the resulting path on stdout |
+
+The archive is a single `.tar.gz` holding `manifest.json`, `db/`, `db-dir/` and (unless
+skipped) `agent-login/`. The manifest records the format version, the app version, the
+resolved source paths, the snapshot's SHA-256 and `user_version`, and row counts — enough
+to tell two backups apart and to reconcile absolute paths on restore. On a 37 MB database
+with the app running, the whole run took **1.2 s** and produced an 8.5 MB archive.
+
+**It contains credentials.** The file is written `0600` on POSIX. On Windows a POSIX mode is
+a no-op, so it inherits the ACL of the directory it lands in — put it somewhere private.
+
+Nightly, with your own retention (there is no built-in pruning of old archives):
+
+```cron
+17 4 * * *  cd /opt/calandria && /usr/bin/npm run backup -- --quiet --out /mnt/backups >/dev/null
+27 4 * * *  find /mnt/backups -name 'calandria-backup-*.tar.gz' -mtime +14 -delete
+```
+
+### Cold backup (the alternative)
+
+If you'd rather not reason about any of the above: stop the container and copy the volume.
+The app is down, nothing is mid-write, and a plain copy is correct — including the WAL,
+because it comes along with everything else.
+
+```bash
+docker compose -p calandria-alice stop
+docker run --rm -v orch-u-alice-home:/from -v /mnt/backups:/to alpine \
+  tar -czf /to/calandria-volume-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /from .
+docker compose -p calandria-alice start
+```
+
+That captures worktrees and project clones too, so it is much larger. It costs downtime,
+which is why it isn't the default recipe — but it is the one to reach for when you want a
+byte-for-byte image of the whole instance rather than its state.
+
+### Restore
+
+This procedure was run end to end — hot backup of a live instance (five projects, 156 tasks,
+13k messages), restored into a scratch data directory, verification boot, contents checked
+through the API — before it was written down.
+
+1. **Stop the app.** A restore that races a running instance is the one thing the boot lock
+   can't save you from, because you'd be replacing the file underneath it.
+
+   ```bash
+   docker compose -p calandria-alice stop     # or: systemctl stop calandria
+   ```
+
+2. **Unpack somewhere scratch**, and read the manifest before you overwrite anything —
+   `contents.db` names the file, `source.*` says where it came from.
+
+   ```bash
+   mkdir -p /tmp/restore && tar -xzf calandria-backup-20260827T221316Z.tar.gz -C /tmp/restore
+   cd /tmp/restore/calandria-backup-20260827T221316Z && cat manifest.json
+   ```
+
+3. **Put the database back.** Copy the snapshot to `<CALANDRIA_DB_DIR>` and make sure no
+   stale sidecars survive beside it — the snapshot is self-contained, and an old `-wal` next
+   to a new `.db` is the one way to lose data during a *successful* restore.
+
+   ```bash
+   DBDIR=~/.calandria                       # whatever CALANDRIA_DB_DIR resolves to
+   rm -f "$DBDIR"/calandria.db-wal "$DBDIR"/calandria.db-shm
+   cp db/calandria.db "$DBDIR"/calandria.db
+   cp -a db-dir/.     "$DBDIR"/             # uploads, vapid.json, any API key
+   ```
+
+   Restoring a backup whose `contents.db` is `db/orchestrator.db` is the moment to leave the
+   old name behind: copy it to `calandria.db` instead. Nothing but `lib/storage.mjs` cares
+   about the name, and there is no other reference to fix up.
+
+4. **Put the agent logins back** (skip if the target is already logged in):
+
+   ```bash
+   cp -a agent-login/home/. ~/
+   ```
+
+5. **Start the app and verify.** For a verification boot against a *copy*, point
+   `CALANDRIA_DB_DIR` at the scratch directory and set `CALANDRIA_SCHEDULER=off` and
+   `CALANDRIA_FEATURE_SERVICES=0` first — otherwise the restored instance cheerfully fires
+   every schedule it thinks it missed and restarts every managed service it remembers.
+
+   ```bash
+   CALANDRIA_DB_DIR=/tmp/restore/data CALANDRIA_WORKTREES_DIR=/tmp/restore/worktrees \
+   CALANDRIA_SCHEDULER=off CALANDRIA_FEATURE_SERVICES=0 PORT=4318 PTY_PORT=4319 npm start
+   curl -s localhost:4318/api/projects | jq 'length'
+   ```
+
+Three things to expect from a restored instance, none of them a fault:
+
+- **In-flight turns come back interrupted, not resumed.** The snapshot captures whatever was
+  running at that instant (in the tested run: three tasks with `running=1`), and the first
+  boot's crash recovery clears exactly that — running flags, queued follow-ups, unanswered
+  permission cards, in-flight schedule runs. Ask those tasks to continue; the transcript and
+  the session lineage are intact.
+- **Absolute paths come back verbatim.** `projects.repo_path` and `tasks.worktree_path` are
+  absolute. Restoring onto the same layout (the container case, where everything is under
+  `/home/calandria`) needs nothing. Restoring onto a *different* layout means editing
+  `projects.repo_path` to point at the repos' new home; task worktrees self-heal, since every
+  launch path re-cuts a missing one.
+- **Worktrees you didn't archive are gone, and that's recoverable.** A task whose checkout is
+  missing gets a fresh one cut from its branch on the next turn. Uncommitted edits that were
+  sitting in the old worktree are not in the backup — which is the argument for `--worktrees`
+  if you run tasks that idle for days with work in progress.
 
 ## Notes & caveats
 

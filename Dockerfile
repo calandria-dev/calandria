@@ -169,6 +169,10 @@ COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDe
 # package.json IS in this image, so a script it names has to exist or `npm start`
 # in a docker exec fails on a missing file rather than doing the obvious thing.
 COPY --from=build --chown=root:root /app/scripts/start.mjs ./scripts/start.mjs
+# The hot-backup script (`docker exec ... npm run backup`). It needs better-sqlite3
+# from node_modules and lib/env.mjs + lib/storage.mjs, all already above; without
+# this line the one recovery tool the image ships would be missing from the image.
+COPY --from=build --chown=root:root /app/scripts/backup.mjs ./scripts/backup.mjs
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/calandria-entrypoint
 
 # CALANDRIA_HOSTNAME, not HOSTNAME: server.js no longer reads the generic variable
