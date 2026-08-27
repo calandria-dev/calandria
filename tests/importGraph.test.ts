@@ -40,6 +40,7 @@ const PINNED = [
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
+  "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice — the client imports it to render the button

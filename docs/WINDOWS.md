@@ -19,7 +19,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 1 | `npm run build` / `npm start` use `NODE_ENV=production …` inline env (POSIX-only); `*:docker` scripts invoke a bash file directly | Entrypoints | S | Yes — nothing boots |
 | 2 | `pty-server.js:119` falls back to `/bin/zsh`; `$SHELL` is unset on Windows | node-pty | S | Yes — terminal dead |
 | 3 | `CLAUDE_CLI_PATH` default has no `.exe`; bare `"codex"` spawned without a shell can't resolve npm's `.cmd` shim | Agent CLIs | S | Yes — no turns |
-| 4 | Six negative-PID process-group kills + a `ps`-based orphan guard in `lib/services.ts`; `detached: true` means "new console" on Windows | Process mgmt | M | Yes — services can't be stopped or reaped |
+| 4 | Six negative-PID process-group kills + a `ps`-based orphan guard in `lib/services.ts`; `detached: true` means "new console" on Windows | Process mgmt | M | Yes — services can't be stopped or reaped — **fixed** (`lib/processTree.ts`) |
 | 5 | Path identity compared case-sensitively after `realpathSync` (`lib/git.ts:536`, `lib/repoLock.ts:73`) — NTFS is case-insensitive | Paths | S | Yes — can wrongly `rmSync` a linked worktree |
 | 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
 | 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
@@ -88,11 +88,19 @@ Two further semantics:
   just a port: either document that Windows service commands are `cmd.exe`
   syntax, or run them through `pwsh`/Git Bash explicitly.
 
-Fix shape: a `killTree(pid, signal)` helper — POSIX does today's group kill,
-win32 shells out to `taskkill /pid <pid> /T /F` (or the `tree-kill` package),
-with `tasklist /fi "PID eq <pid>"` (or a WMI query for the command line)
-standing in for the `ps` membership guard. The SIGTERM→SIGKILL two-phase
-escalation collapses to one forced kill on Windows.
+**Shipped** as `lib/processTree.ts`: `killTree(pid, signal)` signals the process
+group on POSIX and runs `taskkill /pid <pid> /T /F` on win32 (both signals
+collapse to that one forced kill — there is no graceful tree signal), with
+`treeAlive` (`tasklist /fi "PID eq <pid>" /nh /fo csv`) and `treeMatchesCommand`
+(a `Get-CimInstance Win32_Process` CommandLine lookup, since the persisted pid
+IS the `cmd.exe /d /s /c "<command>"` wrapper) standing in for the `ps`
+membership guard. `detached` is now set only where process groups exist, the
+SIGTERM→SIGKILL escalation is skipped on win32, and when the guard can't find
+out — no `ps`, no PowerShell — the answer stays "don't kill". The win32 branches
+take their platform and command runner as arguments, so `tests/processTree.test.ts`
+pins them from the POSIX suite. The `cmd.exe` command semantics above are
+documented in [SERVICES.md](SERVICES.md#windows-command-syntax) rather than
+worked around: `dev_command` is a `cmd.exe` command line on Windows.
 
 **The runner's own children are fine.** The claude/codex CLI processes the
 Agent SDKs spawn are plain, non-detached children; Stop and the drain are
@@ -334,7 +342,7 @@ Filed in the Suggested tray, in dependency order:
 3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
 4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check). — **Done** (`lib/binPath.ts` + callers).
 5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
-6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics).
+6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics). — **Done** (`lib/processTree.ts` + `lib/services.ts`).
 7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade).
 8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2.
 9. Unit/e2e suite portability — blocked by 2, 3, 5, 6.
