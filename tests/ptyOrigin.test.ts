@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import WebSocket from "ws";
+import { DETACHED, TEST_SHELL, killChildTree } from "./platform";
 
 const ROOT = path.resolve(__dirname, "..");
 const PORT = 3947; // fixed but unusual; the suite is serial so nothing contends
@@ -40,14 +41,17 @@ function connect(origin?: string, port = PORT, host?: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  // Own the whole process group: the sidecar's accepted connections are real
-  // pty children, and killing only the parent would orphan them onto the
-  // developer's machine.
+  // Own the whole tree: the sidecar's accepted connections are real pty
+  // children, and killing only the parent would orphan them onto the
+  // developer's machine. On POSIX that means its own process group; win32 has
+  // none, and killChildTree() knows the difference (lib/processTree.ts).
   sidecar = spawn(process.execPath, [path.join(ROOT, "pty-server.js")], {
     cwd: ROOT,
-    env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", SHELL: "/bin/sh" },
+    // The knob, not $SHELL: this file needs A shell, not a POSIX one, and
+    // $SHELL is only the sidecar's fallback (tests/platform.ts).
+    env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", CALANDRIA_PTY_SHELL: TEST_SHELL },
     stdio: "ignore",
-    detached: true,
+    detached: DETACHED,
   });
   // Wait for the listener rather than sleeping a fixed amount.
   const deadline = Date.now() + 15_000;
@@ -60,10 +64,7 @@ beforeAll(async () => {
 }, 20_000);
 
 afterAll(() => {
-  // Negative pid = the group, so any pty child goes with it.
-  if (sidecar?.pid) {
-    try { process.kill(-sidecar.pid, "SIGKILL"); } catch { try { sidecar.kill("SIGKILL"); } catch {} }
-  }
+  killChildTree(sidecar);
 });
 
 describe("pty sidecar handshake", () => {
@@ -122,7 +123,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
         ...process.env,
         PTY_PORT: String(ACCESS_PORT),
         PTY_HOST: "127.0.0.1",
-        SHELL: "/bin/sh",
+        CALANDRIA_PTY_SHELL: TEST_SHELL,
         // Enforcement is on iff BOTH are set. Never contacted: an absent
         // assertion is rejected before any JWKS fetch.
         CF_ACCESS_TEAM_DOMAIN: "example-team.cloudflareaccess.com",
@@ -132,7 +133,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
         CALANDRIA_ALLOWED_ORIGINS: "",
       },
       stdio: ["ignore", "ignore", "pipe"],
-      detached: true,
+      detached: DETACHED,
     });
     accessSidecar.stderr?.on("data", (chunk) => { stderr += String(chunk); });
     // No handshake can succeed here, so readiness is the plain HTTP listener.
@@ -149,9 +150,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
   }, 20_000);
 
   afterAll(() => {
-    if (accessSidecar?.pid) {
-      try { process.kill(-accessSidecar.pid, "SIGKILL"); } catch { try { accessSidecar.kill("SIGKILL"); } catch {} }
-    }
+    killChildTree(accessSidecar);
   });
 
   it("stops rejecting the tunnel hostname for being unlisted", async () => {

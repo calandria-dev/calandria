@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ensureWorktree, mergeTask, taskDiff } from "../lib/git";
 import { commitFile, git, makeRepo, makeRepoWithWorktree, uid, writeFile } from "./helpers";
+import { onPosix } from "./platform";
 
 describe("taskDiff", () => {
   it("reports a clean, up-to-date worktree as empty", async () => {
@@ -134,20 +135,31 @@ describe("taskDiff", () => {
     expect(renamed.patch).toContain("rename from old-name.txt");
   });
 
-  it("synthesizes untracked patches like git (exec bit, empty file, no trailing newline)", async () => {
+  // The exec bit is its own case because it is the one assertion here that
+  // cannot hold on Windows: NTFS has no executable bit, `chmod` is a no-op, and
+  // git therefore records the file 100644. Skipped rather than ported —
+  // synthesizing a mode git itself wouldn't record proves nothing
+  // (docs/WINDOWS.md §7). The rest of the untracked-patch synthesis below is
+  // platform-independent and still runs everywhere.
+  onPosix("synthesizes an untracked patch with the executable bit git records", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     writeFile(wt.path, "exec.sh", "#!/bin/sh\necho hi\n");
     fs.chmodSync(path.join(wt.path, "exec.sh"), 0o755);
+
+    const diff = await taskDiff(repo, wt.path, wt.baseSha, "main");
+    const exec = diff.files.find((f) => f.path === "exec.sh")!;
+    expect(exec.patch).toContain("new file mode 100755");
+    expect(exec.patch).toContain("@@ -0,0 +1,2 @@");
+    expect(exec.additions).toBe(2);
+  });
+
+  it("synthesizes untracked patches like git (empty file, no trailing newline)", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     writeFile(wt.path, "no-nl.txt", "no newline at end");
     writeFile(wt.path, "empty.txt", "");
 
     const diff = await taskDiff(repo, wt.path, wt.baseSha, "main");
     const byPath = new Map(diff.files.map((f) => [f.path, f]));
-
-    const exec = byPath.get("exec.sh")!;
-    expect(exec.patch).toContain("new file mode 100755");
-    expect(exec.patch).toContain("@@ -0,0 +1,2 @@");
-    expect(exec.additions).toBe(2);
 
     const noNl = byPath.get("no-nl.txt")!;
     expect(noNl.patch).toContain("@@ -0,0 +1 @@");

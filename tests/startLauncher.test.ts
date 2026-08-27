@@ -9,15 +9,20 @@
  * entrypoints in a temp cwd. The launcher resolves `server.js` / `pty-server.js`
  * cwd-relative for exactly that reason.
  *
- * Windows' console-signal path can't be exercised from here; what this pins is
- * the POSIX behaviour plus the shared lifetime contract (first exit wins, the
- * survivor comes down with it) that both platforms rely on.
+ * Windows' console-signal path can't be exercised from here — there is no way
+ * to deliver a CTRL_C_EVENT to another process from Node, and `child.kill()`
+ * there is a TerminateProcess for every signal name, so nothing downstream can
+ * observe WHICH signal it got. A Windows run therefore keeps the half that is
+ * still meaningful (the lifetime contract: first exit wins, the survivor comes
+ * down with it, the launcher reports the first child's code) and skips the
+ * relay assertions; `expectSignalled` and `onPosix` mark each place.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { IS_WIN, onPosix } from "./platform";
 
 const LAUNCHER = path.resolve(__dirname, "..", "scripts", "start.mjs");
 
@@ -75,12 +80,27 @@ async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
   throw new Error(`timed out waiting for ${file}`);
 }
 
+/**
+ * Assert a stub recorded the signal it was asked to shut down on. A no-op on
+ * Windows, where every `child.kill()` is a TerminateProcess and no handler
+ * runs — the marker file is never written, and asserting on it would only pin
+ * the platform, not the launcher.
+ */
+function expectSignalled(file: string, signal: string): void {
+  if (IS_WIN) return;
+  expect(fs.readFileSync(file, "utf8")).toBe(signal);
+}
+
 function exitOf(child: ChildProcess): Promise<{ code: number | null; signal: string | null }> {
   return new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
 }
 
 describe("npm start launcher", () => {
-  it("relays SIGINT to both children and waits for a slow drain to finish", async () => {
+  // POSIX-only: `process.kill(pid, "SIGINT")` at another process is not a
+  // deliverable signal on Windows — it terminates the target outright, so there
+  // is no relay to observe. The console path that replaces it is documented in
+  // docs/WINDOWS.md §8 and can only be checked on a real Windows console.
+  onPosix("relays SIGINT to both children and waits for a slow drain to finish", async () => {
     const cwd = fixture(
       // 400ms stands in for drainActiveTurns(): long enough that a launcher
       // which killed instead of waiting would leave no marker behind.
@@ -96,8 +116,8 @@ describe("npm start launcher", () => {
     process.kill(child.pid!, "SIGINT");
     const { code } = await exitOf(child);
 
-    expect(fs.readFileSync(path.join(cwd, "app.signal"), "utf8")).toBe("SIGINT");
-    expect(fs.readFileSync(path.join(cwd, "pty.signal"), "utf8")).toBe("SIGINT");
+    expectSignalled(path.join(cwd, "app.signal"), "SIGINT");
+    expectSignalled(path.join(cwd, "pty.signal"), "SIGINT");
     // A shutdown we were asked for is a success, whatever the children reported.
     expect(code).toBe(0);
   });
@@ -112,7 +132,7 @@ describe("npm start launcher", () => {
 
     const { code } = await exitOf(child);
     expect(code).toBe(3);
-    expect(fs.readFileSync(path.join(cwd, "pty.signal"), "utf8")).toBe("SIGTERM");
+    expectSignalled(path.join(cwd, "pty.signal"), "SIGTERM");
   });
 
   it("takes the app down when the sidecar dies, so a crashed pty can't be missed", async () => {
@@ -125,6 +145,6 @@ describe("npm start launcher", () => {
 
     const { code } = await exitOf(child);
     expect(code).toBe(1);
-    expect(fs.readFileSync(path.join(cwd, "app.signal"), "utf8")).toBe("SIGTERM");
+    expectSignalled(path.join(cwd, "app.signal"), "SIGTERM");
   });
 });

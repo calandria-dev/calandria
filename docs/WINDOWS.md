@@ -301,6 +301,49 @@ Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
 - **e2e.** `e2e/env.ts` is the one file in the repo that already anticipates
   win32. The prod server boot is Playwright's own `webServer` (portable
   teardown); the only blocker is `npm start` itself (§5).
+
+**Shipped** (`tests/platform.ts`), on one rule: a POSIX construct a test merely
+*uses* gets a portable spelling; a test *about* POSIX semantics is skipped on
+win32 rather than translated into something that pins nothing. The module holds
+the whole platform vocabulary the suite needs — `IS_WIN`, `onPosix`,
+`NULL_DEVICE`, `TEST_SHELL`, `DETACHED`, `killChildTree` — so no test file
+guesses, and every value resolves to the literal the suite used before on
+Linux/macOS.
+
+Ported: `tests/setup.ts` takes `NUL` for `GIT_CONFIG_SYSTEM` (the branch
+`e2e/env.ts` always had) and for `core.hooksPath` — which also dodges a subtler
+break, since a Windows path in a git *config file* carries backslashes and `\U`
+in `C:\Users\…` is an escape git rejects the whole file for. Both configs also
+pin `core.autocrlf=false` and `core.longpaths=true`, so fixtures are the same
+bytes everywhere and a mkdtemp root under `%TEMP%` can still be checked out.
+The three pty files hand the sidecar `CALANDRIA_PTY_SHELL` (`%COMSPEC%` on
+Windows) instead of `SHELL=/bin/sh`, and tear down through `killChildTree` —
+`lib/processTree.ts`, so `detached` is asked for only where process groups
+exist. `tests/services.test.ts` probes liveness with `treeAlive` rather than
+`process.kill(pid, 0)`; its `sleep 30` had already become a `node -e` sleep with
+the tree-kill work. `tests/repoLock.test.ts` creates its symlink as a
+**junction** on win32 (a directory symlink needs Developer Mode; a junction
+needs nothing) and compares `git worktree list` output through `canonicalPath`,
+since git prints `C:/…` where `path.join` produced `C:\…`; same for
+`tests/taskMoveWorktree.test.ts`'s `--git-common-dir` assertions.
+`tests/codexVerify.test.ts`'s fake CLI is a `.cmd` shim + `.js` on win32 — the
+pair npm itself installs — which incidentally exercises `lib/binPath.ts`'s
+`cmd.exe` wrapping. `e2e/env.ts` realpaths its tmp root the way `tests/setup.ts`
+does, because a CI runner's `%TEMP%` is often the 8.3 short form.
+
+Skipped, each with the reason at the call site: the exec-bit halves of
+`tests/ghBin.test.ts` (split so the win32 cases, which pass their platform
+explicitly, still run on every OS) and `tests/binPath.test.ts`; the `100755`
+assertion in `tests/diff.test.ts` (split out so the rest of the untracked-patch
+synthesis still runs); `tests/ptyShell.test.ts`'s `$SHELL`/`$0`/`$TERM` cases,
+replaced there by one win32 case asserting the probed default is a shell node-pty
+can actually launch; and the SIGINT relay in `tests/startLauncher.test.ts`,
+whose lifetime-contract cases keep running (`child.kill()` is a
+`TerminateProcess` on Windows, so no stub can observe *which* signal it got).
+
+Not yet paid: nothing here has run on a real Windows box. The changes are static
+portability plus what the Linux/macOS suite still proves — the Windows CI lane
+is the task that turns them into a claim.
 - **CI.** All jobs run on Ubuntu. A `windows-latest` lane needs: Git for
   Windows (preinstalled), node-pty (vendored prebuild — fine), better-sqlite3
   (`prebuild-install` downloads a win32/Node-22 binary at install; falls back to
@@ -461,11 +504,11 @@ Filed in the Suggested tray, in dependency order:
 
 1. Docs: WSL2 as the supported Windows path (README, INSTALLATION, TROUBLESHOOTING; the `/mnt/c` locking and login caveats). No blockers. **Do first.**
 2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`). — **Done** (`1314a34`).
-3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
+3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`. — **Done** (`pty-server.js`, `tests/ptyShell.test.ts`).
 4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check). — **Done** (`lib/binPath.ts` + callers).
-5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
+5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement). — **Done** (`lib/paths.ts`; the global `core.longpaths` setting and the held-handle failure are documented in TROUBLESHOOTING).
 6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics). — **Done** (`lib/processTree.ts` + `lib/services.ts`).
-7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade).
+7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade). — **Done** (`lib/secretFile.ts`). The VAPID private key (`lib/push/vapid.ts`) is still on a plain `mode: 0o600` and is its own task.
 8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2. — **Done** (`scripts/start.mjs`; see the addendum for the one check still owed a real Windows box).
-9. Unit/e2e suite portability — blocked by 2, 3, 5, 6.
+9. Unit/e2e suite portability — blocked by 2, 3, 5, 6. — **Done** (`tests/platform.ts` + the files listed in §7); nothing has run on a real Windows box yet, which is what 10 buys.
 10. Windows CI lane + docs declaring native support — blocked by 2, 9.

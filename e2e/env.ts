@@ -13,7 +13,12 @@ import path from "node:path";
 function ensureRoot(): string {
   let root = process.env.CALANDRIA_E2E_ROOT;
   if (!root) {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-e2e-"));
+    // realpathSync the tmp root, like tests/setup.ts: on macOS os.tmpdir() is a
+    // symlink (/var -> /private/var) and on Windows a CI runner's %TEMP% is
+    // often the 8.3 short form (C:\Users\RUNNER~1\...). Git and the app both
+    // report the resolved spelling, so resolving up front keeps the paths the
+    // specs compare identical to the ones the server persists.
+    root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "calandria-e2e-"));
     process.env.CALANDRIA_E2E_ROOT = root;
   }
   for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
@@ -36,6 +41,11 @@ function ensureRoot(): string {
         "[commit]",
         "\tgpgsign = false",
         "[core]",
+        // Windows-only in effect: a checkout that rewrote line endings would
+        // change the diffs the specs read, and the fixture repos live deep
+        // under %TEMP%. Same pair tests/setup.ts pins, same reasoning.
+        "\tautocrlf = false",
+        "\tlongpaths = true",
         `\thooksPath = ${os.platform() === "win32" ? "NUL" : "/dev/null"}`,
         "",
       ].join("\n")

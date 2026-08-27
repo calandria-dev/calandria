@@ -21,6 +21,7 @@ import {
 } from "../lib/worktreeFailure";
 import { WORKTREES_DIR } from "../lib/config";
 import { commitFile, git, makeRepo, makeRepoWithWorktree, tmpDir, uid, writeFile } from "./helpers";
+import { NULL_DEVICE } from "./platform";
 
 describe("isGitRepo", () => {
   it("is true inside a repo and false for plain or missing dirs", async () => {
@@ -381,7 +382,7 @@ describe("commitWorktree", () => {
     writeFile(wt.path, "file.txt", "no identity\n");
 
     const saved = process.env.GIT_CONFIG_GLOBAL;
-    process.env.GIT_CONFIG_GLOBAL = "/dev/null"; // strip the test identity
+    process.env.GIT_CONFIG_GLOBAL = NULL_DEVICE; // strip the test identity
     try {
       expect(await commitWorktree(wt.path, "identity-less commit")).toBe(true);
     } finally {

@@ -10,13 +10,15 @@
  * siblings: the resolution decides an argument to pty.spawn, and only a real
  * spawn proves the choice was one the OS could actually execute.
  *
- * The win32 half of the default can't run here; it's pinned by structure —
- * a shell resolved by probing PATH/COMSPEC, and TERM set only on POSIX.
+ * Split by platform: the cases that assert on `$SHELL`, `$0` and `$TERM` are
+ * POSIX semantics and are skipped on win32; what a Windows run pins instead is
+ * that the probed default resolves to a shell node-pty can launch at all.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import WebSocket from "ws";
+import { DETACHED, IS_WIN, killChildTree } from "./platform";
 
 const ROOT = path.resolve(__dirname, "..");
 const PORT = 3949; // fixed but unusual; the suite is serial so nothing contends
@@ -26,13 +28,13 @@ let sidecar: ChildProcess | null = null;
 
 /** Boot the sidecar with exactly `env` layered on, and wait for it to serve. */
 async function startSidecar(env: Record<string, string | undefined>): Promise<void> {
-  // Own the whole process group: accepted connections are real pty children,
-  // and killing only the parent would orphan them onto the developer's machine.
+  // Own the whole tree: accepted connections are real pty children, and killing
+  // only the parent would orphan them onto the developer's machine.
   const child = spawn(process.execPath, [path.join(ROOT, "pty-server.js")], {
     cwd: ROOT,
     env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", SHELL: undefined, CALANDRIA_PTY_SHELL: undefined, ...env },
     stdio: "ignore",
-    detached: true,
+    detached: DETACHED,
   });
   sidecar = child;
   const deadline = Date.now() + 15_000;
@@ -79,14 +81,17 @@ async function runInShell(command: string): Promise<string> {
 }
 
 afterEach(() => {
-  // Negative pid = the group, so any pty child goes with it.
-  if (sidecar?.pid) {
-    try { process.kill(-sidecar.pid, "SIGKILL"); } catch { try { sidecar.kill("SIGKILL"); } catch {} }
-  }
+  killChildTree(sidecar);
   sidecar = null;
 });
 
-describe("pty sidecar shell resolution", () => {
+// Skipped on Windows rather than ported: every case below is ABOUT a POSIX
+// convention — `$SHELL`, `$0` naming the shell that ran the line, `$TERM` — and
+// a cmd.exe translation would assert a different thing under the same name. The
+// win32 half is covered where it can be: the default is exercised end-to-end by
+// the case below, and by tests/ptyOrigin.test.ts + tests/ptyProtocol.test.ts,
+// which spawn real Windows shells through the knob (docs/WINDOWS.md §7).
+describe.skipIf(IS_WIN)("pty sidecar shell resolution", () => {
   it("uses CALANDRIA_PTY_SHELL ahead of $SHELL", async () => {
     // $SHELL points at nothing, so if precedence were the other way round the
     // spawn ENOENTs and no output comes back at all.
@@ -113,5 +118,16 @@ describe("pty sidecar shell resolution", () => {
     // the drawer degrades to a dumb terminal.
     await startSidecar({ CALANDRIA_PTY_SHELL: "/bin/sh" });
     expect(await runInShell("echo term-is-$TERM")).toContain("term-is-xterm-256color");
+  }, 30_000);
+});
+
+describe.runIf(IS_WIN)("pty sidecar shell resolution on Windows", () => {
+  it("spawns a shell with neither the knob nor $SHELL set", async () => {
+    // The whole win32 default in one assertion: pwsh/powershell/COMSPEC has to
+    // resolve to something node-pty can actually launch. startSidecar only
+    // returns once a session reached the `ready` frame, which the sidecar sends
+    // after pty.spawn — so a default that ENOENTs fails here rather than
+    // silently serving a dead terminal.
+    await startSidecar({});
   }, 30_000);
 });

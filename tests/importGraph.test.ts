@@ -63,6 +63,7 @@ const PINNED = [
   "app/api/notifications/push/route.ts",
   "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
   "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
+  "lib/paths.ts", //              case-folded path identity + EBUSY-tolerant rm; fs + path only, and lib/git.ts and lib/repoLock.ts both sit on it
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
@@ -118,6 +119,14 @@ const SPECIFIER_RE = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["']([^"']+)["']
 const STATIC_SPECIFIER_RE = /(?:from\s+|require\s*\(\s*)["']([^"']+)["']/g;
 const IMPORT_BARE_RE = /^\s*import\s+["']([^"']+)["']/gm;
 
+/**
+ * A repo-relative module id, always `/`-separated. `path.relative` gives
+ * backslashes on Windows, and these strings are both map KEYS looked up with
+ * the literals in PINNED/LAUNCHERS and the trails printed in failure messages
+ * — so a platform-shaped separator would make every lookup miss.
+ */
+const relKey = (file: string) => path.relative(ROOT, file).split(path.sep).join("/");
+
 function resolveLocal(fromFile: string, spec: string): string | null {
   let base: string;
   if (spec.startsWith("@/")) base = path.join(ROOT, spec.slice(2));
@@ -127,7 +136,7 @@ function resolveLocal(fromFile: string, spec: string): string | null {
     const candidate = base + suffix;
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
   }
-  throw new Error(`unresolvable import "${spec}" from ${path.relative(ROOT, fromFile)}`);
+  throw new Error(`unresolvable import "${spec}" from ${relKey(fromFile)}`);
 }
 
 /**
@@ -148,7 +157,7 @@ function reachablePackages(entry: string, staticOnly = false): Map<string, strin
       for (let m; (m = re.exec(src)); ) {
         const spec = m[1];
         const local = resolveLocal(file, spec);
-        if (local) queue.push({ file: local, trail: [...trail, path.relative(ROOT, local)] });
+        if (local) queue.push({ file: local, trail: [...trail, relKey(local)] });
         else if (!spec.startsWith("node:") && !packages.has(spec)) packages.set(spec, trail);
       }
     }
@@ -165,7 +174,7 @@ function reachableFiles(entry: string): Map<string, string[]> {
   const queue: { file: string; trail: string[] }[] = [{ file: path.join(ROOT, entry), trail: [entry] }];
   while (queue.length) {
     const { file, trail } = queue.shift()!;
-    const rel = path.relative(ROOT, file);
+    const rel = relKey(file);
     if (files.has(rel)) continue;
     files.set(rel, trail);
     const src = fs.readFileSync(file, "utf8");
@@ -173,7 +182,7 @@ function reachableFiles(entry: string): Map<string, string[]> {
       re.lastIndex = 0;
       for (let m; (m = re.exec(src)); ) {
         const local = resolveLocal(file, m[1]);
-        if (local) queue.push({ file: local, trail: [...trail, path.relative(ROOT, local)] });
+        if (local) queue.push({ file: local, trail: [...trail, relKey(local)] });
       }
     }
   }

@@ -133,13 +133,21 @@ describe("resolveWorktreeFile", () => {
     fs.mkdirSync(path.join(wt, "docs"));
     fs.writeFileSync(path.join(wt, "docs", "a.md"), "# a\n");
     fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
-    fs.symlinkSync(path.join(outside, "secret.md"), path.join(wt, "docs", "link.md"));
+    // A FILE symlink needs Developer Mode or elevation on Windows (a junction
+    // only stands in for a directory one), so its absence there is a fixture
+    // limitation, not a result — the link assertion below is conditioned on it.
+    let linked = true;
+    try {
+      fs.symlinkSync(path.join(outside, "secret.md"), path.join(wt, "docs", "link.md"));
+    } catch {
+      linked = false;
+    }
 
     expect(resolveWorktreeFile(wt, "docs/a.md")).toBe(fs.realpathSync(path.join(wt, "docs", "a.md")));
     expect(resolveWorktreeFile(wt, "docs/../docs/a.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "../" + path.basename(outside) + "/secret.md")).toBeNull();
     expect(resolveWorktreeFile(wt, path.join(outside, "secret.md"))).toBeNull();
-    expect(resolveWorktreeFile(wt, "docs/link.md")).toBeNull();
+    if (linked) expect(resolveWorktreeFile(wt, "docs/link.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "docs/missing.md")).toBeNull();
     expect(resolveWorktreeFile(wt, "")).toBeNull();
   });

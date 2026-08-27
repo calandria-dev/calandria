@@ -17,6 +17,7 @@ import { pushNotification, pushTopic, sendWebPush, taskUrl, toPushMessage } from
 import {
   deletePushSubscription, getPushSubscription, listPushSubscriptions, toPushDevice, upsertPushSubscription,
 } from "@/lib/push/store";
+import { IS_WIN } from "./platform";
 import { getDb } from "@/lib/db";
 import { emitTestNotification, resetNotificationDedupe } from "@/lib/notifications/notify";
 import type { NotificationPayload } from "@/lib/notifications/types";
@@ -146,7 +147,10 @@ describe("VAPID", () => {
     resetVapidCache();
     const first = vapidKeys();
     expect(fs.existsSync(file)).toBe(true);
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // POSIX-only: lib/push/vapid.ts writes the private key with a plain
+    // `mode: 0o600`, and on NTFS that maps onto the read-only attribute rather
+    // than a DACL — there is no 0o600 to read back (docs/WINDOWS.md §3).
+    if (!IS_WIN) expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     resetVapidCache();
     expect(vapidKeys()).toEqual(first);
     // The public half is re-derived from the private one on read, so a file

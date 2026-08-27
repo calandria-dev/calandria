@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll } from "vitest";
+import { NULL_DEVICE } from "./platform";
 
 // This file runs before each test file's module graph is loaded, so env set
 // here is seen by lib/config.ts (which reads CALANDRIA_WORKTREES_DIR at import
@@ -90,12 +91,32 @@ fs.writeFileSync(
     "[commit]",
     "\tgpgsign = false",
     "[core]",
-    `\thooksPath = ${path.join(root, "no-hooks")}`,
+    // Windows-only in effect, and both are about the fixtures being the same
+    // bytes on every platform. `autocrlf` is already off here because
+    // GIT_CONFIG_NOSYSTEM strips the system config Git for Windows sets it in
+    // — pinned anyway, since a checkout that rewrote line endings would make
+    // every diff/patch assertion in the suite platform-dependent. `longpaths`
+    // matches what lib/git.ts passes the app's own git calls: fixture repos
+    // live under a mkdtemp root inside %TEMP%, which is deep before the
+    // repository's own tree starts.
+    "\tautocrlf = false",
+    "\tlongpaths = true",
+    // The null device rather than a directory under `root`: a Windows path in
+    // a git CONFIG FILE would carry backslashes, and `\U` in `C:\Users\...` is
+    // an invalid escape git rejects the whole file for. `NUL`/`/dev/null` has
+    // no separator to escape and disables hooks just as well (git looks for
+    // `<hooksPath>/pre-commit`, which can't exist under a device). Same value
+    // e2e/env.ts pins.
+    `\thooksPath = ${NULL_DEVICE}`,
     "",
   ].join("\n")
 );
 process.env.GIT_CONFIG_GLOBAL = gitconfig;
-process.env.GIT_CONFIG_SYSTEM = "/dev/null";
+// The bit bucket is spelled differently on Windows, and this is a path git
+// opens: `/dev/null` there is a missing file in the current drive's root, which
+// git reports as an error rather than as "no system config". e2e/env.ts has
+// always branched here; this is the same branch (docs/WINDOWS.md §7).
+process.env.GIT_CONFIG_SYSTEM = NULL_DEVICE;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_TERMINAL_PROMPT = "0";
 for (const v of [
