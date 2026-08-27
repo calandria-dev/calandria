@@ -7,11 +7,16 @@ import type { TaskRow } from "./types";
 // (see useShell's sparklines map). Renders nothing until the server has
 // attached diff stats — i.e. only for in_progress tasks with a worktree (see
 // withDiffStats in app/api/projects/[id]/route.ts).
-export function DiffFooter({ task, points }: { task: TaskRow; points?: number[] }) {
+export function DiffFooter({ task, points, projectBranch }: { task: TaskRow; points?: number[]; projectBranch?: string }) {
   if (!task.work_branch || typeof task.diff_add !== "number" || typeof task.diff_del !== "number") return null;
+  // The base only when it ISN'T the project's default (lib/baseBranch.ts). Every
+  // card saying "main" is noise on a row this narrow; the one saying
+  // "feature/auth" is the whole point of the feature.
+  const base = task.base_branch && task.base_branch !== projectBranch ? task.base_branch : "";
   return (
-    <div className="diff-foot" title={task.work_branch}>
+    <div className="diff-foot" title={base ? `${task.work_branch} → ${base}` : task.work_branch}>
       <span className="diff-branch">{task.work_branch}</span>
+      {base && <span className="diff-base">→ {base}</span>}
       <span className="diff-stat">
         <span className="a">+{task.diff_add}</span> <span className="d">−{task.diff_del}</span>
       </span>

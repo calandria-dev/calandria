@@ -9,6 +9,7 @@ import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { MAX_MESSAGE_CHARS } from "@/lib/promptLimits";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import type { TaskStreamEvent } from "@/lib/types";
@@ -134,12 +135,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // POST landing in this window queues instead of double-running.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
-          const wt = await ensureWorktree(proj.repo_path, fresh.id, proj.branch);
+          const wt = await ensureWorktree(proj.repo_path, fresh.id, resolveBaseBranch(fresh, proj));
           if (wt) {
             fresh.worktree_path = wt.path;
             fresh.work_branch = wt.branch;
             fresh.base_sha = wt.baseSha;
-            updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+            // Pin the base at the cut: from here the task owns the answer, because
+            // base_sha came from that branch (lib/baseBranch.ts). "" = the branch
+            // didn't exist and the cut fell back to HEAD, which isn't a base to
+            // record.
+            if (wt.baseBranch) fresh.base_branch = wt.baseBranch;
+            updateTask(id, {
+              worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
+              ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+            });
           }
         } catch (err) {
           // ensureWorktree returning null is the legitimate fallback handled
