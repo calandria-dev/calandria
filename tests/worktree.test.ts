@@ -9,8 +9,16 @@ import {
   mergeTask,
   recentCommits,
   removeWorktree,
+  repairWorktree,
   worktreePruneSafety,
 } from "../lib/git";
+import {
+  WORKTREE_PREP_PREFIX,
+  WORKTREE_REPAIR_NOTICE,
+  WorktreePrepError,
+  classifyWorktreePrep,
+  worktreePrepNotice,
+} from "../lib/worktreeFailure";
 import { WORKTREES_DIR } from "../lib/config";
 import { commitFile, git, makeRepo, makeRepoWithWorktree, tmpDir, uid, writeFile } from "./helpers";
 
@@ -142,6 +150,136 @@ describe("ensureWorktree", () => {
     expect(wt).not.toBeNull();
     expect(wt!.baseSha).toBe(await git(dir, "rev-parse", "HEAD"));
     expect(fs.existsSync(path.join(wt!.path, "notes.md"))).toBe(true);
+  });
+});
+
+// Issue #44: ensureWorktree fails CLOSED, which is right — but a bare "Could
+// not prepare an isolated worktree: fatal: …" with nothing to click is a dead
+// end, and a scheduled run in that state settles `failed` every morning. Each
+// case below pins one classification and, where a repair can act, that it
+// actually recovers the task rather than just claiming to.
+describe("worktree prep failures — classification", () => {
+  it("reads a crashed git's leftover lock as recoverable", () => {
+    const d = classifyWorktreePrep(
+      "fatal: Unable to create '/repo/.git/index.lock': File exists.\n\n" +
+        "Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'."
+    );
+    expect(d.kind).toBe("stale_lock");
+    expect(d.recoverable).toBe(true);
+    expect(d.hint).not.toBe("");
+  });
+
+  it("reads a worktree registered at a directory that's gone as recoverable", () => {
+    const d = classifyWorktreePrep(
+      "fatal: '/w/abc' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear"
+    );
+    expect(d.kind).toBe("stale_registration");
+    expect(d.recoverable).toBe(true);
+  });
+
+  it("reads a full disk as a full disk even when it surfaces as a failed lock write", () => {
+    // Ordering matters: ENOSPC kills the very lock-file write git was making,
+    // so a "stale lock" read here would offer a repair that deletes a lock
+    // nothing left behind and then fails identically.
+    const raw = "fatal: Unable to create '/repo/.git/index.lock': No space left on device";
+    const d = classifyWorktreePrep(raw);
+    expect(d.kind).toBe("disk_full");
+    expect(d.recoverable).toBe(false);
+    // Explained on the transcript, but with no button: the disk is the fix.
+    const notice = worktreePrepNotice(`${WORKTREE_PREP_PREFIX}: ${raw}`);
+    expect(notice).toBe(d.hint);
+    expect(notice).not.toContain(WORKTREE_REPAIR_NOTICE);
+  });
+
+  it("reads a detached HEAD as unrecoverable — repairing bookkeeping wouldn't touch it", () => {
+    const d = classifyWorktreePrep("fatal: You are in a detached HEAD state");
+    expect(d.kind).toBe("detached_head");
+    expect(d.recoverable).toBe(false);
+  });
+
+  it("leaves anything unrecognised with its own error text and no hint", () => {
+    const d = classifyWorktreePrep("fatal: could not read Username for 'https://example.com': terminal prompts disabled");
+    expect(d.kind).toBe("unknown");
+    expect(d.recoverable).toBe(false);
+    expect(d.hint).toBe("");
+    expect(worktreePrepNotice("fatal: something nobody has seen before")).toBeNull();
+  });
+
+  it("offers the repair only on a PREP failure, not on the agent's own git output", () => {
+    // A turn dies with git output in it all the time — a Bash call inside the
+    // worktree hitting the same lock. That failure has nothing to do with
+    // preparing the checkout, and re-cutting it is the wrong advice.
+    const fromTheAgent = "Another git process seems to be running in this repository";
+    expect(worktreePrepNotice(fromTheAgent)).toBeNull();
+    expect(worktreePrepNotice(`${WORKTREE_PREP_PREFIX}: ${fromTheAgent}`)).toContain(WORKTREE_REPAIR_NOTICE);
+  });
+});
+
+describe("repairWorktree", () => {
+  it("classifies, then recovers, a worktree whose directory is gone but whose registration isn't", async () => {
+    const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
+    const tip = await commitFile(wt.path, "work.txt", "work\n");
+    // The dir deleted out from under git (external cleanup, a full disk being
+    // reclaimed) WITHOUT `git worktree remove`: the registration survives, and
+    // git then refuses both the path and the branch.
+    fs.rmSync(wt.path, { recursive: true, force: true });
+
+    const err = await ensureWorktree(repo, taskId).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(WorktreePrepError);
+    const prep = err as WorktreePrepError;
+    expect(prep.kind).toBe("stale_registration");
+    expect(prep.recoverable).toBe(true);
+    expect(prep.message).toContain(WORKTREE_PREP_PREFIX);
+    // The line the user actually reads carries the button.
+    expect(worktreePrepNotice(prep.message)).toContain(WORKTREE_REPAIR_NOTICE);
+
+    const repaired = await repairWorktree(repo, taskId);
+    expect(repaired.worktree!.path).toBe(wt.path);
+    expect(repaired.worktree!.branch).toBe(wt.branch);
+    // Recovery, not amnesia: the branch and its commits are what came back.
+    expect(await git(wt.path, "rev-parse", "HEAD")).toBe(tip);
+    expect(await git(wt.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(wt.branch);
+  });
+
+  it("clears a leftover lock in the task's own admin dir without waiting", async () => {
+    // Nothing but this task owns that directory, and no turn is running (the
+    // route refuses), so a lock there is stale by definition.
+    const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
+    const lock = path.join(repo, ".git", "worktrees", taskId, "index.lock");
+    fs.writeFileSync(lock, "");
+
+    const repaired = await repairWorktree(repo, taskId);
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(repaired.actions.join(" ")).toContain("index.lock");
+    expect(repaired.worktree!.path).toBe(wt.path);
+  });
+
+  it("classifies a crashed git's index.lock, and clears it only once it's certainly abandoned", async () => {
+    const dir = tmpDir("locked-repo-");
+    await git(dir, "init", "-b", "main");
+    writeFile(dir, "notes.md", "hello\n");
+    const lock = path.join(dir, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+    const taskId = uid();
+
+    const err = await ensureWorktree(dir, taskId).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(WorktreePrepError);
+    expect((err as WorktreePrepError).kind).toBe("stale_lock");
+    expect((err as WorktreePrepError).recoverable).toBe(true);
+
+    // Seconds old: it may belong to a `git add` running in the user's own
+    // checkout this instant, so the repair leaves it — and fails the same way,
+    // which is the honest answer.
+    await expect(repairWorktree(dir, taskId)).rejects.toBeInstanceOf(WorktreePrepError);
+    expect(fs.existsSync(lock)).toBe(true);
+
+    // Older than any index write could be: whatever held it is dead.
+    const abandoned = new Date(Date.now() - 60 * 60_000);
+    fs.utimesSync(lock, abandoned, abandoned);
+    const repaired = await repairWorktree(dir, taskId);
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(repaired.worktree).not.toBeNull();
+    expect(fs.existsSync(path.join(repaired.worktree!.path, "notes.md"))).toBe(true);
   });
 });
 

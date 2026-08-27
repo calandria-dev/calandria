@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import { getProject, createTask, updateTask, addMessage } from "@/lib/store";
 import { validatePrompt } from "@/lib/schedule/commands";
-import { startTurn } from "@/lib/runner";
+import { startTurn, publishTurnError } from "@/lib/runner";
 import { AUTO_START_HOOKS } from "@/lib/autoStart";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -157,6 +157,16 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
     }
     return launched ? { ok: true, task: created } : { ok: false, error: "the turn could not be launched", task: created };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), task };
+    const message = err instanceof Error ? err.message : String(err);
+    // A failure that already minted a task has to say why on THAT TASK, not
+    // only in the DispatchResult. A schedule's failure lands in the run ledger
+    // and a runbook's in an HTTP response, and neither is where anyone looks
+    // the next morning: what they open is a task sitting there with an empty
+    // transcript. publishTurnError is the same classified line every other
+    // launch failure writes, so a worktree that couldn't be prepared arrives
+    // with its "Repair worktree" button attached (issue #44) — and one click
+    // from there is a launch, since the task is unstarted.
+    if (task) publishTurnError(task.id, task.generation, message);
+    return { ok: false, error: message, task };
   }
 }

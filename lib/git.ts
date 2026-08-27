@@ -9,6 +9,7 @@ import {
   GIT_FETCH_COOLDOWN_MS,
 } from "./config";
 import { repoLockKey, withRepoLock } from "./repoLock";
+import { WorktreePrepError } from "./worktreeFailure";
 
 const run = promisify(execFile);
 
@@ -606,6 +607,13 @@ async function forkPointSha(repoPath: string, branch: string, localBase: string)
  * When the base branch has a remote and is simply behind it, the task is cut
  * from the fetched remote tip instead — see `selectStartPoint`. The user's local
  * base branch is never moved as a side effect of launching a task.
+ *
+ * Every failure comes out as a `WorktreePrepError` carrying its classification
+ * (stale lock / stale registration / full disk / detached HEAD, and whether
+ * `repairWorktree` can plausibly fix it), so the four callers that fail closed
+ * on a throw can offer a recovery instead of a dead end — see
+ * lib/worktreeFailure.ts. Returning `null` still means the legitimate
+ * no-isolation-possible fallback, and is not an error.
  */
 export async function ensureWorktree(
   repoPath: string,
@@ -620,7 +628,18 @@ export async function ensureWorktree(
   // Serialize with merges and other worktree creations on the same repo: both
   // touch the shared worktree registry / read HEAD for the base sha, and a merge
   // racing this could hand back a base_sha read off a transient HEAD.
-  return withRepoLock(repoPath, () => ensureWorktreeLocked(repoPath, taskId, baseBranch));
+  return classifyPrep(() => withRepoLock(repoPath, () => ensureWorktreeLocked(repoPath, taskId, baseBranch)));
+}
+
+/** Run a worktree-preparation step, wrapping any throw in a classified
+ *  WorktreePrepError. Idempotent: a failure that is already classified passes
+ *  through, so a repair that re-cuts doesn't double-prefix the message. */
+async function classifyPrep<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw err instanceof WorktreePrepError ? err : new WorktreePrepError(err);
+  }
 }
 
 /**
@@ -710,6 +729,103 @@ async function ensureWorktreeLocked(
     await git(repoPath, ["worktree", "add", wtPath, branch]);
   }
   return { path: wtPath, branch, baseSha };
+}
+
+// ---------- repair ----------
+
+/**
+ * The `.git` directory shared by a repo and all its worktrees, absolute. This
+ * is where the per-worktree admin dirs (`worktrees/<task id>/`) and the shared
+ * index live, and it is NOT always `<repoPath>/.git` — a project can itself be
+ * a linked worktree, where `.git` is a file. Empty string if git won't say.
+ */
+async function gitCommonDir(repoPath: string): Promise<string> {
+  const out = await git(repoPath, ["rev-parse", "--git-common-dir"]).catch(() => "");
+  if (!out) return "";
+  return path.isAbsolute(out) ? out : path.resolve(repoPath, out);
+}
+
+// How old the SHARED index lock must be before a repair will delete it. The
+// task's own admin dir has one owner and no turn is running (the route
+// refuses), so a lock there is stale by definition — but `<common>/index.lock`
+// belongs to the user's real checkout, where a `git add` in their own terminal
+// may legitimately be holding it this second. Anything older than this was left
+// by something that died: git holds the index lock for the length of one index
+// write, never minutes.
+const SHARED_LOCK_MIN_AGE_MS = 5 * 60_000;
+
+function removeLockFile(file: string, minAgeMs: number): boolean {
+  try {
+    const st = fs.statSync(file);
+    if (minAgeMs > 0 && Date.now() - st.mtimeMs < minAgeMs) return false;
+    fs.rmSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface WorktreeRepair {
+  /** What was actually done, in order — shown to the user, so phrased for them. */
+  actions: string[];
+  /** The repaired (or freshly cut) worktree, or null when isolation isn't possible at all. */
+  worktree: { path: string; branch: string; baseSha: string } | null;
+}
+
+/**
+ * Recover a task whose worktree preparation failed, then cut it again.
+ *
+ * This is the action behind the "Repair worktree" button (issue #44): the
+ * failures `ensureWorktree` classifies as recoverable are exactly the two kinds
+ * of stale git bookkeeping this clears —
+ *
+ *   1. lock files a crashed git left behind, in the task's own admin dir
+ *      (`<common>/worktrees/<task id>/*.lock`) and, only when it's old enough
+ *      to be certainly abandoned, the shared `<common>/index.lock`;
+ *   2. a registration pointing at a directory that no longer exists, which
+ *      makes git refuse to re-use either the path or the branch — `git worktree
+ *      prune` is the documented clear.
+ *
+ * Then it re-cuts through the ordinary path, so a repaired task reattaches to
+ * its surviving branch with its commits and its real fork point, exactly as a
+ * self-heal after a pruned worktree does. Nothing here deletes a branch, a
+ * commit or a worktree that is actually present.
+ *
+ * Runs under the same per-repo lock `ensureWorktree` takes (calling the locked
+ * body directly rather than nesting locks), so a merge or another task's launch
+ * can't interleave with the prune. Throws a classified `WorktreePrepError` if
+ * the re-cut still fails — the failure is then genuinely not one of these two.
+ */
+export async function repairWorktree(
+  repoPath: string,
+  taskId: string,
+  baseBranch?: string
+): Promise<WorktreeRepair> {
+  const actions: string[] = [];
+  const worktree = await classifyPrep(() =>
+    withRepoLock(repoPath, async () => {
+      const common = await gitCommonDir(repoPath);
+      if (common) {
+        const adminDir = path.join(common, "worktrees", taskId);
+        for (const name of ["index.lock", "HEAD.lock", "gitdir.lock", "config.lock"]) {
+          if (removeLockFile(path.join(adminDir, name), 0)) actions.push(`Cleared a leftover ${name} for this task`);
+        }
+        if (removeLockFile(path.join(common, "index.lock"), SHARED_LOCK_MIN_AGE_MS))
+          actions.push("Cleared an abandoned index.lock in the project repository");
+      }
+      try {
+        await git(repoPath, ["worktree", "prune"]);
+        actions.push("Pruned stale worktree registrations");
+      } catch {
+        // Not fatal on its own: the re-cut below is the real test, and its
+        // failure is what gets reported (classified) to the user.
+      }
+      const wt = await ensureWorktreeLocked(repoPath, taskId, baseBranch);
+      actions.push(wt ? "Cut the task's worktree again" : "This project can't be isolated — the turn will run in its working directory");
+      return wt;
+    })
+  );
+  return { actions, worktree };
 }
 
 /**

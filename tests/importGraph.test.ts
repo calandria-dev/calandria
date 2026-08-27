@@ -37,6 +37,7 @@ const PINNED = [
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice — the client imports it to render the button
   "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK

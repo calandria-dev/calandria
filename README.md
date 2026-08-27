@@ -62,6 +62,15 @@ straight in and starts the next turn.
 
 - **Parallel, isolated tasks:** work across multiple repositories without
   agents mixing files or branches.
+- **Repair a worktree in one click:** a turn never runs in your real checkout,
+  so a task whose worktree can't be prepared stops instead. When the cause is
+  stale git bookkeeping — a lock file left by a crashed git, a worktree still
+  registered at a directory that's gone — the failure says so and offers
+  **Repair worktree**: it clears the lock, prunes the registration, cuts the
+  checkout again and re-sends the message that never made it. Causes nothing
+  can clear for you (a full disk, a detached HEAD) are named just as plainly,
+  without a button — including on an unattended scheduled run, which would
+  otherwise fail the same way every morning with nothing to go on.
 - **Web-based and self-hostable:** run Calandria on your own machine or
   server, then securely access the same workspace from desktop or mobile.
 - **One "Needs you" inbox:** jump directly to any session waiting for an
