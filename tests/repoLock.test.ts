@@ -29,12 +29,18 @@ function deferred<T = void>() {
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
 /**
- * `<kind>:` followed by an ABSOLUTE path — `/...` on POSIX, `C:\...` on Windows.
- * What the assertion is really about is that the key is namespaced and can't be
- * a relative answer two callers would spell differently; the leading slash was
- * only ever how that looked on POSIX.
+ * `<kind>:` followed by an ABSOLUTE path — `/...` on POSIX, `C:\...` or `C:/...`
+ * on Windows. What the assertion is really about is that the key is namespaced
+ * and can't be a relative answer two callers would spell differently; the
+ * leading slash was only ever how that looked on POSIX.
+ *
+ * BOTH Windows separators, because the two kinds of key are built differently
+ * and legitimately disagree: a `git:` key is git's own `--git-common-dir`
+ * output, which is forward-slashed even on Windows, while a `path:` key comes
+ * from `canonicalPath` (lib/paths.ts), which normalizes to backslashes. Each is
+ * internally consistent, which is all the lock needs.
  */
-const KEYED_ABSOLUTE = (kind: string) => new RegExp(`^${kind}:(/|[A-Za-z]:\\\\)`);
+const KEYED_ABSOLUTE = (kind: string) => new RegExp(`^${kind}:(/|[A-Za-z]:[\\\\/])`);
 
 /** `repo` reachable through a symlinked directory, the way /tmp -> /private/tmp is. */
 function symlinkTo(repo: string): string {

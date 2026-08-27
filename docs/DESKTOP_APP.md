@@ -25,10 +25,11 @@ all of them were measured rather than reasoned about (§2).
    `lib/` learned about Electron. If that stops being true, the wrapper is
    growing into a fork of the app and should be re-argued.
 
-A companion assessment for the other half of "cross platform" — whether the
-server itself runs on Windows — is [`WINDOWS.md`](WINDOWS.md). The two are
-independent: the shell in `desktop/` runs on Windows today, but it would be
-starting a server with the gaps that document lists.
+The other half of "cross platform" — whether the server itself runs on Windows —
+is [`WINDOWS.md`](WINDOWS.md), and it now does, natively. The two remain
+independent: the shell in `desktop/` runs on Windows today, and the server it
+would start no longer has platform gaps under it, only the shutdown-path
+difference noted below.
 
 ---
 
@@ -122,18 +123,18 @@ notarization are required for anything distributed (Gatekeeper blocks unsigned
 apps by default). `hiddenInset` overlaps the app's own titlebar row; needs a look
 on a real screen.
 
-**Windows** — the shell runs, but the *server* has the gaps in
-[`WINDOWS.md`](WINDOWS.md): `pty-server.js` falls back to `/bin/zsh` when `SHELL`
-is unset (the supervisor sets `COMSPEC`/PowerShell as a shell-side mitigation, so
-no app change is needed for that one), managed services rely on POSIX
-process-group kills, and `lib/git.ts` compares realpaths case-sensitively. Also:
-`.kill()` on Windows is `TerminateProcess`, so the drain-on-quit path silently
-degrades to a hard stop — an in-flight turn would be interrupted rather than
-settled. Fixing that properly means a graceful-shutdown channel that is not a
-signal (e.g. the shell POSTing `/api/instance/drain` itself before killing).
-(`npm start` used to carry a POSIX-only inline `NODE_ENV=production` prefix; it
-now goes through `cross-env`, and the supervisor spawns `node` directly with an
-env regardless.)
+**Windows** — the server's own gaps are closed ([`WINDOWS.md`](WINDOWS.md)):
+the pty sidecar probes a real Windows shell, managed services are killed as a
+`taskkill /T` tree, and path identity is case-folded. One gap is the
+supervisor's, not the app's: `.kill()` on Windows is `TerminateProcess`, so a
+quit from the shell degrades to a hard stop and an in-flight turn is interrupted
+rather than settled. `npm start` solves the same problem for the console with
+`scripts/start.mjs`, which relies on the console broadcasting Ctrl+C — a path a
+GUI supervisor doesn't have. It needs a graceful-shutdown channel that is not a
+signal: POST `/api/instance/drain` and wait for it before killing. (`npm start`
+used to carry a POSIX-only inline `NODE_ENV=production` prefix; it now goes
+through `cross-env`, and the supervisor spawns `node` directly with an env
+regardless.)
 
 **Linux** — works as-is under X11/Wayland. `chrome-sandbox` must be
 root-owned/4755 when running from a plain directory (packaged builds handle it);

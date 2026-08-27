@@ -3,7 +3,7 @@
 ## Requirements
 
 - Node.js 20.9 or newer
-- macOS, Linux, or Windows via [WSL2](#windows-wsl2) (native Windows is not supported yet)
+- macOS, Linux, or [Windows](#windows) — natively, or under WSL2
 - Claude Code, OpenAI Codex, or both
 
 Install the CLI for the agent you plan to use:
@@ -35,11 +35,74 @@ internet-facing; see [Self-hosting](SELF_HOSTING.md).
 Every setting is an environment variable with a documented default in
 [`.env.example`](../.env.example).
 
-## Windows (WSL2)
+## Windows
 
-WSL2 is the supported way to run Calandria on a Windows machine. It runs the ordinary
-Linux build with no Windows-specific configuration. Native Windows is not supported yet;
-[`WINDOWS.md`](WINDOWS.md) records what that would take.
+Both ways are supported. **Native** is the ordinary install above with three prerequisites
+and a few Windows-specific defaults worth knowing; **WSL2** is the Linux build unchanged,
+and is the better answer if your repos, toolchains or agent logins already live there.
+`npm run typecheck` and `npm test` run on `windows-latest` in CI, so the native path is a
+tested claim rather than a hope. [`WINDOWS.md`](WINDOWS.md) records what native support
+consists of and the one thing still unverified on real hardware.
+
+### Native Windows
+
+Prerequisites:
+
+- **Windows 10 1809+ or Windows Server 2019+.** The terminal drawer is node-pty over
+  ConPTY, which arrived in 1809; older builds fall back to winpty and are untested.
+- **Git for Windows, on `PATH`.** Calandria shells out to `git` for every worktree, diff
+  and merge. Claude Code needs it too — `claude.exe` runs its Bash tool through Git Bash
+  even when you launch it from PowerShell.
+- **Node.js 20.9 or newer.**
+
+Set git's long-path support once for the machine before you start:
+
+```powershell
+git config --global core.longpaths true
+```
+
+Calandria passes `-c core.longpaths=true` on its own git calls, but a task's checkout lives
+under `%USERPROFILE%\.calandria\worktrees\<task id>\`, and the agent's own `git` and `npm`
+read the ordinary config. Without this, a deep repository fails part-way through checkout
+with "Filename too long". See
+[Native Windows](TROUBLESHOOTING.md#native-windows) for that and for worktree removals that
+fail while a terminal or editor holds the folder open.
+
+Then, from PowerShell in the cloned repo:
+
+```powershell
+npm install
+npm run build
+npm start
+```
+
+**Install the agent CLI natively too.** Claude Code must be the self-contained `claude.exe`
+from its native installer, which lands in `%USERPROFILE%\.local\bin` — Calandria looks
+there first, then on `PATH`. npm's `claude.cmd` shim will **not** work: the path goes
+straight to the Agent SDK and to node-pty for `claude auth login`, and neither can run a
+batch shim. Set `CLAUDE_CLI_PATH` to pin a different location. Codex has no such
+restriction; `npm install -g @openai/codex` and its `.cmd` shim are fine.
+
+**The terminal picks a shell for you.** With `CALANDRIA_PTY_SHELL` unset, terminal tabs get
+`pwsh.exe` or `powershell.exe` if either is on `PATH`, otherwise `%COMSPEC%` (`cmd.exe`).
+Set the variable to choose something else — Git Bash, for instance:
+
+```
+CALANDRIA_PTY_SHELL=C:\Program Files\Git\bin\bash.exe
+```
+
+**Managed-service commands are `cmd.exe` command lines**, not `sh` ones: a `dev_command`
+written as `FOO=bar npm run dev` does not parse. See
+[Windows command syntax](SERVICES.md#windows-command-syntax).
+
+**Stop the server with Ctrl+C in the terminal running `npm start`.** That is the only stop
+path that reaches the drain and settles in-flight turns; `taskkill /F`, Task Manager and
+closing the console window are hard kills. Nothing is lost — the next boot clears what a
+hard stop left behind — but the interrupted turns look like they simply stopped.
+
+### WSL2
+
+WSL2 runs the ordinary Linux build with no Windows-specific configuration.
 
 Install a distribution, then do everything else **inside** it:
 
@@ -68,7 +131,7 @@ npm start
 WSL2 forwards `localhost:3000` to Windows, so <http://localhost:3000> opens in your
 Windows browser with nothing further to configure.
 
-Three caveats:
+Three caveats, all of them about the boundary between the two systems:
 
 **Keep everything on the ext4 root.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and your
 project repos must live under the Linux home (`/home/you/...`), never on `/mnt/c` or

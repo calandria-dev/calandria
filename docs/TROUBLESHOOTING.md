@@ -8,7 +8,8 @@ is setup and architecture; this file is what to do when something's already wron
 | App won't start, `[config]`/`[server]`/`[db-lock]` warnings, or a boot refusal | [Common boot failures](#common-boot-failures) |
 | `SQLITE_CORRUPT`, `database disk image is malformed`, garbled tasks after a crash | [Database corruption](#database-corruption) |
 | Disk filling up, container out of space | [Disk usage and sizing](#disk-usage-and-sizing) |
-| Running on Windows: locking errors, "not logged in" agents, slow git, service hostnames | [WSL2 on Windows](#wsl2-on-windows) |
+| Running natively on Windows: "Filename too long", a worktree that won't delete, a hard stop | [Native Windows](#native-windows) |
+| Running under WSL2: locking errors, "not logged in" agents, slow git, service hostnames | [WSL2 on Windows](#wsl2-on-windows) |
 | A turn fails with "Failed to authenticate" / the titlebar shows a broken-connection banner | [Headless re-authentication](#headless-re-authentication) |
 | Upgrading, or need to roll back a version | [Upgrade rollback](#upgrade-rollback) |
 
@@ -45,9 +46,10 @@ giving you.
 
 ## WSL2 on Windows
 
-WSL2 is the supported way to run Calandria on Windows ([setup](INSTALLATION.md#windows-wsl2));
-native Windows is not supported yet. Inside WSL2 it is the ordinary Linux build, so everything
-else in this file applies unchanged. Three failures are specific to the WSL2 boundary.
+WSL2 is one of the two supported ways to run Calandria on Windows ([setup](INSTALLATION.md#wsl2));
+[Native Windows](#native-windows) below is the other. Inside WSL2 it is the ordinary Linux build,
+so everything else in this file applies unchanged — and none of the native section applies. Three
+failures are specific to the WSL2 boundary.
 
 **Anything under `/mnt/c` or `\\wsl$`.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and project repos
 must live on the WSL2 ext4 root. Those cross-boundary filesystems (drvfs/9p) do not implement
@@ -72,11 +74,11 @@ else. Either use the port directly, or add each hostname to
 `C:\Windows\System32\drivers\etc\hosts` pointing at `127.0.0.1`. There is no wildcard-hosts-file
 equivalent — a real wildcard DNS record is the only way to avoid one entry per service.
 
-## Native Windows filesystem limits
+## Native Windows
 
-Native Windows is still in progress ([assessment](WINDOWS.md)) — WSL2 above is the supported
-path. Two NTFS behaviours bite hard enough there to be worth stating, because both look like
-Calandria breaking rather than like the filesystem doing what it always does.
+Native Windows is supported ([setup](INSTALLATION.md#native-windows),
+[platform notes](WINDOWS.md)). Three of its behaviours look like Calandria breaking when they
+are Windows doing what it always does — two from NTFS, one from how a process is stopped.
 
 **`MAX_PATH` — "Filename too long" on a task launch or an agent's `npm install`.** Git for
 Windows refuses paths over 260 characters unless `core.longpaths` is on, and a task's checkout
@@ -102,6 +104,18 @@ fresh checkout do the same. Teardown retries on Windows, which clears an antivir
 own, but a shell sitting in the directory needs you: close the Task terminal (or `cd` it out of
 the worktree), close the editor window, and retry. Nothing was lost — the task row and its
 branch are intact, and the operation is refused rather than half-applied.
+
+**Turns look like they simply stopped after you shut the server down.** Only Ctrl+C in the
+terminal running `npm start` reaches the shutdown drain, which aborts each in-flight turn and
+writes its interrupted state to the transcript. `taskkill /F`, Task Manager's End task, and
+closing the console window are all `TerminateProcess` — they run no handler at all, so the drain
+never starts. `taskkill` without `/F` is no better: it asks a GUI message loop to close, and Node
+has none. Running Calandria under a service wrapper (NSSM, WinSW, `sc`) is only as graceful as
+the wrapper's configured shutdown method, which is why it is not supported without pinning that
+method yourself. None of this is data loss — the next boot clears the running flags, pending
+messages, unanswered permission cards and orphaned schedule runs a hard stop left behind — but
+the interrupted turns carry no notice explaining themselves. If you need to stop the server from
+outside its console, stop the tasks first.
 
 ## Database corruption
 

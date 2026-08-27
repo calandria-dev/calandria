@@ -10,9 +10,21 @@ import { NULL_DEVICE } from "./platform";
 // only a fork or one machine needs goes in the optional tests/setup.local.ts
 // layer instead (see vitest.config.ts).
 
-// realpathSync: os.tmpdir() is a symlink on macOS (/var -> /private/var) and git
-// reports realpaths, so resolve it up front to keep path comparisons exact.
-const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "calandria-git-test-"));
+// Resolve os.tmpdir() up front so path comparisons are exact: it is a symlink
+// on macOS (/var -> /private/var) and git reports realpaths, and on Windows it
+// is routinely the 8.3 SHORT form — a GitHub runner's is
+// `C:\Users\RUNNER~1\AppData\Local\Temp`. `realpathSync` does not expand a short
+// name (it resolves links and stops); `realpathSync.native` goes through
+// GetFinalPathNameByHandle and gives back `C:\Users\runneradmin\...`. Without it
+// the suite compares its own short spelling against the long one everything
+// else reports, and `git worktree add` registers a path that the next call's
+// identity check reads as a different, "missing but already registered" one.
+// libuv strips the `\\?\` prefix GetFinalPathNameByHandle returns; the guard
+// below is belt and braces, since a leaked prefix would poison every path in
+// the suite. `.native` is what POSIX gets too — same answer there, one code
+// path — and it needs an existing directory, which os.tmpdir() is.
+const tmpBase = fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, "");
+const root = fs.mkdtempSync(path.join(tmpBase, "calandria-git-test-"));
 process.env.CALANDRIA_TEST_TMP = root;
 process.env.CALANDRIA_WORKTREES_DIR = path.join(root, "worktrees");
 // Point the SQLite store at a throwaway dir so store-backed tests get a fresh,
@@ -101,6 +113,15 @@ fs.writeFileSync(
     // repository's own tree starts.
     "\tautocrlf = false",
     "\tlongpaths = true",
+    // `autocrlf` alone doesn't settle it: a fixture that ships its own
+    // `.gitattributes` with `* text=auto` (tests/merge.test.ts does, as the
+    // tool-dropping case) marks its files as text, and git then checks them out
+    // with `core.eol`, which defaults to NATIVE — CRLF on Windows. The file
+    // came back from a stash as `* text=auto\r\n` and failed a byte assertion.
+    // Pinning `lf` makes the working tree the same bytes on every platform,
+    // which is the only thing this block is for; with no text attributes in
+    // play (every other fixture) it changes nothing at all.
+    "\teol = lf",
     // The null device rather than a directory under `root`: a Windows path in
     // a git CONFIG FILE would carry backslashes, and `\U` in `C:\Users\...` is
     // an invalid escape git rejects the whole file for. `NUL`/`/dev/null` has
@@ -133,5 +154,25 @@ for (const v of [
 }
 
 afterAll(() => {
-  fs.rmSync(root, { recursive: true, force: true });
+  // Close the suite's SQLite connection BEFORE deleting the tree it lives in.
+  // POSIX lets an open file be unlinked and simply disappear; Windows refuses
+  // with EBUSY while any handle is open, and `global.__calandriaDb` (lib/db.ts)
+  // is held for the process's lifetime — so on Windows this teardown failed in
+  // every one of the 79 test files that had touched the store, turning a green
+  // suite into a wall of red that named the teardown rather than the test.
+  // Same shape as the app's own worktree teardown (lib/paths.ts): close what we
+  // hold, then retry for the handles we don't (a Defender scan of a fresh
+  // checkout, an indexer). A residual failure is not worth failing a passing
+  // suite over — the directory is under %TEMP% — so it is reported, not thrown.
+  try {
+    global.__calandriaDb?.close();
+  } catch {
+    /* already closed, or never opened */
+  }
+  global.__calandriaDb = undefined;
+  try {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    console.warn(`[tests] could not remove ${root}:`, err);
+  }
 });
