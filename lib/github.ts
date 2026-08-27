@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
+import { gitErrorDetail } from "./git";
 
 const run = promisify(execFile);
 
@@ -383,6 +384,7 @@ export interface CreatePrResult {
   url?: string;
   existing?: boolean; // an open PR for this branch already existed — the push updated it
   error?: string;
+  detail?: string; // hook/rejection output beyond the one-line push error, if any
 }
 
 /**
@@ -437,7 +439,8 @@ export async function createTaskPr(input: {
   try {
     await run("git", ["-C", worktreePath, "push", "-u", "origin", workBranch], opts);
   } catch (e) {
-    return { ok: false, error: `push failed: ${cliErrorMessage(e, "git push errored")}` };
+    const detail = gitErrorDetail(e);
+    return { ok: false, error: `push failed: ${cliErrorMessage(e, "git push errored")}`, ...(detail ? { detail } : {}) };
   }
 
   // Already an open PR for this branch? The push above just updated it.

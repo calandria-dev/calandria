@@ -18,6 +18,11 @@ process.env.CALANDRIA_WORKTREES_DIR = path.join(root, "worktrees");
 // isolated calandria.db instead of the user's real one. Read at import time
 // by lib/config.ts, so it must be set here (before the module graph loads).
 process.env.CALANDRIA_DB_DIR = path.join(root, "db");
+// And the projects dir: seedIfEmpty() scaffolds the welcome repo under
+// PROJECTS_DIR, so without this every fresh init(db) in the suite wrote
+// ~/projects/welcome on the contributor's machine (issue #34). e2e/env.ts
+// already pins all three.
+process.env.CALANDRIA_PROJECTS_DIR = path.join(root, "projects");
 
 // Hermetic agent credentials: a developer's real API key exported in their
 // shell would otherwise leak into the suite — hasApiKey()/hasOpenAiKey() are

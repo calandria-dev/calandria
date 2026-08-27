@@ -285,7 +285,7 @@ trimmed PATH). Phases 2–3 wait for a real Windows user.
 Filed in the Suggested tray, in dependency order:
 
 1. Docs: WSL2 as the supported Windows path (README, INSTALLATION, TROUBLESHOOTING; the `/mnt/c` locking and login caveats). No blockers. **Do first.**
-2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`).
+2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`). — **Done** (`1314a34`).
 3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
 4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check).
 5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).

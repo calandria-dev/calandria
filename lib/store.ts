@@ -504,13 +504,28 @@ export function markAgentEditReverted(id: string): void {
 }
 
 /** Any edit on this task still applied (not reverted) — what Revert re-checks before clearing the chip. */
-export function hasUnrevertedAgentEdits(taskId: string): boolean {
-  return !!getDb().prepare("SELECT 1 FROM task_agent_edits WHERE task_id = ? AND reverted_at = 0 LIMIT 1").get(taskId);
+/** True while some edit is neither reverted nor acknowledged — what keeps the chip up. */
+export function hasOutstandingAgentEdits(taskId: string): boolean {
+  return !!getDb().prepare("SELECT 1 FROM task_agent_edits WHERE task_id = ? AND reverted_at = 0 AND acknowledged_at = 0 LIMIT 1").get(taskId);
 }
 
 /** Clear the chip without touching history — Ack, or the last outstanding edit reverted. */
 export function clearAgentEditFlag(taskId: string): void {
   getDb().prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
+}
+
+/**
+ * "Keep changes": stamp every outstanding edit acknowledged and drop the chip,
+ * in one transaction. Stamping the ROWS is what lets a later Revert decide
+ * whether anything is still outstanding — clearing only the task flag left
+ * acked rows counting as outstanding forever.
+ */
+export function acknowledgeAgentEdits(taskId: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("UPDATE task_agent_edits SET acknowledged_at = ? WHERE task_id = ? AND reverted_at = 0 AND acknowledged_at = 0").run(Date.now(), taskId);
+    db.prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
+  })();
 }
 
 export function getTask(id: string): Task | undefined {

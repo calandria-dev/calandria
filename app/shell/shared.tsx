@@ -106,6 +106,19 @@ export function ErrNote({ children, onRetry, retryLabel = "Retry", style }: {
   );
 }
 
+// Collapsed raw output beneath a one-line error headline — a rejected push's
+// pre-push/pre-receive hook output, which a single-line error would otherwise
+// throw away. Closed by default so it reads as detail, not noise.
+export function ErrDetail({ detail }: { detail?: string }) {
+  if (!detail) return null;
+  return (
+    <details className="err-detail">
+      <summary>Show git output</summary>
+      <pre>{detail}</pre>
+    </details>
+  );
+}
+
 // A dropdown menu anchored to its trigger. It renders into document.body via a
 // portal and positions itself `fixed` from the trigger's measured rect, so it is
 // never clipped or pushed off-screen by an ancestor's `overflow` — which is

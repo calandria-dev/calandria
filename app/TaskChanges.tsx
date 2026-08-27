@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Skel, ErrNote } from "./shell/shared";
+import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
 import type { TaskComment } from "@/lib/types";
@@ -472,6 +472,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
   const [st, setSt] = useState<{ ahead: number; label: string } | null>(null);
   const [state, setState] = useState<"" | "busy" | "done">("");
   const [err, setErr] = useState("");
+  const [detail, setDetail] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let live = true;
@@ -491,6 +492,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
   const push = async () => {
     setState("busy");
     setErr("");
+    setDetail(undefined);
     try {
       const r = await fetch(`/api/projects/${projectId}/base-branch`, {
         method: "POST",
@@ -500,7 +502,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
       const j = await r.json();
       // A rejected push leaves the merge intact — it landed locally either way.
       if (j?.ok) setState("done");
-      else { setErr(j?.error || "push failed"); setState(""); }
+      else { setErr(j?.error || "push failed"); setDetail(j?.detail); setState(""); }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setState("");
@@ -512,7 +514,12 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
       <button className="tc-btn" onClick={push} disabled={state === "busy"} title={`Push the base branch to ${st.label}`}>
         {state === "busy" ? "Pushing…" : `Push to ${st.label}`}
       </button>
-      {err && <span className="tc-push-err">⚠ {err}</span>}
+      {err && (
+        <div className="tc-push-err">
+          ⚠ {err}
+          <ErrDetail detail={detail} />
+        </div>
+      )}
     </div>
   );
 }
@@ -556,6 +563,7 @@ export default function TaskChanges({
   const [merging, setMerging] = useState(false);
   const [prBusy, setPrBusy] = useState(false);
   const [prErr, setPrErr] = useState<string | null>(null);
+  const [prDetail, setPrDetail] = useState<string | undefined>(undefined);
   const [resolving, setResolving] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [dirtyHelp, setDirtyHelp] = useState(false);
@@ -751,11 +759,15 @@ export default function TaskChanges({
   const doCreatePr = async () => {
     setPrBusy(true);
     setPrErr(null);
+    setPrDetail(undefined);
     try {
       const r = await fetch(`/api/tasks/${taskId}/pr`, { method: "POST" });
-      const res: { ok?: boolean; url?: string; error?: string } = await r.json();
+      const res: { ok?: boolean; url?: string; error?: string; detail?: string } = await r.json();
       if (res.ok && res.url) onPrCreated?.(res.url);
-      else setPrErr(res.error || "could not create the PR");
+      else {
+        setPrErr(res.error || "could not create the PR");
+        setPrDetail(res.detail);
+      }
     } catch (e) {
       setPrErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -938,7 +950,12 @@ export default function TaskChanges({
         </div>
       )}
 
-      {prErr && <div className="tc-mergebar bad">⚠ {prErr}</div>}
+      {prErr && (
+        <div className="tc-mergebar bad">
+          ⚠ {prErr}
+          <ErrDetail detail={prDetail} />
+        </div>
+      )}
 
       {mergeRes && (
         <div className={`tc-mergebar ${mergeRes.ok ? "ok" : "bad"}`}>

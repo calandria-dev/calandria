@@ -44,9 +44,10 @@ ordinary nightly builds publish under `edge` instead, so pulling `latest` never 
 untagged, unreleased code. Pin `sha-<short>` (or a specific `X.Y.Z`) when you want a tag
 that can never change under you. See [Pinning a version](#pinning-a-version) below.
 
-The first release, `v0.2.0`, was cut on 2026-08-25, so `latest`,
-`<version>` and `<major>.<minor>` all exist and point at it — as `0.2.0` and
-`0.2`, with no `v`.
+Every release since the first (`v0.2.0`, 2026-08-25) publishes all three:
+`latest`, `<version>` and `<major>.<minor>` — as `0.3.0` and `0.3` for a
+`v0.3.0` tag, with no `v`. The [releases page](https://github.com/calandria-dev/calandria/releases)
+is the list of what `latest` has pointed at.
 
 ### Verify the image's provenance
 
@@ -111,7 +112,7 @@ docker build -t calandria .
 docker compose -p calandria-alice up -d
 
 # B) or run the published image, nothing to build. :latest is the newest
-# release; pin :0.2.0 (no leading v) to hold one; :edge is nightly main.
+# release; pin :0.3.0 (no leading v) to hold one; :edge is nightly main.
 # See "Pinning a version" above.
 export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:latest
 docker compose -p calandria-alice pull

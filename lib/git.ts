@@ -8,7 +8,7 @@ import {
   GIT_FETCH_TIMEOUT_MS,
   GIT_FETCH_COOLDOWN_MS,
 } from "./config";
-import { withRepoLock } from "./repoLock";
+import { repoLockKey, withRepoLock } from "./repoLock";
 
 const run = promisify(execFile);
 
@@ -63,6 +63,31 @@ async function hasCommit(repoPath: string): Promise<boolean> {
 }
 
 export const branchForTask = (taskId: string) => `calandria/${taskId}`;
+/**
+ * The spelling tasks were minted under before the rename. Never minted again,
+ * only ADOPTED: a branch is written into the repo once and lives there
+ * forever, and a v0.2.0 task's commits are on `orch/<id>`, not on a
+ * `calandria/<id>` that doesn't exist yet. See existingTaskBranch().
+ */
+export const legacyBranchForTask = (taskId: string) => `orch/${taskId}`;
+
+/**
+ * The branch a task already has in this repo, under either spelling, or null
+ * when it has none. This is what makes a reattach a reattach: ensureWorktree
+ * is the one place that DERIVES a branch name rather than reading it off the
+ * row, and it runs on every self-heal (a pruned merged worktree, a lost
+ * checkout, a task moved between projects) — deriving only the new spelling
+ * there cut a fresh empty `calandria/<id>` beside the task's real work on
+ * `orch/<id>`, and every caller then committed that to the row: an empty
+ * diff, a merge of nothing, and a branch nothing pointed at any more.
+ */
+async function existingTaskBranch(repoPath: string, taskId: string): Promise<string | null> {
+  const current = branchForTask(taskId);
+  if (await branchExists(repoPath, current)) return current;
+  const legacy = legacyBranchForTask(taskId);
+  if (await branchExists(repoPath, legacy)) return legacy;
+  return null;
+}
 
 // Fallback committer identity, used only when the user has none configured.
 const FALLBACK_IDENTITY = ["-c", "user.name=Calandria", "-c", "user.email=calandria@local"];
@@ -207,17 +232,86 @@ async function gitNet(repoPath: string, args: string[], timeoutMs = GIT_FETCH_TI
   return stdout.trim();
 }
 
+function subprocessStderr(e: unknown): string {
+  return e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+}
+
+// A line naming a rejected ref — client-side (`! [rejected] …`) or server-side,
+// via a pre-receive hook on the remote (`! [remote rejected] …`). Preferred over
+// the generic "failed to push some refs" summary line as the headline, since
+// THIS is the line that says which branch and why.
+const REJECTED_LINE = /!\s*\[(remote )?rejected\]/i;
+const GENERIC_PUSH_FAILURE = /^error:\s*failed to push some refs/i;
+
 // The one line of git's stderr wall that says what actually failed — a rejected
-// push otherwise reaches the user as forty lines of hint text.
-function gitErrorLine(e: unknown, fallback: string): string {
-  const stderr = e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+// push otherwise reaches the user as forty lines of hint text. Exported for
+// tests/gitErrorDetail.test.ts, which pins the headline this reorders.
+export function gitErrorLine(e: unknown, fallback: string): string {
+  const stderr = subprocessStderr(e);
   const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const fatalLine = lines.find((l) => /^(fatal|error)[:\s]/i.test(l));
+  const rejectedLine = lines.find((l) => REJECTED_LINE.test(l));
+
+  // The generic line ("failed to push some refs to '<url>'") is the same for
+  // every push rejection, so it's the WORST headline available whenever
+  // something more specific exists: a named [rejected]/[remote rejected] ref,
+  // or — when a pre-push hook rejected the push without git printing one of
+  // those (hooks aren't required to) — the fact that a hook spoke at all.
+  if (fatalLine && GENERIC_PUSH_FAILURE.test(fatalLine)) {
+    if (rejectedLine) return rejectedLine;
+    if (gitErrorDetail(e)) return "push rejected by a pre-push hook";
+  }
+
   return (
-    lines.find((l) => /^(fatal|error)[:\s]/i.test(l))?.replace(/^(fatal|error):\s*/i, "") ||
+    fatalLine?.replace(/^(fatal|error):\s*/i, "") ||
+    rejectedLine ||
     lines.find((l) => /rejected|denied|could not|not found|protected|non-fast-forward/i.test(l)) ||
     lines[lines.length - 1] ||
     (e instanceof Error ? e.message : fallback)
   );
+}
+
+const DETAIL_MAX_LINES = 40;
+const DETAIL_MAX_CHARS = 4000;
+
+/**
+ * The rest of git's stderr, once `gitErrorLine`'s headline is stripped of its
+ * own noise — chiefly a pre-push (or pre-receive) hook's own output, which
+ * otherwise never reaches the user at all. A DENYLIST of git's own boilerplate,
+ * not an allowlist: a hook's output doesn't match any known shape, so keeping
+ * only "recognized" lines would drop the one thing this exists to surface.
+ */
+export function gitErrorDetail(e: unknown): string {
+  const stderr = subprocessStderr(e);
+  const rawLines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines: string[] = [];
+  for (const line of rawLines) {
+    if (/^hint:/i.test(line)) continue; // git's own "what this usually means" filler
+    if (GENERIC_PUSH_FAILURE.test(line)) continue; // the headline already says this
+    if (/^To\s+\S+/.test(line)) continue; // "To <url>" — restates what we're pushing to
+    if (/^remote:/i.test(line)) {
+      // Server-side (pre-receive) hook output arrives prefixed on every line;
+      // strip the prefix but drop the boilerplate blank "remote:" separator lines.
+      const rest = line.replace(/^remote:\s?/i, "").trim();
+      if (!rest) continue;
+      lines.push(rest);
+      continue;
+    }
+    lines.push(line);
+  }
+
+  let truncated = false;
+  let kept = lines;
+  if (kept.length > DETAIL_MAX_LINES) {
+    kept = kept.slice(0, DETAIL_MAX_LINES);
+    truncated = true;
+  }
+  let text = kept.join("\n").trim();
+  if (text.length > DETAIL_MAX_CHARS) {
+    text = text.slice(0, DETAIL_MAX_CHARS).trim();
+    truncated = true;
+  }
+  return truncated ? `${text}…` : text;
 }
 
 /** What a best-effort fetch managed to do. Never an exception. */
@@ -253,23 +347,29 @@ function fetchState() {
  */
 export async function fetchBase(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
   const st = fetchState();
-  const last = st.last.get(repoPath) ?? 0;
+  // Keyed on the repo's IDENTITY (its common git dir, the same resolution
+  // lib/repoLock.ts uses) rather than the configured path, so a symlinked
+  // spelling, a trailing slash, or two projects pointed at one checkout share a
+  // cooldown instead of each fetching on their own clock — and on the branch,
+  // because a fetch of `main` says nothing about `release` (issue #41).
+  const key = `${await repoLockKey(repoPath)}\0${baseBranch}`;
+  const last = st.last.get(key) ?? 0;
   // Turned off is not the same as failed: the user may still fetch by hand, so
   // the remote-tracking ref can be perfectly current. Report nothing to report.
   if (!GIT_FETCH_ENABLED) return { attempted: false, ok: false, fetchedAt: last };
   if (last && Date.now() - last < GIT_FETCH_COOLDOWN_MS) return { attempted: true, ok: true, fetchedAt: last };
 
-  const inflight = st.inflight.get(repoPath);
+  const inflight = st.inflight.get(key);
   if (inflight) return inflight;
 
-  const p = runFetch(repoPath, baseBranch).finally(() => st.inflight.delete(repoPath));
-  st.inflight.set(repoPath, p);
+  const p = runFetch(key, repoPath, baseBranch).finally(() => st.inflight.delete(key));
+  st.inflight.set(key, p);
   return p;
 }
 
-async function runFetch(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
+async function runFetch(key: string, repoPath: string, baseBranch: string): Promise<FetchOutcome> {
   const st = fetchState();
-  const prior = () => st.last.get(repoPath) ?? 0;
+  const prior = () => st.last.get(key) ?? 0;
   let up: BaseRemote | null = null;
   try {
     up = await baseRemote(repoPath, baseBranch);
@@ -290,7 +390,7 @@ async function runFetch(repoPath: string, baseBranch: string): Promise<FetchOutc
       `+refs/heads/${up.remoteBranch}:${up.trackingRef}`,
     ]);
     const at = Date.now();
-    st.last.set(repoPath, at);
+    st.last.set(key, at);
     return { attempted: true, ok: true, fetchedAt: at };
   } catch (e) {
     return { attempted: true, ok: false, fetchedAt: prior(), error: gitErrorLine(e, "git fetch failed") };
@@ -439,6 +539,7 @@ export interface PushResult {
   ok: boolean;
   label?: string; // "origin/main"
   error?: string;
+  detail?: string; // hook/rejection output beyond the one-line headline, if any
 }
 
 // A push moves more data than a fetch of one branch, so it gets the same
@@ -460,7 +561,8 @@ export async function pushBaseBranch(repoPath: string, baseBranch: string): Prom
     await gitNet(repoPath, ["push", up.remote, `refs/heads/${baseBranch}:refs/heads/${up.remoteBranch}`], PUSH_TIMEOUT_MS);
     return { ok: true, label: up.label };
   } catch (e) {
-    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed") };
+    const detail = gitErrorDetail(e);
+    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed"), ...(detail ? { detail } : {}) };
   }
 }
 
@@ -565,16 +667,18 @@ async function ensureWorktreeLocked(
   if (!(await isGitRepo(repoPath)) || !(await hasCommit(repoPath))) return null;
 
   const wtPath = path.join(WORKTREES_DIR, taskId);
-  const branch = branchForTask(taskId);
+  // A branch already under this task's name — either spelling — means the task
+  // ran before, so this is a reattach, not a fresh start: its base is where it
+  // forked, not the tip as of now, and the branch it gets is the one its
+  // commits are on.
+  const existing = await existingTaskBranch(repoPath, taskId);
+  const branch = existing ?? branchForTask(taskId);
   // The configured base branch if it exists, else current HEAD. The fallback
   // must stay — a freshly-initialized repo may have an unborn or differently-named
   // default branch, and a misconfigured project shouldn't block task isolation.
   const localBase = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
 
-  // A branch already under this task's name means the task ran before, so this
-  // is a reattach, not a fresh start — and its base is where it forked, not the
-  // tip as of now.
-  const reattaching = await branchExists(repoPath, branch);
+  const reattaching = existing !== null;
   const baseSha = reattaching
     ? await forkPointSha(repoPath, branch, localBase)
     : await selectStartPoint(repoPath, localBase);

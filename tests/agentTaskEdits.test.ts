@@ -179,6 +179,60 @@ describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
     expect(edits2[0].reverted_at).toBe(0);
   });
 
+  it("refuses (409) to revert a field the user has changed since, and leaves the row alone", async () => {
+    const project = createProject({ name: "Edits-Stale" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const target = accepted(project.id, "A");
+    updateTaskForAgent(caller, target.id, { title: "B", priority: "hi" });
+    const edit = listAgentEdits(target.id)[0];
+    // The user renames it themselves without acking the chip…
+    updateTask(target.id, { title: "C" });
+    const res = await postEdits(target.id, { action: "revert", edit_id: edit.id });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('title is now "C"');
+    // …and nothing moved: not the title, not the priority the same edit carried.
+    expect(getTask(target.id)).toMatchObject({ title: "C", priority: "hi" });
+    expect(listAgentEdits(target.id)[0].reverted_at).toBe(0);
+  });
+
+  it("stacked edits on one field revert newest-first to the original, and refuse oldest-first", async () => {
+    const project = createProject({ name: "Edits-Stack" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const target = accepted(project.id, "A");
+    updateTaskForAgent(caller, target.id, { title: "B" });
+    updateTaskForAgent(caller, target.id, { title: "C" });
+    const [newer, older] = listAgentEdits(target.id);
+    expect(older.changes[0].after).toBe("B");
+    // Oldest first: B is no longer what the row holds, so this would land on
+    // A with C's edit still marked applied.
+    expect((await postEdits(target.id, { action: "revert", edit_id: older.id })).status).toBe(409);
+    expect(getTask(target.id)!.title).toBe("C");
+    // Newest first walks the stack back.
+    expect((await postEdits(target.id, { action: "revert", edit_id: newer.id })).status).toBe(200);
+    expect(getTask(target.id)!.title).toBe("B");
+    expect((await postEdits(target.id, { action: "revert", edit_id: older.id })).status).toBe(200);
+    expect(getTask(target.id)!.title).toBe("A");
+    expect(getTask(target.id)!.agent_edited_at).toBe(0);
+  });
+
+  it("an acked edit no longer counts as outstanding, so reverting a later edit clears the chip", async () => {
+    const project = createProject({ name: "Edits-AckThenRevert" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const target = accepted(project.id, "A");
+    updateTaskForAgent(caller, target.id, { title: "B" });
+    expect((await postEdits(target.id, { action: "ack" })).status).toBe(200);
+    expect(listAgentEdits(target.id)[0].acknowledged_at).toBeGreaterThan(0);
+    expect(getTask(target.id)!.agent_edited_at).toBe(0);
+    // A fresh edit re-raises the chip…
+    updateTaskForAgent(caller, target.id, { priority: "hi" });
+    expect(getTask(target.id)!.agent_edited_at).toBeGreaterThan(0);
+    const latest = listAgentEdits(target.id)[0];
+    // …and reverting it alone clears the chip: the acked row is not outstanding.
+    expect((await postEdits(target.id, { action: "revert", edit_id: latest.id })).status).toBe(200);
+    expect(getTask(target.id)!.agent_edited_at).toBe(0);
+    expect(getTask(target.id)).toMatchObject({ title: "B", priority: "med" });
+  });
+
   it("refuses an unknown edit id (404), one from another task (400), and a double revert (400)", async () => {
     const project = createProject({ name: "Edits-Refuse" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });

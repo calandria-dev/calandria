@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   abortWorktreeMerge,
+  ensureWorktree,
   mergeTask,
   removeWorktree,
   worktreePruneSafety,
@@ -64,5 +65,28 @@ describe("legacy orch/ branches keep working after the calandria/ cutover", () =
     // Marker cleared under the legacy name too.
     await expect(git(wtPath, "rev-parse", "--verify", "refs/worktree/orch-merge-abort")).rejects.toThrow();
     expect(branch).toMatch(/^orch\//);
+  });
+
+  // The self-heal path is the one place a branch name is DERIVED rather than
+  // read off the row, and it runs whenever a worktree is gone — a merged
+  // worktree pruned to reclaim disk, a lost checkout. Deriving only the new
+  // spelling there cut a fresh, empty calandria/<id> beside the task's real
+  // work on orch/<id>, and every caller then wrote that branch to the row.
+  it("ensureWorktree reattaches a pruned orch/ task to its own branch, not a fresh calandria/ one", async () => {
+    const { repo, taskId, branch, wtPath } = await legacyWorktree();
+    await commitFile(wtPath, "task.txt", "task work\n", "task edit");
+    const work = (await git(wtPath, "rev-parse", "HEAD")).trim();
+    // The prune: worktree directory gone, branch kept (keepBranch: true).
+    await removeWorktree(repo, wtPath, branch, { keepBranch: true });
+    expect(fs.existsSync(wtPath)).toBe(false);
+
+    const wt = await ensureWorktree(repo, taskId, "main");
+    expect(wt).not.toBeNull();
+    expect(wt!.branch).toBe(branch);
+    expect((await git(wt!.path, "rev-parse", "HEAD")).trim()).toBe(work);
+    // Fork point, not today's tip: the base is where the task branched.
+    expect(wt!.baseSha).toBe((await git(repo, "rev-parse", "main")).trim());
+    // And no shadow branch was minted.
+    await expect(git(repo, "rev-parse", "--verify", `calandria/${taskId}`)).rejects.toThrow();
   });
 });

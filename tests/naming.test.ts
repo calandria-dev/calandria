@@ -104,8 +104,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   "CLAUDE.md": [LEGACY_STORAGE],
 
   // (c) git artifacts minted before the rename. A branch name is written into
-  // the repo once and lives there forever; the merge-abort ref likewise.
-  "lib/git.ts": [/refs\/worktree\/orch-merge-abort/],
+  // the repo once and lives there forever, so ensureWorktree's self-heal has
+  // to ADOPT an `orch/<id>` branch (legacyBranchForTask) rather than cut an
+  // empty `calandria/<id>` beside it; the merge-abort ref likewise.
+  "lib/git.ts": [/refs\/worktree\/orch-merge-abort/, /`orch\/\$\{taskId\}`/, /`orch\/<id>`/],
   "tests/legacyBranchPrefix.test.ts": [/orch\\?\/|orch-merge-abort/],
 
   // (c) localStorage keys minted before the rename, read once on miss so a
@@ -120,7 +122,8 @@ const ALLOWED: Record<string, RegExp[]> = {
 
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
-  "CHANGELOG.md": [/\(orchestrator task [\w-]+\)/, /ORCH_GH_BIN/],
+  // (a) too: the preamble names the upstream project the way NOTICE does.
+  "CHANGELOG.md": [/\(orchestrator task [\w-]+\)/, /ORCH_GH_BIN/, /Operator/, /operator-oss/],
 
   // (e) the ordinary noun.
   "app/api/instance/usage/route.ts": [SYSADMIN],

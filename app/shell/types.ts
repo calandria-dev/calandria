@@ -104,6 +104,7 @@ export interface TaskAgentEdit {
   created_at: number;
   /** 0 = still applied; non-zero = the user already reverted it. */
   reverted_at: number;
+  acknowledged_at: number;
 }
 
 // A single row in the titlebar "need you" dropdown: an awaiting task plus enough

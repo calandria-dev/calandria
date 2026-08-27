@@ -714,6 +714,7 @@ export function updateTaskForAgent(
         after: nextGroupId ? nextGroupName : "(none)",
         // Not the name — a group NAME can't be written back on revert, only the id.
         before_value: cur.group_id ?? null,
+        after_value: nextGroupId ?? null,
       });
     }
   }
@@ -774,6 +775,7 @@ export function updateTaskForAgent(
         before: depsBefore.length ? `${depsBefore.length} task(s)` : "nothing",
         after: wanted.length ? `${wanted.length} task(s)` : "nothing",
         before_value: depsBefore,
+        after_value: wanted,
       });
     }
   }
@@ -841,11 +843,12 @@ export function updateTaskForAgent(
   // rows as well, which is why PATCH /api/tasks/[id] counts deps as an edit too.
   publishGlobal(task.id, { type: "task_edited" });
 
-  // No auto-start sweep for a dependency change, and none is missing: clearing
-  // a task's last blocker could only launch the task ITSELF, and the only rows
-  // this tool writes edges on are inert tray suggestions — listAutoStartCandidates
-  // requires `suggested = 0`, so an unreviewed suggestion is never a candidate.
-  // The sweep below is for the OTHER direction: tasks blocked by this one.
+  // No auto-start sweep for a dependency change: clearing a task's last blocker
+  // could only launch the task ITSELF, and neither this tool nor the edit
+  // dialog's PATCH (app/api/tasks/[id]/route.ts) launches a task on its own
+  // dependency edit — both fire the sweep only on the task's own transition to
+  // terminal. The sweep below is for the OTHER direction: tasks blocked by
+  // this one.
   const done = task.status === "done" && cur.status !== "done";
   return {
     task,

@@ -1,5 +1,6 @@
 // Pure formatting + derivation helpers shared across the shell modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
+import { contextWindowFor } from "@/lib/contextWindow";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";
 
@@ -112,20 +113,12 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
 // Context window: the input-side tokens of the latest turn ≈ how full that
 // window currently is. The size comes from the agent's capability descriptor
 // (capabilities.models[].contextWindow) — Codex windows differ from Claude's, so
-// it can't be a static Claude-only table. `caps.models` is looked up by the
-// task's configured model value; unknown/Default falls back to the widest model
-// the agent offers, then a conservative constant.
-export const DEFAULT_CONTEXT_WINDOW = 200_000;
+// it can't be a static Claude-only table. The miss policy (widest for
+// Default/null, narrowest for an id the catalog doesn't know) is
+// lib/contextWindow.ts, shared with the server's modelContextWindow().
+export { DEFAULT_CONTEXT_WINDOW } from "@/lib/contextWindow";
 export function contextWindowOf(model: string | null | undefined, caps?: AgentCapabilities): number {
-  const models = caps?.models ?? [];
-  if (model) {
-    const hit = models.find((m) => m.value === model);
-    if (hit) return hit.contextWindow;
-  }
-  // Default (null) model → the driver picks its own; approximate with the widest
-  // window it offers so the gauge doesn't over-report fullness.
-  const widest = models.reduce((mx, m) => Math.max(mx, m.contextWindow), 0);
-  return widest || DEFAULT_CONTEXT_WINDOW;
+  return contextWindowFor(caps?.models ?? [], model);
 }
 export function contextPct(tokens: number, model: string | null | undefined, caps?: AgentCapabilities): number {
   return Math.round((tokens / contextWindowOf(model, caps)) * 1000) / 10;

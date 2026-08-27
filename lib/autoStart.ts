@@ -57,6 +57,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
+import { DEPENDENCY_RUN_CONTEXT } from "@/lib/runContext";
 import type { Task } from "@/lib/types";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
@@ -182,7 +183,8 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
       // opens a session — a failed launch leaves the task cleanly retryable.
       updateTask(taskId, { running: 1, awaiting_input: 0 });
       publish(taskId, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-      startTurn(fresh, project, userText, note, controller);
+      // Declared, not inferred: nobody clicked this launch (issue #37).
+      startTurn(fresh, project, userText, note, controller, { ...DEPENDENCY_RUN_CONTEXT });
       launched = true;
     });
     return launched;

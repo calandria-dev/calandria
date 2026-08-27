@@ -107,6 +107,15 @@ export interface AgentEditChange {
    * can't be written back, and "2 tasks" names no ids.
    */
   before_value: string | string[] | null;
+  /**
+   * What the edit LEFT the field holding, in the same shape — what Revert
+   * compares against the live row before writing `before_value` back, so it
+   * can refuse instead of overwriting a change made since (the user's own, or
+   * a later agent edit). Absent on rows recorded before it existed; for those
+   * the scalar fields still compare through `after` (raw there), and group /
+   * blocked_by are reverted unchecked as before.
+   */
+  after_value?: string | string[] | null;
 }
 
 /**
@@ -127,6 +136,13 @@ export interface TaskAgentEdit {
   created_at: number;
   /** ms epoch the user reverted this edit; 0 = still applied. */
   reverted_at: number;
+  /**
+   * ms epoch the user pressed Keep changes while this edit was outstanding;
+   * 0 = never. What lets a LATER revert clear the chip: without it an acked
+   * row read as "still outstanding" forever and the chip a fresh edit re-raised
+   * could only be cleared by a second ack.
+   */
+  acknowledged_at: number;
 }
 
 export interface Message {
