@@ -207,17 +207,86 @@ async function gitNet(repoPath: string, args: string[], timeoutMs = GIT_FETCH_TI
   return stdout.trim();
 }
 
+function subprocessStderr(e: unknown): string {
+  return e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+}
+
+// A line naming a rejected ref — client-side (`! [rejected] …`) or server-side,
+// via a pre-receive hook on the remote (`! [remote rejected] …`). Preferred over
+// the generic "failed to push some refs" summary line as the headline, since
+// THIS is the line that says which branch and why.
+const REJECTED_LINE = /!\s*\[(remote )?rejected\]/i;
+const GENERIC_PUSH_FAILURE = /^error:\s*failed to push some refs/i;
+
 // The one line of git's stderr wall that says what actually failed — a rejected
-// push otherwise reaches the user as forty lines of hint text.
-function gitErrorLine(e: unknown, fallback: string): string {
-  const stderr = e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+// push otherwise reaches the user as forty lines of hint text. Exported for
+// tests/gitErrorDetail.test.ts, which pins the headline this reorders.
+export function gitErrorLine(e: unknown, fallback: string): string {
+  const stderr = subprocessStderr(e);
   const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const fatalLine = lines.find((l) => /^(fatal|error)[:\s]/i.test(l));
+  const rejectedLine = lines.find((l) => REJECTED_LINE.test(l));
+
+  // The generic line ("failed to push some refs to '<url>'") is the same for
+  // every push rejection, so it's the WORST headline available whenever
+  // something more specific exists: a named [rejected]/[remote rejected] ref,
+  // or — when a pre-push hook rejected the push without git printing one of
+  // those (hooks aren't required to) — the fact that a hook spoke at all.
+  if (fatalLine && GENERIC_PUSH_FAILURE.test(fatalLine)) {
+    if (rejectedLine) return rejectedLine;
+    if (gitErrorDetail(e)) return "push rejected by a pre-push hook";
+  }
+
   return (
-    lines.find((l) => /^(fatal|error)[:\s]/i.test(l))?.replace(/^(fatal|error):\s*/i, "") ||
+    fatalLine?.replace(/^(fatal|error):\s*/i, "") ||
+    rejectedLine ||
     lines.find((l) => /rejected|denied|could not|not found|protected|non-fast-forward/i.test(l)) ||
     lines[lines.length - 1] ||
     (e instanceof Error ? e.message : fallback)
   );
+}
+
+const DETAIL_MAX_LINES = 40;
+const DETAIL_MAX_CHARS = 4000;
+
+/**
+ * The rest of git's stderr, once `gitErrorLine`'s headline is stripped of its
+ * own noise — chiefly a pre-push (or pre-receive) hook's own output, which
+ * otherwise never reaches the user at all. A DENYLIST of git's own boilerplate,
+ * not an allowlist: a hook's output doesn't match any known shape, so keeping
+ * only "recognized" lines would drop the one thing this exists to surface.
+ */
+export function gitErrorDetail(e: unknown): string {
+  const stderr = subprocessStderr(e);
+  const rawLines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines: string[] = [];
+  for (const line of rawLines) {
+    if (/^hint:/i.test(line)) continue; // git's own "what this usually means" filler
+    if (GENERIC_PUSH_FAILURE.test(line)) continue; // the headline already says this
+    if (/^To\s+\S+/.test(line)) continue; // "To <url>" — restates what we're pushing to
+    if (/^remote:/i.test(line)) {
+      // Server-side (pre-receive) hook output arrives prefixed on every line;
+      // strip the prefix but drop the boilerplate blank "remote:" separator lines.
+      const rest = line.replace(/^remote:\s?/i, "").trim();
+      if (!rest) continue;
+      lines.push(rest);
+      continue;
+    }
+    lines.push(line);
+  }
+
+  let truncated = false;
+  let kept = lines;
+  if (kept.length > DETAIL_MAX_LINES) {
+    kept = kept.slice(0, DETAIL_MAX_LINES);
+    truncated = true;
+  }
+  let text = kept.join("\n").trim();
+  if (text.length > DETAIL_MAX_CHARS) {
+    text = text.slice(0, DETAIL_MAX_CHARS).trim();
+    truncated = true;
+  }
+  return truncated ? `${text}…` : text;
 }
 
 /** What a best-effort fetch managed to do. Never an exception. */
@@ -445,6 +514,7 @@ export interface PushResult {
   ok: boolean;
   label?: string; // "origin/main"
   error?: string;
+  detail?: string; // hook/rejection output beyond the one-line headline, if any
 }
 
 // A push moves more data than a fetch of one branch, so it gets the same
@@ -466,7 +536,8 @@ export async function pushBaseBranch(repoPath: string, baseBranch: string): Prom
     await gitNet(repoPath, ["push", up.remote, `refs/heads/${baseBranch}:refs/heads/${up.remoteBranch}`], PUSH_TIMEOUT_MS);
     return { ok: true, label: up.label };
   } catch (e) {
-    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed") };
+    const detail = gitErrorDetail(e);
+    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed"), ...(detail ? { detail } : {}) };
   }
 }
 

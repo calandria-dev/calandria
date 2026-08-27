@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../icons";
 import type { BaseBranchResp } from "./types";
-import { jget, jsend } from "./api";
+import { jget } from "./api";
+import { ErrDetail } from "./shared";
 
 /**
  * How the project's local base branch stands against its remote, shown under the
@@ -24,6 +25,7 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   const [st, setSt] = useState<BaseBranchResp | null>(null);
   const [busy, setBusy] = useState<"" | "ff" | "push">("");
   const [err, setErr] = useState("");
+  const [detail, setDetail] = useState<string | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -38,14 +40,25 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   useEffect(() => {
     setSt(null);
     setErr("");
+    setDetail(undefined);
     void load();
   }, [load, refreshKey]);
 
   const act = async (action: "fast-forward" | "push") => {
     setBusy(action === "push" ? "push" : "ff");
     setErr("");
+    setDetail(undefined);
     try {
-      await jsend(`/api/projects/${projectId}/base-branch`, "POST", { action });
+      const r = await fetch(`/api/projects/${projectId}/base-branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) {
+        setErr(j?.error || `${r.status} ${r.statusText}`);
+        setDetail(j?.detail);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -76,32 +89,35 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   const diverged = st.diverged || (behind > 0 && ahead > 0);
 
   return (
-    <div className={`bb-banner${diverged ? " warn" : ""}`}>
-      <span className="bb-msg">
-        {diverged
-          ? `${base} and ${label} have diverged — ${commits(ahead)} here, ${commits(behind)} there`
-          : behind > 0
-            ? `${base} is ${commits(behind)} behind ${label}`
-            : `${base} is ${commits(ahead)} ahead of ${label}`}
-      </span>
-      <span className="bb-spacer" />
-      {err && <span className="bb-err" title={err}>{err}</span>}
-      {!diverged && behind > 0 && (
-        <button className="tc-btn primary" onClick={() => act("fast-forward")} disabled={!!busy}
-          title={`Fast-forward ${base} to ${label}. New tasks already start from ${label}; this catches up your own checkout.`}>
-          {busy === "ff" ? "Catching up…" : "Fast-forward"}
-        </button>
-      )}
-      {!diverged && ahead > 0 && behind === 0 && (
-        <button className="tc-btn" onClick={() => act("push")} disabled={!!busy} title={`Push ${base} to ${label}`}>
-          {busy === "push" ? "Pushing…" : "Push"}
-        </button>
-      )}
-      {diverged && (
-        <span className="bb-hint" title={`Merge or rebase ${base} yourself — the app only ever fast-forwards it.`}>
-          resolve this in your checkout
+    <>
+      <div className={`bb-banner${diverged ? " warn" : ""}`}>
+        <span className="bb-msg">
+          {diverged
+            ? `${base} and ${label} have diverged — ${commits(ahead)} here, ${commits(behind)} there`
+            : behind > 0
+              ? `${base} is ${commits(behind)} behind ${label}`
+              : `${base} is ${commits(ahead)} ahead of ${label}`}
         </span>
-      )}
-    </div>
+        <span className="bb-spacer" />
+        {err && <span className="bb-err" title={err}>{err}</span>}
+        {!diverged && behind > 0 && (
+          <button className="tc-btn primary" onClick={() => act("fast-forward")} disabled={!!busy}
+            title={`Fast-forward ${base} to ${label}. New tasks already start from ${label}; this catches up your own checkout.`}>
+            {busy === "ff" ? "Catching up…" : "Fast-forward"}
+          </button>
+        )}
+        {!diverged && ahead > 0 && behind === 0 && (
+          <button className="tc-btn" onClick={() => act("push")} disabled={!!busy} title={`Push ${base} to ${label}`}>
+            {busy === "push" ? "Pushing…" : "Push"}
+          </button>
+        )}
+        {diverged && (
+          <span className="bb-hint" title={`Merge or rebase ${base} yourself — the app only ever fast-forwards it.`}>
+            resolve this in your checkout
+          </span>
+        )}
+      </div>
+      {err && detail && <ErrDetail detail={detail} />}
+    </>
   );
 }

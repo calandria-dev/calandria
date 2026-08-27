@@ -1345,6 +1345,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .err-note{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;line-height:1.45;color:var(--err);background:var(--red-soft);border:1px solid rgba(192,80,60,.3);}
 .err-note .err-msg{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;}
 .err-note .btn{flex:0 0 auto;}
+/* collapsed raw git/hook output under a one-line push-error headline */
+.err-detail{width:100%;margin-top:2px;font-size:11.5px;}
+.err-detail summary{cursor:pointer;color:var(--ink-3);user-select:none;}
+.err-detail summary:hover{color:var(--ink-2);}
+.err-detail pre{margin:6px 0 0;padding:8px 10px;background:var(--surface-2);border-radius:var(--r);font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-height:220px;overflow:auto;}
 
 /* composer */
 .composer{flex:0 0 auto;padding:14px 18px 16px;border-top:1px solid var(--line);background:var(--surface);}
