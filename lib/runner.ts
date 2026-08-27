@@ -531,8 +531,14 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       if (ev.type === "session") {
         sessionId = ev.sessionId;
         opened = true;
-        // Session is live — now it's officially started / in progress.
-        updateTask(id, { started: 1, status: "in_progress" });
+        // Session is live — now it's officially started / in progress. And
+        // whatever an earlier unattended run left unread is superseded: a turn
+        // is underway again, so the row belongs under "In progress" rather
+        // than in the ran-clean pile. Cleared HERE rather than at each launch
+        // site because every turn passes through this one point, however it
+        // was started (a message, a resume, the deferred-start sweep, the next
+        // firing of the same schedule).
+        updateTask(id, { started: 1, status: "in_progress", unread_run_at: 0 });
         // Persist this generation's agent session id for the project view.
         recordSession({ project_id: project.id, task_id: id, generation: gen, claude_session_id: sessionId });
         publish(id, ev);
@@ -800,7 +806,22 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     if (!generationAdvanced && !superseded) {
       // background_pending settles with running: however the linger ended (all
       // work done, expiry, Stop), the session that owned the work is gone.
-      updateTask(id, { running: 0, background_pending: 0, background_note: "", session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
+      //
+      // A clean scheduled run rests on `unread_run_at` — the mark that says
+      // "this ran, on its own, and nobody has looked at it yet". Quiet like
+      // awaiting_input isn't (it's outside the NEEDS_YOU predicate, so the "N
+      // need you" pill never gains a daily item nobody can answer), but still a
+      // state with a way OUT of it: the board draws these in their own group
+      // and acknowledging one is an ordinary status write. Without it the task
+      // sat at running=0 / awaiting_input=0 / status=in_progress, which is
+      // indistinguishable from live work and which nothing ever moved, so every
+      // firing left one more permanent "In progress" row behind (issue #28).
+      updateTask(id, {
+        running: 0, background_pending: 0, background_note: "", session_id: sessionId,
+        awaiting_input: opened && !scheduledOk ? 1 : 0,
+        // Only a run that actually opened a session produced anything to read.
+        ...(scheduledOk && opened ? { unread_run_at: Date.now() } : {}),
+      });
     }
 
     // Settle the schedule run from HERE, because this is the only place that

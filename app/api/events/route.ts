@@ -150,6 +150,12 @@ export async function GET(req: Request) {
           background_pending: !!t.background_pending,
           background_note: t.background_note ?? "",
           status: t.status,
+          // The resting state of a clean unattended run (lib/runner.ts). Coarse
+          // like the flags above and settled at the same instant, so a board
+          // watching from another tab moves the row into the ran-clean group
+          // on the turn_end it already receives, instead of leaving it under
+          // "In progress" until something refetches the list.
+          unread_run_at: t.unread_run_at ?? 0,
           awaiting_count: countAwaiting(t.project_id),
           // A suggestion can be filed into a project other than the one the
           // turn runs in, and then every field above describes the WRONG

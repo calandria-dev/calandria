@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { Logo } from "../Logo";
-import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
-import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
+import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, RAN_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
 import { TagStrip } from "./TagStrip";
 import { agentLabel } from "./agents";
@@ -39,13 +39,17 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
   );
 }
 
-function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparkline, tagsById, onSelectTag, projectBranch }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string }) {
+function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparkline, tagsById, onSelectTag, projectBranch }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting: the whole point of parking a task that's asking you
   // a question is that it stops reading as "waiting on you" until it's back.
   const awaiting = !snoozed && isAwaiting(task);
   const blocked = !!blockedBy?.length && !task.started;
+  // Ran on its own and nobody has read it yet. Below snoozed and awaiting for
+  // the same reason they're ordered that way — a parked or questioning row is
+  // describing something more urgent than "there is output here".
+  const ranClean = !snoozed && !awaiting && isUnreadRun(task);
   // The model's turn ended but the session is held open for run_in_background
   // work — live, but nothing to watch and nothing needed from the user.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
@@ -53,6 +57,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // waiting on you, so it should read "waiting", not "working".
   const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
+    : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
     : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
     : running ? "live · working"
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
@@ -92,6 +97,19 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
       {!snoozed && wasSnoozed(task) && (
         <div className="snz-chip was" title={`Snoozed until ${new Date(task.snoozed_until).toLocaleString()}`}>
           {Icon.moon()} Was snoozed
+        </div>
+      )}
+      {/* A scheduled run that finished with nothing to answer. The button is
+          the only way out of this state, which is why it's on the card and not
+          just in a menu: acknowledging IS a status write (the server clears the
+          mark with it), so the row lands in Done rather than sliding back into
+          the undifferentiated "In progress" pile. Sending it another message
+          works too — the next turn clears the mark when its session opens. */}
+      {ranClean && (
+        <div className="ran-chip" title={`Ran on its own ${relTime(task.unread_run_at)}, unattended, with nothing to answer — read it, then mark it done`}>
+          {Icon.check()} Ran clean · {relTime(task.unread_run_at)}
+          <span className="spacer" />
+          <button className="ran-ack" title="Mark done — you've read this run" onClick={(e) => { e.stopPropagation(); onAckRun(task.id); }}>Mark done</button>
         </div>
       )}
       {blocked && (task.auto_start ? (
@@ -156,14 +174,14 @@ const canPick = (t: TaskRow) => t.running === 0;
 // Header dot color, keyed the same as the per-card <StatusDot> classes (see
 // shared.tsx) — "c" (needs you) and "z" (snoozed) aren't real Statuses, so
 // they're passed explicitly rather than derived from SCLS.
-type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z";
+type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z" | "u";
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
   const cards = tasks.map((t) => (
     <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
       blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick}
-      onSnooze={onSnooze} onUnsnooze={onUnsnooze} sparkline={sparklines[t.id]}
+      onSnooze={onSnooze} onUnsnooze={onUnsnooze} onAckRun={onAckRun} sparkline={sparklines[t.id]}
       tagsById={tagsById} onSelectTag={onSelectTag} projectBranch={projectBranch} />
   ));
   const dotEl = dot && <span className={`sdot sm ${dot}`} />;
@@ -284,11 +302,14 @@ function useCollapsed(key: string, legacyKey: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onBulkTag, onCollapse, mobile, onBack, baseBranchTick }: {
+export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, onBulkMove, onBulkTag, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; tags: TagRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
+  // Acknowledge a clean unattended run: "I've read it" — a status write that
+  // files the task under Done and clears the mark (useShell.ts).
+  onAckRun: (id: string) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
@@ -332,8 +353,13 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   const snoozedGroup = shown.filter((t) => isSnoozed(t)).sort((a, b) => a.snoozed_until - b.snoozed_until);
   const awake = shown.filter((t) => !isSnoozed(t));
   const needsYou = awake.filter((t) => isAwaiting(t));
+  // Unattended runs that finished clean and haven't been read. Lifted out of
+  // "In progress" like needsYou is, and for the stronger reason: nothing is
+  // running in them and nothing ever will again on its own, so left in that
+  // group they were permanent rows pretending to be live work (issue #28).
+  const ranClean = awake.filter((t) => isUnreadRun(t));
   const groups = {
-    a: awake.filter((t) => t.status === "in_progress" && !isAwaiting(t)),
+    a: awake.filter((t) => t.status === "in_progress" && !isAwaiting(t) && !isUnreadRun(t)),
     h: awake.filter((t) => t.status === "on_hold" && !isAwaiting(t)),
     r: awake.filter((t) => t.status === "not_started"),
     z: snoozedGroup,
@@ -361,7 +387,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // Suggested rows are ordinary unstarted task rows server-side, so a range
   // crossing into the tray is a real selection, not a category error.
   const order = [
-    ...needsYou, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
+    ...needsYou, ...ranClean, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
     ...(doneCollapsed && !q ? [] : groups.g),
     ...(cancelledCollapsed && !q ? [] : groups.x),
     ...shownSuggested,
@@ -455,7 +481,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
             tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch}
             onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
             onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
-            onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}
+            onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun}
           />
         </div>
         </>
@@ -472,15 +498,19 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" />
+          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
+          {/* Between the two for a reason: a clean run wants reading, which is
+              less than answering a question and more than a task that is
+              simply still open. */}
+          <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="u" />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" />
           {/* Parked work sits between the live groups and the terminal ones —
               it isn't finished, but it isn't asking for anything either. */}
-          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">

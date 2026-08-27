@@ -541,6 +541,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .snz-chip svg{width:11px;height:11px;flex:0 0 auto;}
 .bc-chip.snz{margin-top:7px;align-self:flex-start;color:var(--ink-3);}
 
+/* "Ran clean" — a scheduled run that finished unattended with nothing to
+   answer, and the one action that state offers (issue #28). Green like Done
+   because it succeeded, outlined rather than filled because it isn't finished
+   with until somebody says so. */
+.ran-chip{display:flex;align-items:center;gap:5px;margin-top:7px;padding:2px 4px 2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--green);background:var(--green-soft);border:1px solid var(--green);}
+.ran-chip svg{width:11px;height:11px;flex:0 0 auto;}
+.ran-ack{background:transparent;border:1px solid var(--green);border-radius:999px;padding:1px 8px;font:inherit;font-size:10px;color:var(--green);cursor:pointer;}
+.ran-ack:hover{background:color-mix(in oklab, var(--green) 26%, transparent);}
+.bc-chip.ran{margin-top:7px;align-self:flex-start;color:var(--green);border-color:var(--green);background:var(--green-soft);cursor:pointer;}
+.bc-chip.ran:hover{background:color-mix(in oklab, var(--green) 26%, transparent);}
+
 /* Board: the corner affordance, out of the card's content flow. */
 .bc-snz{position:absolute;top:8px;right:8px;}
 .bcard.snoozed .bc-act{color:var(--ink-3);}
@@ -588,6 +599,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you — waiting/review, not error */
 .sdot.lg{width:12px;height:12px;}
 .sdot.z{background:var(--dim);}  /* snoozed group header — parked, not a real status */
+.sdot.u{background:transparent;border:1.5px solid var(--green);box-sizing:border-box;}  /* ran clean, unread — succeeded, but hollow: nobody has read it */
 /* Small flat variant for group headers (mobile board's status-grouped list) — no glow/pulse at 6px. */
 .sdot.sm{width:6px;height:6px;box-shadow:none;}
 .sdot.pulse::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;box-shadow:none;animation:ping 1.6s cubic-bezier(0,0,.2,1) infinite;}

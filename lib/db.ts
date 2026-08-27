@@ -116,6 +116,18 @@ export function init(db: Database.Database) {
       -- sweeps this — a past deadline simply stops matching — so a wake can't
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
+      -- When an UNATTENDED run finished cleanly and nobody has acknowledged it
+      -- yet (ms epoch; 0 = nothing outstanding). A scheduled turn that succeeds
+      -- deliberately leaves awaiting_input at 0 — it is not asking anybody
+      -- anything — so without this column the task rested at 'in_progress'
+      -- with nothing running and no path out of it, and every firing added a
+      -- permanent "In progress" row (issue #28). Written by lib/runner.ts on
+      -- the scheduled-success path, cleared by the next turn that starts here
+      -- and by any explicit status write (PATCH /api/tasks/[id]). The status column is
+      -- left alone for the same reason a snooze leaves it alone: the state is
+      -- "ran, unread", not a status of its own, so acknowledging it is an
+      -- ordinary status write rather than a restore.
+      unread_run_at INTEGER NOT NULL DEFAULT 0,
       -- Queued to start on its own at this instant (ms epoch; 0 = not queued).
       -- The one stored fact behind "start at the usage-window reset": a server
       -- sweep (lib/deferredStart.ts) launches an unstarted task's first turn or
@@ -759,6 +771,11 @@ export function migrate(db: Database.Database) {
   // because the state is derived from the value rather than stored beside it,
   // there is no companion column to backfill consistently.
   if (!taskCols.includes("snoozed_until")) db.exec("ALTER TABLE tasks ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0");
+  // Unacknowledged clean unattended run (see the CREATE TABLE note). 0 on every
+  // pre-existing row deliberately: backfilling the scheduled tasks already
+  // stranded in "In progress" would resurface months of finished runs as an
+  // unread pile, and the state is about the run that just happened.
+  if (!taskCols.includes("unread_run_at")) db.exec("ALTER TABLE tasks ADD COLUMN unread_run_at INTEGER NOT NULL DEFAULT 0");
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");

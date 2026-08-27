@@ -623,6 +623,18 @@ export function useShell() {
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
   };
 
+  // "I've read it" for a clean unattended run — the ran-clean group's one verb
+  // (issue #28). It's a plain status write because that is exactly what clears
+  // the mark server-side: the state has no third resting place to fall back
+  // into, and clearing the flag alone would drop the task straight back into
+  // the undifferentiated "In progress" pile it was lifted out of. Takes an id
+  // rather than acting on the selection — the button lives on the card, and
+  // acknowledging a run you can see is not the same as opening it.
+  const ackRun = async (id: string) => {
+    const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { status: "done" });
+    setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
+  };
+
   // ---------- queued start (see ./queuedStart.ts; the sweep is lib/deferredStart.ts) ----------
   //
   // "Start at the usage-window reset": one deadline on the row, set from the
@@ -1001,7 +1013,7 @@ export function useShell() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
-    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
+    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSendContext, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,

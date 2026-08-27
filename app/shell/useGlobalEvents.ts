@@ -94,7 +94,7 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       // doesn't carry it, but the trays sort by it — without this a task that
       // just started, answered or finished a turn would stay wherever it was
       // until something refetched the list.
-      return { ...t, running: ev.running ? 1 : 0, awaiting_input: ev.awaiting_input ? 1 : 0, background_pending: ev.background_pending ? 1 : 0, background_note: ev.background_note ?? "", status, updated_at: Date.now() };
+      return { ...t, running: ev.running ? 1 : 0, awaiting_input: ev.awaiting_input ? 1 : 0, background_pending: ev.background_pending ? 1 : 0, background_note: ev.background_note ?? "", status, unread_run_at: ev.unread_run_at ?? 0, updated_at: Date.now() };
     }));
     // Project badge + titlebar pill: the event carries the project's fresh
     // awaiting count, so no /api/projects refetch is needed.
