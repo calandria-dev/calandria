@@ -60,6 +60,12 @@ const LEGACY_STORAGE = /\.zen-orchestrator|\.agent-orchestrator|orchestrator\.(d
 const FROZEN_DIRS = [
   "docs/superpowers/", // shipped specs + plans, dated in their filenames
   "docs/design/", //      the visual-identity handoff that COMMISSIONED the new name
+  // (d) too: release-please writes it from commit messages, and the release
+  // that performed the rename necessarily names everything it renamed — the
+  // 0.3.0 breaking-change note lists ORCH_*, orch/<id>, /home/orch and the
+  // old MCP server by name. A generated record of what each release said,
+  // never a live reference; the lineage preamble at its top is (a).
+  "CHANGELOG.md",
 ];
 
 // file -> the spellings it may keep, and why.
@@ -122,8 +128,6 @@ const ALLOWED: Record<string, RegExp[]> = {
 
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
-  // (a) too: the preamble names the upstream project the way NOTICE does.
-  "CHANGELOG.md": [/\(orchestrator task [\w-]+\)/, /ORCH_GH_BIN/, /Operator/, /operator-oss/],
 
   // (e) the ordinary noun.
   "app/api/instance/usage/route.ts": [SYSADMIN],
