@@ -491,6 +491,15 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
 // --porcelain` prints one blank-line-separated block per worktree, the main one
 // first. Moving a branch that some worktree has checked out would leave that
 // worktree's index and files describing a commit the branch no longer points at.
+//
+// `path` is normalized because both callers put it in a message a person reads
+// and then goes looking for: git prints `C:/Users/...` on Windows while every
+// other path the app shows — and the one in the task's own row — is
+// `C:\Users\...`, and being told to go close a worktree at an address spelled
+// differently from the one you have is a needless second question. Deliberately
+// `path.normalize` and not `canonicalPath`: this is for display, so the case
+// has to survive (canonicalPath lower-cases on win32, by design, for identity
+// comparisons this isn't one of).
 export async function worktreeForBranch(repoPath: string, branch: string): Promise<{ path: string; isMain: boolean } | null> {
   const out = await git(repoPath, ["worktree", "list", "--porcelain"]).catch(() => "");
   let current = "";
@@ -500,7 +509,7 @@ export async function worktreeForBranch(repoPath: string, branch: string): Promi
       current = line.slice("worktree ".length);
       seen++;
     } else if (line === `branch refs/heads/${branch}`) {
-      return { path: current, isMain: seen === 0 };
+      return { path: path.normalize(current), isMain: seen === 0 };
     }
   }
   return null;
