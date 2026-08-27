@@ -46,15 +46,15 @@ stream isn't open. There is no task-list polling.
 
 Not every fact fits that snapshot. A mutation route publishes `task_edited` when it rewrites
 fields the snapshot can't carry (title, priority, dependency edges) — the client refetches
-the row instead of patching it. And three events aren't about a single task at all, so they
+the row instead of patching it. And some events aren't about a single task at all, so they
 carry their own project id and skip the relay's re-read entirely: `task_deleted` (the row is
-gone), `tasks_moved` (both ends, since the trays a selection LEFT have to lose it), and
-`tasks_reordered` (a board drag rewrote the project's manual card order — `position` isn't
-on the wire, or on the client's task model, so the tray refetches). Reorder is the one that
-fires on every drop, so `reorderTasks` publishes only for projects whose *rendered* order
-actually moved: dropping a card back where it started, or renumbering positions left
-non-contiguous by a delete, is silent. The dragging tab holds its own echo until its writes
-settle, so an optimistic drop is never snapped back by the event it caused.
+gone), `tasks_moved` (both ends, since the trays a selection LEFT have to lose it),
+`runbooks_changed` and `task_groups_changed` (no task row is involved at all).
+
+Task order is not one of those facts, because it isn't stored: `listTasks` sorts by
+`updated_at DESC`, so the coarse lifecycle events that already flow for every turn are what
+re-sort a tray. The most recently active task is the top card, in every bucket and in the
+Suggested tray, and it gets there without anyone dragging it.
 
 **A task is a lineage of sessions.** Generation N ends at `/clear`; its transcript is
 condensed to a summary, and generation N+1 starts with a clean context window seeded by all

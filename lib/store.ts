@@ -288,6 +288,20 @@ const CONTEXT_TOKENS_SQL = (t: string) => `COALESCE(${t}.context_measured, ${CON
 const CONTEXT_ESTIMATED_SQL = (t: string) =>
   `CASE WHEN ${t}.context_measured IS NULL AND ${CONTEXT_FALLBACK_SQL(t)} IS NOT NULL THEN 1 ELSE 0 END`;
 
+/**
+ * One project's tasks, MOST RECENTLY ACTIVE FIRST — `updated_at DESC`, with
+ * `created_at` then `rowid` breaking the ties two writes in the same
+ * millisecond produce (so a fresh task still lands above its same-tick
+ * siblings). Every bucket the UI partitions this into inherits that order, the
+ * Suggested tray included: the top card is always the newest thing that
+ * happened, which is what makes a long backlog readable without scrolling.
+ *
+ * Deliberately NOT `position` — the manual board order that used to lead this
+ * sort. The two can't both be the default, and recency won: a task you just
+ * worked on has to come back to the top on its own, without being dragged
+ * there. `tasks.position` survives as a stable creation sequence (moveTasks
+ * renumbers it per destination) but nothing renders it any more.
+ */
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
   const rows = db
@@ -301,7 +315,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
          ${CONTEXT_TOKENS_SQL("t")} AS context_tokens,
          ${CONTEXT_ESTIMATED_SQL("t")} AS context_estimated
        FROM tasks t WHERE t.project_id = ?
-       ORDER BY t.suggested ASC, t.position ASC, t.created_at ASC`
+       ORDER BY t.suggested ASC, t.updated_at DESC, t.created_at DESC, t.rowid DESC`
     )
     .all(projectId) as (Task & {
     cost_usd: number;
@@ -470,7 +484,10 @@ export function createTask(input: {
   // Whether sessions get the saved project context: explicit choice, else the
   // project's send_context setting (missing project ⇒ 1, the historic behavior).
   const sendContext = input.send_context ?? (project ? project.send_context !== 0 : true);
-  // New tasks land at the end of the project's manual order.
+  // Next in the project's creation sequence. Not a render order any more —
+  // listTasks sorts by recency — but a monotonic per-project counter the move
+  // paths still renumber, and the only durable record of the order rows were
+  // added in beyond `created_at`'s millisecond resolution.
   const position = (
     getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(input.project_id) as { n: number }
   ).n;
@@ -485,62 +502,6 @@ export function createTask(input: {
       input.group_id ?? null, position, now, now
     );
   return getTask(id)!;
-}
-
-// The fields listTasks sorts by — everything needed to tell whether a reorder
-// actually moves a card, read before the write rewrites the positions.
-type OrderRow = { id: string; project_id: string; suggested: number; position: number; created_at: number };
-
-// listTasks' `suggested ASC, position ASC, created_at ASC`, with the id as a
-// final tiebreak so the comparison below is total (two rows CAN share a
-// position — reorderTasks only renumbers the ids it's given).
-function byRenderedOrder(a: OrderRow, b: OrderRow): number {
-  return a.suggested - b.suggested || a.position - b.position || a.created_at - b.created_at || (a.id < b.id ? -1 : 1);
-}
-
-/** The listed ids per project, in the order given. */
-function idsByProject(rows: OrderRow[]): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const r of rows) {
-    const seq = out.get(r.project_id);
-    if (seq) seq.push(r.id);
-    else out.set(r.project_id, [r.id]);
-  }
-  return out;
-}
-
-// Persist a manual task ordering (board drag / drop). `ids` is the desired
-// order — each task's position is set to its index. The client sends the
-// project's full task list flattened in column order; only relative order
-// within a status group is ever rendered, so cross-group interleaving is fine.
-//
-// Returns the project ids whose RENDERED order actually changed — what POST
-// /api/tasks/reorder announces on the bus. Rendered order, not raw position
-// values, because the two come apart in both directions and only the first is
-// something another tab could be drawing wrong:
-//   - Positions go non-contiguous when a task is deleted (0, 1, 3), so the next
-//     drop renumbers a row to 2 without moving a single card.
-//   - The board submits ONE flat list with the Suggested column at the front,
-//     while the tray renders suggestions last — so the submitted sequence is
-//     compared per `suggested` group, the way the read sorts it.
-// A drag that drops a card back where it started (or that only tidies the
-// numbering) is therefore silent, instead of costing every open tab a refetch.
-export function reorderTasks(ids: string[]): string[] {
-  const db = getDb();
-  // Read first: the write below is what we're comparing against.
-  const sel = db.prepare("SELECT id, project_id, suggested, position, created_at FROM tasks WHERE id = ?");
-  const rows = ids.map((id) => sel.get(id) as OrderRow | undefined).filter((r): r is OrderRow => !!r);
-  const stmt = db.prepare("UPDATE tasks SET position = ? WHERE id = ?");
-  db.transaction(() => {
-    ids.forEach((id, i) => stmt.run(i, id));
-  })();
-
-  const submitted = new Map(ids.map((id, i) => [id, i]));
-  const before = idsByProject([...rows].sort(byRenderedOrder));
-  // After the write every listed row holds a distinct position (its index), so
-  // `suggested` then submitted index is the whole sort key.
-  const after = idsByProject([...rows].sort((a, b) => a.suggested - b.suggested || submitted.get(a.id)! - submitted.get(b.id)!));
-  return [...after].filter(([pid, seq]) => before.get(pid)!.join() !== seq.join()).map(([pid]) => pid);
 }
 
 // Why a task may not change projects right now — null when it may. A task with

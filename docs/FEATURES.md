@@ -103,6 +103,12 @@ Use a compact list or a full-width kanban board with Suggested, Not started, In 
 Needs input, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
 
+Everywhere tasks are listed — every group in the list, every board column, the Suggested
+tray — the top one is the most recently active: whatever was last created, edited, or worked
+on by a turn. Nothing has to be dragged to the top, and a backlog you haven't touched in a
+week sinks under one you have. On the board, dragging a card moves it between columns to
+change its status; there is no manual order to pin it in.
+
 ### Groups
 
 A feature, a migration or a refactor is rarely one task, and until now the app had no noun

@@ -30,6 +30,7 @@ import {
   resolveGroup,
   sameDepSet,
 } from "./store";
+import { topoMembers } from "./groupContext";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
@@ -185,7 +186,10 @@ export function listGroupsForAgent(project: Project): AgentGroupInfo[] {
     done: groupIsDone(g),
     counts: g.counts,
     origin_task_id: g.origin_task_id,
-    tasks: tasks.filter((t) => t.group_id === g.id).map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    // Plan order, not the tray's recency order: topoMembers is what numbers
+    // the steps on screen and in a session's group context block, and an agent
+    // asking "how is it going" is asking about the same sequence.
+    tasks: topoMembers(tasks.filter((t) => t.group_id === g.id)).map((t) => ({ id: t.id, title: t.title, status: t.status })),
   }));
 }
 

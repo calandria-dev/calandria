@@ -33,18 +33,22 @@ type Member = Task & { depends_on: string[] };
 
 /**
  * Members in dependency order — a topological sort over `depends_on`
- * restricted to the group, ties broken by the order they were passed in
- * (listTasks' own: suggested last, then `position`). That's deliberately the
- * SAME order the group strip renders (topoMembers in
- * app/shell/GroupStrip.tsx), so "step 3 of 7" in a session's context and
- * "3" on the user's screen name the same task. The two implementations are
- * separate because the strip runs on the client over TaskRow; keep them in step.
+ * restricted to the group, ties broken by `position` — the project's filing
+ * sequence. Filing order rather than the caller's: listTasks sorts by recency,
+ * and a plan's steps must not renumber themselves every time one of them runs.
+ * (`created_at` can't do it: a planning turn files its whole batch inside one
+ * millisecond.) That's deliberately the SAME order the group strip renders
+ * (topoMembers in app/shell/GroupStrip.tsx — which is why `position` is on the
+ * client's TaskRow at all), so "step 3 of 7" in a session's context and "3" on
+ * the user's screen name the same task. The two implementations are separate
+ * because the strip runs on the client over TaskRow; keep them in step.
  *
  * Edges pointing OUTSIDE the group are ignored rather than treated as blockers:
  * groups and dependencies are orthogonal, and a member legitimately waiting on
  * another feature's task must not reorder a list that doesn't show it.
  */
-export function topoMembers<T extends { id: string; depends_on: string[] }>(members: T[]): T[] {
+export function topoMembers<T extends { id: string; position: number; depends_on: string[] }>(members: T[]): T[] {
+  members = [...members].sort((a, b) => a.position - b.position);
   const ids = new Set(members.map((m) => m.id));
   const deps = new Map(members.map((m) => [m.id, m.depends_on.filter((d) => ids.has(d))]));
   const placed = new Set<string>();

@@ -16,8 +16,9 @@ import { DiffFooter } from "./DiffFooter";
 // The kanban alternative to the grouped task list (layout from the Claude
 // Design "Calandria — Board View" study, rendered with the app's own tokens).
 // Columns are live views over the same task rows the list renders — cards
-// update as sessions stream — and dragging a card re-statuses it and/or
-// persists a new manual order.
+// update as sessions stream — and dragging a card between columns re-statuses
+// it. Order WITHIN a column is recency (listTasks sorts by `updated_at`), not
+// something a drag can pin, so there is no drop position to aim at.
 type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "snoozed" | "on_hold" | "done" | "cancelled";
 
 const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "snoozed", "on_hold", "done", "cancelled"];
@@ -34,7 +35,7 @@ const COLS: Record<ColKey, {
   label: string;
   accent?: boolean;   // Needs-input styling (blue header/rule)
   derived?: boolean;  // holds a derived state — badged, rejects foreign drops
-  mini?: boolean;     // terminal column: compact rows, newest first, drops append
+  mini?: boolean;     // terminal column: compact rows, capped under a veil
   always: boolean;    // On hold / Cancelled hide when empty (drop bays mid-drag)
   member: (t: TaskRow) => boolean;
   patchFor: (t: TaskRow) => Patch;
@@ -117,7 +118,7 @@ function wake(t: TaskRow): { snoozed_until?: number } {
 
 // Dropping into a plain status column: accept a suggestion into the real list,
 // change status when it differs, wake it if it was parked, or (same column,
-// same state) just reorder.
+// same state) nothing at all.
 function statusPatch(t: TaskRow, status: Status): Patch {
   if (t.suggested) return { suggested: 0, status, ...wake(t) };
   return t.status !== status || isSnoozed(t) ? { status, ...wake(t) } : {};
@@ -175,7 +176,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
       onDragOver={onDragOverCard}
       onDrop={onDropOnCard}
       onDragEnd={onDragEnd}
-      title={canDrag ? "Drag to move / reorder" : undefined}
+      title={canDrag ? "Drag to another column to change status" : undefined}
     >
       <div className="bc-top">
         <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
@@ -242,53 +243,43 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, groupsById, onSelectGroup, canDrag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, groupsById, onSelectGroup, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   groupsById: Map<string, TaskGroupRow>; onSelectGroup: (id: string) => void;
-  // Dragging is disabled while a search filter OR a group chip is active:
-  // hidden cards would be silently dropped from the persisted order.
-  canDrag: boolean;
   onSelect: (id: string) => void; onEditTask: (id: string) => void;
-  onMove: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
+  onMove: (id: string, patch: TaskMovePatch) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
 }) {
-  const coarse = useCoarsePointer();
-  const dragEnabled = canDrag && !coarse;
+  // Dragging is a pointer gesture, so it's off on a touch device (the card's
+  // own controls own those gestures). Nothing else gates it: a drop re-statuses
+  // exactly the card it moved, so a search filter or group chip hiding OTHER
+  // cards can't corrupt anything — which it could when a drop also submitted
+  // the project's whole manual order.
+  const dragEnabled = !useCoarsePointer();
   const [dragId, setDragId] = useState<string | null>(null);
-  const [over, setOver] = useState<{ col: ColKey; index: number } | null>(null);
+  const [over, setOver] = useState<ColKey | null>(null);
   // Terminal columns past MINI_CAP rows collapse under a veil until expanded.
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const all = [...suggested, ...tasks];
   const dragTask = dragId ? all.find((x) => x.id === dragId) : undefined;
-  // Position-order membership per column — the source of truth for drag math.
-  // Suggested is the one column with a second sort on top: withdrawn cards sink
-  // below live ones. Applied HERE rather than at render time on purpose — drop
-  // indices are computed against these lists, so a display-only sort would make
-  // a reorder land somewhere other than where it was dropped.
+  // Membership per column. Every list arrives in the server's recency order;
+  // Suggested is the one column with a second sort on top, sinking withdrawn
+  // cards below live ones (a stable sort, so recency still orders each half).
   const cols = new Map<ColKey, TaskRow[]>(
     COL_ORDER.map((k) => [k, k === "suggested" ? all.filter(COLS[k].member).sort(withdrawnLast) : all.filter(COLS[k].member)])
   );
   const reset = () => { setDragId(null); setOver(null); };
 
-  const drop = (colKey: ColKey, index: number) => {
+  const drop = (colKey: ColKey) => {
     const t = dragId ? all.find((x) => x.id === dragId) : undefined;
     reset();
     if (!t) return;
     const patch = COLS[colKey].patchFor(t);
-    if (patch === null) return; // column rejects this card
-    // Rebuild every column's id list with the card removed, insert it at the
-    // drop index (computed against the pre-removal list, so dragging downward
-    // lands after the hovered card — same feel as the projects sidebar), then
-    // flatten in column order into the project's new manual order.
-    const lists = new Map<ColKey, string[]>(
-      COL_ORDER.map((k) => [k, cols.get(k)!.map((x) => x.id).filter((id) => id !== t.id)])
-    );
-    const destination = lists.get(colKey)!;
-    destination.splice(Math.min(index, destination.length), 0, t.id);
-    const orderedIds = COL_ORDER.flatMap((k) => lists.get(k)!);
-    onMove(t.id, patch, orderedIds);
+    if (patch === null) return;              // column rejects this card
+    if (!Object.keys(patch).length) return;  // already here, and order isn't manual
+    onMove(t.id, patch);
   };
 
   // On hold / Cancelled aren't part of the core flow: at rest they only appear
@@ -309,21 +300,21 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
         const colTasks = cols.get(key)!;
         const accepts = !!dragTask && def.patchFor(dragTask) !== null;
         const reject = !!dragTask && !accepts;
-        const isOver = over?.col === key;
-        // Terminal columns render newest-first in compact rows; ordering within
-        // them is meaningless, so drops append and no insertion line is shown.
-        const display = def.mini ? [...colTasks].sort((a, b) => b.updated_at - a.updated_at) : colTasks;
+        const isOver = over === key;
         const expanded = !!showAll[key];
-        const visible = def.mini && !expanded ? display.slice(0, MINI_CAP) : display;
-        const hidden = display.length - visible.length;
+        // Terminal columns show a capped slice until expanded — a long Done
+        // list is history, not the working set. Newest first, like everything
+        // else, so the cap keeps what you just finished.
+        const visible = def.mini && !expanded ? colTasks.slice(0, MINI_CAP) : colTasks;
+        const hidden = colTasks.length - visible.length;
         let lastDay: string | null = null;
         return (
           <div
             key={key}
             className={`bcol k-${key} ${accepts && isOver ? "drag-over" : ""} ${reject ? "reject" : ""}`}
-            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver({ col: key, index: colTasks.length }); }}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver(key); }}
             onDragLeave={(e) => { if (isOver && !e.currentTarget.contains(e.relatedTarget as Node)) setOver(null); }}
-            onDrop={(e) => { e.preventDefault(); drop(key, colTasks.length); }}
+            onDrop={(e) => { e.preventDefault(); drop(key); }}
           >
             <div className="bcol-h">
               <span className={`cn ${def.accent ? "needs-you" : ""}`}><span className="bcol-dot" />{key === "suggested" && Icon.spark()}{def.label}</span>
@@ -340,14 +331,13 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
               </div>
             )}
             <div className="bcol-body">
-              {visible.map((t, i) => {
+              {visible.map((t) => {
                 const day = def.mini && key === "done" ? dayBucket(t.updated_at) : null;
                 const divider = day !== null && day !== lastDay ? <div className="b-day" key={`day-${day}`}>{day}<i /></div> : null;
                 lastDay = day;
                 return (
                   <div className="b-slot" key={t.id}>
                     {divider}
-                    {accepts && isOver && !def.mini && over!.index === i && <div className="b-dropline" />}
                     <BoardCard
                       task={t}
                       agents={agents}
@@ -359,8 +349,8 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       canDrag={dragEnabled}
                       onSelect={() => (t.suggested ? onEditTask(t.id) : onSelect(t.id))}
                       onDragStart={() => setDragId(t.id)}
-                      onDragOverCard={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver({ col: key, index: def.mini ? colTasks.length : i }); }}
-                      onDropOnCard={(e) => { e.preventDefault(); e.stopPropagation(); drop(key, def.mini ? colTasks.length : i); }}
+                      onDragOverCard={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = accepts ? "move" : "none"; if (dragId) setOver(key); }}
+                      onDropOnCard={(e) => { e.preventDefault(); e.stopPropagation(); drop(key); }}
                       onDragEnd={reset}
                       onSnooze={(until) => onSnooze(t.id, until)}
                       onUnsnooze={() => onUnsnooze(t.id)}
@@ -384,11 +374,10 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                   </div>
                 );
               })}
-              {accepts && isOver && !def.mini && over!.index >= visible.length && visible.length > 0 && <div className="b-dropline" />}
               {hidden > 0 && (
-                <button className="b-showall" onClick={() => setShowAll((s) => ({ ...s, [key]: true }))}>Show all {display.length} →</button>
+                <button className="b-showall" onClick={() => setShowAll((s) => ({ ...s, [key]: true }))}>Show all {colTasks.length} →</button>
               )}
-              {def.mini && expanded && display.length > MINI_CAP && (
+              {def.mini && expanded && colTasks.length > MINI_CAP && (
                 <button className="b-showall" onClick={() => setShowAll((s) => ({ ...s, [key]: false }))}>Show less</button>
               )}
               {visible.length === 0 && (
@@ -409,7 +398,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, groups, selT
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; groups: TaskGroupRow[]; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;
   onSetView: (v: TaskView) => void;
-  onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
+  onMoveTask: (id: string, patch: TaskMovePatch) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void;
   onEditTask: (id: string) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
@@ -460,7 +449,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, groups, selT
       ) : (
         <TaskBoard
           tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
-          running={running} blockedBy={blockedBy} sparklines={sparklines} canDrag={!q && !groupSel}
+          running={running} blockedBy={blockedBy} sparklines={sparklines}
           groupsById={groupsById} onSelectGroup={selectGroup}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}

@@ -21,6 +21,17 @@ type Modal = null | "task" | "context" | "project" | "sessions";
 // Calandria's single source of truth: all client state, the derived
 // views over it, the data-loading effects, and every action callback. Returns a
 // flat bag the composition root (Shell.tsx) wires straight into the UI.
+// Both trays are recency-ordered, most recently active first — the same sort
+// lib/store.ts listTasks applies, re-applied on the client because the list does
+// NOT come back from the server on every lifecycle event: a turn starting or
+// ending patches the row in place (useGlobalEvents stamps `updated_at` as it
+// does), and without this the card that just moved would sit where it was until
+// something happened to refetch the tray. `position` breaks the tie the way the
+// query's `created_at`/`rowid` do — same filing order, one field.
+function byRecency(a: TaskRow, b: TaskRow): number {
+  return b.updated_at - a.updated_at || b.position - a.position;
+}
+
 export function useShell() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selProj, setSelProj] = useState<string | null>(null);
@@ -100,8 +111,8 @@ export function useShell() {
   const project = useMemo(() => projects.find((p) => p.id === selProj) ?? null, [projects, selProj]);
   const activeProjects = useMemo(() => projects.filter((p) => !p.deprecated), [projects]);
   const deprecatedProjects = useMemo(() => projects.filter((p) => p.deprecated), [projects]);
-  const realTasks = useMemo(() => tasks.filter((t) => !t.suggested), [tasks]);
-  const suggested = useMemo(() => tasks.filter((t) => t.suggested), [tasks]);
+  const realTasks = useMemo(() => tasks.filter((t) => !t.suggested).sort(byRecency), [tasks]);
+  const suggested = useMemo(() => tasks.filter((t) => t.suggested).sort(byRecency), [tasks]);
   const task = useMemo(() => tasks.find((t) => t.id === selTask) ?? null, [tasks, selTask]);
   // taskId -> titles of its unfinished blockers. A task in this map is blocked:
   // it shows a "Blocked by" chip and its Start button is disabled. Recomputed from
@@ -145,12 +156,6 @@ export function useShell() {
   // exist.
   const selTaskRef = useRef(selTask);
   useEffect(() => { selTaskRef.current = selTask; }, [selTask]);
-
-  // Board drops in flight, shared with the live stream handler: a reorder
-  // echoes back as tasks_reordered, and applying that echo on top of a newer
-  // optimistic drop would snap the card back. `missed` records that an echo was
-  // held so moveTask can flush it once the writes settle. See useGlobalEvents.
-  const reorderRef = useRef({ pending: 0, missed: false });
 
   // Latest agents bundle for the live stream handler (context-window sizing),
   // read without re-subscribing the EventSource.
@@ -223,7 +228,7 @@ export function useShell() {
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
   // stream ISN'T open — only the selected task has one.
-  useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification: showNotification });
+  useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification: showNotification });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
   // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
   // session view shows a transcript skeleton instead of an empty chat flash.
@@ -761,44 +766,20 @@ export function useShell() {
     if (input.startNow) runTurn(t.id, "", true);
   };
 
-  // A board drop: optionally re-status the dragged task (it landed in another
-  // column) and persist the new manual order. `orderedIds` is the project's
-  // full task list flattened in column order. Optimistic on both counts — the
-  // card lands where it was dropped instantly; a failure reloads server truth.
-  const moveTask = useCallback(async (id: string, patch: TaskMovePatch, orderedIds: string[]) => {
-    const hasPatch = Object.keys(patch).length > 0;
-    setTasks((prev) => {
-      const byId = new Map(prev.map((t) => [t.id, t]));
-      const listed = new Set(orderedIds);
-      const next = [
-        ...orderedIds.map((tid) => byId.get(tid)).filter((t): t is TaskRow => !!t),
-        ...prev.filter((t) => !listed.has(t.id)),
-      ];
-      // Mirror the server: a manual status change clears the "your turn" flag.
-      return hasPatch ? next.map((t) => (t.id === id ? { ...t, ...patch, awaiting_input: patch.status ? 0 : t.awaiting_input } : t)) : next;
-    });
-    // The whole optimistic window, not just the reorder POST: the echo of our
-    // own write must not be applied while the card is sitting where the user
-    // dropped it but the server hasn't been told yet.
-    reorderRef.current.pending += 1;
+  // A board drop: re-status the dragged task, optimistically. The board's
+  // columns ARE statuses, so a drop between them is the whole write — there is
+  // no manual order to persist alongside it any more (listTasks sorts by
+  // recency), which is why a drop within one column is a no-op the board
+  // never calls this for. A failure reloads server truth.
+  const moveTask = useCallback(async (id: string, patch: TaskMovePatch) => {
+    if (!Object.keys(patch).length) return;
+    // Mirror the server: a manual status change clears the "your turn" flag.
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch, awaiting_input: patch.status ? 0 : t.awaiting_input } : t)));
     try {
-      if (hasPatch) {
-        const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
-        setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
-      }
-      await jsend("/api/tasks/reorder", "POST", { ids: orderedIds });
+      const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", patch);
+      setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
     } catch {
-      // Server truth is about to be reloaded anyway, so any held echo is moot.
-      reorderRef.current.missed = false;
       if (selProjRef.current) void loadTasks(selProjRef.current, false);
-    } finally {
-      reorderRef.current.pending -= 1;
-      // Last drop out settles up: an echo held mid-flight (ours, or another
-      // tab's concurrent drag) is applied now that the server has every write.
-      if (reorderRef.current.pending === 0 && reorderRef.current.missed) {
-        reorderRef.current.missed = false;
-        if (selProjRef.current) void loadTasks(selProjRef.current, false);
-      }
     }
   }, [loadTasks]);
 

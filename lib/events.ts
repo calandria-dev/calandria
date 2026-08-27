@@ -32,17 +32,12 @@ import type { NotificationPayload } from "./notifications/types";
 // be announcing a row other than the calling task's) — and it
 // SUPERSEDES task_updated when one write is both (a refetch settles the status
 // too, so the pair would be a duplicate).
-// tasks_reordered is task_edited's project-keyed cousin: a board drop rewrote
-// the manual order (POST /api/tasks/reorder). `position` isn't a task field the
-// client even models — the list endpoint just returns rows already sorted — and
-// the fact is project-wide rather than about any one row, so it can't ride on
-// task_edited's task key. Like task_deleted it carries its project id and
-// BYPASSES the relay's re-read-the-task enrichment, which has nothing to add.
-// runbooks_changed is tasks_reordered's sibling: a project's saved runbooks were
-// created, edited, copied into or deleted from. No task row is involved AT ALL —
-// not even an arbitrary one to key the bus by, so its publishers pass "" — and
-// the card refetches wholesale, so like tasks_reordered it carries its own
-// project id and says only "go again".
+// runbooks_changed is task_edited's project-keyed cousin: a project's saved
+// runbooks were created, edited, copied into or deleted from. No task row is
+// involved AT ALL — not even an arbitrary one to key the bus by, so its
+// publishers pass "" — and the card refetches wholesale, so like task_deleted
+// it carries its own project id, BYPASSES the relay's re-read-the-task
+// enrichment, and says only "go again".
 // notification is the odd one out and knows it: not a fact about a row that
 // listeners should re-read, but a message COMPOSED for a human — the payload is
 // already final by the time it is published (lib/notifications/notify.ts), and
@@ -53,7 +48,6 @@ export type TaskMutationEvent =
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
-  | { type: "tasks_reordered"; projectId: string }
   | { type: "runbooks_changed"; projectId: string }
   | { type: "task_groups_changed"; projectId: string }
   | { type: "notification"; payload: NotificationPayload };
@@ -86,18 +80,11 @@ export type TasksMovedWireEvent = {
   fromProjectIds: string[];
   toProjectId: string;
 };
-// A project's manual task order was rewritten. Deliberately payload-free
-// beyond the project: the order the client would need is a whole sequence, and
-// the one that matters is the SERVER's — the ids the drag submitted are one
-// tab's view of the project, already stale if a task was created elsewhere and
-// wrong outright if two tabs dragged at once (last write wins in the DB, but
-// relayed ids would have every tab render whichever event landed last). So this
-// says "refetch the tray", exactly like task_edited.
-export type TasksReorderedWireEvent = {
-  type: "tasks_reordered";
-  projectId: string;
-};
-/** A project's saved runbooks changed. Same "refetch" shape as the reorder above. */
+/**
+ * A project's saved runbooks changed. Deliberately payload-free beyond the
+ * project — it says "refetch the card", exactly like task_edited says "refetch
+ * the row".
+ */
 export type RunbooksChangedWireEvent = {
   type: "runbooks_changed";
   projectId: string;
@@ -118,7 +105,6 @@ export type GlobalWireEvent =
   | GlobalTaskWireEvent
   | TaskDeletedWireEvent
   | TasksMovedWireEvent
-  | TasksReorderedWireEvent
   | RunbooksChangedWireEvent
   | TaskGroupsChangedWireEvent
   | NotificationWireEvent

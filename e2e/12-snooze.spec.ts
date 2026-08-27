@@ -16,12 +16,13 @@ let targetId = "";
 test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
   const project = await createProject(request, { name: PROJECT, repoPath: makeFixtureRepo("snooze") });
-  // Created FIRST on purpose: the shell auto-selects a project's first task
-  // when nothing is selected (useRecaps), and selecting the target would clear
-  // the was-snoozed marker this spec needs to see — that marker is an unread
-  // flag, and opening the task is what acknowledges it.
-  await createTask(request, { projectId: project.id, title: "Decoy task" });
+  // Created LAST on purpose: the shell auto-selects a project's TOP task when
+  // nothing is selected (useRecaps), the tray is ordered most-recently-active
+  // first, and selecting the target would clear the was-snoozed marker this
+  // spec needs to see — that marker is an unread flag, and opening the task is
+  // what acknowledges it. So the decoy has to be the newer of the two.
   targetId = (await createTask(request, { projectId: project.id, title: "Snooze me" })).id;
+  await createTask(request, { projectId: project.id, title: "Decoy task" });
 });
 
 const row = (page: import("@playwright/test").Page, title: string) =>
