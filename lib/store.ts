@@ -1008,6 +1008,22 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   return getTask(id);
 }
 
+/**
+ * Drop a task's worktree column, and NOTHING else — not even `updated_at`.
+ *
+ * updateTask() stamps `updated_at = Date.now()` on every write, which is right
+ * for a change somebody made and wrong for a reclaim nobody asked for. That
+ * column is the board's sort key (listTasks orders by it, so the top card in
+ * each bucket is the most recently active task) AND retention's clock, so
+ * stamping it here would float a six-month-old finished task to the top of
+ * Done and push its transcript prune out by the width of the worktree window.
+ * Used by the scheduled worktree sweep (lib/worktreeSweep.ts); the interactive
+ * paths go through updateTask, where the stamp is the truth.
+ */
+export function clearTaskWorktreePath(id: string): void {
+  getDb().prepare("UPDATE tasks SET worktree_path = '' WHERE id = ?").run(id);
+}
+
 export function deleteTask(id: string) {
   getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id);
 }

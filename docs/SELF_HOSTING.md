@@ -726,8 +726,34 @@ a restart — later scrapes serve the last measurement while a new one runs.
   plateaus instead of falling. Only `VACUUM` shrinks it, by rewriting the whole database
   under a write lock, which is seconds on a small database and a visible stall on a large
   one. So it is opt-in: `CALANDRIA_RETENTION_VACUUM=1` runs one after any sweep that
-  deleted rows, or run `VACUUM;` yourself against a stopped instance. Per-task git
-  worktrees are a separate and larger disk story with its own reclaim path —
-  Settings → Storage.
+  deleted rows, or run `VACUUM;` yourself against a stopped instance.
+- **Worktrees are the bigger disk story**, and they have their own switch. Every task
+  runs in its own git worktree — a full checkout of the project repo *each*, under
+  `CALANDRIA_WORKTREES_DIR` — so this is the one number measured in gigabytes rather
+  than rows. Two things happen here, and the second is on by default while the first
+  is not.
+  **The sweep** (`CALANDRIA_WORKTREE_RETENTION=on`, off by default) rides the same
+  ticker and reclaims the checkouts of tasks that are finished and cold, on a shorter
+  window: `CALANDRIA_WORKTREE_RETENTION_DAYS`, default **14** (`0` keeps them forever).
+  It reuses the retention predicate above verbatim — terminal, idle, not snoozed,
+  nothing queued behind it — and adds the check the manual cleanup uses: a worktree
+  with **uncommitted edits or commits the base branch has not absorbed is skipped**,
+  however old, and named in the log rather than quietly passed over. It never deletes
+  a branch, so a reclaimed task keeps its diff and re-cuts its checkout on the next
+  turn. It is opt-in because the table windows above (180/400 days) are longer than
+  most instances have existed, whereas a window in weeks would start removing
+  checkouts on the first tick after an upgrade nobody asked for. The manual path
+  (Settings → Storage, which can also *discard* unmerged work after you acknowledge
+  it) is unaffected either way.
+  **The disk warning** runs whether or not the sweep does: when the worktrees
+  directory crosses `CALANDRIA_WORKTREES_DISK_WARN_GB` (default **20**, `0` disables)
+  a line goes to the server log each pass while it is over, the reading is served on
+  `GET /api/instance/scheduler` under `worktrees`, and Settings → Storage shows it
+  above the reclaim list. (The same directory is also a `/metrics` gauge —
+  `calandria_worktrees_size_bytes` — if you would rather alert on it than read a log;
+  see [Metrics](#metrics).) That total counts the checkouts of tasks still in flight,
+  which nothing here will touch — so on a busy instance the honest reading is "you
+  have 40 GB of worktrees, 6 GB of it reclaimable", and the remaining 34 GB is
+  answered by finishing or deleting tasks, not by a sweep.
 - **Delete is hard delete:** a removed project's chat history is gone (your code on disk
   is untouched).

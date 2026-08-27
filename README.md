@@ -212,6 +212,15 @@ the WAL so the space is actually reclaimed. Live tasks are never touched, and
 `CALANDRIA_RETENTION=off` keeps everything forever. Windows and the opt-in
 `VACUUM` are in the [self-hosting guide](docs/SELF_HOSTING.md).
 
+Per-task worktrees are the bigger disk story — a full checkout of the repo
+each — and get their own switch. Calandria warns in the log (and in
+Settings → Storage) once the worktrees directory passes
+`CALANDRIA_WORKTREES_DISK_WARN_GB`, default 20. Reclaiming them stays manual
+unless you opt in with `CALANDRIA_WORKTREE_RETENTION=on`, which removes the
+checkouts of finished tasks after 14 days — never the branch, and never a
+checkout holding uncommitted edits or unmerged commits, which is skipped and
+named instead.
+
 `npm run backup` takes a hot backup with the app running — a WAL-safe
 `VACUUM INTO` snapshot of the database plus uploads, keys and the agent CLI
 logins, in one timestamped archive. Don't `cp` a live SQLite database; see

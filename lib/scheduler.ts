@@ -15,8 +15,11 @@
 // lib/dispatch.ts, shared with runbooks — a runbook is this feature with the
 // clock taken off, and two copies of that sequence would have drifted.
 
-import { RETENTION_ENABLED, SCHEDULER_ENABLED, SCHEDULE_TICK_MS } from "@/lib/config";
+import {
+  RETENTION_ENABLED, SCHEDULER_ENABLED, SCHEDULE_TICK_MS, WORKTREES_DISK_WARN_BYTES, WORKTREE_SWEEP_ENABLED,
+} from "@/lib/config";
 import { maybeSweepRetention, retentionHealth } from "@/lib/retention";
+import { maybeSweepWorktrees, worktreeSweepHealth } from "@/lib/worktreeSweep";
 import { adjudicate } from "@/lib/schedule/due";
 import {
   activeRun, getSchedule, listEnabledSchedules, refreshNextFire, claimRun, settleRun, startRun, specOf,
@@ -68,6 +71,10 @@ export const schedulerHealth = () => {
     // own, so its cadence is reported here — otherwise "did the prune run?" has
     // no answer short of reading the log.
     retention: retentionHealth(),
+    // Same deal for the worktree half (lib/worktreeSweep.ts), which also
+    // carries the disk-usage reading behind the log warning — "how big is the
+    // worktrees dir" otherwise has no answer short of ssh and `du`.
+    worktrees: worktreeSweepHealth(),
   };
 };
 
@@ -82,7 +89,12 @@ export function startScheduler(): void {
   // second container on a copy of the DB — is exactly the one that still wants
   // its disk swept, and coupling the two would have made CALANDRIA_SCHEDULER=off
   // silently disable a policy nobody set.
-  if (s.timer || (!SCHEDULER_ENABLED && !RETENTION_ENABLED)) return;
+  // The worktree sweep and the disk-usage warning ride it too, and the warning
+  // is deliberately not conditional on the sweep: an instance with everything
+  // else switched off still wants to be told its worktrees dir is 40 GB. Set
+  // CALANDRIA_WORKTREES_DISK_WARN_GB=0 to stop even that.
+  if (s.timer || (!SCHEDULER_ENABLED && !RETENTION_ENABLED && !WORKTREE_SWEEP_ENABLED && WORKTREES_DISK_WARN_BYTES <= 0))
+    return;
   // A restart can land mid-slot, and a tzdata update can move a cached
   // next_fire_at. Revalidate every enabled schedule against its spec before the
   // first tick, so boot catch-up adjudicates from a correct position.
@@ -153,6 +165,15 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
       maybeSweepRetention(Date.now());
     } catch (err) {
       console.error("[retention] sweep failed:", err);
+    }
+    // The worktree half (issue #15 item 2), on the same clock and wrapped for
+    // the same reason. Awaited rather than fired off: it holds task and repo
+    // locks and spawns git, and a sweep still running when the next one starts
+    // would be two passes racing for the same checkouts.
+    try {
+      await maybeSweepWorktrees(Date.now());
+    } catch (err) {
+      console.error("[worktrees] sweep failed:", err);
     }
     s.lastTickAt = Date.now();
   } finally {

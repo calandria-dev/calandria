@@ -24,6 +24,9 @@ interface Candidate {
 interface PruneList {
   candidates: Candidate[];
   totalBytes: number;
+  // The whole worktrees directory, not just the reclaimable share — including
+  // the checkouts of tasks still in flight, which this panel cannot offer.
+  disk: { dir: string; bytes: number; warnBytes: number; over: boolean };
 }
 interface PruneResult {
   pruned: string[];
@@ -128,6 +131,14 @@ export function WorktreePrune() {
         </div>
 
         {error && <ErrNote style={{ marginBottom: 10 }} onRetry={refresh}>{error}</ErrNote>}
+        {list?.disk?.over && (
+          <div className="hlp" style={{ marginBottom: 10 }} role="status">
+            {Icon.flag()} <strong>{fmtBytes(list.disk.bytes)}</strong> of worktrees in <code>{list.disk.dir}</code>,
+            over the {fmtBytes(list.disk.warnBytes)} warning threshold
+            (<code>CALANDRIA_WORKTREES_DISK_WARN_GB</code>). That total includes tasks still in flight, which
+            can&apos;t be reclaimed here.
+          </div>
+        )}
         {result && (
           <div className="hlp" style={{ marginBottom: 10 }}>
             {Icon.check()} Removed {result.pruned.length} worktree{result.pruned.length === 1 ? "" : "s"}, reclaimed{" "}
