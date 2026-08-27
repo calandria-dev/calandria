@@ -20,6 +20,7 @@
     "typecheck:docker": "bash scripts/docker-test.sh npm run typecheck",
     "test:e2e:docker": "bash scripts/docker-test.sh --e2e npm run test:e2e",
     "preflight:docker": "bash scripts/docker-test.sh --e2e npm run preflight",
+    "backup": "node scripts/backup.mjs",
     "postinstall": "node scripts/fix-pty.js"
   },
   "dependencies": {

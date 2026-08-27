@@ -204,6 +204,12 @@ refuses to start if another process already owns it, naming the holder. Two
 servers sharing one database overwrite each other's running tasks; give a
 second instance its own `CALANDRIA_DB_DIR`.
 
+`npm run backup` takes a hot backup with the app running — a WAL-safe
+`VACUUM INTO` snapshot of the database plus uploads, keys and the agent CLI
+logins, in one timestamped archive. Don't `cp` a live SQLite database; see
+[Backup & restore](docs/SELF_HOSTING.md#backup--restore) for the flags, the
+cold-copy alternative, and the restore procedure.
+
 ## Privacy
 
 Calandria contains no telemetry and no analytics. It makes no outbound

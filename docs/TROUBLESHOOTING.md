@@ -168,11 +168,12 @@ runs after the file has already opened successfully.
 
 **Manual recovery, in order of preference:**
 
-1. **Restore from a backup.** There's no built-in backup/restore tooling yet — full
-   backup/restore/upgrade-safety story is tracked in
-   [issue #13](https://github.com/calandria-dev/calandria/issues/13). Until then, back up by
-   stopping the app and copying `calandria.db*` (all three files together, so the WAL isn't
-   left behind).
+1. **Restore from a backup.** `npm run backup` takes a WAL-safe hot snapshot (`VACUUM INTO`,
+   no downtime, no application lock) plus uploads, the VAPID key and the agent CLI logins;
+   the restore procedure is in
+   [SELF_HOSTING.md — Backup & restore](SELF_HOSTING.md#backup--restore). If you are here
+   without one, note what NOT to do next time: `cp calandria.db` alone drops everything still
+   in the write-ahead log, and copying the pair from under a running app can tear it.
 2. **Recover what SQLite can still read.** With the app stopped:
    ```bash
    sqlite3 calandria.db ".recover" | sqlite3 calandria-recovered.db
@@ -309,7 +310,10 @@ pending state.
 
 ## Upgrade rollback
 
-Not covered here — pulling an older image tag against a database written by a newer one has no
-defined-safe path today (no schema version stamp, no compatibility check; migrations are
-additive-only by convention, not enforced). Full backup/restore/upgrade-safety design is tracked
-in [issue #13](https://github.com/calandria-dev/calandria/issues/13).
+Pulling an older image tag against a database written by a newer one has no defined-safe path
+today (no schema version stamp, no compatibility check; migrations are additive-only by
+convention, not enforced) — that half is still tracked in
+[issue #13](https://github.com/calandria-dev/calandria/issues/13). What exists now is the
+thing that makes a rollback survivable rather than safe: take a backup first
+([SELF_HOSTING.md — Backup & restore](SELF_HOSTING.md#backup--restore)) so a downgrade that
+does go wrong is a restore rather than a loss.
