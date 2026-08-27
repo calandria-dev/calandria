@@ -224,7 +224,10 @@ describe("the secrets on the volume go through it", () => {
     resetVapidCache();
     const keys = vapidKeys();
     expect(JSON.parse(fs.readFileSync(file, "utf8")).privateKey).toBe(keys.privateKey);
-    expect(modeOf(file)).toBe(SECRET_FILE_MODE);
+    // Same guard as the API-key case above: on NTFS `chmod` toggles the
+    // read-only attribute and nothing else, so the mode reads back 0666 and
+    // pins nothing. The win32 ACL is pinned structurally, by argv, further up.
+    if (!IS_WIN) expect(modeOf(file)).toBe(SECRET_FILE_MODE);
     resetVapidCache();
   });
 });

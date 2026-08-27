@@ -18,7 +18,9 @@ function ensureRoot(): string {
     // often the 8.3 short form (C:\Users\RUNNER~1\...). Git and the app both
     // report the resolved spelling, so resolving up front keeps the paths the
     // specs compare identical to the ones the server persists.
-    root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "calandria-e2e-"));
+    root = fs.mkdtempSync(
+      path.join(fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""), "calandria-e2e-")
+    );
     process.env.CALANDRIA_E2E_ROOT = root;
   }
   for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {

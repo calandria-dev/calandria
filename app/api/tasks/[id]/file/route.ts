@@ -2,7 +2,12 @@ import fs from "node:fs";
 import { NextResponse } from "next/server";
 import { getTask } from "@/lib/store";
 import { hasTurn } from "@/lib/abort";
-import { resolveWorktreeFile, blobSha, MAX_COLLAB_BYTES } from "@/lib/worktreeFile";
+import {
+  resolveWorktreeFile,
+  malformedWorktreePath,
+  blobSha,
+  MAX_COLLAB_BYTES,
+} from "@/lib/worktreeFile";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +23,7 @@ function locate(taskId: string, rel: string): { abs: string; worktree: string } 
     // Either outside the worktree or nonexistent; the guard can't tell the
     // route which without leaking which paths exist, so both are "not found"
     // unless the request was malformed on its face.
-    const malformed = !rel || rel.startsWith("/") || rel.split("/").includes("..");
+    const malformed = malformedWorktreePath(rel);
     return NextResponse.json({ error: malformed ? "bad path" : "file not found" }, { status: malformed ? 400 : 404 });
   }
   let stat: fs.Stats;

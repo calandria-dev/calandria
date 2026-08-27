@@ -172,6 +172,34 @@ describe("worktreeRelative", () => {
     expect(worktreeRelative("", "/wt/a/x.md")).toBeNull(); // no worktree yet
     expect(worktreeRelative("/wt/a", "")).toBeNull();
   });
+
+  // Regression, found by the windows-latest CI lane: "absolute" was `/...` and
+  // nothing else, so a drive-letter path fell into the relative branch. Both
+  // halves were wrong — a file plainly inside the worktree 404'd because
+  // `C:/wt/a/docs/x.md` was looked up as directories named `C:`, `wt`, ...
+  // BELOW the worktree, and a path outside it was never refused, it just missed.
+  // Asserted on every platform, not skipped off win32: the function is pure
+  // string work and takes its dialect from the shape of the paths, so a Windows
+  // spelling means the same thing wherever the test runs.
+  it("reads a Windows absolute path as absolute", () => {
+    expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\a\\docs\\x.md")).toBe("docs/x.md");
+    expect(worktreeRelative("C:\\wt\\a", "C:/wt/a/docs/x.md")).toBe("docs/x.md"); // git's spelling
+    expect(worktreeRelative("C:\\wt\\a", "C:\\other\\secret.md")).toBeNull();
+    expect(worktreeRelative("C:\\wt\\a", "D:\\wt\\a\\x.md")).toBeNull(); // another volume
+    expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\ab\\x.md")).toBeNull(); // shared prefix
+    expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\a")).toBeNull(); // the root itself
+    expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\a\\..\\b\\x.md")).toBeNull();
+    expect(worktreeRelative("C:\\wt\\a", "docs\\x.md")).toBe("docs/x.md"); // still relative
+  });
+
+  it("case-folds containment for a Windows worktree, and only there", () => {
+    // NTFS is case-insensitive, so these are one directory and the file is
+    // inside it (lib/paths.ts makes the same call for the same reason).
+    expect(worktreeRelative("C:\\WT\\A", "c:\\wt\\a\\docs\\x.md")).toBe("docs/x.md");
+    // POSIX filesystems are case-SENSITIVE, and folding there would merge two
+    // paths that really can differ, so a case mismatch stays outside.
+    expect(worktreeRelative("/WT/A", "/wt/a/docs/x.md")).toBeNull();
+  });
 });
 
 describe("describeToolUse names the file a writing call touched", () => {

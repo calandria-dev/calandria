@@ -41,6 +41,24 @@ export function resolveWorktreeFile(worktree: string, rel: string): string | nul
   return real;
 }
 
+/**
+ * Whether a requested path is malformed ON ITS FACE — absent, absolute, or
+ * carrying a `..` segment — as opposed to merely naming something that isn't
+ * there. The route answers 400 for the first and 404 for the second, so that a
+ * refusal never leaks which paths exist.
+ *
+ * Exported so it cannot drift from the rejection rules in
+ * `resolveWorktreeFile` above, which is exactly what had happened: the route
+ * inlined it as `rel.startsWith("/") || rel.split("/").includes("..")`, and
+ * both halves are POSIX-only spellings. On Windows `C:\secret.md` is absolute
+ * and `docs\..\..\x` is a traversal, and `resolveWorktreeFile` refused both
+ * while the route reported them as an ordinary missing file. Found by the
+ * windows-latest CI lane.
+ */
+export function malformedWorktreePath(rel: string): boolean {
+  return !rel || path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === "..");
+}
+
 // git's blob id for a file's bytes — what `git hash-object <file>` prints —
 // computed in-process (no subprocess, and it's exact for an uncommitted
 // file, which HEAD is not). The file route stamps it on every read and a

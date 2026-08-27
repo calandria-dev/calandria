@@ -39,6 +39,23 @@ export interface CollabSubmission {
   mode?: CollabEditMode; // defaults to "patch" — the packet is only ever told "direct" by a caller that has written the file
 }
 
+/** A drive-letter path (`C:/...` once norm() has rewritten the separators).
+ *
+ * A UNC path (`//server/share/...`) is not one of these and doesn't need to be:
+ * it starts with a slash, so the POSIX test below already calls it absolute. */
+const windowsPath = (s: string) => /^[A-Za-z]:\//.test(s);
+
+/** Absolute in either dialect. `/...` was the whole test until Windows; a
+ * drive-letter path read as RELATIVE is wrong twice over, and the Windows CI
+ * lane caught both. `C:/wt/a/docs/x.md` — the spelling an agent's Write call
+ * actually reports on Windows — was looked up as a chain of directories named
+ * `C:`, `Users`, ... INSIDE the worktree, so a file that was plainly there
+ * 404'd. And the containment check the callers rely on never ran at all: it is
+ * only harmless while every caller joins the result, and stops being harmless
+ * the moment one reaches for `path.resolve`, where a drive-letter path discards
+ * the prefix it was resolved against. */
+const absolutePath = (s: string) => s.startsWith("/") || windowsPath(s);
+
 // The worktree-relative form of a path an agent's tool call named, or null
 // when it isn't inside the worktree. Absolute paths are what Write/Edit carry;
 // a relative one is taken as relative to the worktree (the driver's cwd), and
@@ -52,8 +69,14 @@ export function worktreeRelative(worktree: string, p: string): string | null {
   const target = norm(p);
   if (!root) return null;
   let rel: string;
-  if (target.startsWith("/")) {
-    if (target === root || !target.startsWith(root + "/")) return null;
+  if (absolutePath(target)) {
+    // NTFS is case-insensitive, so on a Windows worktree the containment test
+    // has to be too — `C:/wt/a` and `c:/wt/a` are one directory. Decided from
+    // the SHAPE of the root, not from `process.platform`: this module is
+    // bundled for the client, where `platform` isn't a meaningful answer, and
+    // the question is about the path syntax anyway.
+    const fold = (s: string) => (windowsPath(root) ? s.toLowerCase() : s);
+    if (fold(target) === fold(root) || !fold(target).startsWith(fold(root) + "/")) return null;
     rel = target.slice(root.length + 1);
   } else {
     rel = target;
