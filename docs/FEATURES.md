@@ -132,7 +132,10 @@ touch your checkout at all, so they are unaffected.
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,
 Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
-launches an opted-in task as soon as its final blocker is marked done.
+launches an opted-in task as soon as its final blocker is marked done. Opt in from the edit
+dialog's dependency picker, or straight from the blocked task's own start screen — its
+"Blocked until …" notice carries a **Start when unblocked** button, and the queued notice it
+becomes carries **Cancel** to hand the start back to you.
 
 Everywhere tasks are listed — every group in the list, every board column, the Suggested
 tray — the top one is the most recently active: whatever was last created, edited, or worked

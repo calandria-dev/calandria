@@ -182,7 +182,7 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
   const blocked = !!blockedBy?.length && !task.started;
   // Queued for the usage-window reset (./queuedStart.ts): the server launches
@@ -226,13 +226,26 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
           {carried && <li><span className="hp-fixed" aria-hidden /><span>Summary of {task.generation - 1 === 1 ? "the previous session" : `all ${task.generation - 1} previous sessions`}</span></li>}
         </ul>
       </div>
+      {/* Blocked, and what to do about it. The `auto_start` flag is the one
+          thing this screen can change without a modal — the dependency EDGES
+          stay the edit dialog's, since choosing them needs the task list. So
+          each notice carries the button that flips the flag the other way: the
+          answer to "this is blocked and I don't want to babysit it" is one
+          click here rather than Edit → tick a box → Save. Same shape as the
+          queued-start notice below, which owns its own Cancel for the same
+          reason. */}
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
-          {Icon.bolt()} Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change this.
+          {Icon.bolt()} <span>Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done.</span>
+          <button className="btn btn-line btn-sm" onClick={() => onSetAutoStart(false)} disabled={running} title="Leave it for you to start by hand once the blockers are done">Cancel</button>
         </div>
       ) : (
         <div className="hero-blocked" title={`Blocked until done: ${blockedBy!.join(", ")}`}>
-          {Icon.lock()} Blocked until {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.
+          {Icon.lock()} <span>Blocked until {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.</span>
+          <button className="btn btn-line btn-sm" onClick={() => onSetAutoStart(true)} disabled={running}
+            title={`Launch this task's first turn by itself once every blocker is done: ${blockedBy!.join(", ")}`}>
+            {Icon.bolt()} Start when unblocked
+          </button>
         </div>
       ))}
       {queued && !blocked && (
@@ -274,7 +287,7 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -283,6 +296,8 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
   onSetSendContext: (v: boolean) => void;
+  // The blocked-task hero's "Start when unblocked" toggle (tasks.auto_start).
+  onSetAutoStart: (v: boolean) => void;
   onSnooze: (until: number) => void; onUnsnooze: () => void;
   // Queue / un-queue a start at the usage-window reset (PATCH start_at; see ./queuedStart.ts).
   onQueueStart: (at: number) => void; onCancelQueuedStart: () => void;
@@ -741,7 +756,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),

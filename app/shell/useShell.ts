@@ -731,6 +731,17 @@ export function useShell() {
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { send_context: v ? 1 : 0 });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
+  // "Start when unblocked" from the task's own start screen (TaskHero), the
+  // same flag the edit dialog's checkbox writes — offered there because that
+  // screen is where you land when a blocked task is the one you wanted to work
+  // on, and opening a modal to tick one box was the only way to say "go ahead
+  // without me". The edges themselves are still the dialog's: this only decides
+  // what happens when the last of them clears.
+  const setAutoStart = async (v: boolean) => {
+    if (!task) return;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { auto_start: v ? 1 : 0 });
+    setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
+  };
 
   /**
    * Dispatch a runbook straight from ⌘K — no sheet.
@@ -1014,7 +1025,7 @@ export function useShell() {
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
-    setReasoning, setPermission, setSendContext, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

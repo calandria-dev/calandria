@@ -304,7 +304,7 @@ export default function Shell() {
             onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
             onReconnect={() => openSettings("agents")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
+            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
             onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
             onResolveWithAI={o.resolveConflictsWithAI}
@@ -417,7 +417,7 @@ export default function Shell() {
                 onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
                 onReconnect={() => openSettings("agents")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext}
+                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
                 onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
                 onResolveWithAI={o.resolveConflictsWithAI}
