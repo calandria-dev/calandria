@@ -83,6 +83,27 @@ can be removed to reclaim disk.
   projects, fixture repos, pinned gitconfig) and points every `CALANDRIA_*` dir at it.
   Nothing touches `~/.calandria` or your real projects; the app listens on
   port 4711 (`CALANDRIA_E2E_PORT` to move it).
+- **A green run deletes its root; a red one keeps it** — `e2e/cleanup-reporter.ts`
+  removes the temp root when the suite passes, and when it doesn't, prints the
+  path instead. That directory is the post-mortem: the SQLite DB with the
+  transcript rows, the task worktree the diff was read from, the branch a merge
+  left behind — so open it, then delete it yourself. (Before this every local
+  run left a full instance behind forever, which on a machine where `/home`,
+  `/tmp` and Docker share one filesystem is how you run out of disk.)
+
+  Three knobs: `CALANDRIA_E2E_KEEP_ROOT=1` keeps a passing run's root too;
+  exporting `CALANDRIA_E2E_ROOT=<dir>` yourself makes that directory *yours* —
+  the suite reuses it and never deletes it — and it's the way to point a run at
+  a disk with room. To sweep whatever earlier runs left:
+
+  ```bash
+  rm -rf "${TMPDIR:-/tmp}"/calandria-e2e-*        # or %TEMP%\calandria-e2e-* on Windows
+  ```
+
+  It's a reporter rather than a `globalTeardown` for two reasons, both in that
+  file's header: global teardown runs *before* Playwright stops the `webServer`,
+  so it would delete the tree out from under a live server (and hit `EBUSY` on
+  the open SQLite handle on Windows), and it isn't told whether the run passed.
 - **No real agent needed** — the suite sets `CALANDRIA_E2E_MOCK_AGENT=1`, which
   registers the deterministic mock driver (`lib/agents/mock/driver.ts`) in the
   agent registry. It implements the full `AgentDriver` contract — instant login,

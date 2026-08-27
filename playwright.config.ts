@@ -19,7 +19,12 @@ export default defineConfig({
   retries: 0,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  reporter: [["list"]],
+  // The second reporter deletes the temp run root — but only when the run
+  // passed, so a failure keeps its DB and worktrees to be read. It's a reporter
+  // rather than a `globalTeardown` because global teardown runs BEFORE
+  // Playwright stops the webServer above (it would delete the tree under a live
+  // server) and isn't told whether the run passed. See e2e/cleanup-reporter.ts.
+  reporter: [["list"], ["./e2e/cleanup-reporter.ts"]],
   use: {
     baseURL: E2E_BASE_URL,
     trace: "retain-on-failure",
