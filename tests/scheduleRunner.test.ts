@@ -16,6 +16,9 @@ vi.mock("@/lib/agents/registry", () => ({
 }));
 
 import { createProject, createTask, getProject, getTask } from "@/lib/store";
+import { isUnreadRun } from "@/app/shell/format";
+import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
+import type { TaskRow } from "@/app/shell/types";
 import { claimRun, createSchedule, getRun, startRun } from "@/lib/schedule/store";
 import { startTurn } from "@/lib/runner";
 import { SCHEDULED_RUN_CONTEXT, getRunContext, recordUnattendedDenial } from "@/lib/runContext";
@@ -57,6 +60,78 @@ describe("scheduled turns in the runner", () => {
     // Success is quiet: a scheduled run must not park itself in the "N need
     // you" pill forever.
     expect(getTask(taskId)!.awaiting_input).toBe(0);
+  });
+
+  // ---------- where a clean scheduled run comes to REST (issue #28) ----------
+  //
+  // Quiet is not the same as invisible. Before this, a scheduled success landed
+  // on running=0 / awaiting_input=0 / status=in_progress and nothing moved it
+  // ever again: every firing left one more row under "In progress",
+  // indistinguishable from live work, and a weekday schedule added five a week.
+  // The mark below is the state those runs rest in — outside the NEEDS_YOU
+  // predicate, so the pill stays quiet, but with a category of its own on the
+  // board and a way out of it.
+
+  it("marks a clean scheduled run as ran-and-unread instead of leaving it 'In progress' forever", async () => {
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+    const t = getTask(taskId)!;
+    expect(t.running).toBe(0);
+    expect(t.awaiting_input).toBe(0);
+    // The status is deliberately untouched — like a snooze, this is a state
+    // OVER the status, which is what makes acknowledging it an ordinary write.
+    expect(t.status).toBe("in_progress");
+    expect(t.unread_run_at).toBeGreaterThan(0);
+    // And the board draws it in its own group rather than among live work.
+    expect(isUnreadRun(t as unknown as TaskRow)).toBe(true);
+  });
+
+  it("does NOT mark a scheduled run that failed — that one raises its hand instead", async () => {
+    events.push({ type: "error", content: "boom" });
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+    const t = getTask(taskId)!;
+    expect(t.awaiting_input).toBe(1);
+    // Two resting states for one run would put the same task in two groups.
+    expect(t.unread_run_at).toBe(0);
+    expect(isUnreadRun(t as unknown as TaskRow)).toBe(false);
+  });
+
+  it("never marks an ordinary, watched turn — nobody needs telling their own turn ended", async () => {
+    startTurn(getTask(taskId)!, getProject(projectId)!, "hello", "");
+    await settled();
+    expect(getTask(taskId)!.unread_run_at).toBe(0);
+  });
+
+  it("clears the mark when the next turn opens a session on the task", async () => {
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+    expect(getTask(taskId)!.unread_run_at).toBeGreaterThan(0);
+    // Reading it by replying is the other way out: the row is working again,
+    // so it belongs under "In progress" from the moment the session opens.
+    startTurn(getTask(taskId)!, getProject(projectId)!, "thanks, carry on", "");
+    await settled();
+    expect(getTask(taskId)!.unread_run_at).toBe(0);
+    // ...and it lands back on the ordinary end-of-turn state.
+    expect(getTask(taskId)!.awaiting_input).toBe(1);
+  });
+
+  it("clears the mark when the user acknowledges the run with a status write", async () => {
+    startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
+    await settled();
+    expect(getTask(taskId)!.unread_run_at).toBeGreaterThan(0);
+    // What the card's "Mark done" sends. The status is what clears the mark —
+    // the state has no third place to fall back to, and clearing it alone would
+    // drop the row into the very pile this whole thing pulls it out of.
+    const res = await patchTask(
+      new Request("http://x", { method: "PATCH", body: JSON.stringify({ status: "done" }) }),
+      { params: Promise.resolve({ id: taskId }) },
+    );
+    expect(res.status).toBe(200);
+    const t = getTask(taskId)!;
+    expect(t.status).toBe("done");
+    expect(t.unread_run_at).toBe(0);
+    expect(isUnreadRun(t as unknown as TaskRow)).toBe(false);
   });
 
   it("settles a failed run and DOES surface it", async () => {

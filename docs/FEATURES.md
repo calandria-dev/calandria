@@ -64,6 +64,33 @@ sent ones stay listed against the document, read-only, and collapse into an outd
 once the document changes. Details and the library survey behind the design are in
 [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md).
 
+### Base branches
+
+A project has a default base branch, and a task can name its own. That branch is what the
+task's worktree is cut from, what **Sync** catches it up to, what **Merge** lands it into,
+and what a PR is opened against — one setting, all four. It is the answer to five agents
+landing on `feature/auth` while three others keep shipping to `main`, which previously
+needed a second project row pointed at the same repo, splitting the task list, the recap and
+the insights in half.
+
+Set it in the task's edit dialog: **Base branch**, empty meaning "follow the project", with
+the inherited value as the placeholder so the field never has to be filled in to be read.
+Any branch that exists locally works, and so does one that exists only on the remote — a
+colleague's freshly pushed `feature/auth` is created locally, tracking it, rather than
+refused as unknown. What is refused is a branch some other worktree has checked out
+(including another task's own `calandria/…` branch): merging lands by moving that branch's
+ref, which would leave the session working in there describing a commit it no longer points
+at. The refusal names the worktree holding it.
+
+Retargeting never rewrites anything. A task that has not committed yet is simply re-cut from
+the new base, so it ends up up to date rather than merely pointed at it. A task that *has*
+committed keeps every commit and is told how far behind the new base it now is — one Sync
+catches it up. Inheritance stops at the worktree cut: once a task has been cut, the branch it
+forked from is recorded on the task, so nothing can move its merge target out from under work
+already built on it. Tasks on a base of their own are badged in the task list and the Changes
+tab; tasks following the project default are not, because a badge on every task saying `main`
+is noise.
+
 ### Staying level with the remote
 
 Work does not only arrive through the merge button — a pull request merged on GitHub, a
@@ -104,7 +131,7 @@ touch your checkout at all, so they are unaffected.
 ## Planning and orchestration
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,
-Needs input, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
+Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
 
 Everywhere tasks are listed — every group in the list, every board column, the Suggested
@@ -438,6 +465,17 @@ When that happens the run is recorded as **failed**, not as a quiet green "ran",
 the exact failure this feature exists to prevent. The same applies to a question — if the
 agent asks one mid-run, it's declined immediately with the question preserved in the
 transcript, rather than parking the run forever waiting on an answer that isn't coming.
+
+**Where a clean run comes to rest.** A firing that gets the job done is not waiting on an
+answer, so it deliberately stays out of the "N need you" pill — a permanent daily item nobody
+can reply to is how people learn to ignore that pill. But it isn't working any more either,
+and it isn't done: nobody has read it. So it rests in a state of its own, **Ran clean**, with
+its own group in the task list and its own column on the board. The card says when it ran and
+carries one button, **Mark done** — you read the run, you close it, the row leaves the board.
+Replying to it does the same thing the other way round: the next turn takes the task back to
+In progress. Before this, a successful run had no terminal state at all and sat under **In
+progress** forever, looking exactly like live work, so a weekday schedule quietly added five
+permanent rows a week.
 
 The card also watches **the ticker itself**. If the scheduler isn't running, or its sweeps
 stop completing (a wedged check hangs every schedule on the instance at once), a banner says

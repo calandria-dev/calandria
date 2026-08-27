@@ -14,7 +14,7 @@ export interface Project {
   building: string; // legacy — kept for back-compat, folded into context
   conventions: string; // legacy — kept for back-compat, folded into context
   repo_path: string; // working dir for Claude Code
-  branch: string; // git branch (context only)
+  branch: string; // the project's DEFAULT base branch: what a task is cut from, syncs to and merges into unless the task names its own (lib/baseBranch.ts)
   dev_command: string; // long-running dev server command supervised by lib/services.ts ("" = none)
   setup_command: string; // optional one-shot setup command (install/migrate/etc.)
   test_command: string; // optional one-shot test command
@@ -53,6 +53,13 @@ export interface Task {
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
   work_branch: string; // the worktree's branch (e.g. "calandria/<id>")
   base_sha: string; // commit the worktree branched from — the stable diff/merge base
+  // The branch this task is based on — what it was cut from, what Sync catches
+  // it up to, and what Merge lands it into. "" = inherit the project's default
+  // (projects.branch). Written back by the launch paths at the moment the
+  // worktree is CUT, because from then on base_sha came from that branch and
+  // nothing else can be true; changing it afterwards is a retarget with the
+  // reconciliation that implies. Resolution and policy: lib/baseBranch.ts.
+  base_branch: string;
   merged_at: number; // when this task's branch was merged back (0 = not merged)
   pr_url: string; // GitHub PR opened from this task's branch via "Create PR" ("" = none)
   generation: number; // increments on each /clear
@@ -73,6 +80,14 @@ export interface Task {
   // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
   // what makes going back to the previous category free rather than restored.
   snoozed_until: number;
+  // When an unattended run finished cleanly and nobody has acknowledged it yet
+  // (ms epoch; 0 = nothing outstanding). A scheduled turn that succeeds sets
+  // this INSTEAD of awaiting_input: it isn't waiting on an answer, so it must
+  // stay out of the "N need you" pill, but it isn't still working either —
+  // without a mark of its own the task rested under "In progress" forever
+  // (issue #28). Cleared by the next turn that starts on the task and by any
+  // explicit status write; `status` itself is untouched, exactly like a snooze.
+  unread_run_at: number;
   // Queued to start on its own at this instant (ms epoch; 0 = not queued) —
   // "start at the usage-window reset" (lib/deferredStart.ts). For a never-
   // started task the sweep launches its first turn; for a started one it
@@ -572,6 +587,13 @@ export type GlobalTaskEvent = {
   /** What the linger is waiting on ("waiting to wake at 12:00"); "" when not lingering. */
   background_note: string;
   status: Status;
+  /**
+   * A clean unattended run nobody has acknowledged yet (ms epoch; 0 = none) —
+   * the resting state of a scheduled success. Carried alongside the flags
+   * above because it settles at the same instant they do, and a client that
+   * only learned running/awaiting_input would draw the row as still working.
+   */
+  unread_run_at: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
   /**

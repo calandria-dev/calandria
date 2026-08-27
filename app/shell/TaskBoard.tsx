@@ -3,12 +3,12 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
-import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
-import { SEARCH_MIN, SNOOZE_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
+import { SEARCH_MIN, SNOOZE_LABEL, RAN_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge, useCoarsePointer } from "./shared";
@@ -20,9 +20,9 @@ import { DiffFooter } from "./DiffFooter";
 // update as sessions stream — and dragging a card between columns re-statuses
 // it. Order WITHIN a column is recency (listTasks sorts by `updated_at`), not
 // something a drag can pin, so there is no drop position to aim at.
-type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "snoozed" | "on_hold" | "done" | "cancelled";
+type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "ran" | "snoozed" | "on_hold" | "done" | "cancelled";
 
-const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "snoozed", "on_hold", "done", "cancelled"];
+const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "ran", "snoozed", "on_hold", "done", "cancelled"];
 
 // The fields a drop can rewrite. `snoozed_until` is here because dragging a
 // card OUT of Snoozed has to wake it in the same write — see statusPatch.
@@ -55,7 +55,7 @@ const COLS: Record<ColKey, {
   },
   in_progress: {
     label: "In progress", always: true,
-    member: (t) => inStatusColumn(t) && t.status === "in_progress" && !isAwaiting(t),
+    member: (t) => inStatusColumn(t) && t.status === "in_progress" && !isAwaiting(t) && !isUnreadRun(t),
     // Dropping an awaiting card here is "I've dealt with it": the explicit
     // status write clears the awaiting flag server-side, so patch even when
     // the status string wouldn't change.
@@ -66,6 +66,17 @@ const COLS: Record<ColKey, {
     member: (t) => inStatusColumn(t) && isAwaiting(t),
     patchFor: (t) => (inStatusColumn(t) && isAwaiting(t) ? {} : null),
     noDropWhy: "Needs input is derived from session state — the agent sets it when it asks you a question.",
+  },
+  ran: {
+    // A scheduled run that finished on its own with nothing to answer. Derived
+    // like Needs-input: the state is settled by the runner at the end of an
+    // unattended turn, so there is no such thing as dragging a card INTO it.
+    // Dragging one OUT is an ordinary status write, which is also how the card
+    // is acknowledged — the server clears the mark with the status (issue #28).
+    label: RAN_LABEL, derived: true, always: false,
+    member: (t) => inStatusColumn(t) && isUnreadRun(t),
+    patchFor: (t) => (inStatusColumn(t) && isUnreadRun(t) ? {} : null),
+    noDropWhy: "Ran clean is what an unattended run settles as — drag a card out to Done once you've read it.",
   },
   snoozed: {
     // Parked work. Derived like Needs-input, but for a different reason: there
@@ -137,12 +148,12 @@ function dayBucket(ts: number): string {
   return "Earlier";
 }
 
-function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, actions, sparkline, tagsById, onSelectTag }: {
-  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
+function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, onAckRun, actions, sparkline, tagsById, onSelectTag, projectBranch }: {
+  task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string;
   mini?: boolean; dragging: boolean; canDrag: boolean;
   onSelect: () => void; onDragStart: () => void; onDragOverCard: (e: React.DragEvent) => void;
   onDropOnCard: (e: React.DragEvent) => void; onDragEnd: () => void;
-  onSnooze: (until: number) => void; onUnsnooze: () => void; actions?: ReactNode; sparkline?: number[];
+  onSnooze: (until: number) => void; onUnsnooze: () => void; onAckRun: () => void; actions?: ReactNode; sparkline?: number[];
 }) {
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting, the way it does in the list: a parked task must
@@ -157,10 +168,13 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
   // Queued for the usage-window reset (./queuedStart.ts); moot once a turn is live.
   const queued = isQueuedStart(task) && !running;
+  // Ran unattended, cleanly, and unread — the ran-clean column's state.
+  const ranClean = !snoozed && !awaiting && isUnreadRun(task);
   const activity = snoozed ? `wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
     : running ? "live · working"
+    : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
     : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
@@ -199,6 +213,14 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           {Icon.moon()} Was snoozed
         </div>
       )}
+      {/* The one way out of the ran-clean column that doesn't need a drag —
+          and the only affordance that says what the state expects of you. */}
+      {ranClean && !mini && (
+        <button className="bc-chip ran" title="Mark done — you've read this run"
+          onClick={(e) => { e.stopPropagation(); onAckRun(); }}>
+          {Icon.check()} Mark done
+        </button>
+      )}
       {/* The reason IS the card's content once it's withdrawn — a struck-through
           title with no explanation gives the user nothing to judge. */}
       {withdrawn && task.withdrawn_reason && (
@@ -219,7 +241,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           )}
         </div>
       )}
-      {!mini && <DiffFooter task={task} points={sparkline} />}
+      {!mini && <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />}
       {(!!task.agent_edited_at || blocked || queued || sessionCount > 0) && !mini && (
         <div className="bc-foot">
           <AgentEditedChip task={task} variant="board" />
@@ -245,14 +267,17 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, projectBranch, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze, onAckRun }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
+  projectBranch: string; // the project's DEFAULT base — cards badge a task's own base only when it differs
   onSelect: (id: string) => void; onEditTask: (id: string) => void;
   onMove: (id: string, patch: TaskMovePatch) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
+  /** Acknowledge a clean unattended run — a status write that files it under Done. */
+  onAckRun: (id: string) => void;
 }) {
   // Dragging is a pointer gesture, so it's off on a touch device (the card's
   // own controls own those gestures). Nothing else gates it: a drop re-statuses
@@ -356,9 +381,11 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       onDragEnd={reset}
                       onSnooze={(until) => onSnooze(t.id, until)}
                       onUnsnooze={() => onUnsnooze(t.id)}
+                      onAckRun={() => onAckRun(t.id)}
                       sparkline={sparklines[t.id]}
                       tagsById={tagsById}
                       onSelectTag={onSelectTag}
+                      projectBranch={projectBranch}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
                           <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
@@ -396,7 +423,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
 // Full-workspace board shell (desktop): owns everything right of the projects
 // sidebar — header with the List/Board toggle, the board, and (via `children`)
 // the slide-over session panel + drawers the composition root mounts on top.
-export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, children }: {
+export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, children }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; tags: TagRow[]; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;
   onSetView: (v: TaskView) => void;
@@ -405,6 +432,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTas
   onEditTask: (id: string) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
+  onAckRun: (id: string) => void;
   children?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -457,10 +485,10 @@ export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTas
         <TaskBoard
           tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
           running={running} blockedBy={blockedBy} sparklines={sparklines}
-          tagsById={tagsById} onSelectTag={selectTag}
+          tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
-          onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}
+          onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun}
         />
       )}
       {children}

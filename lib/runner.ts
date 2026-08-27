@@ -15,10 +15,12 @@ import { withTaskLock } from "@/lib/taskLock";
 import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED } from "@/lib/permissions";
 import { worktreeRelative } from "@/lib/collab";
@@ -276,12 +278,21 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // ever reaching this function, so this branch is its safety net, not its
     // primary path.)
     if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
-      const wt = await ensureWorktree(project.repo_path, id, project.branch);
+      const wt = await ensureWorktree(project.repo_path, id, resolveBaseBranch(task, project));
       if (wt) {
         task.worktree_path = wt.path;
         task.work_branch = wt.branch;
         task.base_sha = wt.baseSha;
-        updateTask(id, { worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha });
+        // Pin the base at the cut (lib/baseBranch.ts). This path is the self-heal
+        // rather than a first launch, but a cut is a cut: base_sha now comes from
+        // that branch, so the task owns the answer from here on. Skipped when
+        // ensureWorktree fell back to HEAD (baseBranch "") — pinning a branch the
+        // worktree wasn't actually cut from would be a lie the merge would honor.
+        if (wt.baseBranch) task.base_branch = wt.baseBranch;
+        updateTask(id, {
+          worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
+          ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+        });
       }
     }
     // Catch the worktree up to base when it's a clean, zero-conflict fast-forward
@@ -290,19 +301,22 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // hiccup must never block the turn — just skip the catch-up.
     let syncNote = "";
     if (task.worktree_path && task.work_branch) {
+      // The task's own base, not the project's: a task on feature/auth catches
+      // up to feature/auth, which is the entire point of the feature.
+      const base = resolveBaseBranch(task, project);
       try {
         const s = await worktreeSyncStatus({
           repoPath: project.repo_path,
           worktreePath: task.worktree_path,
           workBranch: task.work_branch,
-          baseBranch: project.branch,
+          baseBranch: base,
         });
-        if (s.canFastForward && s.behind > 0 && (await fastForwardWorktree(task.worktree_path, project.branch))) {
+        if (s.canFastForward && s.behind > 0 && (await fastForwardWorktree(task.worktree_path, base))) {
           if (s.baseTip) {
             task.base_sha = s.baseTip;
             updateTask(id, { base_sha: s.baseTip });
           }
-          syncNote = `✓ Caught up to ${project.branch} (was ${s.behind} behind).`;
+          syncNote = `✓ Caught up to ${base} (was ${s.behind} behind).`;
         }
       } catch {
         // skip the catch-up
@@ -394,7 +408,14 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
  *   - an approval-policy block (enterprise-managed Codex downgraded our
  *     "never" to an approval-requiring policy that exec mode can't service) →
  *     APPROVAL_BLOCKED_NOTICE, which becomes a "Retry" button — the Codex
- *     driver has already self-healed to "on-request" for the next turn.
+ *     driver has already self-healed to "on-request" for the next turn;
+ *   - a worktree that could not be prepared (a crashed git's stale index.lock, a
+ *     registration pointing at a directory that's gone, a full disk, a detached
+ *     HEAD) → the classified hint from lib/worktreeFailure.ts, plus, for the two
+ *     kinds a repair pass can fix, WORKTREE_REPAIR_NOTICE — a "Repair worktree"
+ *     button. This is the path an UNATTENDED launch failure takes (the queue
+ *     drain below, lib/autoStart.ts, lib/dispatch.ts), so a scheduled run that
+ *     fails the same way every morning now says what to do about it.
  * Either way the raw provider text stays visible above the hint, so token counts
  * and the actual wording remain legible. The persisted message is the durable
  * channel — it survives SSE reconnects because the snapshot replays from SQLite.
@@ -408,7 +429,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
         ? USAGE_LIMIT_NOTICE
         : isApprovalBlocked(errText)
           ? APPROVAL_BLOCKED_NOTICE
-          : null;
+          : worktreePrepNotice(errText);
   const content = notice ? `⚠ ${errText}\n\n${notice}` : `⚠ ${errText}`;
   // The persist can itself throw — most importantly when the task row is gone
   // (project/task deleted mid-turn): addMessage then hits a FOREIGN KEY error.
@@ -518,8 +539,14 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       if (ev.type === "session") {
         sessionId = ev.sessionId;
         opened = true;
-        // Session is live — now it's officially started / in progress.
-        updateTask(id, { started: 1, status: "in_progress" });
+        // Session is live — now it's officially started / in progress. And
+        // whatever an earlier unattended run left unread is superseded: a turn
+        // is underway again, so the row belongs under "In progress" rather
+        // than in the ran-clean pile. Cleared HERE rather than at each launch
+        // site because every turn passes through this one point, however it
+        // was started (a message, a resume, the deferred-start sweep, the next
+        // firing of the same schedule).
+        updateTask(id, { started: 1, status: "in_progress", unread_run_at: 0 });
         // Persist this generation's agent session id for the project view.
         recordSession({ project_id: project.id, task_id: id, generation: gen, claude_session_id: sessionId });
         publish(id, ev);
@@ -787,7 +814,22 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     if (!generationAdvanced && !superseded) {
       // background_pending settles with running: however the linger ended (all
       // work done, expiry, Stop), the session that owned the work is gone.
-      updateTask(id, { running: 0, background_pending: 0, background_note: "", session_id: sessionId, awaiting_input: opened && !scheduledOk ? 1 : 0 });
+      //
+      // A clean scheduled run rests on `unread_run_at` — the mark that says
+      // "this ran, on its own, and nobody has looked at it yet". Quiet like
+      // awaiting_input isn't (it's outside the NEEDS_YOU predicate, so the "N
+      // need you" pill never gains a daily item nobody can answer), but still a
+      // state with a way OUT of it: the board draws these in their own group
+      // and acknowledging one is an ordinary status write. Without it the task
+      // sat at running=0 / awaiting_input=0 / status=in_progress, which is
+      // indistinguishable from live work and which nothing ever moved, so every
+      // firing left one more permanent "In progress" row behind (issue #28).
+      updateTask(id, {
+        running: 0, background_pending: 0, background_note: "", session_id: sessionId,
+        awaiting_input: opened && !scheduledOk ? 1 : 0,
+        // Only a run that actually opened a session produced anything to read.
+        ...(scheduledOk && opened ? { unread_run_at: Date.now() } : {}),
+      });
     }
 
     // Settle the schedule run from HERE, because this is the only place that
@@ -873,7 +915,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // Re-read the project at dequeue time, not the snapshot captured at the
         // START of the turn we're finishing. The base branch, repo_path, or
         // context may have changed while this turn ran; the dequeued follow-up
-        // fast-forwards against project.branch/repo_path and seeds its system
+        // fast-forwards against its resolved base branch / repo_path and seeds its system
         // prompt from project.context, so a stale snapshot would sync it to the
         // wrong base and run it with outdated context.
         const freshProject = fresh ? getProject(fresh.project_id) : undefined;

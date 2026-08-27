@@ -98,6 +98,10 @@ describe("dispatchPromptTask fails closed on a throwing ensureWorktree", () => {
     expect(task.worktree_path).toBe("");
     // The turn never launched into any cwd, isolated or not.
     expect(startTurnMock).not.toHaveBeenCalled();
+    // …and the minted task says so on its own transcript, classified (issue
+    // #44). A schedule's failure otherwise lives only in the run ledger, so
+    // the task the user opens the next morning would be blank.
+    expect(publishTurnErrorMock).toHaveBeenCalledWith(task.id, task.generation, expect.stringContaining(LOCK_ERROR));
   });
 
   it("still falls back to repo_path when ensureWorktree legitimately returns null", async () => {
