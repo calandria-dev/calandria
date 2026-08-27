@@ -63,6 +63,31 @@ async function hasCommit(repoPath: string): Promise<boolean> {
 }
 
 export const branchForTask = (taskId: string) => `calandria/${taskId}`;
+/**
+ * The spelling tasks were minted under before the rename. Never minted again,
+ * only ADOPTED: a branch is written into the repo once and lives there
+ * forever, and a v0.2.0 task's commits are on `orch/<id>`, not on a
+ * `calandria/<id>` that doesn't exist yet. See existingTaskBranch().
+ */
+export const legacyBranchForTask = (taskId: string) => `orch/${taskId}`;
+
+/**
+ * The branch a task already has in this repo, under either spelling, or null
+ * when it has none. This is what makes a reattach a reattach: ensureWorktree
+ * is the one place that DERIVES a branch name rather than reading it off the
+ * row, and it runs on every self-heal (a pruned merged worktree, a lost
+ * checkout, a task moved between projects) — deriving only the new spelling
+ * there cut a fresh empty `calandria/<id>` beside the task's real work on
+ * `orch/<id>`, and every caller then committed that to the row: an empty
+ * diff, a merge of nothing, and a branch nothing pointed at any more.
+ */
+async function existingTaskBranch(repoPath: string, taskId: string): Promise<string | null> {
+  const current = branchForTask(taskId);
+  if (await branchExists(repoPath, current)) return current;
+  const legacy = legacyBranchForTask(taskId);
+  if (await branchExists(repoPath, legacy)) return legacy;
+  return null;
+}
 
 // Fallback committer identity, used only when the user has none configured.
 const FALLBACK_IDENTITY = ["-c", "user.name=Calandria", "-c", "user.email=calandria@local"];
@@ -642,16 +667,18 @@ async function ensureWorktreeLocked(
   if (!(await isGitRepo(repoPath)) || !(await hasCommit(repoPath))) return null;
 
   const wtPath = path.join(WORKTREES_DIR, taskId);
-  const branch = branchForTask(taskId);
+  // A branch already under this task's name — either spelling — means the task
+  // ran before, so this is a reattach, not a fresh start: its base is where it
+  // forked, not the tip as of now, and the branch it gets is the one its
+  // commits are on.
+  const existing = await existingTaskBranch(repoPath, taskId);
+  const branch = existing ?? branchForTask(taskId);
   // The configured base branch if it exists, else current HEAD. The fallback
   // must stay — a freshly-initialized repo may have an unborn or differently-named
   // default branch, and a misconfigured project shouldn't block task isolation.
   const localBase = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
 
-  // A branch already under this task's name means the task ran before, so this
-  // is a reattach, not a fresh start — and its base is where it forked, not the
-  // tip as of now.
-  const reattaching = await branchExists(repoPath, branch);
+  const reattaching = existing !== null;
   const baseSha = reattaching
     ? await forkPointSha(repoPath, branch, localBase)
     : await selectStartPoint(repoPath, localBase);

@@ -104,8 +104,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   "CLAUDE.md": [LEGACY_STORAGE],
 
   // (c) git artifacts minted before the rename. A branch name is written into
-  // the repo once and lives there forever; the merge-abort ref likewise.
-  "lib/git.ts": [/refs\/worktree\/orch-merge-abort/],
+  // the repo once and lives there forever, so ensureWorktree's self-heal has
+  // to ADOPT an `orch/<id>` branch (legacyBranchForTask) rather than cut an
+  // empty `calandria/<id>` beside it; the merge-abort ref likewise.
+  "lib/git.ts": [/refs\/worktree\/orch-merge-abort/, /`orch\/\$\{taskId\}`/, /`orch\/<id>`/],
   "tests/legacyBranchPrefix.test.ts": [/orch\\?\/|orch-merge-abort/],
 
   // (c) localStorage keys minted before the rename, read once on miss so a
