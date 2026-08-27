@@ -448,6 +448,8 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
         <TagStrip
           tag={selectedTag}
           members={[...tasks, ...suggested].filter((t) => t.tag_ids.includes(selectedTag.id))}
+          allTags={tags}
+          projectBranch={project.branch}
           originTask={selectedTag.origin_task_id
             ? [...tasks, ...suggested].find((t) => t.id === selectedTag.origin_task_id)
             : undefined}

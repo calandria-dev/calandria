@@ -846,8 +846,12 @@ export function moveTasks(
       db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tags WHERE project_id = ?").get(projectId) as { n: number }
     ).n;
     const nameTaken = db.prepare("SELECT 1 AS x FROM tags WHERE project_id = ? AND name = ?");
+    // base_branch is cleared on the way across for exactly the reason it is
+    // cleared on every mover below: a branch name means nothing in another
+    // repository, and a carried tag still naming `feature/auth` would hand that
+    // default to every task filed under it in a repo that has no such branch.
     const rekey = db.prepare(
-      "UPDATE tags SET project_id = ?, name = ?, position = ?, origin_task_id = ?, updated_at = ? WHERE id = ?"
+      "UPDATE tags SET project_id = ?, name = ?, position = ?, origin_task_id = ?, base_branch = '', updated_at = ? WHERE id = ?"
     );
     for (const g of carriedTags) {
       // UNIQUE(project_id, name), and a same-named tag in the destination is
@@ -1024,10 +1028,11 @@ export interface ReclaimableWorktree {
   project_id: string;
   project_name: string;
   repo_path: string;
-  // The task's RESOLVED base — its own when it has one, else the project's
-  // default. Expressed as SQL because this sweep has no Task in hand; the
-  // COALESCE order must stay the twin of resolveBaseBranch() in
-  // lib/baseBranch.ts, and tests/baseBranch.test.ts asserts they agree.
+  // The task's RESOLVED base — its own when it has one, else the first of its
+  // tags that sets one (in tag order), else the project's default. Expressed as
+  // SQL because this sweep has no Task in hand; the order must stay the twin of
+  // resolveBaseBranch() in lib/baseBranch.ts, and tests/baseBranch.test.ts
+  // asserts that all three legs agree.
   base_branch: string;
   worktree_path: string;
   work_branch: string;
@@ -1038,8 +1043,18 @@ export interface ReclaimableWorktree {
 export function listReclaimableWorktrees(): ReclaimableWorktree[] {
   return getDb()
     .prepare(
+      // The tag leg is no longer a plain COALESCE column: it is a lookup
+      // through task_tags, ordered by the same position getTaskTags() reads in,
+      // taking the FIRST tag that actually sets a base. A task carrying three
+      // tags where two name a branch resolves to the one its badges lead with.
       `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path,
-              COALESCE(NULLIF(t.base_branch, ''), p.branch) AS base_branch,
+              COALESCE(
+                NULLIF(t.base_branch, ''),
+                (SELECT g.base_branch FROM task_tags tt JOIN tags g ON g.id = tt.tag_id
+                  WHERE tt.task_id = t.id AND g.base_branch != ''
+                  ORDER BY tt.position ASC, tt.created_at ASC LIMIT 1),
+                p.branch
+              ) AS base_branch,
               t.worktree_path, t.work_branch, t.merged_at, t.status, t.updated_at
          FROM tasks t JOIN projects p ON p.id = t.project_id
         WHERE t.worktree_path != '' AND (t.merged_at > 0 OR t.status = 'done')
@@ -1150,6 +1165,8 @@ export function createTag(input: {
   name: string;
   description?: string;
   color?: string | null;
+  /** The whole plan's base branch; "" = no opinion, members follow the project. */
+  base_branch?: string;
   /** The session that filed it, when an agent did. */
   origin_task_id?: string | null;
 }): Tag {
@@ -1165,16 +1182,19 @@ export function createTag(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tags (id, project_id, name, description, color, origin_task_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tags (id, project_id, name, description, color, base_branch, origin_task_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.project_id, name, input.description ?? "", input.color ?? null, input.origin_task_id ?? null, position, now, now);
+    .run(
+      id, input.project_id, name, input.description ?? "", input.color ?? null,
+      input.base_branch?.trim() ?? "", input.origin_task_id ?? null, position, now, now
+    );
   return getTag(id)!;
 }
 
 export function updateTag(
   id: string,
-  fields: Partial<Pick<Tag, "name" | "description" | "color" | "position">>
+  fields: Partial<Pick<Tag, "name" | "description" | "color" | "base_branch" | "position">>
 ): Tag | undefined {
   const cur = getTag(id);
   if (!cur) return undefined;
@@ -1188,6 +1208,10 @@ export function updateTag(
   }
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.color !== undefined) patch.color = fields.color;
+  // "" clears the default back to "follow the project". Only members that
+  // haven't been cut yet ever see the change — tasks.base_branch is pinned at
+  // the worktree cut, which is what makes editing this mid-plan safe.
+  if (fields.base_branch !== undefined) patch.base_branch = fields.base_branch.trim();
   if (fields.position !== undefined) patch.position = fields.position;
   const keys = Object.keys(patch);
   if (!keys.length) return cur;

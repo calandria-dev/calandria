@@ -91,6 +91,18 @@ already built on it. Tasks on a base of their own are badged in the task list an
 tab; tasks following the project default are not, because a badge on every task saying `main`
 is noise.
 
+**A tag can set the base for a whole plan**, so a five-task feature is configured once instead
+of five times: expand its chip and fill in **Base branch** in the strip's Edit form. Every task
+tagged with it from then on is cut from that branch. Under the field is the consequence of
+changing it — how many members are already past their worktree cut and therefore keep the
+branch their work is built on, and how many take their base from a different tag. That last
+line matters because a task carries as many tags as it has reasons to: when two of them name a
+branch, the one that wins is the **first tag on the task**, in the order its badges render, and
+the strip says so rather than letting a branch appear from a tag you were not looking at. The
+resolution order is: the task's own base, then the first of its tags that sets one, then the
+project's default. Moving tasks to another project clears both, since a branch name means
+nothing in another repository.
+
 ### Staying level with the remote
 
 Work does not only arrive through the merge button — a pull request merged on GitHub, a

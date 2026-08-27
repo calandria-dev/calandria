@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProject, getTask, updateTask } from "@/lib/store";
-import { retargetTaskBase } from "@/lib/baseBranch";
+import { retargetTaskBase, tagBaseBranch } from "@/lib/baseBranch";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
 
@@ -31,25 +31,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
-    // An empty branch is "go back to inheriting the project's default". It still
-    // has to RECONCILE — the task may be pinned to a branch it is now leaving —
-    // so it routes through the same function under the project's own base rather
-    // than blanking the column and leaving base_sha describing a branch the task
-    // is no longer on. The one exception is a project with no base branch
-    // configured at all: there is nothing to reconcile against, and refusing on
-    // the name check would make the field impossible to clear.
-    if (!branch && !project.branch.trim()) {
+    // An empty branch is "go back to inheriting". What it inherits is the rest
+    // of the chain below the task's own pin — a tag's default if one of its
+    // tags sets one, else the project's — and it still has to RECONCILE, since
+    // the task may be pinned to a branch it is now leaving. So it routes through
+    // the same function under that inherited name rather than blanking the
+    // column and leaving base_sha describing a branch the task is no longer on.
+    // The one exception is nothing to inherit at all: there is nothing to
+    // reconcile against, and refusing on the name check would make the field
+    // impossible to clear.
+    const inherited = (tagBaseBranch(id) || project.branch).trim();
+    if (!branch && !inherited) {
       updateTask(id, { base_branch: "" });
       return NextResponse.json({ ok: true, inherited: true, baseBranch: "", message: "Now following the project, which has no base branch set." });
     }
-    const result = await retargetTaskBase(task, project, branch || project.branch);
+    const result = await retargetTaskBase(task, project, branch || inherited);
     if (!result.ok) return NextResponse.json(result, { status: 409 });
-    // Inheriting again is stored as "" so a later change to the project's
-    // default still reaches an uncut task — the pin is for a cut worktree, not
-    // for a user clearing the field.
+    // Inheriting again is stored as "" so a later change to the tag's or the
+    // project's default still reaches an uncut task — the pin is for a cut
+    // worktree, not for a user clearing the field.
     if (!branch) {
       updateTask(id, { base_branch: "" });
-      return NextResponse.json({ ...result, baseBranch: project.branch, inherited: true });
+      return NextResponse.json({ ...result, baseBranch: inherited, inherited: true });
     }
     return NextResponse.json(result);
   }));

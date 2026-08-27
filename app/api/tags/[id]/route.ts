@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { publishGlobal } from "@/lib/events";
+import { refNameSafe } from "@/lib/git";
 import { getTag, updateTag, deleteTag, TagNameConflictError } from "@/lib/store";
 import { parseTagColor } from "@/lib/types";
 
@@ -12,13 +13,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json(tag);
 }
 
-/** Rename, describe, recolor. Membership is NOT here — that's a task edit (PATCH /api/tasks/[id] tag_ids). */
+/**
+ * Rename, describe, recolor, or set the base branch a whole plan is cut from.
+ * Membership is NOT here — that's a task edit (PATCH /api/tasks/[id] tag_ids).
+ *
+ * `base_branch` is validated as a branch-SHAPED string and nothing more: unlike
+ * `POST /api/tasks/[id]/base-branch` this touches no git, because a tag has no
+ * worktree to reconcile and its members may be in any state. It is a default for
+ * cuts that haven't happened yet, so a branch that doesn't exist *yet* — the
+ * integration branch the plan is about to create — must be settable now. The
+ * name check is what stops `--upload-pack=evil` reaching a `git` argv later.
+ */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const before = getTag(id);
   if (!before) return NextResponse.json({ error: "no such tag" }, { status: 404 });
   const body = await req.json();
-  const fields: { name?: string; description?: string; color?: string | null; position?: number } = {};
+  const fields: { name?: string; description?: string; color?: string | null; base_branch?: string; position?: number } = {};
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
     fields.name = body.name;
@@ -31,6 +42,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const color = parseTagColor(body.color);
     if (!color.ok) return NextResponse.json({ error: color.error }, { status: 400 });
     fields.color = color.color;
+  }
+  if (body.base_branch !== undefined) {
+    if (typeof body.base_branch !== "string") return NextResponse.json({ error: "base_branch must be a string" }, { status: 400 });
+    const want = body.base_branch.trim();
+    // "" clears it back to "members follow the project".
+    if (want && !refNameSafe(want)) return NextResponse.json({ error: `"${want}" isn't a usable git branch name.` }, { status: 400 });
+    fields.base_branch = want;
   }
   if (body.position !== undefined) {
     if (typeof body.position !== "number" || !Number.isInteger(body.position)) return NextResponse.json({ error: "position must be an integer" }, { status: 400 });

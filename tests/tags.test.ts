@@ -10,6 +10,7 @@ import {
   TagNameConflictError,
 } from "@/lib/store";
 import { tagIsDone, parseTagColor, TAG_COLORS } from "@/lib/types";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 
 const project = (name = `tag-${Math.random().toString(36).slice(2)}`) => createProject({ name }).id;
 
@@ -318,6 +319,78 @@ describe("tags store", () => {
     expect(() => setTaskTags([a.id, b.id], [g.id, elsewhere.id])).toThrow(/another project/);
     expect(getTaskTagIds(a.id)).toEqual([]);
     expect(getTaskTagIds(b.id)).toEqual([]);
+  });
+
+  // ---- base_branch: a whole plan's base configured once instead of N times
+  // (phase 2 of docs/superpowers/specs/2026-08-27-per-task-base-branch-design.md,
+  // and the tie-break in its 2026-08-27 addendum). ----
+
+  it("a tag's base branch defaults to inherit, round-trips, and clears on empty", () => {
+    const g = createTag({ project_id: pid, name: "Auth" });
+    expect(g.base_branch).toBe("");
+    expect(updateTag(g.id, { base_branch: "  feature/auth  " })!.base_branch).toBe("feature/auth");
+    expect(createTag({ project_id: pid, name: "Rel", base_branch: "release" }).base_branch).toBe("release");
+    // "" is the clear, back to "members follow the project".
+    expect(updateTag(g.id, { base_branch: "" })!.base_branch).toBe("");
+  });
+
+  it("a newly tagged task inherits the tag's base; one already cut keeps its own", () => {
+    const project = createProject({ name: `basetag-${Math.random()}`, branch: "main" });
+    const g = createTag({ project_id: project.id, name: "Auth", base_branch: "feature/auth" });
+    // Not cut yet: nothing is pinned, so the tag answers.
+    const fresh = createTask({ project_id: project.id, title: "fresh", tag_ids: [g.id] });
+    expect(fresh.base_branch).toBe("");
+    expect(resolveBaseBranch(getTask(fresh.id)!, project)).toBe("feature/auth");
+
+    // Already cut: ensureWorktree pinned the branch its work is built on, and a
+    // tag default set afterwards must not move its merge target.
+    const cut = createTask({ project_id: project.id, title: "cut" });
+    updateTask(cut.id, { started: 1, worktree_path: "/tmp/wt", work_branch: "calandria/cut", base_branch: "main" });
+    setTaskTags([cut.id], [g.id]);
+    expect(resolveBaseBranch(getTask(cut.id)!, project)).toBe("main");
+
+    // And a task with no tag at all still falls through to the project.
+    const loose = createTask({ project_id: project.id, title: "loose" });
+    expect(resolveBaseBranch(getTask(loose.id)!, project)).toBe("main");
+  });
+
+  it("two tags disagreeing: the first in tag order that sets a base wins", () => {
+    const project = createProject({ name: `basetie-${Math.random()}`, branch: "main" });
+    const none = createTag({ project_id: project.id, name: "Sweep" });
+    const auth = createTag({ project_id: project.id, name: "Auth", base_branch: "feature/auth" });
+    const rel = createTag({ project_id: project.id, name: "Release", base_branch: "release" });
+    const t = createTask({ project_id: project.id, title: "two plans" });
+
+    // A tag with no opinion is skipped rather than counting as a vote for the
+    // project's default — otherwise adding "flaky-tests" to a task would silently
+    // take it off its feature branch.
+    setTaskTags([t.id], [none.id, auth.id, rel.id]);
+    expect(getTaskTagIds(t.id)).toEqual([none.id, auth.id, rel.id]);
+    expect(resolveBaseBranch(getTask(t.id)!, project)).toBe("feature/auth");
+
+    // Re-ordering the badges re-decides it: task_tags.position is the tie-break,
+    // and it is the same order the strip numbers steps in.
+    setTaskTags([t.id], [rel.id, auth.id]);
+    expect(resolveBaseBranch(getTask(t.id)!, project)).toBe("release");
+
+    // The task's OWN base still beats every tag.
+    updateTask(t.id, { base_branch: "hotfix" });
+    expect(resolveBaseBranch(getTask(t.id)!, project)).toBe("hotfix");
+  });
+
+  it("a carried tag loses its base branch on a cross-project move", () => {
+    const g = createTag({ project_id: pid, name: "Auth", base_branch: "feature/auth" });
+    const a = createTask({ project_id: pid, title: "a", tag_ids: [g.id] });
+    const dest = createProject({ name: `dest-${Math.random()}`, branch: "trunk" });
+    const res = moveTasks([a.id], dest.id, { resetCheckout: new Set() });
+
+    // The whole membership moved, so the tag came too — but a branch name means
+    // nothing in another repository, the same reason tasks.base_branch is cleared.
+    expect(res.carried.map((c) => c.id)).toEqual([g.id]);
+    expect(getTag(g.id)!.project_id).toBe(dest.id);
+    expect(getTag(g.id)!.base_branch).toBe("");
+    expect(getTask(a.id)!.base_branch).toBe("");
+    expect(resolveBaseBranch(getTask(a.id)!, dest)).toBe("trunk");
   });
 
   it("parseTagColor accepts the palette and clears on empty", () => {
