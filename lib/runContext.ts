@@ -45,6 +45,19 @@ export interface RunContext {
 /** What a scheduled firing runs under. */
 export const SCHEDULED_RUN_CONTEXT: RunContext = { origin: "schedule", interactionPolicy: "deny" };
 
+/**
+ * What a dependency-triggered auto-start runs under. "interactive" on purpose:
+ * unlike a schedule, this is work the user filed and asked to start when its
+ * blockers finished, so a permission card or an ask belongs in the "N need
+ * you" inbox rather than being auto-denied — the presence heuristic still
+ * shortens the wait when nobody is watching. What the context adds is the
+ * ORIGIN: the gate and the runner can tell "launched by a status change" from
+ * "launched by a click" instead of guessing from watcherCount(). Spread into
+ * a fresh object per turn (like SCHEDULED_RUN_CONTEXT) — the runner keys the
+ * registry on object identity and recordUnattendedDenial() mutates it.
+ */
+export const DEPENDENCY_RUN_CONTEXT: RunContext = { origin: "dependency", interactionPolicy: "interactive" };
+
 declare global {
   // eslint-disable-next-line no-var
   var __calandriaRunContexts: Map<string, RunContext> | undefined;
