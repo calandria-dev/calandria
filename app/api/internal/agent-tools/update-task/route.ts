@@ -19,9 +19,10 @@ export const dynamic = "force-dynamic";
 //
 // This is the path where the model, not the server, picks what gets written, so
 // the endpoint hands both to updateTaskForAgent and enforces nothing itself.
-// That function owns the policy (own row, or an inert tray suggestion in any
-// project) along with field validation and the refusal to accept "cancelled",
-// and it is shared with the in-process server, so the two can't drift.
+// That function owns the policy (any task, in any project, refused only while
+// it has a turn running right now) along with field validation and the refusal
+// to accept "cancelled", and it is shared with the in-process server, so the
+// two can't drift.
 export async function POST(req: NextRequest) {
   let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[]; group?: string };
   try {

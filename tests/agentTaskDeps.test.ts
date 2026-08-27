@@ -147,7 +147,9 @@ describe("update_task sets dependencies after the fact", () => {
     expect(text).toContain("on_hold");
   });
 
-  it("still refuses a target that isn't an inert suggestion", () => {
+  it("still refuses a target with a live turn streaming in it", () => {
+    // The one refusal that survived the ownership-gate removal: a turn may be
+    // mid-way through reading the very fields this call would rewrite.
     const project = createProject({ name: "UD-Boundary" });
     const caller = callerTask(project.id);
     const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
@@ -156,7 +158,7 @@ describe("update_task sets dependencies after the fact", () => {
     const { task, text } = updateTaskForAgent(caller, theirs.id, { blocked_by: [blocker.id] });
     expect(task).toBeNull();
     expect(getTaskDeps(theirs.id)).toEqual([]);
-    expect(text).toContain("unreviewed suggestion");
+    expect(text).toContain("streaming");
   });
 
   it("reports no change when the dep set already matches", () => {

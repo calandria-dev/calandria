@@ -63,6 +63,7 @@ export interface TaskRow {
   group_id: string | null; // the task group this belongs to (see GroupChips.tsx); null = ungrouped
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
+  agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding) — see AgentEdits.tsx
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
   context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
@@ -72,6 +73,38 @@ export interface TaskRow {
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
   diff_del?: number; // same, deletions
 }
+// ---------- agent edits on an already-accepted task (AgentEdits.tsx) ----------
+// Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
+
+/** The task field an agent's `update_task` call changed. */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "group" | "blocked_by";
+
+/** One field's before/after within an edit — `before`/`after` are already the
+ *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`
+ *  is what a revert writes back and is never sent by the client. */
+export interface AgentEditChange {
+  field: AgentEditField;
+  before: string;
+  after: string;
+  before_value: string | string[] | null;
+}
+
+/** One recorded agent edit to a task the user had already accepted. */
+export interface TaskAgentEdit {
+  id: string;
+  task_id: string;
+  project_id: string;
+  /** The task whose session made the change; "" if that row is gone. */
+  actor_task_id: string;
+  actor_title: string;
+  /** An agent id, e.g. "claude" / "codex". */
+  actor_agent: string;
+  changes: AgentEditChange[];
+  created_at: number;
+  /** 0 = still applied; non-zero = the user already reverted it. */
+  reverted_at: number;
+}
+
 // A single row in the titlebar "need you" dropdown: an awaiting task plus enough
 // of its project to label and color it. Mirrors lib/store.ts listNeedsYou().
 export interface NeedsYouRow {

@@ -120,6 +120,14 @@ export function buildProjectContext(project: Project, task: Task): string {
       `refs must be tasks in the same project the dependent task is filed into.`
   );
   lines.push(
+    `\n\`update_task\` also reaches tasks already on the board, in any project — including ones ` +
+      `the user has accepted or started, not just your own. If you learn something that makes a ` +
+      `planned task wrong or stale, correct it: the edit isn't applied silently, it's flagged on ` +
+      `the user's board as changed by an agent with a before/after diff and a one-click revert, ` +
+      `so it's reviewable rather than sprung on them. The one exception is a task with a turn ` +
+      `running in it right now — that's refused.`
+  );
+  lines.push(
     `\nYou also have \`create_runbook\`, \`list_runbooks\` and \`update_runbook\`. A RUNBOOK is a ` +
       `saved recipe — a prompt plus how to run it — that the user can dispatch later in one ` +
       `click, minting a fresh task each time. When the user asks you to save a procedure, or ` +

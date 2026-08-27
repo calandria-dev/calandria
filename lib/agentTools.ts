@@ -13,7 +13,7 @@
 
 import { nanoid } from "nanoid";
 import { PRIORITIES, groupIsDone } from "./types";
-import type { Project, Task, TaskGroup, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData } from "./types";
+import type { Project, Task, TaskGroup, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData, AgentEditChange } from "./types";
 import {
   createTask,
   setTaskDeps,
@@ -27,6 +27,7 @@ import {
   listGroups,
   listProjectsPlain,
   listTasks,
+  recordAgentEdit,
   resolveGroup,
   sameDepSet,
 } from "./store";
@@ -335,18 +336,27 @@ function depNote(task: Task, project: Project, refs: string[] | undefined): stri
 /* ── Reading and updating tasks ──────────────────────────────────────────────
  *
  * Reads are inert, so they range over the board the same way suggest_task can
- * file into any project. WRITES are bounded by what nobody else is holding: a
- * turn runs detached for as long as it likes, and letting one retitle or close a
- * row another session is mid-flight on would let an agent rearrange live work.
+ * file into any project. Writes used to be bounded by ownership — the CALLING
+ * task's own row, or an INERT TRAY SUGGESTION (isInertSuggestion below) nobody
+ * had touched yet — and everything else, including a task the user had already
+ * accepted and started, was refused outright.
  *
- * So update_task writes exactly two kinds of row: the CALLING task's own (the
- * one thing the session unambiguously owns), and any INERT TRAY SUGGESTION
- * (isInertSuggestion below) in any project. The second is what makes a planning
- * turn honest — an agent that files eight suggestions and then learns something
- * can go back and sharpen them instead of narrating a correction the user has to
- * apply by hand. It ranges across projects because suggest_task already files
- * across projects; a task you can create in project B but not fix there is a
- * seam, not a boundary.
+ * That gate is gone. An agent may now update ANY task in ANY project. The old
+ * restriction's real cost was a long chain of accepted tasks going stale the
+ * moment one fact changed — a planning session that learns something on task 3
+ * had no way to correct task 1 except narrating the fix and making the user
+ * apply it by hand. What replaces the gate is not a narrower permission but
+ * VISIBILITY: a write to a row the old policy would have refused is RECORDED
+ * (recordAgentEdit, below) so the board can show a "changed since you accepted
+ * it" chip, a field-by-field diff, and a per-edit Revert — the user finds out
+ * what changed and can undo it, rather than the write being silently blocked
+ * or silently invisible.
+ *
+ * The one thing still refused is a row with a LIVE TURN in it that isn't the
+ * caller's own — that session may be mid-way through reading the very fields
+ * this call would rewrite, and there is no way to warn it. Nothing else is
+ * off-limits: a suggestion, an accepted backlog item, a task on hold, even one
+ * the user is actively viewing.
  */
 
 /** One row of `list_tasks`: enough to reason about the board, no prose. */
@@ -559,6 +569,14 @@ export function isInertSuggestion(t: Task): boolean {
  * is pinned SDK-free (tests/importGraph.test.ts) because the internal HTTP
  * routes behind the stdio bridge import it. Callers that can, do — against the
  * returned task's id, which is the TARGET's, not the caller's.
+ *
+ * `wasAccepted` — captured on the PRE-PATCH row, before anything about it can
+ * change — is true exactly when this write is one the old ownership gate would
+ * have refused: not the caller's own row, and not an unreviewed tray
+ * suggestion. That, and only that, is what gets recorded via recordAgentEdit
+ * (see the block comment above this section for why) — an edit to the caller's
+ * own row or to a suggestion nobody has looked at yet was always allowed and
+ * isn't a surprise to anyone.
  */
 export function updateTaskForAgent(
   caller: Task,
@@ -578,25 +596,37 @@ export function updateTaskForAgent(
           autoStartDependents: false,
         };
   }
-  // The whole cross-task boundary, in one place. Refuse with the reason the
-  // agent needs to pick a different move — a bare "not allowed" invites a retry
-  // with the same id.
-  if (!own && !isInertSuggestion(cur)) {
+  // The one remaining cross-task refusal: a live turn is streaming in the
+  // target and it isn't the caller's own. That session may be mid-way through
+  // reading the very fields this call would rewrite, and there is no way to
+  // warn it — everything else (an accepted task, one on hold, one the user is
+  // actively viewing) is now writable, on the record (see wasAccepted below).
+  if (!own && cur.running === 1) {
     return {
       task: null,
       text:
-        `Could not update "${cur.title}": it isn't an unreviewed suggestion, so it belongs to the user or to another session ` +
-        `that may be working in it right now. Only tasks still sitting in the Suggested tray can be edited from outside. ` +
-        `Use suggest_task to propose new work, or ask the user. Nothing was changed.`,
+        `Could not update "${cur.title}": a turn is streaming in it right now, so another session is actively working from ` +
+        `these fields. Try again once it finishes, or ask the user. Nothing was changed.`,
       autoStartDependents: false,
     };
   }
+  // Captured on the PRE-PATCH row, before any field below can move `suggested`
+  // out from under it: true exactly for the class of write the OLD gate used
+  // to refuse outright. That, and only that, gets recorded as a visible edit.
+  const wasAccepted = !own && !isInertSuggestion(cur);
   // Past this point the target is writable and the field rules are identical
   // either way — only the noun in the refusals changes, so the agent can tell
   // which row it just failed to write.
   const what = own ? "this task" : `"${cur.title}"`;
   const patch: Partial<Task> = {};
   const changed: string[] = [];
+  // One AgentEditChange per field actually moving, in parallel with `changed`
+  // above — `changed` is prose for the tool's own confirmation text, this is
+  // structured data for the diff panel. Only populated when `wasAccepted`
+  // matters, but built unconditionally: cheap, and keeping one code path per
+  // field (rather than duplicating each push under an `if (wasAccepted)`)
+  // is what keeps the two lists from drifting apart.
+  const changes: AgentEditChange[] = [];
   const fail = (text: string) => ({ task: null, text, autoStartDependents: false });
 
   if (input.title !== undefined) {
@@ -605,11 +635,14 @@ export function updateTaskForAgent(
     if (title !== cur.title) {
       patch.title = title;
       changed.push(`title → "${title}"`);
+      changes.push({ field: "title", before: cur.title, after: title, before_value: cur.title });
     }
   }
   if (input.description !== undefined && input.description !== cur.description) {
     patch.description = input.description;
     changed.push("description rewritten");
+    // Full text, not a preview — the diff panel is what truncates, not the store.
+    changes.push({ field: "description", before: cur.description, after: input.description, before_value: cur.description });
   }
   if (input.priority !== undefined) {
     if (!PRIORITIES.includes(input.priority))
@@ -617,6 +650,7 @@ export function updateTaskForAgent(
     if (input.priority !== cur.priority) {
       patch.priority = input.priority;
       changed.push(`priority → ${input.priority}`);
+      changes.push({ field: "priority", before: cur.priority, after: input.priority, before_value: cur.priority });
     }
   }
   if (input.status !== undefined) {
@@ -638,6 +672,7 @@ export function updateTaskForAgent(
       // keep the task in the project's awaiting count forever.
       patch.awaiting_input = 0;
       changed.push(`status → ${input.status}`);
+      changes.push({ field: "status", before: cur.status, after: input.status, before_value: cur.status });
     }
   }
 
@@ -669,6 +704,13 @@ export function updateTaskForAgent(
     if (nextGroupId !== (cur.group_id ?? null)) {
       patch.group_id = nextGroupId;
       changed.push(nextGroupId ? `group → "${nextGroupName}"` : "no longer in a group");
+      changes.push({
+        field: "group",
+        before: cur.group_id ? getGroup(cur.group_id)?.name ?? cur.group_id : "(none)",
+        after: nextGroupId ? nextGroupName : "(none)",
+        // Not the name — a group NAME can't be written back on revert, only the id.
+        before_value: cur.group_id ?? null,
+      });
     }
   }
 
@@ -717,9 +759,18 @@ export function updateTaskForAgent(
           `in the same project, and it replaces the whole set — so nothing was changed rather than wiring the refs that did ` +
           `work and silently dropping the rest. Pass the complete list of blockers.`
       );
-    if (!sameDepSet(getTaskDeps(cur.id), wanted)) {
+    const depsBefore = getTaskDeps(cur.id);
+    if (!sameDepSet(depsBefore, wanted)) {
       nextDeps = wanted;
       changed.push(wanted.length ? `blocked by ${wanted.length} task(s)` : "no longer blocked by anything");
+      // The complete id list, not a rendered count — Revert has to be able to
+      // wire the exact same set back, and a readable "3 tasks" names no ids.
+      changes.push({
+        field: "blocked_by",
+        before: depsBefore.length ? `${depsBefore.length} task(s)` : "nothing",
+        after: wanted.length ? `${wanted.length} task(s)` : "nothing",
+        before_value: depsBefore,
+      });
     }
   }
 
@@ -756,6 +807,27 @@ export function updateTaskForAgent(
   const updated = updateTask(cur.id, patch);
   if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 
+  // Record the edit when it's the class of write the old ownership gate used
+  // to refuse outright (wasAccepted, captured on the pre-patch row above) —
+  // this is what raises the "changed since you accepted it" chip. Before the
+  // publish below, so a listener that refetches on task_edited sees the chip
+  // already set rather than racing it. recordAgentEdit writes
+  // tasks.agent_edited_at directly, so the `updated` row above is already
+  // stale the moment this runs — re-read so the task this function RETURNS
+  // carries the fresh chip instead of reporting 0 for a beat.
+  let task = updated;
+  if (wasAccepted && changes.length) {
+    recordAgentEdit({
+      task_id: cur.id,
+      project_id: cur.project_id,
+      actor_task_id: caller.id,
+      actor_title: caller.title,
+      actor_agent: caller.agent,
+      changes,
+    });
+    task = getTask(cur.id) ?? updated;
+  }
+
   // Announce it: the board is live and nothing else will publish for this write.
   // "task_edited" rather than "task_updated" because title/description/priority
   // moved too, and the coarse snapshot on the wire only carries status —
@@ -763,17 +835,24 @@ export function updateTaskForAgent(
   // A deps-only change needs it most: the edges live in their own table, so the
   // refetch is the only thing that redraws the blocked badge — on the NEIGHBOUR
   // rows as well, which is why PATCH /api/tasks/[id] counts deps as an edit too.
-  publishGlobal(updated.id, { type: "task_edited" });
+  publishGlobal(task.id, { type: "task_edited" });
 
   // No auto-start sweep for a dependency change, and none is missing: clearing
   // a task's last blocker could only launch the task ITSELF, and the only rows
   // this tool writes edges on are inert tray suggestions — listAutoStartCandidates
   // requires `suggested = 0`, so an unreviewed suggestion is never a candidate.
   // The sweep below is for the OTHER direction: tasks blocked by this one.
-  const done = updated.status === "done" && cur.status !== "done";
+  const done = task.status === "done" && cur.status !== "done";
   return {
-    task: updated,
-    text: `Updated "${updated.title}": ${changed.join(", ")}.${done ? " Any task set to start when unblocked by this one will now launch." : ""}`,
+    task,
+    text:
+      `Updated "${task.title}": ${changed.join(", ")}.` +
+      (done ? " Any task set to start when unblocked by this one will now launch." : "") +
+      // An agent should know the edit is visible, not silent — it landed on a
+      // row the user already reviewed and accepted as their own backlog item.
+      (wasAccepted && changes.length
+        ? " The user already accepted this task, so it's now flagged as changed on their board with a diff and a revert button."
+        : ""),
     autoStartDependents: done,
   };
 }

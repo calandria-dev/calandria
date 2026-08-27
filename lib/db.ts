@@ -100,6 +100,10 @@ export function init(db: Database.Database) {
       -- Cleared by whatever revives the row, so it can never outlive the state
       -- it describes (PATCH /api/tasks/[id]).
       withdrawn_reason TEXT NOT NULL DEFAULT '',
+      -- ms epoch of the most recent agent edit the user hasn't reviewed yet;
+      -- 0 = nothing outstanding. The badge on the task card is this column, so
+      -- it rides on SELECT t.* with no extra query.
+      agent_edited_at INTEGER NOT NULL DEFAULT 0,
       -- When a snoozed task comes back (ms epoch; 0 = never snoozed). The whole
       -- of snoozing is this one column and the fact that the status column is
       -- left alone: ahead of now the task is drawn in the Snoozed category,
@@ -229,6 +233,26 @@ export function init(db: Database.Database) {
       depends_on_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       created_at    INTEGER NOT NULL,
       PRIMARY KEY (task_id, depends_on_id)
+    );
+
+    -- The audit trail behind the "edited by an agent" chip: one row per
+    -- update_task write that used to be refused (not the caller's own row, not
+    -- an unreviewed tray suggestion) and now goes through, on a task the user
+    -- already accepted. actor_* denormalizes the calling session rather than
+    -- foreign-keying tasks(id), because the calling task can be deleted long
+    -- after this edit happened and the diff panel must still say who made it.
+    -- changes is JSON (AgentEditChange[] — see lib/types.ts). reverted_at is
+    -- 0 until the user presses Revert on this specific edit.
+    CREATE TABLE IF NOT EXISTS task_agent_edits (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      project_id    TEXT NOT NULL,
+      actor_task_id TEXT NOT NULL DEFAULT '',
+      actor_title   TEXT NOT NULL DEFAULT '',
+      actor_agent   TEXT NOT NULL DEFAULT '',
+      changes       TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      reverted_at   INTEGER NOT NULL DEFAULT 0
     );
 
     -- Remembered "always allow" answers to a tool-permission prompt (the
@@ -469,6 +493,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_task_merges_project ON task_merges(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_merges_task ON task_merges(task_id);
     CREATE INDEX IF NOT EXISTS idx_permission_rules_project ON permission_rules(project_id);
+    CREATE INDEX IF NOT EXISTS idx_task_agent_edits_task ON task_agent_edits(task_id, created_at);
   `);
 
   migrate(db);
@@ -686,6 +711,10 @@ export function migrate(db: Database.Database) {
   // Why an agent withdrew a tray suggestion (lib/agentTools withdrawSuggestionForAgent).
   // Empty on every pre-existing row, which is correct: nothing was ever withdrawn before.
   if (!taskCols.includes("withdrawn_reason")) db.exec("ALTER TABLE tasks ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''");
+  // Agent-edit chip (see the CREATE TABLE note + task_agent_edits). 0 is the
+  // honest value for every pre-existing row: nothing was recorded before this
+  // column existed, so there's nothing outstanding to flag.
+  if (!taskCols.includes("agent_edited_at")) db.exec("ALTER TABLE tasks ADD COLUMN agent_edited_at INTEGER NOT NULL DEFAULT 0");
   // Measured context-window occupancy (see the schema comment). No backfill:
   // NULL is the honest value for every pre-existing row, and is exactly what
   // routes the gauge to the usage-derived estimate it showed before.

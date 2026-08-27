@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
@@ -218,8 +219,9 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         </div>
       )}
       {!mini && <DiffFooter task={task} points={sparkline} />}
-      {(blocked || queued || sessionCount > 0) && !mini && (
+      {(!!task.agent_edited_at || blocked || queued || sessionCount > 0) && !mini && (
         <div className="bc-foot">
+          <AgentEditedChip task={task} variant="board" />
           {queued && (
             <span className="bc-chip autostart" title={`Queued for the usage-window reset — ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
               {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
