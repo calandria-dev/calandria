@@ -570,9 +570,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .snz-num:focus,.snz-unit:focus,.snz-when:focus{outline:none;border-color:var(--accent);}
 .snz-err{padding:0 13px 9px;font-size:11px;color:var(--coral);}
 /* hero banner shown above a blocked task's disabled Start button */
-.hero-blocked{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);}
+.hero-blocked{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding:9px 12px;border-radius:var(--r);font-size:12.5px;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);}
 .hero-blocked svg{flex:0 0 auto;}
 .hero-blocked.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
+/* Both notices end in a button (Start when unblocked / Cancel). The sentence
+   takes the slack and wraps inside itself; the button keeps its full label and
+   drops to its own line only once the rail is too narrow for both. */
+.hero-blocked > span{flex:1 1 12ch;min-width:0;}
 .hero-blocked .btn{margin-left:auto;flex:0 0 auto;}
 /* dependency picker (modals) */
 .dep-list{display:flex;flex-direction:column;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);max-height:200px;overflow-y:auto;}
