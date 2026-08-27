@@ -17,8 +17,16 @@ import { groupTint } from "./GroupChips";
 
 /**
  * The members in dependency order — a topological sort over `depends_on`
- * restricted to the group, with ties broken by the order the caller passed
- * (which is the tray's own order; `position` never reaches the client).
+ * restricted to the group, with ties broken by `position`, the project's
+ * filing sequence.
+ *
+ * Filing order, deliberately, and NOT the order the caller passed: the tray
+ * sorts by recency, and a plan's steps must not renumber themselves every time
+ * one of them runs. `position` is the one total order both sides can agree on
+ * (`created_at` collides — a planning turn files its whole batch inside one
+ * millisecond), and lib/groupContext.ts sorts by exactly the same thing, so
+ * "step 3 of 7" in a session's context and "3" on the user's screen keep
+ * naming the same task.
  *
  * Edges to tasks OUTSIDE the group are ignored rather than treated as
  * blockers: groups and dependencies are orthogonal (a member may legitimately
@@ -26,6 +34,7 @@ import { groupTint } from "./GroupChips";
  * make "step 3 of 7" depend on tasks the list doesn't show.
  */
 export function topoMembers(members: TaskRow[]): TaskRow[] {
+  members = [...members].sort((a, b) => a.position - b.position);
   const ids = new Set(members.map((m) => m.id));
   const deps = new Map(members.map((m) => [m.id, (m.depends_on ?? []).filter((d) => ids.has(d))]));
   const placed = new Set<string>();

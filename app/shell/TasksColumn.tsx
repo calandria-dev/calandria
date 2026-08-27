@@ -287,7 +287,7 @@ function useCollapsed(key: string, legacyKey: string, def: boolean) {
 export function TasksColumn({ project, agents, tasks, suggested, groups: taskGroups, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onBulkGroup, onCollapse, mobile, onBack, baseBranchTick }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; groups: TaskGroupRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
-  onMoveTask: (id: string, patch: TaskMovePatch, orderedIds: string[]) => void;
+  onMoveTask: (id: string, patch: TaskMovePatch) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
@@ -437,7 +437,7 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
           {groupEmpty && <div className="search-empty">No tasks in {groupsById.get(groupSel!)?.name ?? "this group"} yet.</div>}
           <TaskBoard
             tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
-            running={running} blockedBy={blockedBy} sparklines={sparklines} canDrag={!q && !groupSel}
+            running={running} blockedBy={blockedBy} sparklines={sparklines}
             groupsById={groupsById} onSelectGroup={selectGroup}
             onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
             onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}

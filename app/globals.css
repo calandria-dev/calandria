@@ -672,10 +672,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .b-nodrop small{font-family:var(--sans);font-size:10.5px;letter-spacing:0;text-transform:none;color:var(--ink-3);font-weight:400;line-height:1.4;}
 .b-nodrop .x{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--coral);display:grid;place-items:center;}
 .b-nodrop .x svg{width:11px;height:11px;}
-.b-dropline{flex:0 0 auto;height:2px;border-radius:2px;background:var(--accent);box-shadow:var(--glow-blue);position:relative;margin:1px 2px;pointer-events:none;}
-.b-dropline::before,.b-dropline::after{content:"";position:absolute;top:-2.5px;width:7px;height:7px;border-radius:50%;background:var(--accent);}
-.b-dropline::before{left:-3px;}
-.b-dropline::after{right:-3px;}
 .b-emptydrop{flex:1;border:1px dashed var(--accent);border-radius:var(--r-lg);background:var(--accent-soft);display:grid;place-items:center;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);min-height:110px;pointer-events:none;}
 
 /* card */

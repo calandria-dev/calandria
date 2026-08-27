@@ -36,7 +36,7 @@ function pair(name: string) {
 }
 
 describe("moveTask (store)", () => {
-  it("re-parents the task and appends it to the destination's order", () => {
+  it("re-parents the task, landing it at the top of the destination tray", () => {
     const { from, to, task } = pair("Order");
     createTask({ project_id: to.id, title: "Already here" });
     createTask({ project_id: to.id, title: "Also here" });
@@ -45,9 +45,14 @@ describe("moveTask (store)", () => {
 
     expect(moved.project_id).toBe(to.id);
     // Position is per-project (MAX+1 within the project) — a stale 0 would
-    // collide with the destination's first task.
+    // collide with the destination's first task. It isn't a render order any
+    // more (listTasks sorts by recency), but it stays per-project.
     expect(moved.position).toBe(2);
-    expect(listTasks(to.id).map((t) => t.title)).toEqual(["Already here", "Also here", "Misfiled"]);
+    // Membership only: the tray's order is recency (tests/taskOrder.test.ts
+    // owns that), and every row here is written within the same millisecond,
+    // so asserting a sequence would pin the machine's speed rather than the
+    // move.
+    expect(listTasks(to.id).map((t) => t.title).sort()).toEqual(["Already here", "Also here", "Misfiled"]);
     expect(listTasks(from.id)).toEqual([]);
   });
 

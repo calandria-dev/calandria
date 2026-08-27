@@ -83,17 +83,21 @@ async function startedBatch(name: string, n: number) {
 }
 
 describe("moveTasks (store)", () => {
-  it("moves the whole selection and appends it in source order", () => {
+  it("moves the whole selection, reporting it in source order", () => {
     const { from, to, ids } = batch("Bulk", 3);
     createTask({ project_id: to.id, title: "Already here" });
 
-    // Deliberately out of order: the destination should get them in the order
-    // they had in the source project, not the order they were clicked.
+    // Deliberately out of order: the report (and the positions behind it)
+    // should follow the order they had in the source project, not the order
+    // they were clicked.
     const result = moveTasks([ids[2], ids[0], ids[1]], to.id);
 
     expect(result.moved.map((t) => t.id)).toEqual(ids);
     expect(result.skipped).toEqual([]);
-    expect(listTasks(to.id).map((t) => t.title)).toEqual(["Already here", "Bulk 1", "Bulk 2", "Bulk 3"]);
+    // Membership only: the tray's order is recency (tests/taskOrder.test.ts
+    // owns that) and every row here is written within the same millisecond, so
+    // asserting a sequence would pin the machine's speed rather than the move.
+    expect(listTasks(to.id).map((t) => t.title).sort()).toEqual(["Already here", "Bulk 1", "Bulk 2", "Bulk 3"]);
     expect(listTasks(from.id)).toEqual([]);
   });
 
@@ -251,7 +255,7 @@ describe("moveTasks (store)", () => {
     const result = moveTasks([ids[0], stray.id], to.id);
 
     expect(result.moved.map((t) => t.project_id)).toEqual([to.id, to.id]);
-    expect(listTasks(to.id).map((t) => t.title)).toEqual(["Two sources 1", "Stray"]);
+    expect(listTasks(to.id).map((t) => t.title).sort()).toEqual(["Stray", "Two sources 1"]);
   });
 
   it("keeps each source tray's own order, rather than interleaving by position", () => {

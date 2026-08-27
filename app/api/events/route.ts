@@ -110,20 +110,11 @@ export async function GET(req: Request) {
           send({ type: "tasks_moved", taskIds: ev.taskIds, fromProjectIds: ev.fromProjectIds, toProjectId: ev.toProjectId });
           return;
         }
-        // A board drop rewrote the project's manual order. Project-keyed, so it
-        // bypasses the getTask re-read below the same way task_deleted does:
-        // the bus key is one arbitrary member of the reordered set (`taskId` is
-        // ignored here), and the row snapshot has nothing to say about order —
-        // `position` isn't even on the wire payload.
-        if (ev.type === "tasks_reordered") {
-          send({ type: "tasks_reordered", projectId: ev.projectId });
-          return;
-        }
         // A project's saved runbooks changed — a create/edit/copy/delete here,
-        // in another tab, or an agent's create_runbook. Bypasses the getTask
-        // re-read below for a stronger reason than the branches above: there is
-        // no task row in this mutation at all, so its publishers key the bus
-        // with "" and `taskId` is meaningless here.
+        // in another tab, or an agent's create_runbook. Project-keyed, so it
+        // bypasses the getTask re-read below the way task_deleted does — and
+        // for a stronger reason: there is no task row in this mutation at all,
+        // so its publishers key the bus with "" and `taskId` is meaningless.
         if (ev.type === "runbooks_changed") {
           send({ type: "runbooks_changed", projectId: ev.projectId });
           return;
