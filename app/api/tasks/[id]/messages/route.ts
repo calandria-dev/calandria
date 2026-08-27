@@ -11,6 +11,7 @@ import { subscribe, publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { MAX_MESSAGE_CHARS } from "@/lib/promptLimits";
+import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import type { TaskStreamEvent } from "@/lib/types";
 
@@ -160,8 +161,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // precondition failure in this route uses: the client's runTurn()
           // already resets `running` and drops the message onto the
           // transcript as a system line on a non-ok response.
+          //
+          // That line is the only thing the user sees, so it carries the
+          // classification too (lib/worktreeFailure.ts): what went wrong, and
+          // — for a stale lock or a stale registration — the notice the
+          // transcript turns into a "Repair worktree" button. Marked with the
+          // same ⚠ every runner error line uses so it reads as the failure it
+          // is. ensureWorktree raises the "Could not prepare…" wording itself,
+          // so the message is identical whichever launch path hit it.
+          const detail = err instanceof Error ? err.message : String(err);
+          const notice = worktreePrepNotice(detail);
           return new Response(
-            JSON.stringify({ error: `Could not prepare an isolated worktree: ${err instanceof Error ? err.message : String(err)}` }),
+            JSON.stringify({ error: notice ? `⚠ ${detail}\n\n${notice}` : `⚠ ${detail}` }),
             { status: 400 }
           );
         }

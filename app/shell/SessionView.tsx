@@ -23,7 +23,7 @@ import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
 import { ColResize, ColRail } from "./Layout";
-import { jget } from "./api";
+import { jget, jsend } from "./api";
 
 // Non-blocking banner shown when a reopened task's worktree is behind its base
 // branch. Computed (read-only) on open; the actual git op fires only when the user
@@ -287,6 +287,15 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
+/** The same trick for a handler whose RESULT the caller needs — the repair
+ *  button shows its own failure inline instead of waiting for a transcript
+ *  line, so its handler has to resolve to one. */
+function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
 export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
@@ -367,6 +376,26 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     for (let j = (at === -1 ? messages.length : at) - 1; j >= 0; j--) {
       if (messages[j].role === "user") { onSend(messages[j].content); return; }
     }
+  });
+  // Repair for a worktree-prep failure (Transcript's WORKTREE_REPAIR_NOTICE
+  // branch): clear the stale lock / prune the stale registration / re-cut, then
+  // send the message that never made it. An unstarted task has no user message
+  // to resend — the opening one is only persisted once the worktree exists — so
+  // that case starts the task instead, which is the same launch. Resolves to an
+  // error string when the repair itself failed, so the button can say so rather
+  // than resend a message that would fail identically.
+  const stableRepairWorktree = useStableAsync(async (msgId: string): Promise<string | null> => {
+    try {
+      await jsend(`/api/tasks/${task.id}/repair-worktree`, "POST");
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+    const at = messages.findIndex((m) => m.id === msgId);
+    for (let j = (at === -1 ? messages.length : at) - 1; j >= 0; j--) {
+      if (messages[j].role === "user") { onSend(messages[j].content); return null; }
+    }
+    onStart();
+    return null;
   });
   // Worktree-relative path open in collaboration mode from a tool card, or
   // null. Dropped on task switch: the path was resolved against THAT task's
@@ -496,7 +525,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // Only the newest message may offer to resume at the reset —
                 // an older usage-limit notice describes a limit that has healed.
                 const last = si === sessions.length - 1 && mi === s.messages.length - 1;
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onCollaborate={setCollab} limitResume={last ? limitResume : undefined} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
