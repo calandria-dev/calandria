@@ -1,7 +1,7 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Four jobs, deliberately on different schedules:
+# Five jobs, deliberately on different schedules:
 #
 #   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
@@ -22,12 +22,25 @@
 #           slow to sit in front of every PR push, so it runs on main, on manual
 #           dispatch, and on a PR that carries the `e2e` label — the escape
 #           hatch for a change that obviously touches the app's core flow.
+#   windows — `npm run typecheck` + `npm test` on windows-latest. Calandria
+#           supports native Windows (docs/WINDOWS.md), and nothing else here
+#           would notice it breaking: every other job runs on Ubuntu, so a
+#           POSIX-only path spelling, a `/bin/sh` assumption or a process-group
+#           kill sails through green. This lane is what makes the support claim
+#           in README/INSTALLATION a fact rather than an intention.
 #
-# The three are independent jobs, not steps in one: they run concurrently, each
-# reports its own red/green, and a type error does not hide behind a two-minute
-# vitest run. Each does its own `npm ci` — setup-node caches npm's download
-# cache (not node_modules), so the copies are isolated and concurrent restores
-# of the same key are safe.
+# The Ubuntu three are independent jobs, not steps in one: they run
+# concurrently, each reports its own red/green, and a type error does not hide
+# behind a two-minute vitest run. Each does its own `npm ci` — setup-node caches
+# npm's download cache (not node_modules), so the copies are isolated and
+# concurrent restores of the same key are safe. `windows` is the deliberate
+# exception: it runs both checks in ONE job, because a Windows runner bills at
+# 2x and its `npm ci` (native module install, no Docker layer cache, slow
+# filesystem) costs more than either check it is setting up for. Splitting it
+# would pay that twice to shave a minute off a lane that is already the slow one.
+# e2e is NOT on Windows yet: it wants a full `next build` plus a browser install
+# on the slowest runner we have, and none of it has ever run there. It gets its
+# own follow-up once this lane has a track record.
 #
 # `npm run preflight` (unit + e2e) is the documented pre-push gate locally; this
 # file is the same pair plus the typecheck, split so the fast parts report fast.
@@ -152,6 +165,81 @@ jobs:
       # No git identity is set up here on purpose — tests/setup.ts pins its own
       # GIT_CONFIG_GLOBAL, so a runner with no git config is the case it must
       # already handle.
+      - run: npm test
+
+  windows:
+    name: Windows (types + unit)
+    runs-on: windows-latest
+    # Generous next to `unit`'s 15: process spawning is far more expensive on
+    # Windows and this suite shells out to git thousands of times.
+    timeout-minutes: 30
+    steps:
+      # Before checkout, because it is the checkout these govern. Git for
+      # Windows is preinstalled on the runner; neither setting is on by default
+      # there, and both would otherwise change what the suite is even testing.
+      #
+      #   core.autocrlf — Git for Windows defaults to `true`, which would give
+      #     this job a working tree whose every file differs from what Linux and
+      #     macOS check out. Fixture bytes, diff assertions and mode lines are
+      #     the suite's subject matter; `false` keeps it the same repository
+      #     everywhere. (tests/setup.ts pins the same value inside the fixture
+      #     repos it creates — this is the outer half, for the checkout itself.)
+      #   core.longpaths — the checkout plus `node_modules` under
+      #     D:\a\calandria\calandria\ gets close enough to MAX_PATH that a
+      #     deep transitive dependency can fail the checkout outright. This is
+      #     the same setting docs/TROUBLESHOOTING.md tells a Windows user to set.
+      - name: Pin git's Windows checkout semantics
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # --foreground-scripts so the install scripts' output reaches the log.
+      # This job's most fragile step is invisible otherwise: better-sqlite3's
+      # install is `prebuild-install || node-gyp rebuild`, i.e. it DOWNLOADS a
+      # win32 binary for this Node ABI and silently compiles one with the
+      # runner's MSVC if that fetch fails. Both outcomes exit 0. We want to read
+      # which one happened, and the next step turns it into a verdict.
+      - run: npm ci --foreground-scripts
+
+      # Fail loudly when the prebuild download did not happen.
+      #
+      # A node-gyp fallback is not a neutral substitute here. It only works
+      # because a GitHub runner happens to ship the MSVC build tools — no
+      # ordinary Windows user has them — so letting it pass green would mean
+      # this lane certifies an install path our users cannot reproduce, and the
+      # real failure ("gyp ERR! find VS") would land on them instead. It is also
+      # how the lane would first learn that better-sqlite3 stopped publishing a
+      # prebuild for the Node version in .nvmrc.
+      #
+      # The signal is what each path leaves behind: prebuild-install unpacks
+      # only build/Release/better_sqlite3.node, while node-gyp writes
+      # build/config.gypi and an MSBuild obj/ tree beside it.
+      - name: Assert better-sqlite3 installed from its win32 prebuild
+        shell: bash
+        run: |
+          pkg=node_modules/better-sqlite3
+          if [ -f "$pkg/build/config.gypi" ] || [ -d "$pkg/build/Release/obj" ]; then
+            echo "::error::better-sqlite3 fell back to node-gyp: prebuild-install could not fetch a win32 binary for the Node version in .nvmrc. Read the npm ci step's output for the reason (network, or no prebuild published for this ABI). Do not paper over this — a Windows user without MSVC gets a failed install."
+            exit 1
+          fi
+          if [ ! -f "$pkg/build/Release/better_sqlite3.node" ]; then
+            echo "::error::better-sqlite3 has no native binary at all after npm ci."
+            exit 1
+          fi
+          node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('better-sqlite3 prebuild loads and opens a database')"
+
+      # Same two scripts the Ubuntu lanes run, for the same reasons — see the
+      # `typecheck` and `unit` jobs above. Run in that order so the cheap static
+      # check reports before the long one starts.
+      - run: npm run typecheck
+
       - run: npm test
 
   e2e:

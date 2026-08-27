@@ -168,8 +168,8 @@ Then ask a task in that project whether it's ready to run five at a time.
 
 ## Run locally
 
-You need Node 20.9+, macOS or Linux (or Windows via WSL2), and at least one
-supported agent CLI.
+You need Node 20.9+, macOS, Linux, or Windows, and at least one supported
+agent CLI.
 
 ```bash
 npm install
@@ -180,10 +180,11 @@ npm start
 Open <http://localhost:3000>. The first-run wizard connects Claude Code or
 Codex and takes you through a short hands-on tutorial.
 
-On Windows, run Calandria inside WSL2 — the Linux build, unchanged. Native
-Windows is not supported yet; see
-[Windows (WSL2)](docs/INSTALLATION.md#windows-wsl2) for the setup and its
-three caveats.
+Windows runs natively, with the same three commands. It needs Windows 10
+1809+ or Server 2019+ (for ConPTY, which the terminal uses), Git for Windows
+on PATH, and Node 20.9+; `npm run typecheck` and `npm test` run on
+`windows-latest` in CI. WSL2 stays a supported alternative — it is the Linux
+build, unchanged. [Windows setup, both ways](docs/INSTALLATION.md#windows).
 
 Prefer a container? A multi-arch image (`linux/amd64` + `linux/arm64`) is published
 publicly: `latest` is the newest tagged release, `edge` tracks nightly builds of `main`.
@@ -229,7 +230,7 @@ belongs.
 - [Bundled agent skills](skills/README.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Windows: WSL2 setup](docs/INSTALLATION.md#windows-wsl2) · [compatibility assessment](docs/WINDOWS.md)
+- [Windows: native and WSL2 setup](docs/INSTALLATION.md#windows) · [platform notes](docs/WINDOWS.md)
 - [Desktop app spike](docs/DESKTOP_APP.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)

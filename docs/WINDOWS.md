@@ -1,514 +1,87 @@
-# Windows compatibility assessment
+# Windows
 
-Research spike, 2026-08-24. Findings only — nothing here is implemented. The
-follow-up tasks are listed at the end and filed in the project's Suggested tray.
+Calandria runs on Windows two ways, both supported:
 
-**Recommendation: WSL2 first.** Document WSL2 as the supported way to run
-Calandria on a Windows machine now (it already works — it *is* Linux), and treat
-native Windows as a phased track that only starts if demand shows up. Native is
-not far off in raw line count (~10 files), but it adds a second process model
-(`taskkill` trees instead of POSIX process groups), a second shell (`cmd.exe`
-semantics for managed-service commands), a second filesystem model (case-folded
-identity, `MAX_PATH`, handle-locked deletes), and a Windows CI lane to keep all
-of it honest. That is a standing maintenance cost, not a one-off port.
+- **Natively** — Windows 10 1809+ / Server 2019+, Git for Windows on `PATH`, Node 20.9+.
+- **Under WSL2** — the ordinary Linux build, unchanged.
 
-## Summary by effort
+Setup for both is in [Installation → Windows](INSTALLATION.md#windows). Failure modes
+are in [Troubleshooting → Native Windows](TROUBLESHOOTING.md#native-windows) and
+[→ WSL2 on Windows](TROUBLESHOOTING.md#wsl2-on-windows). This page is the status of the
+port itself: what each platform difference resolved to in the code, what CI proves, and
+what is still owed a real machine.
 
-| # | Finding | Area | Effort | Native blocker? |
-|-|-|-|-|-|
-| 1 | `npm run build` / `npm start` use `NODE_ENV=production …` inline env (POSIX-only); `*:docker` scripts invoke a bash file directly | Entrypoints | S | Yes — nothing boots |
-| 2 | `pty-server.js:119` falls back to `/bin/zsh`; `$SHELL` is unset on Windows | node-pty | S | Yes — terminal dead |
-| 3 | `CLAUDE_CLI_PATH` default has no `.exe`; bare `"codex"` spawned without a shell can't resolve npm's `.cmd` shim | Agent CLIs | S | Yes — no turns |
-| 4 | Six negative-PID process-group kills + a `ps`-based orphan guard in `lib/services.ts`; `detached: true` means "new console" on Windows | Process mgmt | M | Yes — services can't be stopped or reaped — **fixed** (`lib/processTree.ts`) |
-| 5 | Path identity compared case-sensitively after `realpathSync` (`lib/git.ts:536`, `lib/repoLock.ts:73`) — NTFS is case-insensitive | Paths | S | Yes — can wrongly `rmSync` a linked worktree |
-| 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
-| 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
-| 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` killed via `taskkill /T /F` and bypassed the drain even on Ctrl+C | Process mgmt | S–M | Degradation, not a crash — **fixed**, see the addendum |
-| 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) — **fixed**, §3 | Files | S | Security downgrade |
-| 10 | `worktreeDiskUsage()` shells out to `du` (`lib/git.ts:642`) — silently reports 0 | Paths | S | Cosmetic |
-| 11 | `gh` probe dirs are all POSIX (`lib/github.ts:17`); `GIT_SSH_COMMAND` assumes `ssh` on PATH | Agent CLIs | S | Degradation |
-| 12 | Unit suite: `tests/setup.ts:77` pins `GIT_CONFIG_SYSTEM=/dev/null` (e2e already branches to `NUL`); pty tests force `SHELL=/bin/sh` and group-kill; services tests use `sleep 30` through `cmd.exe`; `ghBin`/`diff` tests assert exec-bit semantics | Tests | M | For CI, yes |
-| 13 | No Windows CI lane; better-sqlite3's win32 prebuild is fetched at install (network), node-pty's is vendored | Tests/CI | M | For declaring support, yes |
-| 14 | `lib/db-lock.mjs` — SQLite `BEGIN IMMEDIATE` uses `LockFileEx` byte-range locks on Windows; released on process death; semantics hold on local NTFS | File locking | — | **No change needed** |
-| 15 | `scripts/calandria-mcp.mjs` bridge: launched as `process.execPath <abs path>` — already portable; `postinstall` `fix-pty.js` no-ops correctly (win32 prebuilds ship no `spawn-helper`) | Entrypoints | — | **No change needed** |
+Which to pick: native if Windows is where your repos, editor and agent logins already
+live. WSL2 if they live in Linux, or if you want the platform every other Calandria
+instance runs on. Neither is a fallback for the other.
 
-Effort key: S = under a day, M = one to three days, L = a week or more. Nothing
-here is L on its own; the L is the sum plus the standing CI lane.
+## What CI proves
 
-## Area findings
+`.github/workflows/test.yml` has a `windows-latest` job running `npm run typecheck` and
+`npm test` on every push and pull request, alongside the Ubuntu lanes. It also asserts
+that `better-sqlite3` installed from its **prebuilt** win32 binary rather than compiling
+with the runner's MSVC — a node-gyp fallback would pass green here while failing for
+every user who doesn't have Visual Studio build tools, so it fails the job instead.
 
-### 1. node-pty sidecar (`pty-server.js`)
+Not yet in CI: **e2e on Windows**. It wants a full `next build` plus a browser install on
+the slowest runner available, and has never run there. It is a follow-up, not a claim.
 
-- **Prebuilds are fine.** node-pty 1.1.0 vendors `prebuilds/win32-x64/` and
-  `win32-arm64/` (`conpty.node`, `pty.node`, `winpty-agent.exe`, ConPTY DLL), so
-  no Visual Studio toolchain is needed. ConPTY is selected automatically on
-  Windows 10 1809+ (build ≥ 18309 for the stable path); older builds fall back
-  to winpty.
-- **Shell selection is the break.** `const shell = process.env.SHELL || "/bin/zsh"`
-  (`pty-server.js:119`). `SHELL` is a POSIX convention and is unset in a native
-  Windows environment, so every terminal session tries to spawn `/bin/zsh` and
-  ENOENTs. Fix: a `CALANDRIA_PTY_SHELL` env knob (useful on every platform — the
-  server never reads a shell profile, so `$SHELL` is already a guess) with a
-  win32 default of `process.env.COMSPEC || "powershell.exe"`. `pwsh.exe` if
-  present is the nicer default; `cmd.exe` is the guaranteed one.
-- **Signals.** `term.kill()` on close is a `TerminateProcess` on Windows — fine,
-  that's the desired semantics for a closed tab. `onExit` exit codes come from
-  ConPTY and are reliable.
-- **Loopback-peer check** (`isLoopbackPeer`) compares `socket.remoteAddress`
-  against `127.0.0.1` / `::1` / `::ffff:127.0.0.1` — the same strings Node
-  reports on Windows. No change.
-- **`postinstall`** (`scripts/fix-pty.js`) looks for `spawn-helper` per prebuild
-  dir; the win32 dirs don't have one, so it skips them before `chmod` is
-  reached. Already correct.
+## Where each platform difference lives
 
-### 2. Process management
+Every row is code that behaves differently on `win32`. Nothing here is a Windows-only
+module: each takes the platform as an input so the POSIX suite pins both branches.
 
-All six process-group sites live in `lib/services.ts` and hang off one spawn:
-
-```
-spawn(cfg.command, { cwd: project.repo_path, shell: true, detached: true, env })   // :463-470
-```
-
-| Line | Code | Problem on Windows |
-|-|-|-|
-| 411 | `process.kill(-m.proc.pid, "SIGKILL")` (exit hook) | No process groups; negative pid is meaningless |
-| 517 | `process.kill(-pid, "SIGTERM")` (`killProcGroup`) | Same. With `shell: true` the tree is `cmd.exe → npm.cmd → node.exe`; killing `proc.pid` alone orphans the real server |
-| 518 | `process.kill(-pid, "SIGKILL")` (4 s escalation) | Same; no graceful/forced distinction exists — `taskkill /T /F` is the only tree kill |
-| 644 | `process.kill(-pid, 0)` (liveness) | Not a group probe on Windows |
-| 647 | `execFileSync("ps", ["-A", "-o", "pgid=,command="])` | No `ps` → guard returns false → **orphan reaping is a silent no-op**; a restart then loses `EADDRINUSE` to its own predecessor |
-| 665, 668 | `process.kill(-row.pid, …)` (`reapOrphan`) | Same |
-
-Two further semantics:
-
-- `detached: true` on Windows means "allocate a new console", not "new process
-  group". It buys nothing for kill scoping and may pop a console window.
-- `shell: true` runs the command through `cmd.exe /d /s /c`. A `dev_command`
-  written for `sh` (`FOO=bar npm run dev`, `&&` chains are fine, `$VAR`, single
-  quotes, `~`) parses differently or fails. This is a product decision, not
-  just a port: either document that Windows service commands are `cmd.exe`
-  syntax, or run them through `pwsh`/Git Bash explicitly.
-
-**Shipped** as `lib/processTree.ts`: `killTree(pid, signal)` signals the process
-group on POSIX and runs `taskkill /pid <pid> /T /F` on win32 (both signals
-collapse to that one forced kill — there is no graceful tree signal), with
-`treeAlive` (`tasklist /fi "PID eq <pid>" /nh /fo csv`) and `treeMatchesCommand`
-(a `Get-CimInstance Win32_Process` CommandLine lookup, since the persisted pid
-IS the `cmd.exe /d /s /c "<command>"` wrapper) standing in for the `ps`
-membership guard. `detached` is now set only where process groups exist, the
-SIGTERM→SIGKILL escalation is skipped on win32, and when the guard can't find
-out — no `ps`, no PowerShell — the answer stays "don't kill". The win32 branches
-take their platform and command runner as arguments, so `tests/processTree.test.ts`
-pins them from the POSIX suite. The `cmd.exe` command semantics above are
-documented in [SERVICES.md](SERVICES.md#windows-command-syntax) rather than
-worked around: `dev_command` is a `cmd.exe` command line on Windows.
-
-**The runner's own children are fine.** The claude/codex CLI processes the
-Agent SDKs spawn are plain, non-detached children; Stop and the drain are
-`AbortController` aborts that the SDKs turn into a direct `child.kill()`, which
-libuv maps to `TerminateProcess`. No group semantics involved.
-
-**SIGTERM drain** (`server.js:283-322`, `drainActiveTurns()` in `lib/runner.ts`):
-the drain itself is signal-free (loopback POST, JS aborts, bounded wait) and
-would work on Windows. What doesn't port is *reaching* it: Node on Windows
-delivers `SIGINT` for console Ctrl+C, but there is no deliverable `SIGTERM` —
-`taskkill /F`, a service manager's stop, and Task Manager all `TerminateProcess`
-and skip every handler, leaving the next boot's `recoverFromCrash()` to clean
-up. For the realistic native use case (a user running `npm start` in a
-terminal) Ctrl+C is the path — and it was bypassed too, because `concurrently`
-terminates its children with `taskkill /T /F`. **Fixed** by replacing
-`concurrently` in the `start` script with `scripts/start.mjs`; the reasoning
-and what is still unverified are in the addendum below.
-
-### 3. Path handling
-
-- **Defaults are portable.** `DB_DIR`, `WORKTREES_DIR`, `PROJECTS_DIR`
-  (`lib/config.ts:15-22`) and `resolveDbLockDir` (`lib/db-lock.mjs:81`) all use
-  `path.join(os.homedir(), …)`, never a literal `~`. `.env.example` already
-  says `~` is not expanded in overrides. No change.
-- **Worktree paths are safe.** `path.join(WORKTREES_DIR, taskId)`
-  (`lib/git.ts:552`) with a nanoid task id (`A-Za-z0-9_-`) — no NTFS-illegal
-  characters, no reserved device names possible. The merge scratch path
-  (`lib/git.ts:1147`) is already scrubbed to `[A-Za-z0-9._-]`. Branch `calandria/<id>`
-  is a git ref, which git for Windows nests as folders — fine.
-- **Git is invoked correctly.** Every call is `execFile("git", [argv])`
-  (`lib/git.ts:22-27`); Windows `CreateProcess` resolves `git.exe` on PATH. All
-  output parsing is NUL-delimited or prefix-based and treats paths as opaque
-  strings; `git worktree list --porcelain` emits `C:/…` forward-slash absolute
-  paths on Windows, which `realpathSync` normalizes. No `sh`/`xargs`/`sed`
-  dependencies — except `du` in `worktreeDiskUsage()` (`lib/git.ts:642`), which
-  ENOENTs into its `catch` and reports 0 bytes. Replace with an `fs` walk on
-  win32.
-- **Case-insensitive identity is the correctness bug.** `isLinkedWorktree()`
-  (`lib/git.ts:518-537`) and `pathIdentity()` (`lib/repoLock.ts:72-78`) compare
-  `fs.realpathSync` output with `===`. On NTFS `realpathSync` is case-*preserving*
-  but does not canonicalize case, so `C:\Users\Foo` and `c:\users\foo` differ
-  as strings. In `isLinkedWorktree` a false "not linked" is what authorizes
-  `fs.rmSync(wtPath, { recursive: true, force: true })` at `lib/git.ts:579`;
-  in `repoLock` it means two spellings of one repo take two locks. Fix:
-  case-fold both sides on win32 (`toLowerCase()` after `path.normalize`), ideally
-  in one shared `samePath()` helper.
-- **`MAX_PATH`.** The app never sets `core.longpaths`. Git for Windows enforces
-  260 characters unless it's on, and a task worktree lives four levels under
-  the profile dir before the repo's own tree starts. Set
-  `core.longpaths=true` on the worktree (`git config` per repo, or
-  `-c core.longpaths=true` on `worktree add`/`checkout`) on win32, and document
-  the global setting.
-- **Handle-locked deletes.** POSIX lets an unlinked-but-open file disappear;
-  Windows returns `EBUSY`/`EPERM`/`ENOTEMPTY` while anything holds a handle. The
-  Task-scoped `TerminalDrawer` shell is rooted *in the worktree being removed*,
-  editors index it, and Defender scans fresh checkouts. Every teardown path
-  (`lib/git.ts:579,621,1058`, `git worktree remove`, `lib/taskMove.ts` discard)
-  would surface a hard failure. Fix: on win32, `rmSync` with `maxRetries`/
-  `retryDelay` (Node supports both) and a `git worktree remove --force` retry,
-  with a message that names the likely holder.
-- **File modes are not permissions.** The persisted API keys were written with
-  `mode: 0o600` plus a `chmodSync` and comments promising owner-only
-  (`lib/anthropic-key.ts`, `lib/openai-key.ts`). On NTFS Node's `chmod` maps
-  onto the read-only attribute and nothing else, so the DACL stayed whatever the
-  profile directory handed down and every other local account could read the
-  key. **Fixed**: both go through `writeSecretFile()` (`lib/secretFile.ts`),
-  which keeps the POSIX path byte-for-byte and on win32 runs
-  `icacls <file> /inheritance:r /grant:r <owner>:(R,W)` through `execFile` — no
-  shell, and pinned to `%SystemRoot%\System32\icacls.exe` rather than PATH
-  order, since a PATH-resolved helper is one writable directory away from being
-  someone else's program that exits 0. `/grant:r` replaces the DACL, so
-  re-saving repairs a file an older build left open. **A failure is fatal**: the
-  file is deleted and the error reaches the API-key route, because a credential
-  at permissions we could not set is worse than no credential — the wizard would
-  otherwise report a connected agent over a world-readable key. The escape hatch
-  is the existing one (`ANTHROPIC_API_KEY` in the env plus
-  `CALANDRIA_ALLOW_API_KEY_ENV=1`, which writes nothing to disk), and the same
-  applies to a key directory on FAT32 or a mapped drive, where there is no DACL
-  to set. The owner is `os.userInfo().username`, qualified with `%USERDOMAIN%`
-  when it names something other than this machine — icacls resolves a bare name
-  through `LookupAccountName`, which checks the local machine before the domain,
-  so a domain account can be shadowed by a local one of the same name. Stated in
-  `docs/SELF_HOSTING.md`. The generated VAPID private key (`lib/push/vapid.ts`)
-  had the same 0600-on-NTFS hole and now goes through `writeSecretFile()` too,
-  with the **opposite failure policy** (`fatal: false`): the app mints that key
-  itself on first use with no user in the loop, so throwing would take push
-  notifications out of the whole instance on a filesystem with no ACLs, and the
-  blast radius is forged pushes to this instance's own subscribers rather than
-  billable API access — unlike the API keys it is also not readable through
-  `/api/settings`. A failed ACL there warns, keeps the key, and points at
-  `VAPID_PRIVATE_KEY` in the env.
-- **Service router** (`lib/service-router.mjs`, `lib/service-host.mjs`) is pure
-  Host-header string logic + loopback proxying. Nothing filesystem-bound; the
-  `<slug>--<host>` wildcard-DNS requirement is the same on every OS.
-- **Temp dirs.** Production code never touches `/tmp` or `os.tmpdir()`. Tests
-  use `mkdtemp` and pass results only as `execFile` argv, so a space in
-  `C:\Users\John Doe\AppData\Local\Temp` is safe — but untested.
-
-### 4. File locking (`lib/db-lock.mjs`)
-
-No change needed. SQLite's Windows VFS implements `BEGIN IMMEDIATE`'s RESERVED
-lock as a `LockFileEx` byte-range lock on the file handle; the OS releases it
-when the process dies (including `TerminateProcess`), and a second process on
-the same machine gets `SQLITE_BUSY` immediately — the same contract the module
-documents for `flock`-style POSIX behaviour. `journal_mode = DELETE` on the lock
-file avoids the WAL `-shm` mapping, which is also correct on Windows.
-
-The caveat is **WSL2's cross-boundary filesystems**, and it applies to today's
-Linux build, not just a native port: `/mnt/c` (drvfs/9p) and `\\wsl$` do not
-implement file locking, and SQLite's WAL mode over them can return stale data or
-corrupt. `CALANDRIA_DB_DIR` **and** `CALANDRIA_WORKTREES_DIR` must live on the WSL2 ext4
-root. That belongs in the WSL2 docs (task 1).
-
-### 5. Entrypoints and scripts
-
-| Script | Status |
+| Difference | Where it resolved |
 |-|-|
-| `build`, `start` | `NODE_ENV=production …` prefix — `cmd.exe`/PowerShell try to run a program called `NODE_ENV=production`. Add `cross-env` (not currently a dep) or drop the prefix: `next build` forces production itself, and `server.js` reads `NODE_ENV` for `dev` — check that before dropping it from `start` |
-| `test:docker`, `typecheck:docker`, `test:e2e:docker`, `preflight:docker` | Bare `scripts/docker-test.sh` — no shebang interpreter under `cmd.exe`. `bash scripts/docker-test.sh` works with Git Bash on PATH; the Docker Desktop side additionally needs Linux-container mode |
-| `dev`, `dev:next`, `pty`, `typecheck`, `test`, `test:e2e*`, `preflight`, `postinstall` | Portable as written; `concurrently`'s nested quotes survive npm's `cmd.exe /d /s /c` wrapper. `dev` still runs under `concurrently` and so still force-kills on Ctrl+C — see the addendum |
-| `next.config.mjs`, `server.js`, `pty-server.js` | Plain Node, no POSIX assumptions beyond the shell default in §1 |
-| `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `CALANDRIA_RUNTIME=runc` override documented (no gVisor) |
+| `NODE_ENV=…` prefixes and bare `.sh` invocations in npm scripts | `cross-env`, and `bash scripts/docker-test.sh` for the `*:docker` scripts (which additionally need Git Bash on `PATH` and Docker Desktop in Linux-container mode) |
+| `$SHELL` is a POSIX convention; the old `/bin/zsh` fallback exists nowhere on Windows | `CALANDRIA_PTY_SHELL`, then `$SHELL`, then a probed default: `pwsh.exe`/`powershell.exe` on `PATH`, else `%COMSPEC%` (`pty-server.js`) |
+| `CreateProcess` finds `.exe` but never npm's `.cmd` shim | `lib/binPath.ts` — `PATHEXT`-aware lookup plus `cmd.exe` wrapping for shims, used by `codex` (`lib/agents/codex/bin.ts`) and `gh`. `claude` is the exception: `CLAUDE_CLI_PATH` defaults to a real `claude.exe` under `%USERPROFILE%\.local\bin` because the Agent SDK and node-pty spawn it directly and can't route a batch shim |
+| No process groups; `detached` means "new console"; no `ps` | `lib/processTree.ts` — `taskkill /pid <pid> /T /F` for the tree, `tasklist` for liveness, a `Win32_Process` CommandLine lookup for the recycled-pid guard, and `detached` requested only where groups exist. A `dev_command` is a `cmd.exe` command line ([SERVICES.md](SERVICES.md#windows-command-syntax)) |
+| NTFS is case-insensitive, so `realpathSync` output can't be compared with `===` | `lib/paths.ts` — one `samePath()`/`canonicalPath()` pair, case-folded on win32. This was the correctness bug of the set: a false "not linked" is what authorized an `rmSync` of a live worktree |
+| `MAX_PATH`, and files that can't be deleted while a handle is open | `-c core.longpaths=true` on the app's own git calls; retrying teardown for `EBUSY`/`EPERM`/`ENOTEMPTY`. The global `core.longpaths` setting and the "close the terminal holding it" case are the user's to know — both are in Troubleshooting |
+| `chmod 0o600` is a no-op on NTFS | `lib/secretFile.ts` — `icacls /inheritance:r /grant:r`, pinned to `%SystemRoot%\System32\icacls.exe`. Fatal for the API keys (a credential at permissions we couldn't set is worse than none), a warning for the VAPID key (the app mints it with no user in the loop) |
+| `du` doesn't exist | an `fs` walk on win32 (`lib/git.ts`) |
+| There is no deliverable `SIGTERM`, and `concurrently` kills its children with `taskkill /T /F` | `scripts/start.mjs` — a dependency-free launcher for `npm start` that ties the two entrypoints' lifetimes together without force-killing, so a console Ctrl+C reaches the shutdown drain |
+| POSIX spellings and semantics in the suite | `tests/platform.ts` — `IS_WIN`, `onPosix`, `NULL_DEVICE`, `TEST_SHELL`, `DETACHED`, `killChildTree`, on one rule: a POSIX construct a test merely *uses* gets a portable spelling; a test *about* POSIX semantics is skipped on win32 rather than translated into something that pins nothing |
+| SQLite's single-process mutex | **no change needed** — `BEGIN IMMEDIATE`'s RESERVED lock is a `LockFileEx` byte-range lock on Windows, released by the OS on process death, including `TerminateProcess` (`lib/db-lock.mjs`) |
 
-Playwright's `webServer.command` is `npm start`, so the e2e suite inherits the
-`start` breakage — fixing the scripts is the prerequisite for everything else.
+## Known limits
 
-### 6. Agent CLIs
+- **`npm run dev` still force-kills on Ctrl+C.** It runs under `concurrently`, whose win32
+  kill path is an unconditional `taskkill /T /F` with the requested signal discarded — so
+  the drain loses that race and in-flight turns are terminated rather than settled. A
+  deliberate trade: `concurrently`'s per-process prefixes are worth more in development,
+  where a lost turn is cheap. `npm start` is the one that drains.
+- **Only Ctrl+C in the console reaches the drain.** `taskkill /F`, Task Manager and
+  closing the console window are all `TerminateProcess`. Running under a service wrapper
+  (NSSM, WinSW, `sc`) is only as graceful as the wrapper's configured shutdown method, and
+  is not supported without pinning that method yourself. See
+  [Troubleshooting](TROUBLESHOOTING.md#native-windows).
+- **Codex's native Windows sandbox** (restricted tokens, dedicated sandbox users) has a
+  heavier first-run setup than Landlock or Seatbelt and may want elevation Calandria never
+  prompts for. `sandboxMode` maps through the SDK either way.
+- **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS story as on any
+  platform; `localhost` subdomains don't resolve without a `hosts` entry.
 
-- **Claude Code** is natively supported on Windows (self-contained
-  `claude.exe`, Windows 10 1809+ / Server 2019+) but **requires Git for Windows**
-  — it runs its Bash tool through Git Bash even when launched from PowerShell.
-  So "Git for Windows on PATH" is a hard prerequisite of Calandria-on-Windows
-  either way, which also covers our `execFile("git")` calls.
-- **`CLAUDE_CLI_PATH`** defaulted to `~/.local/bin/claude` with no extension,
-  passed straight to the SDK's `pathToClaudeCodeExecutable` on every turn,
-  one-shot and `/`-command probe (`lib/agents/claude/driver.ts`,
-  `commands.ts`) and to node-pty for `claude auth login` (`lib/claude-auth.ts`).
-  Node's shell-less spawn resolves `.exe` via `CreateProcess` but never npm's
-  `.cmd` shim. **Fixed**: on win32 the default is the native installer's
-  `claude.exe` under `%USERPROFILE%\.local\bin`, then a `PATHEXT`-aware PATH
-  lookup, then that path literally so a failure names something plausible
-  (`lib/config.ts`). `.exe` is ordered ahead of `.cmd` because the SDK spawns
-  this value directly, as does node-pty for the login — neither offers a
-  cmd.exe wrapper, so a real `claude.exe` is a requirement on Windows, not a
-  preference. The codex helpers differ only because they shell out through
-  `child_process`, where the wrapper works.
-- **`claude auth login` sets `BROWSER=true`** to no-op the browser open by
-  exec'ing `/bin/true`, and there is no `true` on Windows. **Checked against
-  the shipped CLI (2.1.240) and left as-is**: `$BROWSER` is exec'd as a command
-  with the URL as its only argument, a missing opener is classified
-  `opener_missing` and *returned* rather than thrown, the CLI sets
-  `BROWSER: "true"` itself in the environment it builds for its own background
-  sessions — in the same object literal carrying its `platform === "windows"`
-  case — and a separate check reads `BROWSER === "true"` as "not a real
-  browser". So the value is a sentinel the CLI expects, and the Windows worst
-  case is the benign no-browser path the flag is asking for.
-- **Codex CLI**: OpenAI shipped a native Windows sandbox in March 2026
-  (restricted tokens + dedicated sandbox users + `codex-command-runner.exe`),
-  so `sandboxMode: "workspace-write" | "read-only"` in
-  `lib/agents/codex/driver.ts` maps through the SDK; first-run sandbox setup is
-  heavier than Landlock/Seatbelt and may need elevation Calandria doesn't
-  prompt for. The bare `"codex"` spawns in `lib/agents/codex/auth.ts:22,212` and
-  `codex/mcp.ts:38` had the same `.cmd` problem as Claude — and `mcp.ts` fails
-  silently (leaves inherited MCP servers mounted, the exact context-waste it
-  exists to prevent), so a Windows instance would have paid that cost on every
-  turn with nothing logged. **Fixed**: both go through `resolveCodexBin()` /
-  `codexSpawn()` (`lib/agents/codex/bin.ts`), which applies `PATHEXT` and wraps
-  a `.cmd` shim in `cmd.exe` — Node refuses to spawn one shell-less since
-  CVE-2024-27980. `codexPathOverride` via `CODEX_CLI_PATH` still works as the
-  escape hatch, and the driver's own SDK-bundled binary is unaffected.
-- **`scripts/calandria-mcp.mjs`** is launched as `{ command: process.execPath,
-  args: [CALANDRIA_MCP_SCRIPT] }` (`lib/agents/codex/driver.ts:58`) with an absolute
-  `path.join(process.cwd(), …)` script path and talks to the app over loopback
-  HTTP. Already portable; the shebang is inert.
-- **`gh`** probe dirs were all POSIX; bare `gh` on PATH is tried first so
-  winget/scoop installs usually worked by accident. **Fixed**: win32 probes
-  `%LOCALAPPDATA%\Microsoft\WinGet\Links`, `%ProgramFiles%\GitHub CLI` and
-  `~\scoop\shims`, and the lookup applies `PATHEXT` so the `gh.exe` in them is
-  actually seen (every extension-less candidate missed before). A PATH hit still
-  answers bare `"gh"` — `CreateProcess` repeats the PATH+PATHEXT search itself.
-  `resolveGhBin`'s `X_OK` check is meaningless on Windows — it passes for any
-  existing file — so `isExecutableFile()` skips it there and asks only "is this
-  a file", which the extension candidates already answer. Accepted, and noted in
-  `lib/binPath.ts`.
+## Still owed a real machine
 
-### 7. Tests and CI
+CI covers the unit suite and typecheck. Two things it structurally cannot, both about the
+shutdown path — `child.kill()` is a `TerminateProcess` on Windows, so no stub can observe
+*which* signal a process was sent, and `tests/startLauncher.test.ts` skips its SIGINT case
+there for exactly that reason. Five minutes on a Windows box would settle both:
 
-- **Unit suite.** Git fixtures are all `execFile("git", argv)` via
-  `tests/helpers.ts:12` — portable. What isn't: `tests/setup.ts:77`
-  (`GIT_CONFIG_SYSTEM = "/dev/null"`, where `e2e/env.ts` already branches to
-  `NUL`); `tests/ptyOrigin.test.ts:48,125` and `tests/ptyProtocol.test.ts:65`
-  force `SHELL=/bin/sh` and clean up with `process.kill(-pid)`;
-  `tests/services.test.ts:160,187,211` run `dev_command: "sleep 30"` through
-  `cmd.exe`, which has no `sleep`; `tests/ghBin.test.ts:21` writes a `#!/bin/sh`
-  fake with mode `0o644` vs `0o755` to test exec-bit detection;
-  `tests/diff.test.ts:139` asserts `new file mode 100755`. The last two encode
-  POSIX semantics and should be `describe.skipIf(win32)`, not ported.
-- **e2e.** `e2e/env.ts` is the one file in the repo that already anticipates
-  win32. The prod server boot is Playwright's own `webServer` (portable
-  teardown); the only blocker is `npm start` itself (§5).
+1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the transcript carries
+   the interrupted-state notice rather than the next boot's crash recovery clearing a raw
+   running flag.
+2. Confirm `cmd.exe`'s `Terminate batch job (Y/N)?` prompt on npm's `.cmd` shim doesn't
+   truncate that wait. It appears *after* the console event has been broadcast, so the
+   drain should already be running — but that is the one interaction between the shim and
+   this design that reading source cannot settle.
 
-**Shipped** (`tests/platform.ts`), on one rule: a POSIX construct a test merely
-*uses* gets a portable spelling; a test *about* POSIX semantics is skipped on
-win32 rather than translated into something that pins nothing. The module holds
-the whole platform vocabulary the suite needs — `IS_WIN`, `onPosix`,
-`NULL_DEVICE`, `TEST_SHELL`, `DETACHED`, `killChildTree` — so no test file
-guesses, and every value resolves to the literal the suite used before on
-Linux/macOS.
+## History
 
-Ported: `tests/setup.ts` takes `NUL` for `GIT_CONFIG_SYSTEM` (the branch
-`e2e/env.ts` always had) and for `core.hooksPath` — which also dodges a subtler
-break, since a Windows path in a git *config file* carries backslashes and `\U`
-in `C:\Users\…` is an escape git rejects the whole file for. Both configs also
-pin `core.autocrlf=false` and `core.longpaths=true`, so fixtures are the same
-bytes everywhere and a mkdtemp root under `%TEMP%` can still be checked out.
-The three pty files hand the sidecar `CALANDRIA_PTY_SHELL` (`%COMSPEC%` on
-Windows) instead of `SHELL=/bin/sh`, and tear down through `killChildTree` —
-`lib/processTree.ts`, so `detached` is asked for only where process groups
-exist. `tests/services.test.ts` probes liveness with `treeAlive` rather than
-`process.kill(pid, 0)`; its `sleep 30` had already become a `node -e` sleep with
-the tree-kill work. `tests/repoLock.test.ts` creates its symlink as a
-**junction** on win32 (a directory symlink needs Developer Mode; a junction
-needs nothing) and compares `git worktree list` output through `canonicalPath`,
-since git prints `C:/…` where `path.join` produced `C:\…`; same for
-`tests/taskMoveWorktree.test.ts`'s `--git-common-dir` assertions.
-`tests/codexVerify.test.ts`'s fake CLI is a `.cmd` shim + `.js` on win32 — the
-pair npm itself installs — which incidentally exercises `lib/binPath.ts`'s
-`cmd.exe` wrapping. `e2e/env.ts` realpaths its tmp root the way `tests/setup.ts`
-does, because a CI runner's `%TEMP%` is often the 8.3 short form.
-
-Skipped, each with the reason at the call site: the exec-bit halves of
-`tests/ghBin.test.ts` (split so the win32 cases, which pass their platform
-explicitly, still run on every OS) and `tests/binPath.test.ts`; the `100755`
-assertion in `tests/diff.test.ts` (split out so the rest of the untracked-patch
-synthesis still runs); `tests/ptyShell.test.ts`'s `$SHELL`/`$0`/`$TERM` cases,
-replaced there by one win32 case asserting the probed default is a shell node-pty
-can actually launch; and the SIGINT relay in `tests/startLauncher.test.ts`,
-whose lifetime-contract cases keep running (`child.kill()` is a
-`TerminateProcess` on Windows, so no stub can observe *which* signal it got).
-
-Not yet paid: nothing here has run on a real Windows box. The changes are static
-portability plus what the Linux/macOS suite still proves — the Windows CI lane
-is the task that turns them into a claim.
-- **CI.** All jobs run on Ubuntu. A `windows-latest` lane needs: Git for
-  Windows (preinstalled), node-pty (vendored prebuild — fine), better-sqlite3
-  (`prebuild-install` downloads a win32/Node-22 binary at install; falls back to
-  `node-gyp` with the runner's MSVC — works but is the network-dependent step
-  to watch), and the `*:docker` scripts excluded. Start with
-  `typecheck` + `unit` on Windows; e2e once the process-management work lands.
-
-## Native vs WSL2
-
-**WSL2 today**: the Linux build, unchanged. A Windows user installs Ubuntu in
-WSL2, Node 20.9+, Git, the agent CLIs *inside* WSL2, clones or keeps project
-repos on the ext4 root, and runs `npm start`. WSL2 forwards `localhost:3000` to
-the Windows browser automatically; xterm gets a real Linux shell; every
-process-group, signal, path, lock and CLI finding above is moot. Three things
-to document because they bite: (1) `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`/repos must
-not be on `/mnt/c` (no file locking — §4 — and 10–50× slower git), (2) the
-Windows-side Claude/Codex logins are not visible inside WSL2, the CLIs log in
-separately there, and (3) `<slug>--<host>` service hostnames need the same DNS
-story as Linux; `localhost` subdomains don't resolve from the Windows browser
-without a hosts-file entry.
-
-**Native** is three phases if it happens:
-
-1. *Boot* (S, all hygiene on every platform): cross-platform npm scripts,
-   `CALANDRIA_PTY_SHELL` + win32 shell default, `.exe`/`.cmd` resolution for
-   `claude`/`codex`/`gh`, `NUL` in `tests/setup.ts`, case-folded path identity.
-   After this the app starts, turns run, the terminal opens.
-2. *Correctness* (M): `killTree` for managed services + `tasklist` guard,
-   `core.longpaths` + EBUSY-tolerant worktree teardown, `du` replacement, key
-   file ACLs, drain-on-Ctrl+C (`scripts/start.mjs`).
-3. *Support* (M, ongoing): Windows CI lane, test-suite portability, README /
-   INSTALLATION / TROUBLESHOOTING declaring native support with prerequisites
-   (Git for Windows, Windows 10 1809+).
-
-Phase 1 is worth doing regardless — every item is a portability fix that also
-removes an assumption Linux users trip on (`$SHELL` unset under systemd, a
-trimmed PATH). Phases 2–3 wait for a real Windows user.
-
-## Addendum, 2026-08-27: Ctrl+C and the drain under `npm start`
-
-Finding 8 asked two questions. Both are answered; one of them was answered by
-reading the shipped code rather than by pressing Ctrl+C on a Windows machine,
-and that limit is stated at the end.
-
-### Did Ctrl+C reach the drain under `concurrently -k`? No.
-
-Four facts, each from the version this repo installs (`concurrently` 9.2.4,
-`tree-kill` 1.2.2):
-
-- `concurrently` spawns each job through `cmd.exe /s /c "<job>"` with
-  **`detached: false`** explicitly set on win32 (`dist/src/spawn.js`). Children
-  therefore stay attached to the same console, so the console's `CTRL_C_EVENT`
-  *does* reach `node server.js`, and Node turns it into `SIGINT`. The drain
-  handler in `server.js` fires. That half was never the problem.
-- `KillOnSignal` is in the CLI's default controller list unconditionally — `-k`
-  adds `KillOthers`, it does not add this one. It listens for
-  `SIGINT`/`SIGTERM`/`SIGHUP` on concurrently's own process and, in the
-  listener, immediately calls `command.kill(signal)` for every job
-  (`dist/src/flow-control/kill-on-signal.js`).
-- `command.kill()` delegates to the injected `killProcess`, which the CLI
-  leaves at its default of `tree-kill` (`dist/src/concurrently.js:23`).
-- `tree-kill`'s win32 branch is `exec('taskkill /pid ' + pid + ' /T /F')` —
-  **unconditionally forced, and the requested signal is discarded**
-  (`tree-kill/index.js`). There is no CLI flag that changes this;
-  `--kill-signal` is read but never reaches the win32 path.
-
-So on Ctrl+C the console delivered the event to `server.js` and to
-`concurrently` in the same instant, and `concurrently` answered by
-`taskkill /T /F`-ing the whole subtree — the app included — while the drain was
-still one loopback `fetch` into `POST /api/instance/drain`. `taskkill` is a
-process spawn (tens of milliseconds); the drain is an HTTP round trip into a
-Next route plus `drainActiveTurns()`'s bounded wait for each live turn's
-`finally` to persist. The drain cannot win that race, and losing it means every
-in-flight turn is `TerminateProcess`'d with nothing durable written — exactly
-the state the next boot's `recoverFromCrash()` exists to sweep up.
-
-### The fix: `scripts/start.mjs`
-
-`start` no longer runs `concurrently`; it runs a dependency-free Node launcher
-that spawns `pty-server.js` and `server.js` (in that order, matching
-`docker/entrypoint.sh`), inherits stdio, and ties the two lifetimes together —
-first exit wins, the survivor comes down with it, which is the only property
-`-k` was providing. What differs is the signal path:
-
-- **POSIX** — forward the received signal to each live child, then wait. Same
-  as before; `tree-kill`'s POSIX branch honoured the signal.
-- **win32** — on a *console* signal (Ctrl+C / Ctrl+Break) send **nothing**. The
-  console has already delivered the event to every attached process, and Node's
-  `child.kill()` on Windows is a `TerminateProcess` for every signal name, so
-  "forwarding" it would be precisely the bypass being removed. The launcher's
-  only job there is to outlive the children and wait for them.
-
-Either way a force-kill backstop fires at `CALANDRIA_SHUTDOWN_GRACE_MS + 6s`,
-deliberately later than `server.js`'s own `+3s` hard exit, so a wedged process
-is still reaped and `npm start` never hangs. A second Ctrl+C is ignored rather
-than allowed to preempt a drain in progress.
-
-Not changed: **`npm run dev` still runs under `concurrently`** and so still
-force-kills on Ctrl+C on Windows. That is a deliberate trade — the coloured
-per-process prefixes are worth more in dev than a drain is, since dev turns are
-cheap to lose — but a Windows developer debugging a lost turn should know the
-difference between the two scripts. `docker/entrypoint.sh` is untouched; the
-container has always had its own `wait -n` supervisor and never ran
-`concurrently`.
-
-`concurrently` stays in `dependencies` even though nothing in production
-invokes it now (issue #32's rule was about `npm start` specifically); moving it
-back to `devDependencies` is a separate, riskier call than this task warrants.
-
-### The other stop paths, and what to document
-
-Confirmed by construction rather than by experiment, because there is nothing
-to experiment on — all three are `TerminateProcess`, which by definition runs
-no user-mode handler:
-
-| How you stop it | Reaches the drain? |
-|-|-|
-| Ctrl+C in the console running `npm start` | **Yes** (with `scripts/start.mjs`) |
-| `taskkill /PID <pid> /F` | No |
-| `taskkill /PID <pid>` (no `/F`) | Only for a GUI process with a message loop — Node has none, so no |
-| Task Manager → End task | No |
-| A service manager stop (NSSM, `sc stop`, WinSW) | Depends entirely on the wrapper's configured shutdown method; NSSM's default sequence begins with a console `Ctrl+C` to the process's console, which *would* work, but none of this is configured or tested here |
-| Closing the console window | No — `CTRL_CLOSE_EVENT` gives ~5s, which Node does not surface as a signal |
-
-The supported way to stop Calandria on Windows is **Ctrl+C in the terminal
-running `npm start`**. Everything else is a hard kill; it is not data loss —
-`recoverFromCrash()` clears the running flags, pending messages, unanswered
-permission cards and orphaned schedule runs on the next boot — but the
-interrupted turns lose their transcript notices and look like they simply
-stopped. Running Calandria as a Windows service without first pinning the
-wrapper's shutdown method is not supported.
-
-### What is still unverified
-
-**This was not run on a Windows machine.** No Windows box or VM was available
-to the session, so the `concurrently` finding above is a source-level reading
-of the exact installed versions, not an observed `taskkill`, and the launcher's
-win32 branch has never executed. The mechanism is not in doubt — `tree-kill`'s
-win32 branch is four lines with no conditionals — but two things deserve a
-five-minute check the first time anyone runs this on Windows:
-
-1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the
-   transcript shows the interrupted-state notice rather than a raw running
-   flag on the next boot.
-2. Confirm `cmd.exe`'s `Terminate batch job (Y/N)?` prompt on npm's `.cmd`
-   shim does not truncate the wait. It appears *after* the console event has
-   already been broadcast, so the drain should already be running, but it is
-   the one interaction between the shim and this design that source alone
-   cannot settle.
-
-`tests/startLauncher.test.ts` pins the launcher's contract (signal relayed,
-slow drain waited out, shared lifetime in both directions) against stub
-entrypoints; it can only exercise the POSIX path.
-
-## Follow-up tasks
-
-Filed in the Suggested tray, in dependency order:
-
-1. Docs: WSL2 as the supported Windows path (README, INSTALLATION, TROUBLESHOOTING; the `/mnt/c` locking and login caveats). No blockers. **Do first.**
-2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`). — **Done** (`1314a34`).
-3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`. — **Done** (`pty-server.js`, `tests/ptyShell.test.ts`).
-4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check). — **Done** (`lib/binPath.ts` + callers).
-5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement). — **Done** (`lib/paths.ts`; the global `core.longpaths` setting and the held-handle failure are documented in TROUBLESHOOTING).
-6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics). — **Done** (`lib/processTree.ts` + `lib/services.ts`).
-7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade). — **Done** (`lib/secretFile.ts`). The VAPID private key (`lib/push/vapid.ts`) is still on a plain `mode: 0o600` and is its own task.
-8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2. — **Done** (`scripts/start.mjs`; see the addendum for the one check still owed a real Windows box).
-9. Unit/e2e suite portability — blocked by 2, 3, 5, 6. — **Done** (`tests/platform.ts` + the files listed in §7); nothing has run on a real Windows box yet, which is what 10 buys.
-10. Windows CI lane + docs declaring native support — blocked by 2, 9.
+This file began as a compatibility assessment (research spike, 2026-08-24) enumerating
+fifteen findings, sized and ordered into three phases, with WSL2 recommended as the
+interim answer. All of it shipped; the findings and their reasoning now live in the code
+they became, in the commits that made each change, and in the earlier revisions of this
+file.
