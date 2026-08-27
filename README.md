@@ -145,6 +145,24 @@ login; API keys remain an optional explicit choice.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
+### Preparing a project for parallel tasks
+
+Every task is its own git worktree, which means every task starts from a
+checkout holding tracked files and nothing else — no `.env`, no `node_modules`,
+no build output — and several of them run at once. Repos that assumed one copy
+of themselves on the machine hit that as port collisions, a shared dev
+database, or a first turn spent guessing how to install dependencies.
+
+The `worktree-ready` skill in [`skills/`](skills/) audits a repository for
+exactly that and proposes the repo-side fixes. It works in Claude Code and
+Codex:
+
+```bash
+scripts/install-skills.sh          # both agents, user scope
+```
+
+Then ask a task in that project whether it's ready to run five at a time.
+
 ## Run locally
 
 You need Node 20.9+, macOS or Linux (or Windows via WSL2), and at least one
@@ -205,6 +223,7 @@ belongs.
 - [Agents](docs/AGENTS.md)
 - [Insights and usage](docs/INSIGHTS.md)
 - [Managed services](docs/SERVICES.md)
+- [Bundled agent skills](skills/README.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Windows: WSL2 setup](docs/INSTALLATION.md#windows-wsl2) · [compatibility assessment](docs/WINDOWS.md)

@@ -60,6 +60,8 @@ Only the SELECTED task has a transcript stream open. Everything else stays live 
 
 ### Scope
 
+`skills/` ships agent skills to USERS' projects (installed by `scripts/install-skills.sh` into `~/.claude/skills` + `~/.agents/skills`, or into a target repo); `.claude/skills/` is this repo's own tooling for people developing Calandria. Don't cross them.
+
 This repo is the whole product — self-hosted only, with no control plane behind it. Don't add hosted/fleet/billing features or first-party identity; the only auth modes are the two in `lib/auth/`. Site-specific CLIs and config are an end user's concern, layered on the published image the way `examples/overlay/` shows, not merged in here.
 
 ### Where data lives
