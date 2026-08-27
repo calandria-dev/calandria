@@ -72,6 +72,37 @@ else. Either use the port directly, or add each hostname to
 `C:\Windows\System32\drivers\etc\hosts` pointing at `127.0.0.1`. There is no wildcard-hosts-file
 equivalent — a real wildcard DNS record is the only way to avoid one entry per service.
 
+## Native Windows filesystem limits
+
+Native Windows is still in progress ([assessment](WINDOWS.md)) — WSL2 above is the supported
+path. Two NTFS behaviours bite hard enough there to be worth stating, because both look like
+Calandria breaking rather than like the filesystem doing what it always does.
+
+**`MAX_PATH` — "Filename too long" on a task launch or an agent's `npm install`.** Git for
+Windows refuses paths over 260 characters unless `core.longpaths` is on, and a task's checkout
+starts deep before the repository's own tree begins: `%USERPROFILE%\.calandria\worktrees\<task
+id>\`. Add a `node_modules` chain to that and `git worktree add` fails part-way through the
+checkout. Calandria passes `-c core.longpaths=true` on its own git invocations, so cutting,
+diffing and merging a worktree are covered — but nothing else inherits that. The agent's own
+`git`, `npm`, and your editor all read the ordinary config, so set it once for the machine:
+
+```
+git config --global core.longpaths true
+```
+
+That is a Git for Windows setting only; the Win32 limit itself is separate, and some tools stay
+subject to it regardless. `CALANDRIA_WORKTREES_DIR=C:\w` (a short root, close to the drive
+letter) buys back ~30 characters per path if a specific repository still overflows.
+
+**"Couldn't remove the task's worktree" on discard, prune, or delete.** POSIX lets an open file
+be unlinked and simply disappear; Windows returns `EBUSY`/`EPERM`/`ENOTEMPTY` while any process
+holds a handle on it. The usual holder is Calandria's own Task-scoped terminal, which is rooted
+*inside* the worktree being removed — an editor with the folder open and a Defender scan of a
+fresh checkout do the same. Teardown retries on Windows, which clears an antivirus scan on its
+own, but a shell sitting in the directory needs you: close the Task terminal (or `cd` it out of
+the worktree), close the editor window, and retry. Nothing was lost — the task row and its
+branch are intact, and the operation is refused rather than half-applied.
+
 ## Database corruption
 
 Everything the app knows — projects, tasks, transcripts, summaries, usage/cost history, merge

@@ -288,7 +288,7 @@ Filed in the Suggested tray, in dependency order:
 2. Cross-platform npm scripts (`cross-env` or drop `NODE_ENV=` prefix; `bash scripts/docker-test.sh`). — **Done** (`1314a34`).
 3. `CALANDRIA_PTY_SHELL` env knob + win32 shell default in `pty-server.js`.
 4. Agent CLI resolution on win32 (`claude.exe` default, `.cmd`/`PATHEXT` for `codex`, win32 `gh` probe dirs, `BROWSER=true` check).
-5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
+5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement). — **Done** (`lib/paths.ts`; the global `core.longpaths` setting and the held-handle failure are documented in TROUBLESHOOTING).
 6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics).
 7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade).
 8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2.

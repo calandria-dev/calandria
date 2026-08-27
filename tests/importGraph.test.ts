@@ -59,6 +59,7 @@ const PINNED = [
   "app/api/notifications/push/route.ts",
   "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
   "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
+  "lib/paths.ts", //              case-folded path identity + EBUSY-tolerant rm; fs + path only, and lib/git.ts and lib/repoLock.ts both sit on it
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
