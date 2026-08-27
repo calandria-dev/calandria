@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { readEnv } from "./env.mjs";
+import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 
@@ -465,3 +466,17 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  * cache plus the passive rate-limit telemetry that rides every turn for free.
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
+
+/**
+ * How every log line is rendered: `text` (default — the `[component] message
+ * key=value` form this app has always printed) or `json` (one JSON object per
+ * line, with `ts`/`level`/`component`/`msg` plus the line's own fields) for an
+ * instance whose output is being shipped somewhere that parses it.
+ *
+ * Re-exported here for discoverability alongside every other knob, but the
+ * emitters do NOT read this constant: lib/log.mjs resolves the value per line,
+ * because server.js and pty-server.js emit through the same module and can't
+ * import this file at all. Both ends call the same resolver, so they cannot
+ * disagree.
+ */
+export const LOG_FORMAT = resolveLogFormat();

@@ -12,6 +12,62 @@ is setup and architecture; this file is what to do when something's already wron
 | Running under WSL2: locking errors, "not logged in" agents, slow git, service hostnames | [WSL2 on Windows](#wsl2-on-windows) |
 | A turn fails with "Failed to authenticate" / the titlebar shows a broken-connection banner | [Headless re-authentication](#headless-re-authentication) |
 | Upgrading, or need to roll back a version | [Upgrade rollback](#upgrade-rollback) |
+| Wondering how long turns take, what they cost, or why one failed | [Reading the logs](#reading-the-logs) |
+
+## Reading the logs
+
+Log lines are emitted through one shared module (`lib/log.mjs`) in one of two shapes, chosen
+for the whole instance by `CALANDRIA_LOG_FORMAT`:
+
+- **`text`** (the default) — `[component] message key=value key=value`. The bracket tag names
+  the subsystem: `[server]`, `[pty-server]`, `[runner]`.
+- **`json`** — one JSON object per line: `ts` (ISO-8601), `level` (`info`/`warn`/`error`),
+  `component`, `msg`, then that line's own fields at the top level. Set this when something
+  downstream is parsing — `docker logs` piped at a collector, or just `jq` at the terminal.
+
+The turn runner and both plain-Node entrypoints emit this way today; the remaining call sites
+(`[config]`, `[db-lock]`, `[scheduler]`, the routes) still print bracket-tagged prose through
+`console` and are being moved over incrementally, so a `json` instance currently produces a few
+non-JSON lines. They are all `warn`/`error` and none of them is on the turn path.
+
+`server.js` and `pty-server.js` are separate processes that read the variable themselves, so
+export it in the environment that launches both (a `.env` file read by Next alone won't reach
+them). Anything other than `json` or `text` warns once and falls back to `text`.
+
+**Every turn logs twice**, at start and at settle — the two lines that answer "how long do
+turns take on this box", "which task burned the tokens", and "did last night's schedule
+actually run":
+
+```
+[runner] turn start task=lM5-igB project=cal agent=claude generation=0 origin=schedule resume=true
+[runner] turn ok task=lM5-igB ms=84120 tokens_in=1204 tokens_out=8801 cache_read=412003 tokens_total=422008 cost_usd=0.4113
+```
+
+`origin` is why the turn is running (`user`, `schedule`, `dependency`), and the settle line's
+`msg` is its outcome:
+
+| `turn …` | Means |
+|-|-|
+| `ok` | the session opened, ran, and ended without an error |
+| `failed` | the turn errored, or a tool call was auto-denied because nobody was watching — logged at `error` level with the message in `error=` |
+| `stopped` | the Stop button (or a shutdown drain) cut it — not a failure |
+| `interrupted` | the agent session never opened, so the turn produced nothing — logged at `warn` |
+
+Those are the same four outcomes a scheduled run is settled with in the ledger, deliberately:
+a run recorded `failed` on the Schedules card and logged `ok` would be worse than no line.
+
+Token counts are per **turn**, summed from the same usage reports that write the `task_usage`
+table — an agent that reports no usage logs zeros rather than the task's running total. Some
+useful one-liners in JSON mode:
+
+```bash
+# The ten slowest turns, newest first
+docker logs calandria-alice 2>&1 | jq -rc 'select(.msg|startswith("turn ")) | [.ts,.msg,.task,.ms] | @tsv' | sort -k4 -n | tail
+# What this instance spent, by task
+docker logs calandria-alice 2>&1 | jq -rc 'select(.msg=="turn ok") | [.task,.cost_usd] | @tsv'
+# Everything that failed, with the reason
+docker logs calandria-alice 2>&1 | jq -c 'select(.level=="error")'
+```
 
 ## Common boot failures
 
