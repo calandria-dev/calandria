@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { DB_DIR, DB_PATH, PROJECTS_DIR, SERVICE_PORT_BASE } from "./config";
 import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
+import { SCHEMA_VERSION, schemaTooNew, schemaTooNewMessage } from "./schema-version.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
 
@@ -18,6 +19,13 @@ declare global {
 }
 
 export function init(db: Database.Database) {
+  // Before anything writes: a database stamped NEWER than this build understands
+  // belongs to a version we can't reason about, and touching it is how a rolled-
+  // back image tag silently eats data. server.js runs the same gate against the
+  // file at boot (lib/schema-version.mjs) so the refusal is a boot failure with a
+  // message; this one covers every other way a connection gets opened.
+  assertSchemaVersionSupported(db);
+
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   // Default is 0ms: a write racing the concurrent read-only `sqlite3` inspection
@@ -647,6 +655,20 @@ function ensureOnboardingFlag(db: Database.Database) {
   if (inUse) db.prepare("INSERT INTO settings (key, value) VALUES ('onboarding_complete', '1')").run();
 }
 
+/**
+ * Refuse a database stamped by a build that knew more about the schema than
+ * this one does. See lib/schema-version.mjs for why this is a refusal and not a
+ * warning; the message is shared with the boot-time gate in server.js so an
+ * operator reads the same words wherever the refusal surfaces.
+ *
+ * Older-or-equal proceeds untouched — that's every ordinary upgrade, and the
+ * additive migrations below are what make it safe.
+ */
+export function assertSchemaVersionSupported(db: Database.Database) {
+  const found = db.pragma("user_version", { simple: true }) as number;
+  if (schemaTooNew(found)) throw new Error(schemaTooNewMessage(found, DB_PATH));
+}
+
 // Add columns introduced after a DB was first created (older database files).
 export function migrate(db: Database.Database) {
   const cols = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
@@ -950,6 +972,14 @@ export function migrate(db: Database.Database) {
     WHERE m.role IN ('user', 'assistant', 'tool')
     GROUP BY m.task_id, m.generation;
   `);
+
+  // Last, and only once everything above has actually run: stamp what this
+  // build made of the file, so a LATER build that is OLDER than this one
+  // refuses to open it instead of writing to a schema it doesn't know
+  // (assertSchemaVersionSupported above, and the boot gate in server.js).
+  // Stamping unconditionally rather than only when it differs — it's a header
+  // write, and a pre-stamp database reads back 0 and has to be moved forward.
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
 // The built-in tutorial. A brand-new instance gets a "Welcome" project backed by
@@ -1143,7 +1173,14 @@ export function getDb(): Database.Database {
     // Create the app-data home on first run (idempotent).
     fs.mkdirSync(DB_DIR, { recursive: true });
     const db = new Database(DB_PATH);
-    init(db);
+    try {
+      init(db);
+    } catch (err) {
+      // init() can refuse outright (a database from a newer build), and an
+      // unusable connection must not be left open holding the file.
+      db.close();
+      throw err;
+    }
     global.__calandriaDb = db;
     warnIfUnowned();
   }

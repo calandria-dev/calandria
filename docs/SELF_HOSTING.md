@@ -94,10 +94,10 @@ both moving targets by design (see the tag table above). Pin `X.Y.Z` for anythin
 don't want to babysit; use `latest` only if you're fine re-reading the changelog after
 every unattended upgrade.
 
-**Rollback** is re-pinning: set `CALANDRIA_IMAGE` back to the previous `X.Y.Z` and
-`docker compose pull && up -d --no-build` again. There's no separate rollback mechanism —
-every past release tag stays pullable indefinitely, so "roll back" and "pin an older
-version" are the same operation.
+Every past release tag stays pullable indefinitely, so moving between versions is only
+ever a matter of re-pinning `CALANDRIA_IMAGE`. Going *backwards* has one more step than
+going forwards, because the newer build already migrated your database — see
+[Rolling back an upgrade](#rolling-back-an-upgrade).
 
 ### Running it
 
@@ -140,6 +140,111 @@ the setup wizard drives that flow from the browser.
 Need site-specific CLIs or config layered on top of the published image? See
 [`examples/overlay/`](../examples/overlay/) for a sanitized starting point — real overlays
 belong in a private repo, not committed here.
+
+### Upgrading
+
+**Take a backup first.** It is one command, it needs no downtime, and it is the only
+thing that makes the upgrade reversible — the new build migrates your database on its
+first boot, and there is no down-migration.
+
+```bash
+# 1. Snapshot the database while the old version is still the one running.
+docker exec -u calandria calandria-alice npm run backup -- --out /home/calandria/backups
+#    (running locally instead: npm run backup -- --out /mnt/backups)
+
+# 2. Note the version you are on — it's what you'd roll back to.
+curl -s localhost:10001/api/version
+
+# 3. Upgrade.
+export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:0.3.0   # or :latest
+docker compose -p calandria-alice pull
+docker compose -p calandria-alice up -d --no-build
+```
+
+The container comes up, runs its schema migrations, and serves. Migrations are additive
+and idempotent — new columns get defaults, nothing is dropped — so a database from any
+older version upgrades in place, and re-running the same version changes nothing. What
+they are *not* is reversible, which is what step 1 is for.
+
+At the end of migrating, the build stamps the database with the schema version it
+understands (`PRAGMA user_version`, [`lib/schema-version.mjs`](../lib/schema-version.mjs)).
+Nothing surfaces that number in normal operation; it exists so that an *older* build
+pointed at that database refuses to start instead of quietly writing to a schema it has
+never seen. That refusal is the subject of the next section.
+
+### Rolling back an upgrade
+
+A rollback is **two** moves, and doing only the first one is the mistake this section
+exists to prevent: re-pin the image *and* put back the database the old version knew.
+
+If you re-pin the image alone, the old build finds a database stamped by the newer one
+and refuses to boot, with the versions and both ways out in the message:
+
+```
+Refusing to start: /home/calandria/.calandria/calandria.db was written by a NEWER version of Calandria.
+
+  database schema version: 2
+  this build understands:  1
+  ...
+```
+
+That is a deliberate, clean failure rather than a corrupted instance. The container will
+exit and (with `restart: unless-stopped`) keep retrying, so `docker compose logs` is where
+you'll read it. Pick one of the two exits:
+
+**A. Forward — go back to the version you just came from.** Nothing to restore; the
+database is already the shape that build wants. This is the right answer whenever the
+upgrade merely surprised you and no data is at stake.
+
+```bash
+export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:0.3.0   # the NEWER tag
+docker compose -p calandria-alice pull
+docker compose -p calandria-alice up -d --no-build
+```
+
+**B. Backward — pin the old tag and restore the pre-upgrade backup.** This is a real
+rollback: you also give up everything that happened after the backup was taken.
+
+```bash
+# 1. Stop the app. Never swap the database file under a running instance.
+docker compose -p calandria-alice stop
+
+# 2. Pin the version you are going back to (no leading v).
+export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:0.2.0
+
+# 3. Restore the database from the backup you took before the upgrade.
+#    Full procedure, including the sidecars and the manifest: "Restore" below.
+mkdir -p /tmp/rollback
+tar -xzf calandria-backup-20260827T221316Z.tar.gz -C /tmp/rollback
+cd /tmp/rollback/calandria-backup-20260827T221316Z
+DBDIR=~/.calandria
+rm -f "$DBDIR"/calandria.db-wal "$DBDIR"/calandria.db-shm
+cp db/calandria.db "$DBDIR"/calandria.db
+
+# 4. Bring the old version up.
+docker compose -p calandria-alice pull
+docker compose -p calandria-alice up -d --no-build
+curl -s localhost:10001/api/version
+```
+
+Read [Restore](#restore) before running step 3 in anger — it covers the `db-dir/`
+half (uploads, VAPID key, a persisted API key), agent logins, and the three things a
+restored instance does that look like faults and aren't. The backup's `manifest.json`
+records the snapshot's `userVersion` and the app version that wrote it, so you can check
+you're restoring a database the tag you just pinned will actually accept.
+
+Three notes on what a rollback costs, none of them avoidable by a different procedure:
+
+- **Everything since the backup is gone**, including turns that ran on the new version.
+  Task branches are not: they live in your project repos, so committed work survives the
+  database going back — the *task rows* describing it don't.
+- **Worktrees are not rolled back** (they aren't in the default backup). A task whose row
+  came back but whose checkout moved on gets a fresh one cut from its branch on the next
+  turn.
+- **No backup, and you want the old version anyway?** There is no supported way to
+  down-migrate, and pointing the old build at the new database is exactly what the boot
+  gate refuses. Your options are to stay on the newer version (A above) or start from a
+  fresh database — take a backup of the current one first either way.
 
 ## Origin-side auth (Cloudflare Access)
 

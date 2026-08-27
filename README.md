@@ -227,6 +227,13 @@ logins, in one timestamped archive. Don't `cp` a live SQLite database; see
 [Backup & restore](docs/SELF_HOSTING.md#backup--restore) for the flags, the
 cold-copy alternative, and the restore procedure.
 
+Take one before upgrading, because upgrades only run one way: each build
+stamps the database with the schema version it understands, and an older build
+pointed at a database a newer one already migrated refuses to boot rather than
+write to a schema it has never seen. Rolling back is therefore two moves —
+re-pin the previous image tag *and* restore that backup. Runbook:
+[Rolling back an upgrade](docs/SELF_HOSTING.md#rolling-back-an-upgrade).
+
 ## Privacy
 
 Calandria contains no telemetry and no analytics. It makes no outbound

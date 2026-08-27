@@ -30,6 +30,7 @@ const PINNED = [
   "lib/db-lock.mjs", //          the boot lock; server.js loads it in plain Node, before Next exists
   "lib/env.mjs", //              the CALANDRIA_*/ORCH_* alias reader; env-only, no imports, loaded by server.js in plain Node before Next exists
   "lib/log.mjs", //              the shared line emitter; zero imports, and BOTH plain-Node entrypoints load it before Next exists
+  "lib/schema-version.mjs", //   the schema stamp + boot gate; better-sqlite3 + storage.mjs only, and server.js runs it before Next exists
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving

@@ -230,6 +230,13 @@ const prepared = dbLockImport
           "each other's running tasks, queued follow-ups and open permission prompts.",
       );
     }
+    // This process owns the database now, and Next hasn't warmed a route that
+    // could open it yet: refuse a file stamped by a NEWER build. Rolling an
+    // image tag back has to fail HERE, with a message an operator reads in
+    // `docker compose logs`, rather than boot and quietly write to a schema
+    // this build has never seen. See lib/schema-version.mjs.
+    const schemaVersion = await import("./lib/schema-version.mjs");
+    schemaVersion.assertSchemaVersionAtBoot(held.dir);
   })
   .catch((err) => {
     // Not a crash — a refusal. The only useful thing to say is who has it.

@@ -103,6 +103,16 @@ pid, host, and start time when available. See **One process per database** in
 it — don't reach for `CALANDRIA_DB_LOCK=off` as a fix; it disables the exact protection this error is
 giving you.
 
+**"was written by a NEWER version of Calandria."** Also a hard refusal, and the one you get
+from rolling an image tag backwards. The database carries the schema version of the build that
+last migrated it (`PRAGMA user_version`, [`lib/schema-version.mjs`](../lib/schema-version.mjs)),
+and this build's number is lower — meaning a newer version changed the schema in ways this one
+has never seen. Booting anyway would keep writing to it and lose whatever the newer version
+stored, so the app stops instead. The message prints both numbers and the two ways out; the
+runbook is [SELF_HOSTING.md — Rolling back an upgrade](SELF_HOSTING.md#rolling-back-an-upgrade).
+Short version: either go back to the newer tag (nothing to restore), or stay on this build and
+restore the pre-upgrade backup. There is no down-migration and no override flag.
+
 ## WSL2 on Windows
 
 WSL2 is one of the two supported ways to run Calandria on Windows ([setup](INSTALLATION.md#wsl2));
@@ -372,10 +382,14 @@ pending state.
 
 ## Upgrade rollback
 
-Pulling an older image tag against a database written by a newer one has no defined-safe path
-today (no schema version stamp, no compatibility check; migrations are additive-only by
-convention, not enforced) — that half is still tracked in
-[issue #13](https://github.com/calandria-dev/calandria/issues/13). What exists now is the
-thing that makes a rollback survivable rather than safe: take a backup first
-([SELF_HOSTING.md — Backup & restore](SELF_HOSTING.md#backup--restore)) so a downgrade that
-does go wrong is a restore rather than a loss.
+Pulling an older image tag against a database a newer build already migrated is now a clean
+refusal instead of a silent hazard: every build stamps the schema version it understands
+(`PRAGMA user_version`), and boot refuses a database stamped higher — see the entry in
+[Common boot failures](#common-boot-failures) above for the message.
+
+So a rollback is two moves, not one: re-pin the image **and** restore the database from the
+backup you took before the upgrade. The step-by-step runbook, including the case where you
+don't have a backup, is
+[SELF_HOSTING.md — Rolling back an upgrade](SELF_HOSTING.md#rolling-back-an-upgrade). Since
+there is no down-migration, the backup is what makes the rollback possible at all — take one
+before every upgrade ([Backup & restore](SELF_HOSTING.md#backup--restore)).
