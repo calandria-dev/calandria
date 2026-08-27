@@ -12,8 +12,8 @@ vi.mock("@/lib/agents/claude/driver", () => ({
   claudeDriver: {
     id: "claude",
     label: "Scripted Fake",
-    runTurn: (task: unknown, project: unknown, userText: string, ac?: unknown) =>
-      runTurnMock(task, project, userText, ac),
+    runTurn: (task: unknown, project: unknown, userText: string, ac?: unknown, hooks?: unknown) =>
+      runTurnMock(task, project, userText, ac, hooks),
   },
 }));
 
@@ -313,6 +313,37 @@ describe("driver contract through the runner", () => {
     expect(at("ask_answered")).toMatchObject({ running: 1, awaiting: 0 });
     // Turn over: the row settled (running off, awaiting the user) BEFORE turn_end.
     expect(at("turn_end")).toMatchObject({ running: 0, awaiting: 1 });
+  });
+});
+
+describe("the launcher's TurnHooks reach the driver", () => {
+  // The driver's tool callbacks can only fire the auto-start sweep because the
+  // LAUNCHER hands it down (lib/agents/types.ts's TurnHooks) — the driver must
+  // not import lib/autoStart.ts, which is what closed the cycle that broke
+  // every auto-start in production. That makes this plumbing load-bearing and
+  // silent when it breaks: a dropped `hooks` argument runs the turn perfectly
+  // and just never starts anything waiting on what the agent marked done.
+  it("passes them to the first turn AND to a drained follow-up", async () => {
+    const project = createProject({ name: "Hooks" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    // Parked before the turn starts, so run()'s finally drains it as turn two —
+    // the re-entry that has no caller left to re-supply the hooks.
+    addPendingMessage(task.id, task.generation, "follow-up");
+
+    const seen: unknown[] = [];
+    runTurnMock.mockImplementation(async function* (_t: unknown, _p: unknown, _u: string, _ac: unknown, hooks: unknown) {
+      seen.push(hooks);
+      yield { type: "session", sessionId: `s-${seen.length}` } as StreamEvent;
+      yield { type: "done", sessionId: `s-${seen.length}` } as StreamEvent;
+    });
+
+    const hooks = { onTaskCleared: vi.fn() };
+    // Resolves on the second turn's turn_end (the first hands off to the drain).
+    const { done } = collectEvents(task.id);
+    await startResumeTurn(task, project, "go", undefined, hooks);
+    await done;
+
+    expect(seen).toEqual([hooks, hooks]);
   });
 });
 

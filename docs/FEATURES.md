@@ -26,7 +26,11 @@ without turning into one unbounded prompt.
 Typing `/` in the composer opens the command menu. It lists the commands the task's own
 agent would actually expand — your skills, plugin commands, and the `.claude/commands` in
 the checked-out repo — discovered from the agent itself rather than from a list Calandria
-maintains, so a command you install shows up without an Calandria release. Arrow keys move
+maintains, so a command you install shows up without an Calandria release. An MCP server's
+prompts (`/mcp__server__prompt`) are in there too, with one wrinkle: they're the one kind of
+command that can't be read without starting your whole MCP fleet, so Calandria picks them up
+from the task's own sessions instead — they appear once the task has run a turn, and they
+list whatever servers that turn had. Arrow keys move
 the highlight, Enter or Tab completes it, and a command typed in full sends as usual.
 Calandria's own `/clear` heads the list; the agent's same-named command is hidden so one
 name can't mean two things, as are the run-control commands (`/model`, `/effort`, `/fast`)
@@ -453,8 +457,9 @@ command list the composer's `/` menu offers, so the two can't disagree — and i
 *refuses* on a freshly read list, never a cached one, so a command you installed a minute ago
 isn't rejected for being new. Two things it declines to judge rather than get wrong: an MCP
 server's `/mcp__server__prompt` (those names aren't in the list it can read without spawning
-your whole server fleet) and any prompt it couldn't check at all — both save with a note, and
-run.
+your whole server fleet, and the composer's copy of them comes from a task's own sessions,
+which a schedule doesn't have yet) and any prompt it couldn't check at all — both save with a
+note, and run.
 
 Save is never blocked on the check, because the check is a typo catcher and not an authority:
 it reads one session's command list, so a conditionally-registered command can read as

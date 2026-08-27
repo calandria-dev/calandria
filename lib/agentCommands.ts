@@ -45,11 +45,22 @@ function isInternal(name: string): boolean {
 }
 
 /**
+ * The long tail: a plugin's `plugin:command` and an MCP server's
+ * `mcp__server__prompt`. Both arrive in bulk under one prefix, so both sort
+ * below the commands a user typed from memory.
+ */
+function namespaced(name: string): number {
+  return name.includes(":") || name.startsWith("mcp__") ? 1 : 0;
+}
+
+/**
  * The agent's commands, filtered to what makes sense inside a task chat and
- * sorted for a scannable menu: plain commands first, then the namespaced
- * `plugin:command` ones, alphabetically within each group. Namespaced entries
- * sort last because they're the long tail — a user hunting /simplify shouldn't
- * scroll past thirteen superpowers: entries to reach it.
+ * sorted for a scannable menu: plain commands first, then the namespaced ones —
+ * `plugin:command` and an MCP server's `mcp__server__prompt` — alphabetically
+ * within each group. Namespaced entries sort last because they're the long tail
+ * — a user hunting /simplify shouldn't scroll past thirteen superpowers:
+ * entries to reach it, and an MCP fleet's prompts are the same kind of bulk
+ * under the same kind of prefix.
  */
 export function visibleAgentCommands(commands: AgentCommand[]): AgentCommand[] {
   const seen = new Set<string>();
@@ -64,9 +75,5 @@ export function visibleAgentCommands(commands: AgentCommand[]): AgentCommand[] {
       return true;
     })
     .map((c) => ({ ...c, name: c.name.replace(/^\//, "").trim() }))
-    .sort((a, b) => {
-      const an = a.name.includes(":") ? 1 : 0;
-      const bn = b.name.includes(":") ? 1 : 0;
-      return an - bn || a.name.localeCompare(b.name);
-    });
+    .sort((a, b) => namespaced(a.name) - namespaced(b.name) || a.name.localeCompare(b.name));
 }

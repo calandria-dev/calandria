@@ -77,7 +77,10 @@ The app talks to coding agents only through the `AgentDriver` interface.
   implementation reads the SDK's initialization response without sending a model request,
   under the same isolation as the one-shots (see `lib/agents/claude/commands.ts`). It is the
   app's only command enumeration: the schedule editor's prompt validation asks the same
-  function, so the menu and the validator cannot disagree about what a session expands.
+  function, so the menu and the validator cannot disagree about what a session expands. MCP
+  prompt commands are the exception the isolation buys: reading them means starting the
+  user's MCP fleet, so they're harvested from the `init` message of the task's real turns
+  (`recordMcpPrompts`) and merged into the same answer.
 - **`GET /api/agents`** serves each driver's capability descriptor **plus its persisted
   connection state** to the client, which renders every run-control picker (model /
   reasoning / permission), the per-task agent picker, agent badges, and the cost/ask
@@ -285,7 +288,12 @@ and a target read a moment ago may have been started since; the eligibility chec
 write share one synchronous block, which is atomic given better-sqlite3 and a single Node
 process. Marking done fires `maybeAutoStartDependents()` against the **target's** id, and
 that call lives with the callers rather than in `lib/agentTools.ts` — that module is pinned
-SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches the runner.
+SDK-free (`tests/importGraph.test.ts`) and `lib/autoStart.ts` reaches the runner. For the
+stdio bridge the caller is the internal route, which fires the sweep itself. For the Claude
+driver it is the `TurnHooks` callback the launcher injected through `startTurn`
+(`lib/agents/types.ts`): the driver reports the cleared task and nothing more, because a
+driver importing `lib/autoStart.ts` closes a cycle back through `lib/agents/registry.ts` —
+the one that once compiled `lib/autoStart.ts` sync and killed every auto-start in prod.
 
 The policy lives in `updateTaskForAgent()` alone, because the two paths differ in who names
 the target: the Claude driver closes over the caller and hands the model's `task` argument

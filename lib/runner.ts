@@ -25,6 +25,7 @@ import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { sendTurnInput } from "@/lib/turnInput";
 import { settleRun } from "@/lib/schedule/store";
+import type { TurnHooks } from "@/lib/agents/types";
 import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
 
 // What a scheduled run says for itself when it stopped because there was
@@ -44,6 +45,17 @@ export const SCHEDULE_UNATTENDED_DETAIL =
  * must have already persisted the user message and set running=1. `syncNote`
  * (the silent worktree fast-forward notice, if any) is persisted + published
  * first so it reads in order at the top of the turn.
+ *
+ * `hooks` is what this turn's tool calls are allowed to set off outside the
+ * turn — today only "a task went terminal, sweep its auto-start dependents".
+ * It is passed IN rather than resolved here because the sweep lives in
+ * lib/autoStart.ts, which launches through this module: importing it back
+ * would rebuild the cycle that once broke every auto-start in production, and
+ * would drag the agent SDKs into autoStart's sync route-entry importers along
+ * the way (issue #40 — see TurnHooks in lib/agents/types.ts and the
+ * DYNAMIC_ONLY note in tests/importGraph.test.ts). Every launch path passes
+ * AUTO_START_HOOKS; omitting it doesn't break the turn, it just leaves the
+ * dependents of anything the agent marks done sitting unstarted.
  */
 export function startTurn(
   task: Task,
@@ -51,7 +63,8 @@ export function startTurn(
   userText: string,
   syncNote: string,
   controller?: AbortController,
-  runContext?: RunContext
+  runContext?: RunContext,
+  hooks?: TurnHooks
 ): void {
   // Lets the Stop button abort this turn. Registered by task id so the
   // separate /abort route can find and trip it — and so hasTurn() can report
@@ -93,7 +106,7 @@ export function startTurn(
   // FOREIGN KEY error) would surface here as an unhandled rejection and, under
   // Node's default policy, crash the entire server — taking down every other
   // tenant's turn. Swallow-and-log so one deleted task can never do that.
-  run(task, project, userText, syncNote, abortController, runContext).catch((err) => {
+  run(task, project, userText, syncNote, abortController, runContext, hooks).catch((err) => {
     console.error(`[runner] turn for task ${task.id} crashed after its finally settled:`, err);
     // Best-effort settle so even this last-resort path can't wedge the task in
     // a running-forever state. unregisterTurn is identity-checked, so a newer
@@ -211,7 +224,7 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
  * POST route does inline for the very first turn; the initial turn stays in the
  * route since it also persists the generic opening prompt.
  */
-export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController): Promise<void> {
+export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController, hooks?: TurnHooks): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   // Claim the task's turn slot BEFORE the awaits below. The claim is atomic
@@ -298,7 +311,7 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     const userMsg = addMessage(id, gen, "user", userText);
     updateTask(id, { running: 1, suggested: 0, awaiting_input: 0, background_pending: 0, background_note: "" });
     publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-    startTurn(task, project, userText, syncNote, abortController);
+    startTurn(task, project, userText, syncNote, abortController, undefined, hooks);
   } catch (err) {
     // The turn never launched (e.g. the task row vanished mid-await) — release
     // the claim, or the task would read "running" forever and every future
@@ -419,7 +432,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
   }
 }
 
-async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext?: RunContext): Promise<void> {
+async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext?: RunContext, hooks?: TurnHooks): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   let sessionId: string | null = task.session_id;
@@ -498,7 +511,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // neither agent SDK exposes the underlying child process (or its pid)
     // through any public/documented API, so persisting one would mean reading
     // private, minified SDK internals liable to break on every version bump.
-    for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController)) {
+    for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController, hooks)) {
       // Persist first, then publish enriched with the DB message id — so a
       // snapshot taken at any instant plus the live tail never loses an event,
       // and clients can upsert by id instead of appending duplicates.
@@ -906,7 +919,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
               if (!hasTurn(id)) publish(id, { type: "turn_end" });
               return;
             }
-            await startResumeTurn(cur, curProject, next.content, nextController);
+            // Same hooks the turn we're finishing ran under: a drained
+            // follow-up is the same session continuing, so its tool calls must
+            // reach the same launcher (nobody re-supplies them from outside).
+            await startResumeTurn(cur, curProject, next.content, nextController, hooks);
           }).catch((err) => {
             // Failsafe: if launching the queued turn fails, release its slot,
             // surface the error, and settle the task so it doesn't hang in a
