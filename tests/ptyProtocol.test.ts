@@ -5,8 +5,8 @@
  * Worth a real process because the failure mode is invisible in-process:
  * node-pty's write() throws ERR_INVALID_ARG_TYPE on a non-string, the throw
  * escapes the ws 'message' handler, and Node's default policy exits the
- * sidecar. `npm start` runs `concurrently -k`, so that exit takes server.js
- * with it — every in-flight agent turn across every project, plus all SSE
+ * sidecar. `npm start` ties the two lifetimes together (scripts/start.mjs), so
+ * that exit takes server.js with it — every in-flight agent turn across every project, plus all SSE
  * streams, for a two-byte protocol violation on the terminal socket.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

@@ -84,8 +84,9 @@ const SHELL = resolveShell();
 
 // Last-resort process guards, the same backstop server.js installs and for the
 // same reason — except the blast radius here is bigger than it looks. `npm
-// start` runs the two processes under `concurrently -k`, so -k kills the app
-// when the sidecar dies: one malformed frame on one terminal socket would take
+// start` runs the two processes under one launcher (scripts/start.mjs) that
+// takes the app down when the sidecar dies: one malformed frame on one
+// terminal socket would take
 // down every in-flight agent turn across every project plus all SSE streams.
 // A terminal tab is not allowed to be that load-bearing. Individual call sites
 // are fixed to degrade gracefully; these catch the rest of the class. We log
@@ -196,8 +197,8 @@ wss.on("connection", (ws, req) => {
     // Well-formed JSON is not a well-formed message. `null` parses fine and
     // would throw a TypeError on the .type lookup below, and write() throws
     // ERR_INVALID_ARG_TYPE on a non-string — either escapes this handler and,
-    // but for the process guards above, exits the sidecar, which
-    // `concurrently -k` turns into an app-wide outage. So every field is
+    // but for the process guards above, exits the sidecar, which the shared
+    // lifetime in scripts/start.mjs turns into an app-wide outage. So every field is
     // checked before use. The try/catch additionally covers a write that races
     // the shell's own exit.
     if (!msg || typeof msg !== "object") return;

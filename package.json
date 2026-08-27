@@ -10,7 +10,7 @@
     "dev:next": "node server.js",
     "pty": "node pty-server.js",
     "build": "cross-env NODE_ENV=production next build --turbopack",
-    "start": "cross-env NODE_ENV=production concurrently -k -n app,pty -c blue,green \"node server.js\" \"node pty-server.js\"",
+    "start": "cross-env NODE_ENV=production node scripts/start.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",

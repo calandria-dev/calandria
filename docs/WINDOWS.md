@@ -23,7 +23,7 @@ of it honest. That is a standing maintenance cost, not a one-off port.
 | 5 | Path identity compared case-sensitively after `realpathSync` (`lib/git.ts:536`, `lib/repoLock.ts:73`) — NTFS is case-insensitive | Paths | S | Yes — can wrongly `rmSync` a linked worktree |
 | 6 | No `core.longpaths`; worktrees under `%USERPROFILE%\.calandria\worktrees\<id>\…` + `node_modules` exceed `MAX_PATH` | Paths | S | Likely — depends on repo depth |
 | 7 | `fs.rmSync` / `git worktree remove` have no EBUSY/EPERM retry — Windows refuses to delete files another process (shell, editor, AV) has open | Paths | M | Yes — worktree prune/discard/delete fails while a Task terminal is open |
-| 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` on Windows kills via `taskkill /F` (unverified) | Process mgmt | S–M | Degradation, not a crash |
+| 8 | SIGTERM drain (`server.js:318`) only fires for console Ctrl+C on Windows; service-manager stops and `taskkill /F` skip it; `concurrently -k` killed via `taskkill /T /F` and bypassed the drain even on Ctrl+C | Process mgmt | S–M | Degradation, not a crash — **fixed**, see the addendum |
 | 9 | `chmod 0o600` on persisted API-key files is a no-op on NTFS (`lib/anthropic-key.ts:41`, `lib/openai-key.ts:41`) | Files | S | Security downgrade |
 | 10 | `worktreeDiskUsage()` shells out to `du` (`lib/git.ts:642`) — silently reports 0 | Paths | S | Cosmetic |
 | 11 | `gh` probe dirs are all POSIX (`lib/github.ts:17`); `GIT_SSH_COMMAND` assumes `ssh` on PATH | Agent CLIs | S | Degradation |
@@ -106,11 +106,10 @@ delivers `SIGINT` for console Ctrl+C, but there is no deliverable `SIGTERM` —
 `taskkill /F`, a service manager's stop, and Task Manager all `TerminateProcess`
 and skip every handler, leaving the next boot's `recoverFromCrash()` to clean
 up. For the realistic native use case (a user running `npm start` in a
-terminal) Ctrl+C is the path, and it needs verifying, because `concurrently -k`
-on Windows terminates its children with `taskkill /T /F`, which would bypass
-the drain in `server.js` even on Ctrl+C. If that's confirmed, the fix is to
-either stop using `concurrently` for `npm start` on win32 or have `server.js`
-own the pty sidecar as a child.
+terminal) Ctrl+C is the path — and it was bypassed too, because `concurrently`
+terminates its children with `taskkill /T /F`. **Fixed** by replacing
+`concurrently` in the `start` script with `scripts/start.mjs`; the reasoning
+and what is still unverified are in the addendum below.
 
 ### 3. Path handling
 
@@ -182,7 +181,7 @@ root. That belongs in the WSL2 docs (task 1).
 |-|-|
 | `build`, `start` | `NODE_ENV=production …` prefix — `cmd.exe`/PowerShell try to run a program called `NODE_ENV=production`. Add `cross-env` (not currently a dep) or drop the prefix: `next build` forces production itself, and `server.js` reads `NODE_ENV` for `dev` — check that before dropping it from `start` |
 | `test:docker`, `typecheck:docker`, `test:e2e:docker`, `preflight:docker` | Bare `scripts/docker-test.sh` — no shebang interpreter under `cmd.exe`. `bash scripts/docker-test.sh` works with Git Bash on PATH; the Docker Desktop side additionally needs Linux-container mode |
-| `dev`, `dev:next`, `pty`, `typecheck`, `test`, `test:e2e*`, `preflight`, `postinstall` | Portable as written; `concurrently`'s nested quotes survive npm's `cmd.exe /d /s /c` wrapper |
+| `dev`, `dev:next`, `pty`, `typecheck`, `test`, `test:e2e*`, `preflight`, `postinstall` | Portable as written; `concurrently`'s nested quotes survive npm's `cmd.exe /d /s /c` wrapper. `dev` still runs under `concurrently` and so still force-kills on Ctrl+C — see the addendum |
 | `next.config.mjs`, `server.js`, `pty-server.js` | Plain Node, no POSIX assumptions beyond the shell default in §1 |
 | `docker/entrypoint.sh`, `Dockerfile`, `docker-compose.yml` | Run inside the Linux container; unaffected. Docker Desktop users already have the `CALANDRIA_RUNTIME=runc` override documented (no gVisor) |
 
@@ -292,7 +291,7 @@ without a hosts-file entry.
    After this the app starts, turns run, the terminal opens.
 2. *Correctness* (M): `killTree` for managed services + `tasklist` guard,
    `core.longpaths` + EBUSY-tolerant worktree teardown, `du` replacement, key
-   file ACLs, drain-on-Ctrl+C verified under `concurrently`.
+   file ACLs, drain-on-Ctrl+C (`scripts/start.mjs`).
 3. *Support* (M, ongoing): Windows CI lane, test-suite portability, README /
    INSTALLATION / TROUBLESHOOTING declaring native support with prerequisites
    (Git for Windows, Windows 10 1809+).
@@ -300,6 +299,122 @@ without a hosts-file entry.
 Phase 1 is worth doing regardless — every item is a portability fix that also
 removes an assumption Linux users trip on (`$SHELL` unset under systemd, a
 trimmed PATH). Phases 2–3 wait for a real Windows user.
+
+## Addendum, 2026-08-27: Ctrl+C and the drain under `npm start`
+
+Finding 8 asked two questions. Both are answered; one of them was answered by
+reading the shipped code rather than by pressing Ctrl+C on a Windows machine,
+and that limit is stated at the end.
+
+### Did Ctrl+C reach the drain under `concurrently -k`? No.
+
+Four facts, each from the version this repo installs (`concurrently` 9.2.4,
+`tree-kill` 1.2.2):
+
+- `concurrently` spawns each job through `cmd.exe /s /c "<job>"` with
+  **`detached: false`** explicitly set on win32 (`dist/src/spawn.js`). Children
+  therefore stay attached to the same console, so the console's `CTRL_C_EVENT`
+  *does* reach `node server.js`, and Node turns it into `SIGINT`. The drain
+  handler in `server.js` fires. That half was never the problem.
+- `KillOnSignal` is in the CLI's default controller list unconditionally — `-k`
+  adds `KillOthers`, it does not add this one. It listens for
+  `SIGINT`/`SIGTERM`/`SIGHUP` on concurrently's own process and, in the
+  listener, immediately calls `command.kill(signal)` for every job
+  (`dist/src/flow-control/kill-on-signal.js`).
+- `command.kill()` delegates to the injected `killProcess`, which the CLI
+  leaves at its default of `tree-kill` (`dist/src/concurrently.js:23`).
+- `tree-kill`'s win32 branch is `exec('taskkill /pid ' + pid + ' /T /F')` —
+  **unconditionally forced, and the requested signal is discarded**
+  (`tree-kill/index.js`). There is no CLI flag that changes this;
+  `--kill-signal` is read but never reaches the win32 path.
+
+So on Ctrl+C the console delivered the event to `server.js` and to
+`concurrently` in the same instant, and `concurrently` answered by
+`taskkill /T /F`-ing the whole subtree — the app included — while the drain was
+still one loopback `fetch` into `POST /api/instance/drain`. `taskkill` is a
+process spawn (tens of milliseconds); the drain is an HTTP round trip into a
+Next route plus `drainActiveTurns()`'s bounded wait for each live turn's
+`finally` to persist. The drain cannot win that race, and losing it means every
+in-flight turn is `TerminateProcess`'d with nothing durable written — exactly
+the state the next boot's `recoverFromCrash()` exists to sweep up.
+
+### The fix: `scripts/start.mjs`
+
+`start` no longer runs `concurrently`; it runs a dependency-free Node launcher
+that spawns `pty-server.js` and `server.js` (in that order, matching
+`docker/entrypoint.sh`), inherits stdio, and ties the two lifetimes together —
+first exit wins, the survivor comes down with it, which is the only property
+`-k` was providing. What differs is the signal path:
+
+- **POSIX** — forward the received signal to each live child, then wait. Same
+  as before; `tree-kill`'s POSIX branch honoured the signal.
+- **win32** — on a *console* signal (Ctrl+C / Ctrl+Break) send **nothing**. The
+  console has already delivered the event to every attached process, and Node's
+  `child.kill()` on Windows is a `TerminateProcess` for every signal name, so
+  "forwarding" it would be precisely the bypass being removed. The launcher's
+  only job there is to outlive the children and wait for them.
+
+Either way a force-kill backstop fires at `CALANDRIA_SHUTDOWN_GRACE_MS + 6s`,
+deliberately later than `server.js`'s own `+3s` hard exit, so a wedged process
+is still reaped and `npm start` never hangs. A second Ctrl+C is ignored rather
+than allowed to preempt a drain in progress.
+
+Not changed: **`npm run dev` still runs under `concurrently`** and so still
+force-kills on Ctrl+C on Windows. That is a deliberate trade — the coloured
+per-process prefixes are worth more in dev than a drain is, since dev turns are
+cheap to lose — but a Windows developer debugging a lost turn should know the
+difference between the two scripts. `docker/entrypoint.sh` is untouched; the
+container has always had its own `wait -n` supervisor and never ran
+`concurrently`.
+
+`concurrently` stays in `dependencies` even though nothing in production
+invokes it now (issue #32's rule was about `npm start` specifically); moving it
+back to `devDependencies` is a separate, riskier call than this task warrants.
+
+### The other stop paths, and what to document
+
+Confirmed by construction rather than by experiment, because there is nothing
+to experiment on — all three are `TerminateProcess`, which by definition runs
+no user-mode handler:
+
+| How you stop it | Reaches the drain? |
+|-|-|
+| Ctrl+C in the console running `npm start` | **Yes** (with `scripts/start.mjs`) |
+| `taskkill /PID <pid> /F` | No |
+| `taskkill /PID <pid>` (no `/F`) | Only for a GUI process with a message loop — Node has none, so no |
+| Task Manager → End task | No |
+| A service manager stop (NSSM, `sc stop`, WinSW) | Depends entirely on the wrapper's configured shutdown method; NSSM's default sequence begins with a console `Ctrl+C` to the process's console, which *would* work, but none of this is configured or tested here |
+| Closing the console window | No — `CTRL_CLOSE_EVENT` gives ~5s, which Node does not surface as a signal |
+
+The supported way to stop Calandria on Windows is **Ctrl+C in the terminal
+running `npm start`**. Everything else is a hard kill; it is not data loss —
+`recoverFromCrash()` clears the running flags, pending messages, unanswered
+permission cards and orphaned schedule runs on the next boot — but the
+interrupted turns lose their transcript notices and look like they simply
+stopped. Running Calandria as a Windows service without first pinning the
+wrapper's shutdown method is not supported.
+
+### What is still unverified
+
+**This was not run on a Windows machine.** No Windows box or VM was available
+to the session, so the `concurrently` finding above is a source-level reading
+of the exact installed versions, not an observed `taskkill`, and the launcher's
+win32 branch has never executed. The mechanism is not in doubt — `tree-kill`'s
+win32 branch is four lines with no conditionals — but two things deserve a
+five-minute check the first time anyone runs this on Windows:
+
+1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the
+   transcript shows the interrupted-state notice rather than a raw running
+   flag on the next boot.
+2. Confirm `cmd.exe`'s `Terminate batch job (Y/N)?` prompt on npm's `.cmd`
+   shim does not truncate the wait. It appears *after* the console event has
+   already been broadcast, so the drain should already be running, but it is
+   the one interaction between the shim and this design that source alone
+   cannot settle.
+
+`tests/startLauncher.test.ts` pins the launcher's contract (signal relayed,
+slow drain waited out, shared lifetime in both directions) against stub
+entrypoints; it can only exercise the POSIX path.
 
 ## Follow-up tasks
 
@@ -312,6 +427,6 @@ Filed in the Suggested tray, in dependency order:
 5. Path identity + filesystem semantics on win32 (case-fold `samePath()`, `core.longpaths`, EBUSY-retrying teardown, `du` replacement).
 6. Cross-platform process tree kill in `lib/services.ts` (`killTree`, `tasklist` guard, `detached` only on POSIX, document `cmd.exe` command semantics).
 7. Persisted API-key file permissions on Windows (`icacls` or documented downgrade).
-8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2.
+8. Verify Ctrl+C drain path under `concurrently -k` on Windows — blocked by 2. — **Done** (`scripts/start.mjs`; see the addendum for the one check still owed a real Windows box).
 9. Unit/e2e suite portability — blocked by 2, 3, 5, 6.
 10. Windows CI lane + docs declaring native support — blocked by 2, 9.

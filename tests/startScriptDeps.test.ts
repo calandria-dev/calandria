@@ -1,5 +1,7 @@
 // Issue #32: `npm start` ran through cross-env and concurrently, both
-// devDependencies. Any install that omits dev deps — and NODE_ENV=production
+// devDependencies. (`concurrently` is gone from this script — scripts/start.mjs
+// replaced it so Ctrl+C can reach server.js's drain on Windows, docs/WINDOWS.md
+// §8 — but the rule it motivated outlives it, and `cross-env` still proves it.) Any install that omits dev deps — and NODE_ENV=production
 // makes npm do exactly that, including a `npm install` an agent runs from a
 // shell the app spawned — produced an instance that could not start, and said
 // nothing about it until the next restart. Docker never noticed (its build
@@ -41,7 +43,9 @@ function binariesOf(script: string): string[] {
 describe("npm start under a production-only install", () => {
   it("invokes only binaries that ship in `dependencies`", () => {
     const bins = binariesOf(pkg.scripts.start);
-    expect(bins).toEqual(expect.arrayContaining(["cross-env", "concurrently"]));
+    // Canary: if the parser above ever stops finding anything, the loop below
+    // passes vacuously and this test would stop testing anything at all.
+    expect(bins).toEqual(expect.arrayContaining(["cross-env"]));
     for (const bin of bins) {
       expect(pkg.dependencies, `${bin} is used by \`npm start\` but is not a runtime dependency`).toHaveProperty(bin);
       expect(pkg.devDependencies).not.toHaveProperty(bin);
