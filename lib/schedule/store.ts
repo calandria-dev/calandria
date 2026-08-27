@@ -235,6 +235,41 @@ export function listRuns(scheduleId: string, limit = 20): ScheduleRun[] {
 
 export const lastRun = (scheduleId: string): ScheduleRun | null => listRuns(scheduleId, 1)[0] ?? null;
 
+/**
+ * Every status a run row can hold, as data — the /metrics exposition zero-fills
+ * from this so a status nothing has hit yet is still a series (an absent one
+ * silently answers no alert). The line below fails to compile if a new member
+ * is added to ScheduleRunStatus without being listed here.
+ */
+export const SCHEDULE_RUN_STATUSES = [
+  "claimed", "running", "succeeded", "failed", "stopped", "interrupted", "missed", "skipped_overlap",
+] as const satisfies readonly ScheduleRunStatus[];
+const _statusesAreExhaustive: never[] = [] as Exclude<ScheduleRunStatus, (typeof SCHEDULE_RUN_STATUSES)[number]>[];
+void _statusesAreExhaustive;
+
+/**
+ * How many run rows sit at each status right now, across every schedule.
+ *
+ * A SNAPSHOT of the ledger, not a tally of everything that ever ran: pruneRuns()
+ * caps each schedule at RUN_RETENTION rows, so these numbers fall as history
+ * ages out. That's why /metrics exports them as a gauge — read as a counter,
+ * a prune would look like a negative rate.
+ */
+export function runCountsByStatus(): Record<ScheduleRunStatus, number> {
+  const counts = Object.fromEntries(SCHEDULE_RUN_STATUSES.map((s) => [s, 0])) as Record<ScheduleRunStatus, number>;
+  const rows = getDb()
+    .prepare("SELECT status, COUNT(*) AS n FROM schedule_runs GROUP BY status")
+    .all() as { status: ScheduleRunStatus; n: number }[];
+  for (const row of rows) {
+    // A status the app no longer mints (an older build's row surviving an
+    // upgrade) is dropped rather than added: the exposition's label set is
+    // fixed by the array above, and inventing a series from database content
+    // would let a stale row define a metric's shape.
+    if (row.status in counts) counts[row.status] = row.n;
+  }
+  return counts;
+}
+
 /** Statuses that mean "somebody is still watching this row" — never prunable. */
 const ACTIVE_STATUSES = "'claimed','running'";
 

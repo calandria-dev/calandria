@@ -30,6 +30,7 @@ import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
 import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
+import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 
 // Every line this module prints. The bracket tag it used to hand console
 // becomes the logger's component, so `CALANDRIA_LOG_FORMAT=json` turns the
@@ -503,6 +504,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // from the POST route because this is where every launch path converges: a
   // first turn, a resume, a drained follow-up, a schedule firing, an
   // auto-started dependent.
+  //
+  // The /metrics counter (issue #16 item 3) is incremented from the same two
+  // places as the two lines, deliberately: an instance whose graph and whose
+  // logs disagree about how many turns ran tells two stories and gives whoever
+  // is reading no way to tell which one is lying.
+  countTurnStarted();
   log.info("turn start", {
     task: id,
     project: project.id,
@@ -853,6 +860,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // result message) logs zeros, which is the truth about THIS turn rather
     // than the task's running total.
     const outcome = stopped ? "stopped" : turnError || unattendedDeny ? "failed" : opened ? "ok" : "interrupted";
+    // The counter takes the SAME word: TurnOutcome is that ladder as a type, so
+    // a fifth outcome added here has to be given a series too rather than
+    // quietly landing in no bucket at all.
+    countTurnFinished(outcome);
     log[outcome === "failed" ? "error" : outcome === "interrupted" ? "warn" : "info"](`turn ${outcome}`, {
       task: id,
       project: project.id,
