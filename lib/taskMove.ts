@@ -17,6 +17,7 @@ import { removeWorktree, worktreePruneSafety } from "./git";
 import { resolveBaseBranch } from "./baseBranch";
 import { withTaskLocks } from "./taskLock";
 import { withRepoLock } from "./repoLock";
+import { heldHandleHint } from "./paths";
 import { hasTurn } from "./abort";
 import { publishGlobal } from "./events";
 
@@ -211,7 +212,7 @@ async function discardCheckout(
     // (A branch that outlives its worktree is only a stale ref in a repo this
     // task no longer belongs to, so it doesn't block anything.)
     if (task.worktree_path && fs.existsSync(task.worktree_path))
-      return { reason: `couldn't remove the task's worktree at ${task.worktree_path}` };
+      return { reason: `couldn't remove the task's worktree at ${task.worktree_path}${heldHandleHint()}` };
 
     return { id, branch: task.work_branch, dirty: safety.isDirty, ahead: safety.ahead };
   });

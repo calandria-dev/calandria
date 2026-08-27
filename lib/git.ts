@@ -9,9 +9,23 @@ import {
   GIT_FETCH_COOLDOWN_MS,
 } from "./config";
 import { repoLockKey, withRepoLock } from "./repoLock";
+import { rmTree, samePath } from "./paths";
 import { WorktreePrepError } from "./worktreeFailure";
 
 const run = promisify(execFile);
+
+// Git for Windows enforces the Win32 `MAX_PATH` limit of 260 characters unless
+// `core.longpaths` is on, and a task's checkout starts deep before the repo's
+// own tree even begins: `%USERPROFILE%\.calandria\worktrees\<21-char id>\`.
+// Add a `node_modules` chain to that and a `worktree add` fails mid-checkout,
+// leaving a half-populated directory registered as a worktree.
+//
+// Passed as a per-invocation `-c` override rather than written into the repo's
+// config: it applies to every git call this module makes (the checkout inside
+// `worktree add`, `worktree remove`, status, diff) without mutating a config
+// file in the user's own repository. Empty off win32, so no POSIX git command
+// line changes at all.
+const PLATFORM_GIT_CONFIG: string[] = process.platform === "win32" ? ["-c", "core.longpaths=true"] : [];
 
 // Worktrees live OUTSIDE the Calandria project (CALANDRIA_WORKTREES_DIR, default
 // ~/.calandria/worktrees), keyed by task id. Each is a real git
@@ -23,7 +37,9 @@ const run = promisify(execFile);
 async function git(repoPath: string, args: string[]): Promise<string> {
   // execFile's default maxBuffer is 1MB — a whole-tree `git diff` (taskDiff)
   // or a busy log can exceed that. It's a cap, not an allocation, so raise it.
-  const { stdout } = await run("git", ["-C", repoPath, ...args], { maxBuffer: 64 * 1024 * 1024 });
+  const { stdout } = await run("git", ["-C", repoPath, ...PLATFORM_GIT_CONFIG, ...args], {
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return stdout.trim();
 }
 
@@ -753,32 +769,29 @@ async function classifyPrep<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * Whether `wtPath` is a worktree `repoPath` currently has linked. Compared by
- * real path, since either side can reach the same directory through a symlink
- * (on macOS /var is one, and TMPDIR lives under it).
+ * canonical path (`samePath`, lib/paths.ts), since either side can reach the
+ * same directory through a symlink (on macOS /var is one, and TMPDIR lives
+ * under it) — and on Windows through a different CASE or a different slash,
+ * since git prints `C:/Users/...` where `path.join` produced `C:\Users\...`
+ * and NTFS treats both spellings as one directory. A false "not linked" here
+ * is what authorizes the `rmTree(wtPath)` below, so getting this wrong deletes
+ * a live checkout.
  *
  * Conservative on failure: if the registry can't be read, the answer is "yes,
  * it's ours" — the caller reacts to a `false` by deleting the directory, and a
  * git hiccup must never be grounds for that.
  */
 async function isLinkedWorktree(repoPath: string, wtPath: string): Promise<boolean> {
-  const real = (p: string) => {
-    try {
-      return fs.realpathSync(p);
-    } catch {
-      return path.resolve(p);
-    }
-  };
   let listed: string;
   try {
     listed = await git(repoPath, ["worktree", "list", "--porcelain"]);
   } catch {
     return true;
   }
-  const target = real(wtPath);
   return listed
     .split("\n")
     .filter((line) => line.startsWith("worktree "))
-    .some((line) => real(line.slice("worktree ".length).trim()) === target);
+    .some((line) => samePath(line.slice("worktree ".length).trim(), wtPath));
 }
 
 async function ensureWorktreeLocked(
@@ -823,7 +836,7 @@ async function ensureWorktreeLocked(
   if (fs.existsSync(wtPath)) {
     if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha, baseBranch: localBase };
     try {
-      fs.rmSync(wtPath, { recursive: true, force: true });
+      rmTree(wtPath);
     } catch {
       // Can't clear it and can't trust it; running in repo_path unisolated is
       // the lesser evil versus committing into someone else's repo.
@@ -940,6 +953,36 @@ export async function repairWorktree(
   return { actions, worktree };
 }
 
+// Unlink one worktree directory: git's own removal, then the manual fallback
+// (delete the tree, prune the now-stale registration). Shared by the task
+// teardown below and the throwaway merge worktree, which had the same body
+// inlined.
+//
+// The win32 half is the retry. `git worktree remove` fails outright the moment
+// any file under the checkout is open — and on Windows something usually is:
+// the Task-scoped TerminalDrawer shell is rooted IN this directory, an editor
+// indexes it, Defender scans it. A single retry after a short pause clears the
+// scanner case (the shell case can't be cleared without the user, which is what
+// `heldHandleHint()` says on the way out); `rmTree` then applies Node's own
+// EBUSY/EPERM retries to the fallback. Off win32 nothing changes: one attempt,
+// then the fallback, exactly as before.
+async function removeWorktreeDir(repoPath: string, wtPath: string): Promise<void> {
+  try {
+    await git(repoPath, ["worktree", "remove", "--force", wtPath]);
+    return;
+  } catch {
+    if (process.platform === "win32") {
+      try {
+        await new Promise((r) => setTimeout(r, 250));
+        await git(repoPath, ["worktree", "remove", "--force", wtPath]);
+        return;
+      } catch {}
+    }
+  }
+  rmTree(wtPath);
+  await git(repoPath, ["worktree", "prune"]);
+}
+
 /**
  * Best-effort teardown of a task's worktree. Never throws.
  *
@@ -961,14 +1004,8 @@ export async function removeWorktree(
   if (!wtPath && !branch) return;
   if (wtPath) {
     try {
-      await git(repoPath, ["worktree", "remove", "--force", wtPath]);
-    } catch {
-      // Fall back to removing the directory and pruning the stale registration.
-      try {
-        fs.rmSync(wtPath, { recursive: true, force: true });
-        await git(repoPath, ["worktree", "prune"]);
-      } catch {}
-    }
+      await removeWorktreeDir(repoPath, wtPath);
+    } catch {}
   }
   if (branch && !opts.keepBranch) {
     try {
@@ -977,13 +1014,48 @@ export async function removeWorktree(
   }
 }
 
+// Apparent size of everything under `dir`, in bytes. Symlinks contribute
+// nothing and are not followed: `readdirSync(withFileTypes)` reports a symlink
+// as neither a file nor a directory, so a link pointing back up the tree can't
+// send this into a loop or double-count its target. Unreadable entries are
+// skipped rather than thrown — this number decorates a button, it is never a
+// precondition for anything.
+function directorySize(dir: string): number {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const entry of entries) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) total += directorySize(p);
+    else if (entry.isFile()) {
+      try {
+        total += fs.statSync(p).size;
+      } catch {}
+    }
+  }
+  return total;
+}
+
 /**
- * Disk footprint of a worktree directory in bytes (actual blocks used, via
- * `du`), or 0 if it's gone or can't be measured. Used to show how much a stale
- * merged worktree is costing before the user decides to prune it.
+ * Disk footprint of a worktree directory in bytes, or 0 if it's gone or can't
+ * be measured. Used to show how much a stale merged worktree is costing before
+ * the user decides to prune it.
+ *
+ * `du` on POSIX (blocks actually used, so sparse files and the block rounding
+ * of thousands of tiny source files are both accounted for), an `fs` walk on
+ * win32, where there is no `du` — the spawn ENOENTed into the catch and every
+ * worktree reported 0 bytes, which reads as "nothing to reclaim". The walk
+ * measures APPARENT size rather than allocated blocks, so its answer runs a
+ * little under `du`'s for the same tree; it's a sizing hint on a confirmation
+ * screen, not an accounting figure.
  */
 export async function worktreeDiskUsage(wtPath: string): Promise<number> {
   if (!wtPath || !fs.existsSync(wtPath)) return 0;
+  if (process.platform === "win32") return directorySize(wtPath);
   try {
     // -s: summary for the dir; -k: 1024-byte blocks (portable across macOS/Linux).
     const { stdout } = await run("du", ["-sk", wtPath]);
@@ -1505,13 +1577,8 @@ async function mergeLineStats(dir: string, from = "ORIG_HEAD", to = "HEAD"): Pro
 // Best-effort teardown of the throwaway merge worktree. Never throws.
 async function removeMergeWorktree(repoPath: string, tmp: string): Promise<void> {
   try {
-    await git(repoPath, ["worktree", "remove", "--force", tmp]);
-  } catch {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true });
-      await git(repoPath, ["worktree", "prune"]);
-    } catch {}
-  }
+    await removeWorktreeDir(repoPath, tmp);
+  } catch {}
 }
 
 // Object-level merge of `workBranch` into `target` — see the fast-path note in

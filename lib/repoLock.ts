@@ -21,8 +21,8 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import fs from "node:fs";
 import path from "node:path";
+import { canonicalPath } from "./paths";
 
 const execFileAsync = promisify(execFile);
 
@@ -68,14 +68,11 @@ async function gitCommonDir(repoPath: string): Promise<string> {
 
 // Best available identity for a directory that ISN'T a git repo — greenfield
 // projects, which `ensureWorktree` initializes on first launch. Canonicalized
-// the same way, so the two spellings still share a lock while they wait.
-function pathIdentity(repoPath: string): string {
-  try {
-    return fs.realpathSync(repoPath);
-  } catch {
-    return path.resolve(repoPath);
-  }
-}
+// the same way, so the two spellings still share a lock while they wait — case
+// included, because on NTFS `C:\Code\App` and `c:\code\app` are one directory
+// and taking two locks on it is exactly the concurrency this module exists to
+// prevent (lib/paths.ts).
+const pathIdentity = canonicalPath;
 
 /**
  * The lock key for a repo path: its common git dir, or a canonicalized form of
