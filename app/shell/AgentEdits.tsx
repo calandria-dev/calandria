@@ -19,7 +19,7 @@ const FIELD_LABEL: Record<AgentEditField, string> = {
   description: "Description",
   priority: "Priority",
   status: "Status",
-  group: "Group",
+  tags: "Tags",
   blocked_by: "Blocked by",
 };
 

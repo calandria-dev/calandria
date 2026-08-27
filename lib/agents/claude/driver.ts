@@ -32,18 +32,18 @@ import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "..
 import {
   createSuggestedTask,
   getTaskForAgent,
-  listGroupsForAgent,
+  listTagsForAgent,
   listProjectsForAgent,
   listTasksForAgent,
   registerExposedService,
   rememberSuggestedTitle,
-  resolveGroupRef,
+  resolveTagRefs,
   resolveTargetProject,
   resolveTitleRefs,
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_GROUPS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
 import { waitForAnswer } from "../../asks";
@@ -280,9 +280,9 @@ function calandriaServer(
           priority: z.enum(["hi", "med", "lo"]).default("med"),
           project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
-          group: z.string().optional().describe(SUGGEST_TASK.params.group),
+          tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; group?: string }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[] }) => {
           // Which project this lands in, before anything else: the task's agent,
           // send_context and board position all come from it, and a wrong answer
           // is a misfiled task rather than a visible failure. Strict — an
@@ -303,9 +303,9 @@ function calandriaServer(
             priority: args.priority,
             blocked_by: resolveTitleRefs(args.blocked_by, createdByTitle, target.project.id),
             // Resolved (and created on a miss) inside the TARGET project by
-            // createSuggestedTask — a cross-project suggestion groups where it
+            // createSuggestedTask — a cross-project suggestion tags where it
             // lands. The origin is the closed-over caller, never a parameter.
-            group: args.group,
+            tags: args.tags,
             origin_task_id: originTaskId,
           });
           // A null task = the project was deleted mid-turn; `text` already says so.
@@ -322,32 +322,32 @@ function calandriaServer(
         {
           project: z.string().optional().describe(LIST_TASKS.params.project),
           include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-          group: z.string().optional().describe(LIST_TASKS.params.group),
+          tag: z.string().optional().describe(LIST_TASKS.params.tag),
         },
-        async (args: { project?: string; include_done?: boolean; group?: string }) => {
+        async (args: { project?: string; include_done?: boolean; tag?: string }) => {
           // Same strict resolution suggest_task uses — reads are inert, but a
           // board silently listed from the wrong project is still a lie.
           const target = resolveTargetProject(project, args.project);
           if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
-          // …and the same for the group filter: an unrecognized one must not
+          // …and the same for the tag filter: an unrecognized one must not
           // quietly hand back the whole board as if the feature had that many
           // members. Never creates — this is a read.
-          const group = resolveGroupRef(target.project, args.group ?? "");
-          if ("error" in group)
-            return { content: [{ type: "text", text: `Could not list tasks: ${group.error}.` }], isError: true };
-          const tasks = listTasksForAgent(target.project, task.id, args.include_done ?? false, group.group?.id ?? null);
+          const tag = resolveTagRefs(target.project, args.tag ? [args.tag] : []);
+          if ("error" in tag)
+            return { content: [{ type: "text", text: `Could not list tasks: ${tag.error}.` }], isError: true };
+          const tasks = listTasksForAgent(target.project, task.id, args.include_done ?? false, tag.tags[0]?.id ?? null);
           return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, tasks }, null, 2) }] };
         }
       ),
       tool(
-        LIST_GROUPS.name,
-        LIST_GROUPS.description,
-        { project: z.string().optional().describe(LIST_GROUPS.params.project) },
+        LIST_TAGS.name,
+        LIST_TAGS.description,
+        { project: z.string().optional().describe(LIST_TAGS.params.project) },
         async (args: { project?: string }) => {
           const target = resolveTargetProject(project, args.project);
           if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
-          const groups = listGroupsForAgent(target.project);
-          return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, groups }, null, 2) }] };
+          const tags = listTagsForAgent(target.project);
+          return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, tags }, null, 2) }] };
         }
       ),
       tool(
@@ -375,9 +375,9 @@ function calandriaServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_TASK.params.priority),
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
           blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
-          group: z.string().optional().describe(UPDATE_TASK.params.group),
+          tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
         },
-        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; group?: string }) => {
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; tags?: string[] }) => {
           // The closed-over `task` is the CALLER — the snapshot taken at turn
           // start, and the one identity the model can't influence. `args.task`
           // is the target it named; updateTaskForAgent decides whether that may

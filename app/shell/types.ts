@@ -1,10 +1,10 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
-import { PRIORITIES, GROUP_COLORS, groupIsDone } from "@/lib/types";
-import type { Priority, Status, TaskGroup } from "@/lib/types";
-export { PRIORITIES, GROUP_COLORS, groupIsDone };
-/** A task group as the project GET embeds it — lib/types' row plus its derived counts. */
-export type TaskGroupRow = TaskGroup;
+import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
+import type { Priority, Status, Tag } from "@/lib/types";
+export { PRIORITIES, TAG_COLORS, tagIsDone };
+/** A tag as the project GET embeds it — lib/types' row plus its derived counts. */
+export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
 export type { InternalUsageEstimate };
 
@@ -54,14 +54,14 @@ export interface TaskRow {
   awaiting_input: number;
   background_pending: number; // 1 while a live turn lingers on run_in_background work — "working in background", never "needs you"
   background_note: string; // what the linger is waiting on ("waiting to wake at 12:00"); '' when not lingering
-  position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the group strip numbers its steps by it
+  position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the tag strip numbers its steps by it
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
   depends_on: string[]; // task ids this task is blocked by until they're done
-  group_id: string | null; // the task group this belongs to (see GroupChips.tsx); null = ungrouped
+  tag_ids: string[]; // the tags this task carries, in tag order (see TagChips.tsx); [] = untagged
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding) — see AgentEdits.tsx
@@ -78,7 +78,7 @@ export interface TaskRow {
 // Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
 
 /** The task field an agent's `update_task` call changed. */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "group" | "blocked_by";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by";
 
 /** One field's before/after within an edit — `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`
@@ -132,14 +132,13 @@ export interface PaletteTaskRow {
   project_name: string;
   project_color: string;
   project_icon: string;
-  /** The group this is a step of — the palette's badge; null when ungrouped. */
-  group_name: string | null;
-  group_color: string | null;
+  /** The tags it carries — the palette's badges; [] when untagged. */
+  tags: { name: string; color: string | null }[];
 }
-// A group in the ⌘K palette: a jump target of its own ("Group · Auth migration
+// A tag in the ⌘K palette: a jump target of its own ("Tag · Auth migration
 // · 4/7"), so a feature is reachable by name from anywhere. Mirrors
-// lib/store.ts listAllGroupsLite().
-export type PaletteGroupRow = TaskGroupRow & {
+// lib/store.ts listAllTagsLite().
+export type PaletteTagRow = TagRow & {
   project_name: string;
   project_color: string;
   project_icon: string;
@@ -195,9 +194,9 @@ export interface BulkMoveResult {
   /** One per worktree torn down to let a started task move — the part of the
    *  account nobody can get back, so the report names it. */
   discarded: { id: string; branch: string; dirty: boolean; ahead: number }[];
-  /** Moved rows that left their group behind, because the rest of it stayed. */
-  ungrouped: { id: string; group_id: string; group_name: string }[];
-  /** Groups that came along whole — `renamed_from` when the destination had that name. */
+  /** Moved rows that left a tag behind, because the rest of its members stayed. */
+  untagged: { id: string; tag_id: string; tag_name: string }[];
+  /** Tags that came along whole — `renamed_from` when the destination had that name. */
   carried: { id: string; name: string; renamed_from: string | null }[];
 }
 

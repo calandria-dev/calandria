@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting, getGroup } from "@/lib/store";
+import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting, getTag, getTaskTagIds, setTaskTags } from "@/lib/store";
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
@@ -29,6 +29,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     context_pct: ctx.context_pct,
     context_estimated: ctx.context_estimated,
     depends_on: getTaskDeps(id),
+    tag_ids: getTaskTagIds(id),
     messages: listMessages(id),
   });
 }
@@ -38,7 +39,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at", "group_id"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -92,17 +93,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     allowed.snoozed_until = v;
   }
   if ((body as { unsnooze?: unknown }).unsnooze === true) allowed.snoozed_until = Date.now();
-  // Group membership. Validated here rather than trusted: the column is a
-  // plain FK, so a group from ANOTHER project would be accepted by SQLite and
-  // then filter this task out of every view in its own project. null or ""
-  // ungroups. (Bulk assignment is its own route; this is the edit dialog's.)
-  if ("group_id" in body) {
-    const gid = (body as { group_id?: unknown }).group_id;
-    if (gid !== null && typeof gid !== "string") return NextResponse.json({ error: "group_id must be a string or null" }, { status: 400 });
-    const group = gid ? getGroup(gid) : undefined;
-    if (gid && !group) return NextResponse.json({ error: "no such group" }, { status: 400 });
-    if (group && group.project_id !== current.project_id) return NextResponse.json({ error: "group belongs to another project — a group can't span projects" }, { status: 400 });
-    allowed.group_id = group ? group.id : null;
+  // Tag membership. Validated here rather than trusted: task_tags is a plain
+  // FK pair, so a tag from ANOTHER project would be accepted by SQLite and then
+  // filter this task out of every view in its own project. `[]` clears every
+  // tag. Applied below with the dependency edges, since like them it is a
+  // second table rather than a column. (Bulk assignment is its own route; this
+  // is the edit dialog's.)
+  let nextTagIds: string[] | null = null;
+  if ("tag_ids" in body) {
+    const raw = (body as { tag_ids?: unknown }).tag_ids;
+    if (!Array.isArray(raw) || raw.some((t) => typeof t !== "string"))
+      return NextResponse.json({ error: "tag_ids must be an array of tag ids" }, { status: 400 });
+    const ids = [...new Set(raw as string[])];
+    for (const tagId of ids) {
+      const tag = getTag(tagId);
+      if (!tag) return NextResponse.json({ error: "no such tag" }, { status: 400 });
+      if (tag.project_id !== current.project_id)
+        return NextResponse.json({ error: "tag belongs to another project — a tag can't span projects" }, { status: 400 });
+    }
+    nextTagIds = ids;
   }
   // Queued start (lib/deferredStart.ts): the same shape and the same validation
   // as the snooze deadline — a ms epoch the user picked (the client reads the
@@ -169,6 +178,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // user touched it.
     depsChanged = !sameDepSet(before, getTaskDeps(id));
   }
+  // Tags, same shape: their own table, compared rather than assumed, because
+  // the edit dialog submits the whole list on every save whether or not the
+  // user touched it.
+  let tagsChanged = false;
+  if (nextTagIds) {
+    const before = getTaskTagIds(id);
+    tagsChanged = before.length !== nextTagIds.length || before.some((t, i) => t !== nextTagIds![i]);
+    if (tagsChanged) setTaskTags([id], nextTagIds);
+  }
   const task = updateTask(id, allowed);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
   // Announce the write, or every other tab keeps rendering the old row until it
@@ -180,7 +198,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   //   - task_edited: a field the coarse /api/events payload can't carry changed
   //     — a rename, a reprioritisation, a suggestion accepted out of the tray.
   //     Dependency edges count: they change what the tray draws for the
-  //     NEIGHBOURING rows too, and a refetch is what redraws them.
+  //     NEIGHBOURING rows too, and a refetch is what redraws them. So do tags,
+  //     which move the chip bar's counts as well as this row's badges.
   //   - task_updated: a manual status change settles status + awaiting_input
   //     outside any turn, so no runner publish will follow — without this every
   //     other tab's "needs you" badges keep counting this task. Published on any
@@ -189,9 +208,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // task_edited compares against the pre-write row, so a no-op save from the
   // edit dialog (which submits every field whether or not it was touched) stays
   // silent instead of making every tab refetch its tray.
-  const edited = depsChanged || EDIT_FIELDS.some((k) => k in allowed && allowed[k] !== current[k]);
+  const edited = depsChanged || tagsChanged || EDIT_FIELDS.some((k) => k in allowed && allowed[k] !== current[k]);
   if (edited) publishGlobal(id, { type: "task_edited" });
   else if ("status" in allowed) publishGlobal(id, { type: "task_updated" });
+  // A tag write moves the chip bar's derived counts as well as this row, and
+  // `task_edited` only says "refetch this task". Same event the bulk route and
+  // the tag CRUD routes publish, so every surface reading a count refreshes
+  // from one read.
+  if (tagsChanged) publishGlobal("", { type: "tags_changed", projectId: current.project_id });
   // The sweep that honours a queued start is started by the boot ping; make
   // sure of it here too, so a deadline set on an instance whose ping was lost
   // still fires. Idempotent. Dynamic for the reason on /api/instance/scheduler:

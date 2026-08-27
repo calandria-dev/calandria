@@ -8,9 +8,9 @@ import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, 
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
 } from "./types";
-import { GroupBadge, selectGroupFilter } from "./GroupChips";
+import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { isQueuedStart, resetClock } from "./queuedStart";
@@ -256,8 +256,8 @@ function useStableHandler<A extends unknown[]>(fn?: (...args: A) => void): (...a
   return useCallback((...args: A) => { ref.current?.(...args); }, []);
 }
 
-export function SessionView({ project, task, group, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
-  project: ProjectRow; task: TaskRow; group?: TaskGroupRow | null; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+  project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
@@ -511,9 +511,10 @@ export function SessionView({ project, task, group, agents, messages, running, b
           {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
         </a>
       )}
-      {/* Which feature this session is a step of. Clicking selects the
-          group's chip in the list/board, the way the row badges do. */}
-      {group && <GroupBadge group={group} onSelect={() => selectGroupFilter(project.id, group.id)} />}
+      {/* Which feature(s) this session is a step of — a task can carry several.
+          Clicking one lights that tag's chip in the list/board, the way the
+          row badges do. */}
+      <TagBadges tagIds={task.tag_ids} tagsById={tagsById} onSelect={(id) => selectOneTag(project.id, id)} />
       <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
       {(task.cost_usd > 0 || task.total_tokens > 0) && (
         <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>

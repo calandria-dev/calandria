@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, getTaskDeps, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
+import { getTask, getTaskDeps, getTag, getTaskTagIds, setTaskTags, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import type { AgentEditChange, Priority, Status, Task } from "@/lib/types";
@@ -21,9 +21,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 /**
  * Fold one AgentEditChange's `before_value` into the patch that restores it —
- * every field except `blocked_by`, which POST handles separately (a cycle
- * failure there has to become a 409 with the row untouched, not a column
- * write). Accumulated into ONE patch rather than written per field: a revert of
+ * every field except `blocked_by` and `tags`, which POST handles separately
+ * (both live in their own tables, and a failure there has to become a 409 with
+ * the row untouched, not a column write). Accumulated into ONE patch rather than written per field: a revert of
  * a four-field edit is one user action and should be one row write, so a
  * listener refetching on task_edited can never catch it half-applied.
  */
@@ -41,9 +41,7 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
     case "status":
       patch.status = change.before_value as Status;
       break;
-    case "group":
-      patch.group_id = change.before_value as string | null;
-      break;
+    case "tags":
     case "blocked_by":
       break;
   }
@@ -54,7 +52,7 @@ const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].so
 /**
  * The fields of an edit whose live value no longer matches what the edit left
  * behind, each rendered for the refusal. Scalars compare through `after` (raw
- * there); group and blocked_by need `after_value`, and a row recorded before
+ * there); tags and blocked_by need `after_value`, and a row recorded before
  * that existed is reverted unchecked for those two, as it always was.
  */
 function staleFields(task: Task, changes: AgentEditChange[]): string[] {
@@ -67,8 +65,8 @@ function staleFields(task: Task, changes: AgentEditChange[]): string[] {
       case "status":
         if (task[c.field] !== c.after) out.push(`${c.field} is now "${task[c.field]}"`);
         break;
-      case "group":
-        if (c.after_value !== undefined && (task.group_id ?? null) !== (c.after_value ?? null)) out.push("group has changed");
+      case "tags":
+        if (Array.isArray(c.after_value) && !sameSet(getTaskTagIds(task.id), c.after_value)) out.push("tags have changed");
         break;
       case "blocked_by":
         if (Array.isArray(c.after_value) && !sameSet(getTaskDeps(task.id), c.after_value)) out.push("blocked_by has changed");
@@ -127,6 +125,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Only a cycle reaches here. A blocker id that no longer exists is
         // silently dropped by setTaskDeps — that's fine, don't fight it.
         return NextResponse.json({ error: e instanceof Error ? e.message : "invalid dependencies" }, { status: 409 });
+      }
+    }
+    // Tags next, for the same reason and with the same failure shape: setTaskTags
+    // refuses a tag that has since been deleted or moved, and that refusal must
+    // not land on top of a half-applied revert.
+    const tagsChange = edit.changes.find((c) => c.field === "tags");
+    if (tagsChange) {
+      try {
+        // A tag deleted since the edit is dropped rather than refused — the
+        // same tolerance setTaskDeps shows a vanished blocker.
+        setTaskTags([id], (tagsChange.before_value as string[]).filter((tagId) => !!getTag(tagId)));
+      } catch (e) {
+        return NextResponse.json({ error: e instanceof Error ? e.message : "invalid tags" }, { status: 409 });
       }
     }
     const prevStatus = getTask(id)!.status;

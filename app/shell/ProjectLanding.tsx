@@ -7,18 +7,18 @@ import { relTime } from "./format";
 import { Runbooks } from "./Runbooks";
 import { Schedules } from "./Schedules";
 import { ErrNote } from "./shared";
-import { groupIsDone, type AgentsBundle, type ProjectRow, type RecapInfo, type TaskGroupRow } from "./types";
-import { groupProgress, groupTint } from "./GroupChips";
+import { tagIsDone, type AgentsBundle, type ProjectRow, type RecapInfo, type TagRow } from "./types";
+import { tagProgress, tagTint } from "./TagChips";
 
 // Shown in the session pane when a project is open but no task is selected.
 // Surfaces the auto-generated "where you left off" recap when one exists / is
 // brewing; otherwise the plain create-a-task prompt.
-export function ProjectLanding({ project, projects, agents, recap, groups, onSelectGroup, onNewTask, onRefreshRecap, onOpenTask, mobile }: {
+export function ProjectLanding({ project, projects, agents, recap, tags, onSelectTag, onNewTask, onRefreshRecap, onOpenTask, mobile }: {
   project: ProjectRow; projects: ProjectRow[]; agents: AgentsBundle; recap?: RecapInfo;
-  /** This project's groups with their derived counts — the Groups card below. */
-  groups: TaskGroupRow[];
-  /** Select a group's chip on the task list/board (null = All). */
-  onSelectGroup: (groupId: string | null) => void;
+  /** This project's tags with their derived counts — the Tags card below. */
+  tags: TagRow[];
+  /** Select a tag's chip on the task list/board (null = All). */
+  onSelectTag: (tagId: string | null) => void;
   onNewTask: () => void; onRefreshRecap: () => void; onOpenTask: (taskId: string) => void;
   /**
    * Mounted as the phone's project pane rather than in the session column. The
@@ -88,7 +88,7 @@ export function ProjectLanding({ project, projects, agents, recap, groups, onSel
               <button className="btn btn-accent btn-sm" onClick={onNewTask}>{Icon.plus()} New task</button>
             </div>
           </div>
-          <GroupsCard groups={groups} onSelect={onSelectGroup} />
+          <TagsCard tags={tags} onSelect={onSelectTag} />
           <Runbooks project={project} projects={projects} agents={agents} onOpenTask={onOpenTask} />
           <Schedules project={project} agents={agents} />
         </div>
@@ -123,7 +123,7 @@ export function ProjectLanding({ project, projects, agents, recap, groups, onSel
             <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={onNewTask}>{Icon.plus()} New task</button>
           </div>
         )}
-        <GroupsCard groups={groups} onSelect={onSelectGroup} />
+        <TagsCard tags={tags} onSelect={onSelectTag} />
         <Runbooks project={project} projects={projects} agents={agents} onOpenTask={onOpenTask} />
         <Schedules project={project} agents={agents} />
       </div>
@@ -133,41 +133,41 @@ export function ProjectLanding({ project, projects, agents, recap, groups, onSel
 
 /**
  * The features in flight in this project — the landing-page half of the chip
- * bar. Only ACTIVE groups: a finished one is history, and the point of this
- * card is "what am I in the middle of". Clicking one opens the task list
- * narrowed to it, which is the same selection the chip makes.
+ * bar. Only ACTIVE tags: a finished one is history, and the point of this
+ * card is "what am I in the middle of". Clicking one lights that tag alone on
+ * the task list/board, which is the same selection the chip makes.
  *
- * Renders nothing for a project with no groups, like the chip bar itself — the
- * card costs nothing until the first group exists.
+ * Renders nothing for a project with no tags, like the chip bar itself — the
+ * card costs nothing until the first tag exists.
  */
-function GroupsCard({ groups, onSelect }: { groups: TaskGroupRow[]; onSelect: (id: string) => void }) {
-  const active = groups.filter((g) => !groupIsDone(g));
+function TagsCard({ tags, onSelect }: { tags: TagRow[]; onSelect: (id: string) => void }) {
+  const active = tags.filter((t) => !tagIsDone(t));
   if (active.length === 0) return null;
   return (
-    <div className="grp-card">
-      <h3>Groups</h3>
-      {active.map((g) => {
-        const p = groupProgress(g);
+    <div className="tags-card">
+      <h3>Tags</h3>
+      {active.map((t) => {
+        const p = tagProgress(t);
         const pct = p.of > 0 ? (p.done / p.of) * 100 : 0;
         return (
-          <button key={g.id} className="grp-row" style={groupTint(g.color)} onClick={() => onSelect(g.id)}
-            title={`Show only ${g.name}${g.description ? `\n${g.description}` : ""}`}>
-            <div className="grp-head">
+          <button key={t.id} className="tag-row" style={tagTint(t.color)} onClick={() => onSelect(t.id)}
+            title={`Show only ${t.name}${t.description ? `\n${t.description}` : ""}`}>
+            <div className="tag-head">
               <span className="gc-dot" />
-              <strong>{g.name}</strong>
-              {/* groupProgress' own empty label is "no tasks yet", which the
+              <strong>{t.name}</strong>
+              {/* tagProgress' own empty label is "no tasks yet", which the
                   body below already says — don't print it twice. */}
-              {g.counts.total > 0 && <span className="grp-frac mono">{p.label}</span>}
+              {t.counts.total > 0 && <span className="tag-frac mono">{p.label}</span>}
               <span className="spacer" />
-              {g.counts.running > 0 && <span className="grp-tag run">{g.counts.running} running</span>}
-              {g.counts.awaiting > 0 && <span className="grp-tag need">{g.counts.awaiting} need{g.counts.awaiting === 1 ? "s" : ""} you</span>}
+              {t.counts.running > 0 && <span className="tag-stat run">{t.counts.running} running</span>}
+              {t.counts.awaiting > 0 && <span className="tag-stat need">{t.counts.awaiting} need{t.counts.awaiting === 1 ? "s" : ""} you</span>}
             </div>
-            {/* An empty group is planned, not stalled — say so rather than
+            {/* An empty tag is planned, not stalled — say so rather than
                 showing a 0% bar that reads like nothing is happening. */}
-            {g.counts.total === 0
-              ? <div className="grp-desc">No tasks yet</div>
-              : <div className="grp-bar"><span style={{ width: `${pct}%` }} /></div>}
-            {g.description && <div className="grp-desc">{g.description}</div>}
+            {t.counts.total === 0
+              ? <div className="tag-desc">No tasks yet</div>
+              : <div className="tag-bar"><span style={{ width: `${pct}%` }} /></div>}
+            {t.description && <div className="tag-desc">{t.description}</div>}
           </button>
         );
       })}

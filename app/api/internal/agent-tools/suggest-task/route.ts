@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     description?: string;
     priority?: Priority;
     blocked_by?: string[];
-    group?: string;
+    tags?: string[];
   };
   try {
     body = await req.json();
@@ -49,12 +49,12 @@ export async function POST(req: NextRequest) {
     description: body.description ?? "",
     priority: body.priority,
     blocked_by: Array.isArray(body.blocked_by) ? body.blocked_by : undefined,
-    // The group ref as the model typed it — resolved (and created on a miss)
+    // The tag refs as the model typed them — resolved (and created on a miss)
     // against the TARGET project inside createSuggestedTask, so a suggestion
-    // filed into another project groups there rather than here. `taskId` is the
-    // trusted caller, recorded as the group's origin when one is created; it is
+    // filed into another project tags there rather than here. `taskId` is the
+    // trusted caller, recorded as a new tag's origin when one is created; it is
     // never read from a model-set field.
-    group: typeof body.group === "string" ? body.group : undefined,
+    tags: Array.isArray(body.tags) ? body.tags : undefined,
     origin_task_id: body.taskId ?? null,
   });
   if (!task) return NextResponse.json({ error: text }, { status: 404 });

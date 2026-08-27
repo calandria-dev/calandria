@@ -67,7 +67,6 @@ export interface Task {
   background_note: string; // what the linger is waiting on, phrased for the activity line ("waiting to wake at 12:00"); "" whenever background_pending is 0
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
-  group_id: string | null; // the task group this belongs to (task_groups.id); null = ungrouped. One group per task.
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
   // of now the task is drawn in the Snoozed category and hidden from the "needs
   // you" surfaces; behind it, the task is back in its own status group with a
@@ -92,18 +91,18 @@ export interface Task {
 }
 
 /** A field `update_task` can rewrite on a task the user already accepted. */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "group" | "blocked_by";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by";
 
 /** One field's before/after inside a recorded agent edit. */
 export interface AgentEditChange {
   field: AgentEditField;
-  /** Rendered for the diff panel — a title, a priority, a group name, "3 tasks". */
+  /** Rendered for the diff panel — a title, a priority, a tag list, "3 tasks". */
   before: string;
   after: string;
   /**
-   * What Revert writes back: a string for the scalar fields, the group id (or
-   * null) for `group`, the complete blocker id list for `blocked_by`. Kept
-   * separate from `before` because the readable form is lossy — a group NAME
+   * What Revert writes back: a string for the scalar fields, the complete tag
+   * id list for `tags`, the complete blocker id list for `blocked_by`. Kept
+   * separate from `before` because the readable form is lossy — a tag NAME
    * can't be written back, and "2 tasks" names no ids.
    */
   before_value: string | string[] | null;
@@ -112,7 +111,7 @@ export interface AgentEditChange {
    * compares against the live row before writing `before_value` back, so it
    * can refuse instead of overwriting a change made since (the user's own, or
    * a later agent edit). Absent on rows recorded before it existed; for those
-   * the scalar fields still compare through `after` (raw there), and group /
+   * the scalar fields still compare through `after` (raw there), and tags /
    * blocked_by are reverted unchecked as before.
    */
   after_value?: string | string[] | null;
@@ -666,18 +665,21 @@ export interface Runbook {
 }
 
 /**
- * A named, project-scoped container of tasks — "the auth migration", "the
- * mobile PWA". Not a task: no session, no worktree, no status of its own.
- * See docs/superpowers/specs/2026-08-24-task-grouping-design.md.
+ * A named, project-scoped label a task can carry — "the auth migration", "the
+ * mobile PWA", "flaky-tests". Not a task: no session, no worktree, no status of
+ * its own. Many-to-many with tasks (`task_tags`): a task is a step of the auth
+ * migration AND a piece of the mobile push, and gets both tags' context.
+ * See docs/superpowers/specs/2026-08-24-task-grouping-design.md (the one-tag-per-task
+ * ancestor) and docs/superpowers/specs/2026-08-27-tags-design.md.
  */
-export interface TaskGroup {
+export interface Tag {
   id: string;
   project_id: string;
   name: string;
   description: string;
-  /** Badge tint (hex from GROUP_COLORS), or null for the neutral badge. */
+  /** Badge tint (hex from TAG_COLORS), or null for the neutral badge. */
   color: string | null;
-  /** The session that filed this group, when an agent did; null when the user made it. */
+  /** The session that filed this tag, when an agent did; null when the user made it. */
   origin_task_id: string | null;
   position: number;
   created_at: number;
@@ -690,25 +692,25 @@ export interface TaskGroup {
   counts: { total: number; done: number; cancelled: number; running: number; awaiting: number };
 }
 
-/** The badge tints a group may carry — the project palette, so the two read as one system. */
-export const GROUP_COLORS = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"] as const;
+/** The badge tints a tag may carry — the project palette, so the two read as one system. */
+export const TAG_COLORS = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"] as const;
 
 /**
  * Validate a badge tint off the wire: undefined/null/"" clear it, anything
  * else must be a palette entry. Shared by the create and edit routes so the
  * two can't accept different colors.
  */
-export function parseGroupColor(v: unknown): { ok: true; color: string | null } | { ok: false; error: string } {
+export function parseTagColor(v: unknown): { ok: true; color: string | null } | { ok: false; error: string } {
   if (v === undefined || v === null || v === "") return { ok: true, color: null };
-  if (typeof v !== "string" || !(GROUP_COLORS as readonly string[]).includes(v)) {
-    return { ok: false, error: `color must be one of: ${GROUP_COLORS.join(", ")}` };
+  if (typeof v !== "string" || !(TAG_COLORS as readonly string[]).includes(v)) {
+    return { ok: false, error: `color must be one of: ${TAG_COLORS.join(", ")}` };
   }
   return { ok: true, color: v };
 }
 
-/** Every member terminal, and at least one member: the group's derived "done". */
-export function groupIsDone(g: Pick<TaskGroup, "counts">): boolean {
-  return g.counts.total > 0 && g.counts.done + g.counts.cancelled === g.counts.total;
+/** Every member terminal, and at least one member: the tag's derived "done". */
+export function tagIsDone(t: Pick<Tag, "counts">): boolean {
+  return t.counts.total > 0 && t.counts.done + t.counts.cancelled === t.counts.total;
 }
 
 export type ScheduleRunStatus =

@@ -6,7 +6,7 @@
 // tray suggestion (both always allowed) leaves no trace and no chip.
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { createGroup, createProject, createTask, getTask, getTaskDeps, listAgentEdits, setTaskDeps, updateTask } from "@/lib/store";
+import { createTag, createProject, createTask, deleteTag, getTask, getTaskDeps, getTaskTagIds, listAgentEdits, setTaskDeps, updateTask } from "@/lib/store";
 import { createSuggestedTask, updateTaskForAgent } from "@/lib/agentTools";
 import { GET as agentEditsGet, POST as agentEditsPost } from "@/app/api/tasks/[id]/agent-edits/route";
 import type { TaskAgentEdit } from "@/lib/types";
@@ -130,26 +130,46 @@ describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
     expect(json.edits[0].reverted_at).toBeGreaterThan(0);
   });
 
-  it("revert restores blocked_by and group membership", async () => {
+  it("revert restores blocked_by and tag membership", async () => {
     const project = createProject({ name: "Edits-Revert-Deps" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const b = createTask({ project_id: project.id, title: "B", description: "" });
     const c = createTask({ project_id: project.id, title: "C", description: "" });
-    const groupA = createGroup({ project_id: project.id, name: "Group A" });
-    const groupB = createGroup({ project_id: project.id, name: "Group B" });
-    const target = createTask({ project_id: project.id, title: "Target", description: "", group_id: groupA.id });
+    const tagA = createTag({ project_id: project.id, name: "Tag A" });
+    const tagB = createTag({ project_id: project.id, name: "Tag B" });
+    const target = createTask({ project_id: project.id, title: "Target", description: "", tag_ids: [tagA.id] });
     updateTask(target.id, { suggested: 0, started: 1 });
     setTaskDeps(target.id, [b.id]);
 
-    updateTaskForAgent(caller, target.id, { blocked_by: [c.id], group: groupB.id });
+    updateTaskForAgent(caller, target.id, { blocked_by: [c.id], tags: [tagB.id] });
     expect(getTaskDeps(target.id)).toEqual([c.id]);
-    expect(getTask(target.id)!.group_id).toBe(groupB.id);
+    expect(getTaskTagIds(target.id)).toEqual([tagB.id]);
 
     const edit = listAgentEdits(target.id)[0];
     const res = await postEdits(target.id, { action: "revert", edit_id: edit.id });
     expect(res.status).toBe(200);
     expect(getTaskDeps(target.id)).toEqual([b.id]);
-    expect(getTask(target.id)!.group_id).toBe(groupA.id);
+    expect(getTaskTagIds(target.id)).toEqual([tagA.id]);
+  });
+
+  it("revert drops a tag that was deleted since the edit, rather than refusing", async () => {
+    const project = createProject({ name: "Edits-Revert-DeletedTag" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const tagA = createTag({ project_id: project.id, name: "Tag A" });
+    const tagB = createTag({ project_id: project.id, name: "Tag B" });
+    const target = createTask({ project_id: project.id, title: "Target", description: "", tag_ids: [tagA.id] });
+    updateTask(target.id, { suggested: 0, started: 1 });
+
+    updateTaskForAgent(caller, target.id, { tags: [tagB.id] });
+    expect(getTaskTagIds(target.id)).toEqual([tagB.id]);
+    const edit = listAgentEdits(target.id)[0];
+
+    // tagA — the one the revert would restore — is gone by the time it runs.
+    deleteTag(tagA.id);
+
+    const res = await postEdits(target.id, { action: "revert", edit_id: edit.id });
+    expect(res.status).toBe(200);
+    expect(getTaskTagIds(target.id)).toEqual([]);
   });
 
   it("reverting the only outstanding edit clears agent_edited_at; ack clears it without reverting", async () => {

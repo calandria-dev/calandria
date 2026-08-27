@@ -66,12 +66,13 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       window.dispatchEvent(new CustomEvent("calandria:runbooks", { detail: ev.projectId }));
       return;
     }
-    // A project's task groups changed (create/rename/recolor/delete — here, in
-    // another tab, or by an agent). The groups ride the project GET with their
-    // derived counts, so this is task_edited's answer: refetch the tray, if
-    // it's the one on screen. A deleted group also nulled its members'
-    // group_id, which the same refetch picks up.
-    if (ev.type === "task_groups_changed") {
+    // A project's tags changed (create/rename/recolor/delete, membership moved
+    // by a task write or the bulk tag route — here, in another tab, or by an
+    // agent). Tags ride the project GET with their derived counts, so this is
+    // task_edited's answer: refetch the tray, if it's the one on screen. A
+    // deleted tag also dropped it from its members' tag_ids, which the same
+    // refetch picks up.
+    if (ev.type === "tags_changed") {
       if (selProjRef.current === ev.projectId) void loadTasks(ev.projectId, false);
       return;
     }

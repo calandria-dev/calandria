@@ -87,12 +87,14 @@ straight in and starts the next turn.
 - **Branching task pipelines:** make tasks depend on one or several earlier
   tasks, branch work into parallel paths, and launch each task automatically
   when its blockers finish.
-- **Task groups:** name the feature a set of tasks belongs to ("Auth
-  migration") and filter the list or board down to it with one chip. Every
-  member carries a tinted badge, progress is derived from the members, and
-  finished groups fold away. The chip expands into a strip with the group's
+- **Tags:** name the features a task belongs to ("Auth migration", "0.4
+  release") and filter the list or board with the chips — several at once,
+  union by default or intersection behind an any/all toggle. Every task
+  carries a tinted badge per tag, progress is derived from the tasks, and
+  finished tags fold away. One lit chip expands into a strip with the tag's
   brief and its steps in dependency order; ⌘K, the project landing page and
-  the Insights leaderboard all reach it by name.
+  the Insights leaderboard all reach it by name. Each session is told, for
+  every tag it carries, what that plan is and which step of it this is.
 - **Runbooks:** save a task you run often ("push everything unpushed and
   babysit CI", "sweep my Jiras and report") as a named recipe, then dispatch
   it in one click. Each run mints a fresh task, and a box for this-run-only
@@ -110,7 +112,7 @@ straight in and starts the next turn.
   on your phone's home screen (needs HTTPS, works behind Cloudflare Access).
 - **Built for a phone, not just shrunk:** one pane at a time with a Board /
   Diffs / Terminals / Insights tab bar, a full-screen terminal sheet, and a
-  project screen — recap, groups, runbooks, schedules — a tap away from the
+  project screen — recap, tags, runbooks, schedules — a tap away from the
   task list, so a saved recipe is one tap from anywhere you happen to be.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   transparent token and usage insights stay together — including a live

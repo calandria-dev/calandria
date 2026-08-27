@@ -356,17 +356,19 @@ export function init(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
-    -- A named, project-scoped container of tasks — the noun a multi-task
-    -- feature was missing (docs/superpowers/specs/2026-08-24-task-grouping-design.md).
+    -- A named, project-scoped label a task can carry — the noun a multi-task
+    -- feature was missing (docs/superpowers/specs/2026-08-27-tags-design.md;
+    -- its one-per-task ancestor is the task-grouping spike from 2026-08-24).
     -- Deliberately NOT a task: no session, no worktree, no status of its own.
     -- Status is derived per read from the members (done when every member is
     -- terminal), never stored, so a deleted task can't leave it stale.
     -- UNIQUE(project_id, name) is what makes exact-name resolution from an
     -- agent unambiguous; a rename collision is a 409. origin_task_id is
-    -- provenance — the planning session that filed the group — and SET NULL
-    -- because deleting the plan must not delete the set it named. Members are
-    -- linked from tasks.group_id (added in migrate(), below the runbook link).
-    CREATE TABLE IF NOT EXISTS task_groups (
+    -- provenance — the planning session that filed the tag — and SET NULL
+    -- because deleting the plan must not delete the set it named. Membership
+    -- lives in task_tags below, not in a column on tasks: a task carries as
+    -- many tags as it has reasons to.
+    CREATE TABLE IF NOT EXISTS tags (
       id             TEXT PRIMARY KEY,
       project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name           TEXT NOT NULL,
@@ -379,7 +381,22 @@ export function init(db: Database.Database) {
       UNIQUE(project_id, name)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_task_groups_project ON task_groups(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tags_project ON tags(project_id);
+
+    -- Which tasks carry which tags. CASCADE on both ends: deleting a tag
+    -- untags its members (it never deletes them — a tag is a label over work,
+    -- not the work), and deleting a task takes its rows with it. "position" is
+    -- the order this task's tags render and inject their context in, so a task
+    -- whose primary tag is the auth migration says so first.
+    CREATE TABLE IF NOT EXISTS task_tags (
+      task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      tag_id     TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      position   INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, tag_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag_id);
 
     -- App-level key/value preferences that must be readable server-side (e.g. the
     -- default reasoning level + permission mode a task inherits when it hasn't
@@ -746,13 +763,63 @@ export function migrate(db: Database.Database) {
   // block runs BEFORE this ALTER, so indexing the column there fails with
   // "no such column: runbook_id".
   db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_runbook ON tasks(runbook_id)");
-  // Which group this task belongs to (one group per task, nullable). SET NULL:
-  // deleting a group ungroups its members, never deletes them. Same
-  // create-the-index-here reasoning as runbook_id above.
-  if (!taskCols.includes("group_id")) {
-    db.exec("ALTER TABLE tasks ADD COLUMN group_id TEXT REFERENCES task_groups(id) ON DELETE SET NULL");
+  // Groups became TAGS: the container a task could be in ONE of is now a label
+  // it can carry several of (docs/superpowers/specs/2026-08-27-tags-design.md).
+  // The schema block above has already created the empty `tags` + `task_tags`
+  // tables, so this is a copy-then-drop rather than a rename: every group
+  // becomes a tag with its id intact (so origin_task_id, and any id a user
+  // bookmarked, still resolve), and every `tasks.group_id` becomes the one row
+  // that task has in task_tags. The column goes with the old table — leaving it
+  // behind would give two answers to "which tags does this task carry", and the
+  // stale one would be the one SQLite kept updating on nothing.
+  const tables = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name)
+  );
+  if (tables.has("task_groups")) {
+    db.exec(
+      `INSERT OR IGNORE INTO tags (id, project_id, name, description, color, origin_task_id, position, created_at, updated_at)
+       SELECT id, project_id, name, description, color, origin_task_id, position, created_at, updated_at FROM task_groups`
+    );
+    if (taskCols.includes("group_id")) {
+      // EXISTS rather than a join for the FK's sake: a group_id pointing at a
+      // row that never made it across would be refused by task_tags' own FK.
+      db.prepare(
+        `INSERT OR IGNORE INTO task_tags (task_id, tag_id, position, created_at)
+         SELECT t.id, t.group_id, 0, ? FROM tasks t
+         WHERE t.group_id IS NOT NULL AND EXISTS (SELECT 1 FROM tags g WHERE g.id = t.group_id)`
+      ).run(Date.now());
+      // SQLite refuses to drop an indexed column, so the index goes first.
+      db.exec("DROP INDEX IF EXISTS idx_tasks_group");
+      db.exec("ALTER TABLE tasks DROP COLUMN group_id");
+    }
+    db.exec("DROP INDEX IF EXISTS idx_task_groups_project");
+    db.exec("DROP TABLE task_groups");
   }
-  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_id)");
+  // The recorded agent edits that named the old field. `update_task`'s revert
+  // path switches on `field`, so a row left saying "group" would render a
+  // field that no longer exists and revert to nothing at all — silently. The
+  // scalar becomes the one-element list `tags` now carries.
+  const legacyEdits = db
+    .prepare("SELECT id, changes FROM task_agent_edits WHERE changes LIKE '%\"field\":\"group\"%'")
+    .all() as { id: string; changes: string }[];
+  if (legacyEdits.length) {
+    const upd = db.prepare("UPDATE task_agent_edits SET changes = ? WHERE id = ?");
+    for (const row of legacyEdits) {
+      try {
+        const changes = JSON.parse(row.changes) as { field: string; before_value?: unknown; after_value?: unknown }[];
+        for (const c of changes) {
+          if (c.field !== "group") continue;
+          c.field = "tags";
+          c.before_value = typeof c.before_value === "string" && c.before_value ? [c.before_value] : [];
+          c.after_value = typeof c.after_value === "string" && c.after_value ? [c.after_value] : [];
+        }
+        upd.run(JSON.stringify(changes), row.id);
+      } catch {
+        // Unparseable history is history: the chip renders what it can and the
+        // revert refuses, which is what it already did for a malformed row.
+      }
+    }
+  }
   // An optional link from a schedule to the runbook it fires, so "the morning
   // sweep" is one recipe edited in one place. SET NULL is the FK's answer;
   // deleteRunbook() gets there first and copies the recipe back into the

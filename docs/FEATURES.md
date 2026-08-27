@@ -113,84 +113,96 @@ on by a turn. Nothing has to be dragged to the top, and a backlog you haven't to
 week sinks under one you have. On the board, dragging a card moves it between columns to
 change its status; there is no manual order to pin it in.
 
-### Groups
+### Tags
 
 A feature, a migration or a refactor is rarely one task, and until now the app had no noun
-for the set: a plan arrived as N rows related only by the moment they were filed. A **group**
-is that noun — a named, project-scoped container with a description, the nearest thing here
-to an epic (the word is avoided in the UI; a group can be two tasks). It is deliberately not
+for the set: a plan arrived as N rows related only by the moment they were filed. A **tag**
+is that noun — a named, project-scoped label with a description, the nearest thing here to
+an epic (the word is avoided in the UI; a tag can cover two tasks). It is deliberately not
 a task: no session, no worktree, no status of its own. Its progress is derived from the
-members every time it's read — done when every member is done or cancelled — so there is
-no "close group" verb and nothing to go stale when a task is deleted or moved.
+tasks carrying it every time it's read — done when every one of them is done or cancelled —
+so there is no "close tag" verb and nothing to go stale when a task is deleted or moved.
 
-Every task belongs to at most one group. Pick it in **New task** or **Edit task** from the
-**Group** field, above **Blocked by** (which feature comes before which step), where **New
-group…** mints one inline by name. Names are unique within a project; a collision says so.
-A whole selection can be grouped at once from the list's action bar — tick the rows,
-**Group…**, pick the group (or mint one), and it lands in a single write. That's the cheap
-path for a plan an agent filed before the group existed.
+A task carries as many tags as it has reasons to, and that is the point: "port the login
+route" can be step 3 of the auth migration, part of the 0.4 release, and one of the
+`flaky-tests` sweep at once, and its session is told all three. Pick them in **New task** or
+**Edit task** from the **Tags** field, above **Blocked by** (which feature comes before which
+step), where **New tag…** mints one inline by name. Names are unique within a project; a
+collision says so. A whole selection can be tagged at once from the list's action bar — tick
+the rows, **Tags…**, and add or remove tags across all of them in a single write. Add and
+remove rather than replace, because the rows in a selection rarely carry the same tags and a
+replace would silently strip the ones it didn't know about. That's the cheap path for a plan
+an agent filed before the tag existed.
 
-Groups never span projects, so a move applies the same both-ends rule blocked-by links get:
-a group whose *every* member is in the move travels with them, re-keyed to the destination
-(and suffixed `(moved)` if a group there already has that name), while one selected only in
-part stays behind and the rows that left lose their badge. Both move dialogs say which of
-the two is about to happen, beside the dropped blocked-by links.
+Tags never span projects, so a move applies the same both-ends rule blocked-by links get,
+once per tag: a tag whose *every* member is in the move travels with them, re-keyed to the
+destination (and suffixed `(moved)` if a tag there already has that name), while one selected
+only in part stays behind and the rows that left lose that badge — keeping the others. Both
+move dialogs say which of the two is about to happen, beside the dropped blocked-by links.
 
-Once a project has a group, a chip bar appears over the task list and the board — **All ·
-Auth migration 3/7 · Mobile PWA 0/4 · Done (2)**. One chip narrows every status bucket, the
-Suggested tray included, to that group's members; the fraction is done over members still
+Once a project has a tag, a chip bar appears over the task list and the board — **All ·
+Auth migration 3/7 · Mobile PWA 0/4 · Done (2)**. A chip narrows every status bucket, the
+Suggested tray included, to the tasks carrying it; the fraction is done over tasks still
 counted (a withdrawn or cancelled step leaves the denominator rather than reading as
-unfinished), a blue dot marks a group with a member waiting on you, and finished groups fold
-behind the **Done** chip so a long-lived project's bar isn't a wall of shipped work. The
-selection is remembered per project, like the collapsed Done section, and survives flipping
-between list and board. Each member carries a tinted badge with the group's name — after the
-title in the list, on the board card, in the suggested tray, and in the session header —
-and clicking any badge selects that chip. Dragging cards on the board is paused while a chip
-is active, for the same reason it pauses during a search: hidden cards would fall out of
-the order a drop persists.
+unfinished), a blue dot marks a tag with a task waiting on you, and finished tags fold
+behind the **Done** chip so a long-lived project's bar isn't a wall of shipped work.
+**Several chips can be lit at once.** By default they union — two lit chips show both plans,
+which is what a chip bar reads like — and an **any/all** toggle appears beside them to switch
+to the intersection ("what is in the auth migration *and* touches mobile"). It only appears
+with two chips lit, since with one the two answers are the same set. The selection is
+remembered per project, like the collapsed Done section, and survives flipping between list
+and board. Each task carries a tinted badge per tag — after the title in the list, on the
+board card, in the suggested tray, and in the session header, capped at three with a `+2`
+pill naming the rest on hover — and clicking any badge lights that tag alone. Dragging cards
+on the board is paused while a chip is lit, for the same reason it pauses during a search:
+hidden cards would fall out of the order a drop persists.
 
-Selecting a chip opens the **group strip** beneath the bar — a group's whole detail view,
-since it gets no page of its own. It carries the description, a progress bar reading
+Lighting exactly one chip opens the **tag strip** beneath the bar — a tag's whole detail
+view, since it gets no page of its own. It carries the description, a progress bar reading
 `3 done · 2 withdrawn` so the fraction can't be mistaken for a lie, a link back to the
-session that planned it (**Planned in …**, when an agent filed it), and the members in
-dependency order — a topological sort over their blocked-by edges *within* the group — each
+session that planned it (**Planned in …**, when an agent filed it), and its tasks in
+dependency order — a topological sort over their blocked-by edges *among themselves* — each
 with its status dot, numbered so "step 3 of 7" means something. Its two verbs are **Edit**
-(rename, describe, recolor from the badge palette) and **Delete group**, which asks twice
-and names how many tasks stay: deleting a group ungroups its members and never deletes them.
+(rename, describe, recolor from the badge palette) and **Delete tag**, which asks twice and
+names how many tasks stay: deleting a tag takes one label off its tasks and never deletes
+them, and never touches their other tags. With two chips lit the strip stays shut — that is
+the multi-tag view's job, and a band of prose about one feature above a list showing two
+would just misread.
 
-Groups are reachable from outside the task list too. The project landing page carries a
-**Groups** card between the recap and Runbooks — the active ones with their progress,
-what's running and what needs you (a group with nothing filed yet reads *no tasks yet*) —
-and clicking one opens the list narrowed to it. ⌘K finds a group by name anywhere
+Tags are reachable from outside the task list too. The project landing page carries a
+**Tags** card between the recap and Runbooks — the active ones with their progress, what's
+running and what needs you (a tag with nothing filed yet reads *no tasks yet*) — and
+clicking one opens the list narrowed to it. ⌘K finds a tag by name anywhere
 (`Auth migration · Mobile PWA 4/7`) and lands on the same selection, and its session results
-carry each task's group badge. **Insights** gains a *Groups* leaderboard beside the projects
-one: spend and tokens summed over every member's usage, which is the "what did the migration
-cost" answer.
+carry each task's badges. **Insights** gains a *Tags* leaderboard beside the projects one:
+spend and tokens summed over the usage of every task carrying each tag. A task with three
+tags counts toward all three, so that column deliberately doesn't sum to the project's
+total — "what did the migration cost" is a question about a label, and a task that is part
+of two features really did cost both of them its time.
 
-Agents plan into groups too, which is where the noun earns its keep. `suggest_task` takes a
-`group` — an id or a name — resolved in the project the task is *filed into*, and a name that
+Agents plan into tags too, which is where the noun earns its keep. `suggest_task` takes
+`tags` — ids or names — resolved in the project the task is *filed into*, and a name that
 doesn't exist yet is created there and attributed to the session that filed it, so one pass
-of a planning turn lands a whole named plan instead of seven loose rows. (The result says
-which happened, `Created group "Auth migration" in <project>` or `Filed under group …`, so a
-near-miss spelling is visible while the rest of the batch can still use the right one.)
-`update_task`'s `group` is strict by contrast — an existing id or exact name only, `""` to
-ungroup — because the task already exists and a typo there would split a feature the user is
-filtering by in two; an unknown group refuses the whole call and nothing else in it lands.
-`list_tasks` gains a `group` filter and carries every row's group either way, and
-`list_groups` answers "how is the migration going" in one call: description, counts, and the
-members with their statuses.
+of a planning turn lands a whole named plan instead of seven loose rows. (The result names
+the reused tags and the created ones separately, so a near-miss spelling is visible while the
+rest of the batch can still use the right one.) `update_task`'s `tags` is strict by contrast
+— existing ids or exact names only, and it *replaces* the set, with `[]` clearing it —
+because the task already exists and a typo there would split a feature the user is filtering
+by in two; an unknown tag refuses the whole call and nothing else in it lands. `list_tasks`
+gains a `tag` filter and carries every row's tags either way, and `list_tags` answers "how is
+the migration going" in one call: description, counts, and the tasks with their statuses.
 
-The other half is what a MEMBER session is told. A grouped task's context opens with the
-group's name and description, which step of how many it is (the same dependency order the
-strip numbers), its siblings with their statuses — marking the ones this task is holding up,
-and the task itself with `← this task` — and a link back to the planning session's task, so
-the brief behind the whole plan is one `get_task` away. Sibling *descriptions* are
-deliberately left out: a seven-task group would spend a fifth of a session's context on work
-this task isn't doing. A task with **Send project context** off gets none of this, exactly as
-it gets no project context.
+The other half is what a tagged session is told. Its context carries one block per tag: the
+tag's name and description, which step of how many it is (the same dependency order the strip
+numbers), its siblings with their statuses — marking the ones this task is holding up, and
+the task itself with `← this task` — and a link back to the planning session's task, so the
+brief behind the whole plan is one `get_task` away. Sibling *descriptions* are deliberately
+left out: a seven-task plan would spend a fifth of a session's context on work this task
+isn't doing. A task with **Send project context** off gets none of this, exactly as it gets
+no project context.
 
-Groups sit orthogonal to dependencies — a group says *belongs with*, an edge says
-*waits for*, and nothing is inferred from one to the other.
+Tags sit orthogonal to dependencies — a tag says *belongs with*, an edge says *waits for*,
+and nothing is inferred from one to the other.
 
 ### Snoozing
 
@@ -263,7 +275,7 @@ Agents can read the board as well as add to it: they can list the tasks in a pro
 what each one is blocked by, and open any task in full — including the brief they were
 started with. Agents can also correct any task on the board, in any project — including one
 you've already accepted or started, not just their own — retitling it, rewriting its brief,
-reprioritizing it, moving it into or out of a group, closing it, or rewiring what it's
+reprioritizing it, adding or removing tags, closing it, or rewiring what it's
 blocked by. The one thing that still stops them is a task with a turn running in it right
 now (that session may be mid-read of the very fields being changed), and cancelling is always
 your call. An edit like this is never silent: the task's card picks up a **"Changed by
@@ -516,7 +528,7 @@ The Board tab is a drill-down: **projects → tasks → session**, plus a fourth
 level, the **project home**, reached by tapping the project's name in the task
 list's header. That screen is the phone's mount point for everything that is
 project-level rather than task-level — the "where you left off" recap, the
-Groups card, [Runbooks](#runbooks) and [Scheduled tasks](#scheduled-tasks). On
+Tags card, [Runbooks](#runbooks) and [Scheduled tasks](#scheduled-tasks). On
 desktop the same screen is simply what the session pane shows when no task is
 selected; on a phone that state shows the task list instead, so it needs a level
 of its own. It is a real route (`?home=1`), so a reload or a shared link lands

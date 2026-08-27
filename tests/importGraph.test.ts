@@ -33,7 +33,7 @@ const PINNED = [
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
-  "lib/groupContext.ts", //      the group block buildProjectContext appends; store + types only
+  "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too

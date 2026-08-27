@@ -5,15 +5,20 @@ import { Icon } from "../icons";
 import { jsend } from "./api";
 import { isAwaiting, isWithdrawn } from "./format";
 import { StatusDot } from "./shared";
-import { GROUP_COLORS, type TaskGroupRow, type TaskRow } from "./types";
-import { groupTint } from "./GroupChips";
+import { TAG_COLORS, type TagRow, type TaskRow } from "./types";
+import { tagTint } from "./TagChips";
 
-// The group strip: what a selected chip expands into. There is no group route
-// and no group page — a group's whole detail view is this band under the chip
-// bar (design: docs/superpowers/specs/2026-08-24-task-grouping-design.md).
-// It shows the description, the progress, where the plan came from, the members
-// in the order they have to happen, and the two verbs a group has (Edit,
-// Delete). Everything else about a group IS its tasks.
+// The tag strip: what a lit chip expands into. There is no tag route and no tag
+// page — a tag's whole detail view is this band under the chip bar (design:
+// docs/superpowers/specs/2026-08-27-tags-design.md). It shows the description,
+// the progress, where the plan came from, the tasks in the order they have to
+// happen, and the two verbs a tag has (Edit, Delete). Everything else about a
+// tag IS its tasks.
+//
+// Shown only when exactly ONE chip is lit. Two lit chips are a filter over two
+// plans, and stacking two strips (or picking one of them to expand) would put a
+// band of prose about one feature above a list showing both. The chip bar is
+// the multi-tag surface; this is the single-tag one.
 
 /**
  * The members in dependency order — a topological sort over `depends_on`
@@ -24,12 +29,12 @@ import { groupTint } from "./GroupChips";
  * sorts by recency, and a plan's steps must not renumber themselves every time
  * one of them runs. `position` is the one total order both sides can agree on
  * (`created_at` collides — a planning turn files its whole batch inside one
- * millisecond), and lib/groupContext.ts sorts by exactly the same thing, so
+ * millisecond), and lib/tagContext.ts sorts by exactly the same thing, so
  * "step 3 of 7" in a session's context and "3" on the user's screen keep
  * naming the same task.
  *
- * Edges to tasks OUTSIDE the group are ignored rather than treated as
- * blockers: groups and dependencies are orthogonal (a member may legitimately
+ * Edges to tasks WITHOUT this tag are ignored rather than treated as
+ * blockers: tags and dependencies are orthogonal (a member may legitimately
  * wait on something in another feature), and ordering this list by them would
  * make "step 3 of 7" depend on tasks the list doesn't show.
  */
@@ -52,11 +57,11 @@ export function topoMembers(members: TaskRow[]): TaskRow[] {
 
 /**
  * "5 done · 2 withdrawn". Terminal members are counted the way `blocks()`
- * counts them, so a group of seven with two withdrawn suggestions really is
+ * counts them, so a tag on seven tasks with two withdrawn suggestions really is
  * finished at five — but the withdrawals are named beside the fraction rather
  * than folded into it, or `5/5` on a seven-row list reads as a lie. Withdrawn
  * and plainly cancelled are told apart here (the strip has the rows; the
- * group's derived counts only know `cancelled`).
+ * tag's derived counts only know `cancelled`).
  */
 export function memberProgress(members: TaskRow[]): { done: number; of: number; pct: number; parts: string[] } {
   const done = members.filter((m) => m.status === "done").length;
@@ -69,31 +74,31 @@ export function memberProgress(members: TaskRow[]): { done: number; of: number; 
   return { done, of, pct: of > 0 ? (done / of) * 100 : 0, parts };
 }
 
-export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted }: {
-  group: TaskGroupRow;
-  /** Every task in the group, in tray order — the strip sorts them itself. */
+export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: {
+  tag: TagRow;
+  /** Every task carrying the tag, in tray order — the strip sorts them itself. */
   members: TaskRow[];
-  /** The planning session that filed this group, when it's still in this project. */
+  /** The planning session that filed this tag, when it's still in this project. */
   originTask?: TaskRow;
   onSelectTask: (id: string) => void;
-  /** Called after the group row is gone, so the chip bar can fall back to All. */
+  /** Called after the tag row is gone, so the chip bar can fall back to All. */
   onDeleted: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [name, setName] = useState(group.name);
-  const [desc, setDesc] = useState(group.description);
-  const [color, setColor] = useState<string | null>(group.color);
+  const [name, setName] = useState(tag.name);
+  const [desc, setDesc] = useState(tag.description);
+  const [color, setColor] = useState<string | null>(tag.color);
 
-  // Another tab (or the delete below) can change the group under the form.
+  // Another tab (or the delete below) can change the tag under the form.
   // Re-seed the fields whenever the row we're editing actually changes.
   useEffect(() => {
-    setName(group.name);
-    setDesc(group.description);
-    setColor(group.color);
-  }, [group.id, group.name, group.description, group.color]);
+    setName(tag.name);
+    setDesc(tag.description);
+    setColor(tag.color);
+  }, [tag.id, tag.name, tag.description, tag.color]);
 
   const ordered = topoMembers(members);
   const p = memberProgress(members);
@@ -103,10 +108,10 @@ export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted
     setBusy(true);
     setErr(null);
     try {
-      // The task_groups_changed echo refetches the project, so nothing is
+      // The tags_changed echo refetches the project, so nothing is
       // written into local state here — the chip bar and this strip re-render
       // from the same read.
-      await jsend(`/api/groups/${group.id}`, "PATCH", { name: name.trim(), description: desc, color: color ?? "" });
+      await jsend(`/api/tags/${tag.id}`, "PATCH", { name: name.trim(), description: desc, color: color ?? "" });
       setEditing(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -118,12 +123,12 @@ export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted
   const del = async () => {
     // Two-step, like every other hard delete here: the first click arms it and
     // says how many tasks it touches, so the count is on screen before the
-    // group is gone.
+    // tag is gone.
     if (!confirmDel) return setConfirmDel(true);
     setBusy(true);
     setErr(null);
     try {
-      await jsend(`/api/groups/${group.id}`, "DELETE");
+      await jsend(`/api/tags/${tag.id}`, "DELETE");
       onDeleted();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -134,19 +139,19 @@ export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted
   };
 
   return (
-    <div className="gstrip" style={groupTint(group.color)}>
+    <div className="gstrip" style={tagTint(tag.color)}>
       {editing ? (
         <div className="gs-edit">
-          <input className="gs-name-in" value={name} aria-label="Group name" autoFocus
+          <input className="gs-name-in" value={name} aria-label="Tag name" autoFocus
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }} />
-          <textarea className="gs-desc-in" value={desc} rows={2} aria-label="Group description"
-            placeholder="What this feature is — shown here and given to every member session."
+          <textarea className="gs-desc-in" value={desc} rows={2} aria-label="Tag description"
+            placeholder="What this tag means — shown here and given to every session carrying it."
             onChange={(e) => setDesc(e.target.value)} />
-          <div className="gs-colors" role="group" aria-label="Group color">
+          <div className="gs-colors" role="group" aria-label="Tag color">
             <button type="button" className={`gs-sw none ${color === null ? "on" : ""}`} title="No tint"
               aria-pressed={color === null} onClick={() => setColor(null)} />
-            {GROUP_COLORS.map((c) => (
+            {TAG_COLORS.map((c) => (
               <button key={c} type="button" className={`gs-sw ${color === c ? "on" : ""}`} style={{ background: c }}
                 title={c} aria-label={`Color ${c}`} aria-pressed={color === c} onClick={() => setColor(c)} />
             ))}
@@ -158,30 +163,30 @@ export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted
       ) : (
         <>
           <div className="gs-head">
-            <span className="gs-name">{group.name}</span>
+            <span className="gs-name">{tag.name}</span>
             <span className="gs-frac mono">{p.parts.join(" · ")}</span>
             <span className="spacer" />
-            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Rename, describe or recolor this group">
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Rename, describe or recolor this tag">
               {Icon.edit()} Edit
             </button>
             <button className={`btn btn-sm ${confirmDel ? "btn-danger" : "btn-ghost"}`} disabled={busy} onClick={() => void del()}
-              title="Delete the group — its tasks are kept and simply ungrouped">
+              title="Delete the tag — its tasks are kept, and keep their other tags">
               {confirmDel
                 ? `Delete — ${members.length} task${members.length === 1 ? "" : "s"} stay${members.length === 1 ? "s" : ""}`
-                : "Delete group"}
+                : "Delete tag"}
             </button>
             {confirmDel && <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDel(false)}>Cancel</button>}
           </div>
           {/* The bar measures work still counted: withdrawn and cancelled
-              members are out of the denominator, named in the fraction above. */}
+              tasks are out of the denominator, named in the fraction above. */}
           <div className="gs-bar" role="progressbar" aria-valuemin={0} aria-valuemax={p.of} aria-valuenow={p.done}
-            aria-label={`${group.name} progress`}>
+            aria-label={`${tag.name} progress`}>
             <span style={{ width: `${p.pct}%` }} />
           </div>
-          {group.description && <div className="gs-desc">{group.description}</div>}
+          {tag.description && <div className="gs-desc">{tag.description}</div>}
           {originTask && (
             <button className="gs-origin" onClick={() => onSelectTask(originTask.id)}
-              title="The session that planned this group — its transcript is the brief">
+              title="The session that planned this tag — its transcript is the brief">
               {Icon.spark()} Planned in <em>{originTask.title}</em>
             </button>
           )}
@@ -197,7 +202,7 @@ export function GroupStrip({ group, members, originTask, onSelectTask, onDeleted
                 </button>
               </li>
             ))}
-            {ordered.length === 0 && <li className="gs-none">No tasks yet — nothing has been filed under this group.</li>}
+            {ordered.length === 0 && <li className="gs-none">No tasks yet — nothing carries this tag.</li>}
           </ol>
         </>
       )}

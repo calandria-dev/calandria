@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createGroup, createProject, createTask, getTask, getTaskDeps, listAgentEdits, listGroups, listTasks, updateTask } from "@/lib/store";
+import { createTag, createProject, createTask, getTask, getTaskDeps, getTaskTagIds, listAgentEdits, listTags, listTasks, updateTask } from "@/lib/store";
 import { createSuggestedTask } from "@/lib/agentTools";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { POST as suggestTaskEp } from "@/app/api/internal/agent-tools/suggest-task/route";
-import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups/route";
+import { POST as listTagsEp } from "@/app/api/internal/agent-tools/list-tags/route";
 
 // update_task's cross-task policy, proved END TO END on the Codex path.
 //
@@ -34,7 +34,7 @@ const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "sc
 const ROUTES: Record<string, (req: NextRequest) => Promise<Response>> = {
   "/api/internal/agent-tools/update-task": updateTaskEp,
   "/api/internal/agent-tools/suggest-task": suggestTaskEp,
-  "/api/internal/agent-tools/list-groups": listGroupsEp,
+  "/api/internal/agent-tools/list-tags": listTagsEp,
 };
 
 let server: http.Server;
@@ -290,35 +290,36 @@ describe("update_task policy, end to end over the Codex bridge", () => {
   });
 });
 
-// Groups over the same wire. The Codex path is where the MODEL names both the
-// project a task is filed into AND the group it lands in, so the two rules that
-// make grouping safe have to be shown together here rather than assumed:
-// suggest_task creates a group in the project the task ACTUALLY landed in, and
-// update_task refuses one it doesn't recognize instead of minting a near-twin.
-describe("group, end to end over the Codex bridge", () => {
-  it("groups a cross-project suggestion in the TARGET project, creating the group there", async () => {
-    const here = createProject({ name: "Codex-GroupHere" });
-    const there = createProject({ name: "Codex-GroupThere" });
+// Tags over the same wire. The Codex path is where the MODEL names both the
+// project a task is filed into AND the tags it carries, so the rules that make
+// tagging safe have to be shown together here rather than assumed: suggest_task
+// creates a tag in the project the task ACTUALLY landed in, and update_task
+// refuses one it doesn't recognize instead of minting a near-twin — and, being
+// many-to-many, REPLACES the whole set rather than adding to it.
+describe("tags, end to end over the Codex bridge", () => {
+  it("tags a cross-project suggestion in the TARGET project, creating the tag there", async () => {
+    const here = createProject({ name: "Codex-TagHere" });
+    const there = createProject({ name: "Codex-TagThere" });
     const caller = createTask({ project_id: here.id, title: "Planner", description: "" });
-    // A same-named group in the CALLER's project: if resolution ran before the
-    // project did, the suggestion would be grouped into this one — a group
+    // A same-named tag in the CALLER's project: if resolution ran before the
+    // project did, the suggestion would be tagged into this one — a tag
     // spanning two repos, which the schema and the UI both forbid.
-    const decoy = createGroup({ project_id: here.id, name: "Auth migration" });
+    const decoy = createTag({ project_id: here.id, name: "Auth migration" });
 
     const { client, close } = await connectBridge(caller.id, here.id);
     try {
       const res = (await client.callTool({
         name: "suggest_task",
-        arguments: { title: "Ported route", description: "", project: "Codex-GroupThere", group: "Auth migration" },
+        arguments: { title: "Ported route", description: "", project: "Codex-TagThere", tags: ["Auth migration"] },
       })) as ToolResult;
       expect(res.isError).toBeFalsy();
-      expect(res.content[0].text).toContain('Created group "Auth migration" in Codex-GroupThere.');
+      expect(res.content[0].text).toContain('Created tag "Auth migration" in Codex-TagThere.');
 
       const landed = listTasks(there.id).find((t) => t.title === "Ported route")!;
-      const made = listGroups(there.id);
+      const made = listTags(there.id);
       expect(made).toHaveLength(1);
-      expect(landed.group_id).toBe(made[0].id);
-      expect(landed.group_id).not.toBe(decoy.id);
+      expect(landed.tag_ids).toEqual([made[0].id]);
+      expect(landed.tag_ids).not.toContain(decoy.id);
       // Provenance is the CALLER's task id, which the model never sends — the
       // bridge only forwards CALANDRIA_TASK_ID.
       expect(made[0].origin_task_id).toBe(caller.id);
@@ -326,27 +327,27 @@ describe("group, end to end over the Codex bridge", () => {
       // The second step of the plan reuses it rather than minting a twin.
       const again = (await client.callTool({
         name: "suggest_task",
-        arguments: { title: "Second step", description: "", project: "Codex-GroupThere", group: "Auth migration" },
+        arguments: { title: "Second step", description: "", project: "Codex-TagThere", tags: ["Auth migration"] },
       })) as ToolResult;
-      expect(again.content[0].text).toContain('Filed under group "Auth migration".');
-      expect(listGroups(there.id)).toHaveLength(1);
+      expect(again.content[0].text).toContain('Tagged "Auth migration".');
+      expect(listTags(there.id)).toHaveLength(1);
 
-      // …and list_groups reads it back with the members, in one call.
-      const listed = (await client.callTool({ name: "list_groups", arguments: { project: "Codex-GroupThere" } })) as ToolResult;
-      const parsed = JSON.parse(listed.content[0].text) as { groups: { name: string; counts: { total: number }; tasks: { title: string }[] }[] };
-      expect(parsed.groups.map((g) => g.name)).toEqual(["Auth migration"]);
-      expect(parsed.groups[0].counts.total).toBe(2);
-      expect(parsed.groups[0].tasks.map((t) => t.title).sort()).toEqual(["Ported route", "Second step"]);
+      // …and list_tags reads it back with the members, in one call.
+      const listed = (await client.callTool({ name: "list_tags", arguments: { project: "Codex-TagThere" } })) as ToolResult;
+      const parsed = JSON.parse(listed.content[0].text) as { tags: { name: string; counts: { total: number }; tasks: { title: string }[] }[] };
+      expect(parsed.tags.map((g) => g.name)).toEqual(["Auth migration"]);
+      expect(parsed.tags[0].counts.total).toBe(2);
+      expect(parsed.tags[0].tasks.map((t) => t.title).sort()).toEqual(["Ported route", "Second step"]);
     } finally {
       await close();
     }
   });
 
-  it("refuses an unknown group on update_task, and the rest of that call never lands", async () => {
-    const project = createProject({ name: "Codex-GroupStrict" });
+  it("refuses an unknown tag on update_task, and the rest of that call never lands", async () => {
+    const project = createProject({ name: "Codex-TagStrict" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const inert = createSuggestedTask(project, { title: "Inert", description: "" }).task!;
-    const real = createGroup({ project_id: project.id, name: "Auth migration" });
+    const real = createTag({ project_id: project.id, name: "Auth migration" });
 
     const { client, close } = await connectBridge(caller.id, project.id);
     try {
@@ -354,25 +355,54 @@ describe("group, end to end over the Codex bridge", () => {
       // here would split a feature the user is filtering by in two.
       const bad = (await client.callTool({
         name: "update_task",
-        arguments: { task: inert.id, title: "Sharpened", group: "Auth migraton" },
+        arguments: { task: inert.id, title: "Sharpened", tags: ["Auth migraton"] },
       })) as ToolResult;
       expect(bad.isError).toBe(true);
       expect(bad.content[0].text).toContain("Nothing was changed");
       // Neither half landed, and nothing was created for the misspelling.
-      expect(getTask(inert.id)).toMatchObject({ title: "Inert", group_id: null });
-      expect(listGroups(project.id).map((g) => g.id)).toEqual([real.id]);
+      expect(getTask(inert.id)).toMatchObject({ title: "Inert" });
+      expect(getTaskTagIds(inert.id)).toEqual([]);
+      expect(listTags(project.id).map((g) => g.id)).toEqual([real.id]);
 
-      // The exact name works, and "" takes it back out.
+      // The exact name works, and [] takes it back out.
       const ok = (await client.callTool({
         name: "update_task",
-        arguments: { task: inert.id, group: "Auth migration" },
+        arguments: { task: inert.id, tags: ["Auth migration"] },
       })) as ToolResult;
       expect(ok.isError).toBeFalsy();
-      expect(getTask(inert.id)!.group_id).toBe(real.id);
+      expect(getTaskTagIds(inert.id)).toEqual([real.id]);
 
-      const cleared = (await client.callTool({ name: "update_task", arguments: { task: inert.id, group: "" } })) as ToolResult;
+      const cleared = (await client.callTool({ name: "update_task", arguments: { task: inert.id, tags: [] } })) as ToolResult;
       expect(cleared.isError).toBeFalsy();
-      expect(getTask(inert.id)!.group_id).toBeNull();
+      expect(getTaskTagIds(inert.id)).toEqual([]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("update_task REPLACES the tag set rather than adding to it, over the real bridge", async () => {
+    const project = createProject({ name: "Codex-TagReplace" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const inert = createSuggestedTask(project, { title: "Inert", description: "" }).task!;
+    const a = createTag({ project_id: project.id, name: "Tag A" });
+    const b = createTag({ project_id: project.id, name: "Tag B" });
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const first = (await client.callTool({
+        name: "update_task",
+        arguments: { task: inert.id, tags: [a.id] },
+      })) as ToolResult;
+      expect(first.isError).toBeFalsy();
+      expect(getTaskTagIds(inert.id)).toEqual([a.id]);
+
+      // A second call naming only B drops A rather than adding B alongside it.
+      const second = (await client.callTool({
+        name: "update_task",
+        arguments: { task: inert.id, tags: [b.id] },
+      })) as ToolResult;
+      expect(second.isError).toBeFalsy();
+      expect(getTaskTagIds(inert.id)).toEqual([b.id]);
     } finally {
       await close();
     }

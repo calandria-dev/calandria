@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { createTask, getProject, listAllTasksLite, listAllGroupsLite, getGroup } from "@/lib/store";
+import { createTask, getProject, listAllTasksLite, listAllTagsLite, getTag } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 // Powers the ⌘K palette's search: every real task across all active projects,
-// labeled with its project and (since groups) the feature it's a step of, plus
-// the groups themselves — which are jumpable targets in their own right, not
+// labeled with its project and (since tags) the features it's part of, plus
+// the tags themselves — which are jumpable targets in their own right, not
 // just badges. Both fetched fresh each time the palette opens.
 export async function GET() {
-  return NextResponse.json({ tasks: listAllTasksLite(), groups: listAllGroupsLite() });
+  return NextResponse.json({ tasks: listAllTasksLite(), tags: listAllTagsLite() });
 }
 
 export async function POST(req: Request) {
@@ -16,15 +16,19 @@ export async function POST(req: Request) {
   if (!body?.project_id || !getProject(body.project_id))
     return NextResponse.json({ error: "valid project_id required" }, { status: 400 });
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
-  // Same screen the PATCH route applies: the group must exist and belong to
-  // the project the task is being filed into.
-  let groupId: string | null = null;
-  if (body.group_id) {
-    if (typeof body.group_id !== "string") return NextResponse.json({ error: "group_id must be a string" }, { status: 400 });
-    const group = getGroup(body.group_id);
-    if (!group) return NextResponse.json({ error: "no such group" }, { status: 400 });
-    if (group.project_id !== body.project_id) return NextResponse.json({ error: "group belongs to another project — a group can't span projects" }, { status: 400 });
-    groupId = group.id;
+  // Same screen the PATCH route applies: every tag must exist and belong to
+  // this task's project, since a tag can't span repositories.
+  let tagIds: string[] = [];
+  if (body.tag_ids !== undefined) {
+    if (!Array.isArray(body.tag_ids) || body.tag_ids.some((t: unknown) => typeof t !== "string"))
+      return NextResponse.json({ error: "tag_ids must be an array of tag ids" }, { status: 400 });
+    tagIds = [...new Set(body.tag_ids as string[])];
+    for (const id of tagIds) {
+      const tag = getTag(id);
+      if (!tag) return NextResponse.json({ error: "no such tag" }, { status: 400 });
+      if (tag.project_id !== body.project_id)
+        return NextResponse.json({ error: "tag belongs to another project — a tag can't span projects" }, { status: 400 });
+    }
   }
   const task = createTask({
     project_id: body.project_id,
@@ -52,7 +56,7 @@ export async function POST(req: Request) {
     model: typeof body.model === "string" && body.model.trim() && body.model.length <= 2048 && !/[\0-\x1f\x7f]/.test(body.model)
       ? body.model.trim()
       : undefined,
-    group_id: groupId,
+    tag_ids: tagIds,
   });
   return NextResponse.json(task, { status: 201 });
 }

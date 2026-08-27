@@ -20,7 +20,7 @@ export interface NavSel {
   proj: string | null;
   task: string | null;
   /**
-   * The project home (recap + Groups + Runbooks + Schedules) is showing. A real
+   * The project home (recap + Tags + Runbooks + Schedules) is showing. A real
    * navigation level, not a derived state: on a phone it is the ONLY way to
    * reach those cards, so Back must close it before it closes the project, and
    * a refresh must land back on it. It only ever coexists with `proj` and never
