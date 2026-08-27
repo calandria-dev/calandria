@@ -25,7 +25,7 @@ import type {
 } from "../../types";
 import type { AgentDriver, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
-import { listClaudeCommands } from "./commands";
+import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
 import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
 import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
@@ -879,10 +879,14 @@ async function* runTurn(
     lingerTimer.unref?.();
   };
 
+  // Hoisted because the init handler below records this session's MCP prompt
+  // commands against it, and the menu's cache is keyed by exactly this cwd.
+  const cwd = sessionCwd(task, project);
+
   const response = query({
     prompt: promptStream(),
     options: {
-      cwd: sessionCwd(task, project),
+      cwd,
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.
@@ -1056,6 +1060,12 @@ async function* runTurn(
           }
           sessionId = message.session_id;
           queue.push({ type: "session", sessionId });
+          // The composer's "/" menu can't discover MCP prompt commands on its
+          // own — they exist only on this message, and getting them any other
+          // way means spawning the user's whole MCP fleet on a keystroke
+          // (lib/agents/claude/commands.ts). This session already paid for that
+          // fleet, so hand its list to the menu's cache on the way past.
+          recordMcpPrompts(cwd, SETTING_SOURCES, message.slash_commands);
           // The init message reports the model the SDK actually resolved (e.g. when
           // "default" maps to Opus). Surface it so the UI can badge the live model.
           const resolved = (message as { model?: string }).model;
