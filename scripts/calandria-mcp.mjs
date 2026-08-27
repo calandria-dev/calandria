@@ -202,8 +202,9 @@ server.registerTool(
   async ({ task, title, description, priority, status, blocked_by, group }) => {
     // `task` is the target the MODEL chose, and it is forwarded unvalidated —
     // this bridge deliberately holds no policy. The endpoint decides what may
-    // be written, against CALANDRIA_TASK_ID (sent by callInternal as the trusted
-    // caller identity, which nothing here can override).
+    // be written (any task in any project, refused only while it has a turn
+    // running right now), against CALANDRIA_TASK_ID (sent by callInternal as
+    // the trusted caller identity, which nothing here can override).
     const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, group });
     return { content: [{ type: "text", text: data.text }] };
   }

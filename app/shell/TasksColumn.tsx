@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { Logo } from "../Logo";
 import { isAwaiting, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
@@ -85,6 +86,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <span className={`slabel ${awaiting ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
         <PriPill p={task.priority} />
       </div>
+      <AgentEditedChip task={task} variant="list" />
       {/* Why this card is back where you didn't leave it. An unread marker, not
           history — opening the task clears it (useShell). */}
       {!snoozed && wasSnoozed(task) && (

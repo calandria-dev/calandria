@@ -90,6 +90,11 @@
   --green-soft:var(--run-bg);
   --blue:var(--accent);
   --blue-soft:var(--accent-soft);
+  /* Violet reads as "an agent did this, look" rather than error (red) or
+     schedule (blue) — reused from the chart-series primitive so it stays
+     distinguishable in every palette/mode without a hardcoded hex. */
+  --violet:var(--s4);
+  --violet-soft:color-mix(in oklab, var(--s4) 16%, transparent);
   /* --calandria stays a theme primitive (set per-[data-theme] block above) —
      it must stay distinguishable from --s1..--s5 in the chart series. */
 
@@ -490,6 +495,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .blocked-chip svg{flex:0 0 auto;}
 /* "queued to auto-start" — blocked, but armed to launch itself (blue, not amber) */
 .blocked-chip.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
+/* an agent edited this task since you accepted it (app/shell/AgentEdits.tsx) —
+   a real <button>, not a div like its siblings above; the base button{} reset
+   already gives it font-family:inherit/cursor:pointer/no chrome. */
+.blocked-chip.changed{color:var(--violet);background:var(--violet-soft);border-color:var(--violet);}
+.blocked-chip.changed:hover{background:color-mix(in oklab, var(--violet) 26%, transparent);}
 
 /* ---------- snoozed tasks (app/shell/snooze.ts) ----------
    Deliberately the quietest state in the app: a parked task has nothing to say
@@ -684,6 +694,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-chip{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:2.5px 6px;display:flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .bc-chip.block{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
 .bc-chip.autostart{color:var(--blue);border-color:var(--blue);background:var(--blue-soft);}
+/* an agent edited this task since you accepted it — see .blocked-chip.changed */
+.bc-chip.changed{color:var(--violet);border-color:var(--violet);background:var(--violet-soft);}
+.bc-chip.changed:hover{background:color-mix(in oklab, var(--violet) 26%, transparent);}
 .bc-chip svg{width:10px;height:10px;flex:0 0 auto;}
 .bc-sess{font-family:var(--mono);font-size:9px;color:var(--ink-4);display:flex;align-items:center;gap:4px;}
 .bc-sess svg{width:10px;height:10px;}
@@ -1454,6 +1467,39 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field input:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .field .ctx-mono{font-family:var(--mono);font-size:12.5px;}
 .field .hlp{font-size:11.5px;color:var(--ink-3);margin-top:7px;line-height:1.45;}
+
+/* ---------- agent-edits modal (app/shell/AgentEdits.tsx) ----------
+   One block per recorded edit, each with its own field-by-field before/after
+   and its own Revert — deliberately not a single flattened diff, since edits
+   from different agent sessions revert independently. */
+.ae-edit{padding:12px 0;border-bottom:1px solid var(--line);}
+.ae-edit:first-child{padding-top:0;}
+.ae-edit:last-child{border-bottom:none;padding-bottom:0;}
+.ae-edit.ae-reverted{opacity:.55;}
+.ae-who{font-size:12px;color:var(--ink-2);margin-bottom:9px;}
+.ae-who .ae-agent{color:var(--ink-3);font-family:var(--mono);font-size:10.5px;}
+.ae-who .ae-time{color:var(--ink-3);}
+.ae-row{margin-bottom:10px;}
+.ae-row:last-of-type{margin-bottom:0;}
+.ae-field{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-bottom:4px;}
+/* Two stacked lines rather than a character-level diff — description values can
+   run long, so each side clamps to ~6 lines and scrolls instead of pushing the
+   modal open. pre-wrap keeps newlines the model actually wrote. */
+.ae-before,.ae-after{font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:calc(6 * 1.45em);overflow-y:auto;padding:6px 9px;border-radius:var(--r-sm);margin-top:4px;}
+.ae-before{color:var(--err);background:var(--red-soft);text-decoration:line-through;}
+.ae-after{color:var(--run);background:var(--run-bg);}
+.ae-empty{font-style:italic;color:var(--ink-4);text-decoration:none;}
+.ae-actions{display:flex;justify-content:flex-end;margin-top:9px;}
+.ae-reverted-note{color:var(--ink-4);font-size:11.5px;}
+.ae-err{margin-top:8px;font-size:11.5px;color:var(--err);}
+.ae-none{font-size:13px;color:var(--ink-3);}
+/* Footer helper text: flex-basis:100% pushes it onto its own row above the
+   Close/Keep changes buttons within .modal-f's flex-wrap, without a DOM change
+   to Modal itself. */
+.ae-hint{flex:1 0 100%;font-size:11.5px;color:var(--ink-3);line-height:1.45;order:-1;}
+/* The relTime beside the chip's "Changed by agent" label — muted the same way
+   an activity line's trailing clause is (see .task-foot .activity). */
+.ae-chip-time{opacity:.72;}
 
 .seg{display:flex;gap:6px;}
 .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--raise);font-size:13px;font-weight:600;color:var(--ink-2);transition:all .12s;}
