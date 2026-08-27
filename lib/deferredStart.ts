@@ -46,7 +46,7 @@ import {
 import { claimTurn, unregisterTurn, hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, publishGlobal } from "@/lib/events";
-import { blocks, launchInitialTurn } from "@/lib/autoStart";
+import { AUTO_START_HOOKS, blocks, launchInitialTurn } from "@/lib/autoStart";
 import type { Project, Task } from "@/lib/types";
 
 /** Rides the runner's sync-note slot at the top of a queued first turn. */
@@ -198,7 +198,7 @@ async function resumeQueued(task: Task, project: Project): Promise<boolean> {
       const m = addMessage(fresh.id, gen, "system", DEFERRED_RESUME_NOTE);
       publish(fresh.id, { type: "notice", content: DEFERRED_RESUME_NOTE, msgId: m.id, generation: gen, ts: m.created_at });
       publishGlobal(fresh.id, { type: "task_edited" });
-      await startResumeTurn(fresh, proj, next?.content ?? DEFERRED_RESUME_PROMPT, controller);
+      await startResumeTurn(fresh, proj, next?.content ?? DEFERRED_RESUME_PROMPT, controller, AUTO_START_HOOKS);
       launched = true;
     });
   } catch (err) {

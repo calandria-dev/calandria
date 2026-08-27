@@ -27,6 +27,7 @@ import fs from "node:fs";
 import { getProject, createTask, updateTask, addMessage } from "@/lib/store";
 import { validatePrompt } from "@/lib/schedule/commands";
 import { startTurn } from "@/lib/runner";
+import { AUTO_START_HOOKS } from "@/lib/autoStart";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
@@ -146,7 +147,7 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
           type: "user", content: userMsg.content, msgId: userMsg.id,
           generation: fresh.generation, ts: userMsg.created_at,
         });
-        startTurn(fresh, project, input.prompt, input.note, controller, input.runContext);
+        startTurn(fresh, project, input.prompt, input.note, controller, input.runContext, AUTO_START_HOOKS);
         launched = true;
       });
     } finally {

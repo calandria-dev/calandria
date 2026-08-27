@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import { getTask, getProject, updateTask, addMessage, listMessages, listPendingMessages, addPendingMessage } from "@/lib/store";
 import { startTurn, startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
+// The sweep this turn's tool calls may need, handed to the runner rather than
+// imported by the driver — see AUTO_START_HOOKS. Static import: lib/autoStart
+// has no static path to an agent SDK, so it can't make this route entry async.
+import { AUTO_START_HOOKS } from "@/lib/autoStart";
 import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
@@ -163,11 +167,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Echo the user message to every open stream of this task (other viewers,
         // and the sender itself — the client renders from events, not optimistically).
         publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-        startTurn(fresh, proj, userText, "", controller);
+        startTurn(fresh, proj, userText, "", controller, undefined, AUTO_START_HOOKS);
       } else {
         // Resume: catch the worktree up, persist + echo the message, then hand off
         // to the detached runner. Same path the queue drainer uses.
-        await startResumeTurn(fresh, proj, userText, controller);
+        await startResumeTurn(fresh, proj, userText, controller, AUTO_START_HOOKS);
       }
       // The runner owns the claim now; its finally releases (or hands off) the slot.
       launched = true;
