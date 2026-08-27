@@ -189,6 +189,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
   // it on its own when the deadline passes; "Start now" is still offered.
   const queued = isQueuedStart(task);
   const sendContext = task.send_context !== 0;
+  const tagCount = task.tag_ids.length;
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
     <div className="hero">
@@ -196,18 +197,35 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, running, b
       <div className="h-status"><StatusDot status={task.status} /> {statusLine}</div>
       <h2>{task.title}</h2>
       {task.description && <p className="h-desc">{task.description}</p>}
+      {/* The brief above IS the brief — this card must not restate it. It used
+          to print "**title.** description" under an "initial prompt" header,
+          which was both a near-verbatim repeat of the two lines above it and a
+          fiction: the opening user turn is the fixed INITIAL_TASK_PROMPT, and
+          the title/details reach the session through buildProjectContext() in
+          the system prompt. So the card answers the question the brief can't —
+          which BLOCKS of context get assembled around it — and owns the one
+          knob that changes the answer, rather than stating it twice (readout
+          here, checkbox below). Rows are in the order buildProjectContext()
+          emits them. */}
       <div className="h-prompt">
-        <div className="hp-h">Initial prompt the agent will receive</div>
-        <div className="hp-b">
-          <span className="ctx-pre">↳ {sendContext ? `${project.name} project context` : "task details only"}{carried ? " + previous session summary" : ""} (auto-prepended)</span>
-          <strong>{task.title}.</strong> {task.description}
-        </div>
+        <div className="hp-h">What the session starts with</div>
+        <ul className="hp-list">
+          <li>
+            <label className={running ? "off" : undefined}
+              title="Uncheck to start without the saved project context. Task details and Calandria tools are always included.">
+              <input type="checkbox" checked={sendContext} disabled={running} onChange={(e) => onSetSendContext(e.target.checked)} />
+              <span>{project.name} project context</span>
+            </label>
+          </li>
+          <li><span className="hp-fixed" aria-hidden /><span>This task&rsquo;s title and details</span></li>
+          {/* Suppressed by send_context = 0 exactly like the project context —
+              lib/tagContext.ts returns "" for it — so the row follows the box. */}
+          {sendContext && tagCount > 0 && (
+            <li><span className="hp-fixed" aria-hidden /><span>Where this task sits in {tagCount === 1 ? "its feature" : `its ${tagCount} features`}</span></li>
+          )}
+          {carried && <li><span className="hp-fixed" aria-hidden /><span>Summary of {task.generation - 1 === 1 ? "the previous session" : `all ${task.generation - 1} previous sessions`}</span></li>}
+        </ul>
       </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: running ? "not-allowed" : "pointer" }}
-        title="Uncheck to start without the saved project context. Task details and Calandria tools are always included.">
-        <input type="checkbox" checked={sendContext} disabled={running} onChange={(e) => onSetSendContext(e.target.checked)} />
-        Send saved project context to the agent
-      </label>
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
           {Icon.bolt()} Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change this.
