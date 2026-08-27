@@ -18,6 +18,23 @@ const http = require("node:http");
 const nextImport = require("next");
 const { resolveHostname, hostnameMigrationWarning } = require("./lib/resolveHostname");
 
+// Structured logging (lib/log.mjs), dynamic-imported like every other lib/*.mjs
+// this CommonJS entrypoint needs. `log` is reassigned once that resolves — a
+// microtask or two into boot — so until then it is a console shim printing
+// exactly what the module's default text format would. The only call that can
+// land in that window is numEnv's parse warning below, and losing the
+// CALANDRIA_LOG_FORMAT=json shape for one bad-PORT line is a better trade than
+// blocking the whole boot on an import.
+let log = {
+  info: (msg) => console.log(`[server] ${msg}`),
+  warn: (msg) => console.warn(`[server] ${msg}`),
+  error: (msg) => console.error(`[server] ${msg}`),
+};
+const logImport = import("./lib/log.mjs").then((m) => {
+  log = m.createLogger("server");
+  return m;
+});
+
 // Mirrors num() in lib/config.ts — duplicated because this plain-Node
 // entrypoint can't import TS. Falls back to `def` and warns once when the
 // var is set but not a number, so a typo'd PORT fails loud at boot instead
@@ -26,7 +43,7 @@ function numEnv(name, raw, def) {
   if (raw === undefined) return def;
   const n = Number(raw);
   if (!Number.isFinite(n)) {
-    console.warn(`[server] ${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
+    log.warn(`${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
     return def;
   }
   return n;
@@ -43,10 +60,10 @@ function numEnv(name, raw, def) {
 // not be able to kill the shared process. This can mask real bugs, so the noise
 // is deliberate: every occurrence is a bug to chase, not a state to live in.
 process.on("unhandledRejection", (reason) => {
-  console.error("[server] UNHANDLED REJECTION (kept alive — investigate):", reason);
+  log.error("UNHANDLED REJECTION (kept alive — investigate)", { err: reason });
 });
 process.on("uncaughtException", (err) => {
-  console.error("[server] UNCAUGHT EXCEPTION (kept alive — investigate):", err);
+  log.error("UNCAUGHT EXCEPTION (kept alive — investigate)", { err });
 });
 
 // Origin auth enforcement (lib/auth/origin.mjs selects the provider: open local
@@ -153,7 +170,7 @@ function bootPing(label, path) {
       })
       .catch((err) => {
         if (attempts < 5) setTimeout(ping, 3000).unref?.();
-        else console.warn(`[${label}] boot ping failed: ${err?.message || err}`);
+        else log.warn("boot ping failed", { ping: label, err: err?.message || err });
       });
   };
   ping();
@@ -207,8 +224,8 @@ const prepared = dbLockImport
     const held = await dbLock.acquireDbLock();
     dbDir = held.dir;
     if (held.mode === "bypass") {
-      console.warn(
-        "[server] WARN: CALANDRIA_DB_LOCK=off — the single-instance check is DISABLED. " +
+      log.warn(
+        "WARN: CALANDRIA_DB_LOCK=off — the single-instance check is DISABLED. " +
           "If a second process is running against this database, the two will overwrite " +
           "each other's running tasks, queued follow-ups and open permission prompts.",
       );
@@ -216,24 +233,24 @@ const prepared = dbLockImport
   })
   .catch((err) => {
     // Not a crash — a refusal. The only useful thing to say is who has it.
-    console.error(`[server] ${err.message}`);
+    log.error(err.message);
     process.exit(1);
   })
   .then(() => app.prepare());
 
-Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage]) => {
+Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport, logImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage, logMod]) => {
   // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still relied
   // on — the old spellings keep working, but this is the only heads-up an
   // operator gets, so print it before the app starts serving.
   const deprecation = env.deprecatedEnvWarning();
-  if (deprecation) console.warn("[server] WARN: " + deprecation);
+  if (deprecation) log.warn("WARN: " + deprecation);
 
   // Same deal for the on-disk locations: an install that predates the rename
   // keeps running on ~/.zen-orchestrator / ~/.agent-orchestrator, because
   // moving a live instance's data is the operator's call and never ours. This
   // line is the only place that says so. See lib/storage.mjs.
   const legacyStorage = storage.legacyStorageWarning();
-  if (legacyStorage) console.warn("[server] " + legacyStorage);
+  if (legacyStorage) log.warn(legacyStorage);
 
   // Resolved here (not at top-level) because it reads CALANDRIA_SHUTDOWN_GRACE_MS
   // through lib/env.mjs's readEnv, which needs envImport settled.
@@ -243,8 +260,8 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   // keys so turns can't silently switch from the subscription login to
   // per-token API billing. See lib/env-keys.mjs.
   for (const name of envKeys.stripInheritedAgentKeys()) {
-    console.warn(
-      `[server] WARN: ${name} was set in the environment — unsetting it. ` +
+    log.warn(
+      `WARN: ${name} was set in the environment — unsetting it. ` +
         `Turns authenticate via the connected agent login (or a key saved in Settings). ` +
         `Set CALANDRIA_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose.`,
     );
@@ -339,7 +356,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     const url = `http://127.0.0.1:${port}/api/instance/drain`;
     const headers = process.env.SERVICE_TOKEN ? { "x-service-token": process.env.SERVICE_TOKEN } : {};
     fetch(url, { method: "POST", headers })
-      .catch((err) => console.warn(`[server] shutdown drain request failed (exiting anyway): ${err?.message || err}`))
+      .catch((err) => log.warn("shutdown drain request failed (exiting anyway)", { err: err?.message || err }))
       .finally(() => {
         clearTimeout(hardTimeout);
         exit();
@@ -362,29 +379,35 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       ? `origin auth ON — Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`
       : "origin auth OFF — set CF_ACCESS_*" +
         (dev ? " (fine for local dev)" : "; DO NOT expose this origin unauthenticated");
-    console.log(
-      `[server] calandria ready on http://${hostname}:${port} ` +
+    // Prose on purpose: this is the line a human looks for, and splitting it
+    // into fields would quote the auth sentence into noise. The machine-readable
+    // version of the same facts is the config line right below.
+    log.info(
+      `calandria ready on http://${hostname}:${port} ` +
         `(${dev ? "dev" : "production"}); /pty -> ws://${ptyHost}:${ptyPort}; ${auth}`,
     );
     // One-line boot summary (issue #18 item 4): "is it configured the way I
     // think" as a log-grep instead of a source read, alongside the warnings below.
     const schedulerOn = !["0", "off", "false", "no"].includes(String(env.readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase());
-    console.log(
-      `[server] config: bind=${hostname}:${port} pty=${ptyHost}:${ptyPort} ` +
-        `cfAccess=${cfAccess.originAuthEnabled() ? "on" : "off"} ` +
-        `serviceToken=${(process.env.SERVICE_TOKEN || "").trim() ? "set" : "unset"} ` +
-        `scheduler=${schedulerOn ? "on" : "off"} db=${dbDir}`,
-    );
+    log.info("config", {
+      bind: `${hostname}:${port}`,
+      pty: `${ptyHost}:${ptyPort}`,
+      cfAccess: cfAccess.originAuthEnabled() ? "on" : "off",
+      serviceToken: (process.env.SERVICE_TOKEN || "").trim() ? "set" : "unset",
+      scheduler: schedulerOn ? "on" : "off",
+      logFormat: logMod.resolveLogFormat(),
+      db: dbDir,
+    });
     // An older deployment that set HOSTNAME deliberately just became
     // loopback-only; say so rather than letting remote access vanish silently.
     const migration = hostnameMigrationWarning();
-    if (migration) console.warn(`[server] WARN: ${migration}`);
+    if (migration) log.warn(`WARN: ${migration}`);
     // Binding past loopback publishes the app AND the terminal. The origin gate
     // stops hostile web pages, not a peer with a socket that can forge a Host
     // header, so that combination needs real auth.
     if (!cfAccess.originAuthEnabled() && !/^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i.test(hostname)) {
-      console.warn(
-        `[server] WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
+      log.warn(
+        `WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
           `this port gets the app and a shell. Set CF_ACCESS_*, or unset CALANDRIA_HOSTNAME.`,
       );
     }
@@ -395,8 +418,8 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // way, so say this explicitly.
     const cfSet = ["CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"].filter((k) => (process.env[k] || "").trim());
     if (cfSet.length === 1) {
-      console.warn(
-        `[server] WARN: ${cfSet[0]} is set but the other CF_ACCESS_* variable is not — ` +
+      log.warn(
+        `WARN: ${cfSet[0]} is set but the other CF_ACCESS_* variable is not — ` +
           `Cloudflare Access enforcement needs BOTH and is currently OFF.`,
       );
     }
@@ -407,8 +430,8 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // bridge the non-Claude agents use 403s. docker/entrypoint.sh generates one
     // so a container never lands here; a bare-node deploy has to be told.
     if (cfAccess.originAuthEnabled() && !(process.env.SERVICE_TOKEN || "").trim()) {
-      console.warn(
-        `[server] WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset — health probes, ` +
+      log.warn(
+        `WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset — health probes, ` +
           `boot restore of managed services, and the agent-tool bridge have no way to ` +
           `authenticate and will get 403. Generate one: openssl rand -hex 32`,
       );
@@ -417,11 +440,11 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       // One-time heads-up: dev mode compiles each route on first hit (Turbopack +
       // React dev build) and is MUCH slower than the production build. Users who
       // just want to USE the app should not be running it this way.
-      console.warn(
-        "[server] ============================================================\n" +
-          "[server]  DEV MODE — routes compile on demand; everything is slower.\n" +
-          "[server]  For actually using the app, run:  npm run build && npm start\n" +
-          "[server] ============================================================",
+      log.warn(
+        "============================================================\n" +
+          "  DEV MODE — routes compile on demand; everything is slower.\n" +
+          "  For actually using the app, run:  npm run build && npm start\n" +
+          "  ============================================================",
       );
     }
   });

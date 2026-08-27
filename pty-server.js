@@ -14,6 +14,21 @@ const path = require("node:path");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
 
+// Structured logging (lib/log.mjs) — same lazy shape as server.js: this
+// entrypoint is CommonJS and can only reach an ES module through import(), so
+// `log` starts as a console shim printing what the module's default text format
+// prints and is replaced once the import lands. The sidecar is a separate
+// process, so it reads CALANDRIA_LOG_FORMAT itself; an instance set to json
+// would otherwise emit half its output unparseable.
+let log = {
+  info: (msg) => console.log(`[pty-server] ${msg}`),
+  warn: (msg) => console.warn(`[pty-server] ${msg}`),
+  error: (msg) => console.error(`[pty-server] ${msg}`),
+};
+import("./lib/log.mjs").then((m) => {
+  log = m.createLogger("pty-server");
+});
+
 // Mirrors num() in lib/config.ts — duplicated because this plain-Node
 // entrypoint can't import TS. Falls back to `def` and warns once when the
 // var is set but not a number (issue #18 item 1).
@@ -21,7 +36,7 @@ function numEnv(name, raw, def) {
   if (raw === undefined) return def;
   const n = Number(raw);
   if (!Number.isFinite(n)) {
-    console.warn(`[pty-server] ${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
+    log.warn(`${name}=${JSON.stringify(raw)} is not a number; using default ${def}`);
     return def;
   }
   return n;
@@ -93,10 +108,10 @@ const SHELL = resolveShell();
 // LOUDLY rather than exit — the noise is deliberate, since this can mask real
 // bugs: every occurrence is a bug to chase, not a state to live in.
 process.on("unhandledRejection", (reason) => {
-  console.error("[pty-server] UNHANDLED REJECTION (kept alive — investigate):", reason);
+  log.error("UNHANDLED REJECTION (kept alive — investigate)", { err: reason });
 });
 process.on("uncaughtException", (err) => {
-  console.error("[pty-server] UNCAUGHT EXCEPTION (kept alive — investigate):", err);
+  log.error("UNCAUGHT EXCEPTION (kept alive — investigate)", { err });
 });
 
 const server = http.createServer((_req, res) => {
@@ -126,13 +141,13 @@ const wss = new WebSocketServer({
         // non-loopback peer found PTY_PORT directly.
         const peer = info.req.socket?.remoteAddress;
         if (!localOrigin.isLoopbackPeer(peer)) {
-          console.warn(`[pty-server] rejected connection from ${peer} (not loopback)`);
+          log.warn("rejected connection — peer is not loopback", { peer });
           return callback(false, 401, "Unauthorized");
         }
         const headers = { host: info.req.headers.host, origin: info.origin };
         if (!origin.originAuthEnabled()) {
           const allowed = localOrigin.localWebSocketRequestAllowed(headers);
-          if (!allowed) console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"} not allowed in local mode`);
+          if (!allowed) log.warn("rejected connection — origin not allowed in local mode", { origin: info.origin || "(none)" });
           return callback(allowed);
         }
         // Access mode. Same two checks the app makes, for the same two reasons:
@@ -140,19 +155,19 @@ const wss = new WebSocketServer({
         // (the Access cookie is SameSite=None), the assertion proves who it is.
         // server.js forwards the upgrade's headers verbatim, so both are here.
         if (!localOrigin.sameOriginWebSocketRequestAllowed(headers)) {
-          console.warn(`[pty-server] rejected connection — origin ${info.origin || "(none)"} does not match host ${headers.host || "(none)"}`);
+          log.warn("rejected connection — origin does not match host", { origin: info.origin || "(none)", host: headers.host || "(none)" });
           return callback(false, 401, "Unauthorized");
         }
         try {
           await origin.verifyOriginNodeRequest(info.req);
         } catch (err) {
-          console.warn(`[pty-server] rejected connection — no valid Access assertion (${err?.message || err})`);
+          log.warn("rejected connection — no valid Access assertion", { err: err?.message || err });
           return callback(false, 401, "Unauthorized");
         }
         callback(true);
       })
       .catch((err) => {
-        console.error("[pty-server] Failed to evaluate the connection gate", err);
+        log.error("failed to evaluate the connection gate", { err });
         callback(false);
       });
   },
@@ -220,9 +235,9 @@ wss.on("connection", (ws, req) => {
 // the key still present. See lib/env-keys.mjs (CALANDRIA_ALLOW_API_KEY_ENV opts in).
 import("./lib/env-keys.mjs").then((envKeys) => {
   for (const name of envKeys.stripInheritedAgentKeys()) {
-    console.warn(`[pty-server] WARN: ${name} was set in the environment — unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
+    log.warn(`WARN: ${name} was set in the environment — unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
   }
   server.listen(PORT, HOST, () => {
-    console.log(`[pty-server] listening on ws://${HOST}:${PORT}`);
+    log.info(`listening on ws://${HOST}:${PORT}`);
   });
 });
