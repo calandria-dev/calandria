@@ -1,6 +1,6 @@
 ---
 name: worktree-ready
-description: Audit a repository for parallel git-worktree development and fix what breaks — untracked files a fresh checkout will never have (.env, local config, certs), per-worktree dependency installs, hardcoded ports, one shared dev database, Docker Compose project-name collisions, and tooling that assumes .git is a directory. Use whenever a project runs under Calandria or any orchestrator that gives each agent task its own worktree, when a task fails on a fresh checkout with EADDRINUSE, a missing .env, or missing node_modules, when two parallel tasks interfere with each other, or when asked to make a repo worktree-safe, parallel-agent-ready, or cheaper to check out many times.
+description: Audit a repository for parallel git-worktree development and fix what breaks — untracked files a fresh checkout will never have (.env, local config, certs), per-worktree dependency installs, hardcoded ports, one shared dev database, Docker Compose project-name collisions, and tooling that assumes .git is a directory. Use whenever a project runs under Calandria or any tool that gives each agent task its own worktree, when a task fails on a fresh checkout with EADDRINUSE, a missing .env, or missing node_modules, when two parallel tasks interfere with each other, or when asked to make a repo worktree-safe, parallel-agent-ready, or cheaper to check out many times.
 license: Apache-2.0
 compatibility: Works in any agent that reads the Agent Skills format (Claude Code, Codex). Needs a shell with git.
 ---
@@ -115,7 +115,7 @@ logic over it.
   default documented in `.env.example`.
 - **Tests bind port 0** (ephemeral) and read back the assigned port. A fixed
   test port is a guaranteed collision the moment two suites run at once, and
-  parallel tasks running tests is the whole point of the orchestrator.
+  running tests in parallel tasks is the whole point of this setup.
 - Under Calandria specifically: managed services get a `PORT` injected, but an
   agent running `npm run dev` itself in its worktree gets nothing — so honoring
   `PORT` is what lets the agent pick a free one, and `expose_service` is how it
@@ -179,7 +179,7 @@ worktree.
 
 ### 7. One bootstrap command
 
-Everything above converges here. Because no orchestrator hook runs, the repo's
+Everything above converges here. Because no setup hook runs for you, the repo's
 answer to "you have a bare checkout, now what" has to be a single idempotent
 command — `make bootstrap`, `just setup`, `npm run setup`, `./scripts/setup.sh`
 — that installs dependencies, seeds config from examples, initializes

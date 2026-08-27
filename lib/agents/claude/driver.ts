@@ -40,10 +40,12 @@ import {
   resolveTagRefs,
   resolveTargetProject,
   resolveTitleRefs,
+  setBaseBranchForAgent,
+  updateTagForAgent,
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
 import { waitForAnswer } from "../../asks";
@@ -405,6 +407,39 @@ function calandriaServer(
           const { task: updated, text, autoStartDependents } = withdrawSuggestionForAgent(task, args.task, args.reason);
           // Cancelling cleared a blocker — same hand-off as update_task's above.
           if (autoStartDependents && updated) hooks?.onTaskCleared(updated.id);
+          return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        SET_BASE_BRANCH.name,
+        SET_BASE_BRANCH.description,
+        {
+          branch: z.string().describe(SET_BASE_BRANCH.params.branch),
+          task: z.string().optional().describe(SET_BASE_BRANCH.params.task),
+        },
+        async (args: { branch: string; task?: string }) => {
+          // Same trust split as update_task: the closed-over `task` is the
+          // caller (the server's word), `args.task` the target (the model's).
+          // Everything else — the refusals, the git, the reconciliation — is in
+          // lib/baseBranch.ts, shared with POST /api/tasks/[id]/base-branch.
+          const { task: updated, text } = await setBaseBranchForAgent(task, args.task, args.branch);
+          return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        UPDATE_TAG.name,
+        UPDATE_TAG.description,
+        {
+          tag: z.string().describe(UPDATE_TAG.params.tag),
+          name: z.string().optional().describe(UPDATE_TAG.params.name),
+          description: z.string().optional().describe(UPDATE_TAG.params.description),
+          color: z.string().optional().describe(UPDATE_TAG.params.color),
+          base_branch: z.string().optional().describe(UPDATE_TAG.params.base_branch),
+        },
+        async (args: { tag: string; name?: string; description?: string; color?: string; base_branch?: string }) => {
+          // Tags never span projects, so this is scoped to the session's own —
+          // no resolveTargetProject, and no `project` param to get wrong.
+          const { tag: updated, text } = updateTagForAgent(project, args.tag, args);
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),

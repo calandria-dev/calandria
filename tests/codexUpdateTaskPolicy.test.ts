@@ -5,11 +5,16 @@ import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createTag, createProject, createTask, getTask, getTaskDeps, getTaskTagIds, listAgentEdits, listTags, listTasks, updateTask } from "@/lib/store";
+import { createTag, createProject, createTask, getTag, getTask, getTaskDeps, getTaskTagIds, listAgentEdits, listTags, listTasks, setTaskTags, updateTask } from "@/lib/store";
 import { createSuggestedTask } from "@/lib/agentTools";
+import { resolveBaseBranch } from "@/lib/baseBranch";
+import { ensureWorktree } from "@/lib/git";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { POST as suggestTaskEp } from "@/app/api/internal/agent-tools/suggest-task/route";
 import { POST as listTagsEp } from "@/app/api/internal/agent-tools/list-tags/route";
+import { POST as setBaseBranchEp } from "@/app/api/internal/agent-tools/set-base-branch/route";
+import { POST as updateTagEp } from "@/app/api/internal/agent-tools/update-tag/route";
+import { git, makeRepo, uid } from "./helpers";
 
 // update_task's cross-task policy, proved END TO END on the Codex path.
 //
@@ -35,6 +40,8 @@ const ROUTES: Record<string, (req: NextRequest) => Promise<Response>> = {
   "/api/internal/agent-tools/update-task": updateTaskEp,
   "/api/internal/agent-tools/suggest-task": suggestTaskEp,
   "/api/internal/agent-tools/list-tags": listTagsEp,
+  "/api/internal/agent-tools/set-base-branch": setBaseBranchEp,
+  "/api/internal/agent-tools/update-tag": updateTagEp,
 };
 
 let server: http.Server;
@@ -403,6 +410,201 @@ describe("tags, end to end over the Codex bridge", () => {
       })) as ToolResult;
       expect(second.isError).toBeFalsy();
       expect(getTaskTagIds(inert.id)).toEqual([b.id]);
+    } finally {
+      await close();
+    }
+  });
+});
+
+// set_base_branch and update_tag over the same wire. Both are new verbs in
+// phase 3 of the per-task base branch work, and Codex is the path where the
+// MODEL names the target — so the refusals have to be shown to hold on the far
+// side of a process boundary, against the DB, rather than assumed from the
+// in-process policy (tests/agentToolsBaseBranch.test.ts).
+describe("set_base_branch, end to end over the Codex bridge", () => {
+  /** A project on a real repo with a `release` branch to aim at, plus a caller. */
+  async function board() {
+    const repo = await makeRepo();
+    await git(repo, "branch", "release");
+    const project = createProject({ name: `Codex-Base-${uid()}`, repo_path: repo, branch: "main" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    return { repo, project, caller };
+  }
+
+  /** Cut a worktree the way the launch paths do, pinning the base it used. */
+  async function cut(repo: string, taskId: string, base: string) {
+    const wt = (await ensureWorktree(repo, taskId, base))!;
+    updateTask(taskId, {
+      started: 1, worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
+      ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+    });
+    return getTask(taskId)!;
+  }
+
+  it("retargets the caller's own row mid-turn, and its worktree really moves", async () => {
+    const { repo, project, caller } = await board();
+    await cut(repo, caller.id, "main");
+    await git(repo, "checkout", "release");
+    const releaseTip = (await git(repo, "rev-parse", "HEAD")).trim();
+    await git(repo, "checkout", "main");
+    // A live turn in the caller's own session — exactly the state this tool is
+    // called from, and the one case the liveness refusal must NOT fire on.
+    updateTask(caller.id, { running: 1 });
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const res = (await client.callTool({ name: "set_base_branch", arguments: { branch: "release" } })) as ToolResult;
+      expect(res.isError, res.content[0].text).toBeFalsy();
+      expect(res.content[0].text).toContain("Now based on release");
+      const after = getTask(caller.id)!;
+      expect(after.base_branch).toBe("release");
+      // Nothing of its own in the worktree, so it was re-cut: up to date with
+      // the new base rather than merely pointed at it.
+      expect(after.base_sha).toBe(releaseTip);
+      expect((await git(after.worktree_path, "rev-parse", "HEAD")).trim()).toBe(releaseTip);
+      // Its own row, so no "changed by an agent" chip — nobody to surprise.
+      expect(listAgentEdits(caller.id)).toEqual([]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("records the retarget when the model names SOMEBODY ELSE's row", async () => {
+    const { repo, project, caller } = await board();
+    const other = createTask({ project_id: project.id, title: "Theirs", description: "" });
+    await cut(repo, other.id, "main");
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const res = (await client.callTool({ name: "set_base_branch", arguments: { task: other.id, branch: "release" } })) as ToolResult;
+      expect(res.isError, res.content[0].text).toBeFalsy();
+      expect(getTask(other.id)!.base_branch).toBe("release");
+      const edits = listAgentEdits(other.id);
+      expect(edits).toHaveLength(1);
+      // Attributed to CALANDRIA_TASK_ID, which the model never sends.
+      expect(edits[0].actor_task_id).toBe(caller.id);
+      expect(edits[0].changes[0]).toMatchObject({ field: "base_branch", before: "main", after: "release" });
+      expect(getTask(other.id)!.agent_edited_at).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it("refuses every case it must, with the DB byte-identical afterwards", async () => {
+    const { repo, project, caller } = await board();
+    const mine = await cut(repo, caller.id, "main");
+
+    const running = createTask({ project_id: project.id, title: "Busy", description: "" });
+    await cut(repo, running.id, "main");
+    updateTask(running.id, { running: 1 });
+
+    const neighbour = createTask({ project_id: project.id, title: "Neighbour", description: "" });
+    const n = await cut(repo, neighbour.id, "main");
+
+    const elsewhere = createProject({ name: `Codex-Elsewhere-${uid()}`, repo_path: await makeRepo(), branch: "main" });
+    const foreign = createTask({ project_id: elsewhere.id, title: "Foreign", description: "" });
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const cases: [string, Record<string, unknown>, string][] = [
+        // A live turn in a row that isn't the caller's own: retargeting can
+        // reset a worktree, and that session is working in it.
+        ["running target", { task: running.id, branch: "release" }, "has a turn running"],
+        // A branch is a name in ONE repository.
+        ["another project", { task: foreign.id, branch: "release" }, "different project"],
+        ["unknown task", { task: "ghost", branch: "release" }, 'No task with id "ghost"'],
+        ["unusable name", { branch: "--upload-pack=evil" }, "isn't a usable git branch name"],
+        ["absent branch", { branch: "does-not-exist" }, "does-not-exist"],
+        ["own work branch", { branch: mine.work_branch }, "own work branch"],
+        // The refusal that blocks basing on another task's calandria/… branch.
+        ["occupied branch", { branch: n.work_branch }, "is checked out in"],
+      ];
+      const before = [running.id, foreign.id, caller.id, neighbour.id].map((id) => getTask(id)!);
+      for (const [label, args, expected] of cases) {
+        const res = (await client.callTool({ name: "set_base_branch", arguments: args })) as ToolResult;
+        expect(res.isError, `${label} should have been refused`).toBe(true);
+        expect(res.content[0].text, label).toContain(expected);
+      }
+      // Not one of the seven refusals wrote a row or recorded an edit.
+      for (const row of before) expect(getTask(row.id), row.title).toEqual(row);
+      for (const row of before) expect(listAgentEdits(row.id)).toEqual([]);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("update_tag, end to end over the Codex bridge", () => {
+  it("edits the tag itself, and a member cut later inherits its base branch", async () => {
+    const repo = await makeRepo();
+    await git(repo, "branch", "feature/auth");
+    const project = createProject({ name: `Codex-TagEdit-${uid()}`, repo_path: repo, branch: "main" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const tag = createTag({ project_id: project.id, name: "Auth migration" });
+    const member = createTask({ project_id: project.id, title: "Member", description: "" });
+    setTaskTags([member.id], [tag.id]);
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      // By exact NAME, like every other tag reference — and setting three
+      // things the tag itself owns, none of which update_task can reach.
+      const res = (await client.callTool({
+        name: "update_tag",
+        arguments: { tag: "Auth migration", description: "Port every route.", color: "#3E7CA8", base_branch: "feature/auth" },
+      })) as ToolResult;
+      expect(res.isError, res.content[0].text).toBeFalsy();
+      expect(getTag(tag.id)).toMatchObject({ description: "Port every route.", color: "#3E7CA8", base_branch: "feature/auth" });
+
+      // The uncut member inherits it — that's the point of putting a base on a
+      // tag instead of on N tasks. Membership itself is untouched.
+      expect(resolveBaseBranch(getTask(member.id)!, project)).toBe("feature/auth");
+      expect(getTaskTagIds(member.id)).toEqual([tag.id]);
+
+      // "" clears it back to "members follow the project".
+      const cleared = (await client.callTool({ name: "update_tag", arguments: { tag: tag.id, base_branch: "" } })) as ToolResult;
+      expect(cleared.isError).toBeFalsy();
+      expect(getTag(tag.id)!.base_branch).toBe("");
+      expect(resolveBaseBranch(getTask(member.id)!, project)).toBe("main");
+    } finally {
+      await close();
+    }
+  });
+
+  it("refuses a rename collision, a near-miss ref and a foreign tag, writing nothing", async () => {
+    const project = createProject({ name: `Codex-TagRefuse-${uid()}` });
+    const other = createProject({ name: `Codex-TagRefuse2-${uid()}` });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const a = createTag({ project_id: project.id, name: "Auth migration", description: "keep me" });
+    createTag({ project_id: project.id, name: "Mobile PWA" });
+    const foreign = createTag({ project_id: other.id, name: "Elsewhere" });
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      // Renaming onto a name another tag holds is refused BY NAME, and the
+      // description that shared the call doesn't land under that refusal.
+      const clash = (await client.callTool({
+        name: "update_tag",
+        arguments: { tag: a.id, name: "Mobile PWA", description: "rewritten" },
+      })) as ToolResult;
+      expect(clash.isError).toBe(true);
+      expect(clash.content[0].text).toContain('A tag named "Mobile PWA" already exists');
+      expect(getTag(a.id)).toMatchObject({ name: "Auth migration", description: "keep me" });
+
+      // Exact names only — a near miss must not mint a near-duplicate of the
+      // tag the user filters their board by.
+      const nearMiss = (await client.callTool({ name: "update_tag", arguments: { tag: "auth migration", description: "nope" } })) as ToolResult;
+      expect(nearMiss.isError).toBe(true);
+      expect(listTags(project.id)).toHaveLength(2);
+
+      // The endpoint resolves inside CALANDRIA_PROJECT_ID, so a tag in another
+      // project is simply not there — there is no `project` param to redirect it.
+      const cross = (await client.callTool({ name: "update_tag", arguments: { tag: foreign.id, description: "mine now" } })) as ToolResult;
+      expect(cross.isError).toBe(true);
+      expect(getTag(foreign.id)!.description).toBe("");
+
+      const unsafe = (await client.callTool({ name: "update_tag", arguments: { tag: a.id, base_branch: "--upload-pack=evil" } })) as ToolResult;
+      expect(unsafe.isError).toBe(true);
+      expect(getTag(a.id)!.base_branch).toBe("");
     } finally {
       await close();
     }

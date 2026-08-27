@@ -106,8 +106,11 @@ straight in and starts the next turn.
   carries a tinted badge per tag, progress is derived from the tasks, and
   finished tags fold away. One lit chip expands into a strip with the tag's
   brief and its steps in dependency order; ⌘K, the project landing page and
-  the Insights leaderboard all reach it by name. Each session is told, for
-  every tag it carries, what that plan is and which step of it this is.
+  the Insights leaderboard all reach it by name. A tag can also set the git
+  **base branch** its tasks are cut from, merge into and sync against, so a
+  five-task feature is pointed at `feature/auth` once instead of five times.
+  Each session is told, for every tag it carries, what that plan is and which
+  step of it this is.
 - **Runbooks:** save a task you run often ("push everything unpushed and
   babysit CI", "sweep my Jiras and report") as a named recipe, then dispatch
   it in one click. Each run mints a fresh task, and a box for this-run-only

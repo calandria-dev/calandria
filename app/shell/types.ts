@@ -79,8 +79,9 @@ export interface TaskRow {
 // ---------- agent edits on an already-accepted task (AgentEdits.tsx) ----------
 // Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
 
-/** The task field an agent's `update_task` call changed. */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by";
+/** The task field an agent tool changed — `update_task`'s, plus the base branch
+ *  `set_base_branch` retargets (whose Revert re-runs the retarget, not a write). */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
 
 /** One field's before/after within an edit — `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`

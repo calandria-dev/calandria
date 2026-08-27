@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getTask, getTaskDeps, getTag, getTaskTagIds, setTaskTags, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
+import { getProject, getTask, getTaskDeps, getTag, getTaskTagIds, setTaskTags, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
+import { setTaskBaseBranch } from "@/lib/baseBranch";
 import { publishGlobal } from "@/lib/events";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import type { AgentEditChange, Priority, Status, Task } from "@/lib/types";
@@ -21,10 +22,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 /**
  * Fold one AgentEditChange's `before_value` into the patch that restores it —
- * every field except `blocked_by` and `tags`, which POST handles separately
- * (both live in their own tables, and a failure there has to become a 409 with
- * the row untouched, not a column write). Accumulated into ONE patch rather than written per field: a revert of
- * a four-field edit is one user action and should be one row write, so a
+ * every field except `blocked_by`, `tags` and `base_branch`, which POST handles
+ * separately (the first two live in their own tables; the third has to go back
+ * through the same git reconciliation that set it, since a raw column write
+ * would leave `base_sha` describing a branch the task is no longer on). A
+ * failure in any of the three has to become a 409 with the row untouched.
+ * Accumulated into ONE patch rather than written per field: a revert of a
+ * four-field edit is one user action and should be one row write, so a
  * listener refetching on task_edited can never catch it half-applied.
  */
 function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
@@ -43,6 +47,7 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
       break;
     case "tags":
     case "blocked_by":
+    case "base_branch":
       break;
   }
 }
@@ -70,6 +75,13 @@ function staleFields(task: Task, changes: AgentEditChange[]): string[] {
         break;
       case "blocked_by":
         if (Array.isArray(c.after_value) && !sameSet(getTaskDeps(task.id), c.after_value)) out.push("blocked_by has changed");
+        break;
+      case "base_branch":
+        // The RAW column, not `after` — that one is the resolved name for
+        // reading ("main" where the column says ""), and comparing against it
+        // would call an untouched task stale the moment its pin was cleared.
+        if (typeof c.after_value === "string" && task.base_branch !== c.after_value)
+          out.push(`the base branch is now "${task.base_branch || "inherited"}"`);
         break;
     }
   }
@@ -113,7 +125,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // Deps first, exactly like updateTaskForAgent orders edges before fields:
+    // The base branch goes FIRST, before anything is written: putting it back
+    // re-runs the whole retarget (git, a possible reset --hard, a branch that
+    // may since have been deleted or checked out elsewhere), so it is by far the
+    // likeliest half to refuse — and a refusal has to leave the edit entirely
+    // un-reverted rather than land its other fields. Routed through
+    // setTaskBaseBranch, never a column write: an UPDATE would restore the name
+    // while leaving base_sha pointing at a commit on the branch being left.
+    const baseChange = edit.changes.find((c) => c.field === "base_branch");
+    if (baseChange) {
+      const task = getTask(id)!;
+      const project = getProject(task.project_id);
+      if (!project) return NextResponse.json({ error: "that task's project no longer exists" }, { status: 409 });
+      // "" is a real value here — the edit may have pinned a task that was
+      // inheriting, and setTaskBaseBranch reconciles that case too.
+      const back = await setTaskBaseBranch(task, project, typeof baseChange.before_value === "string" ? baseChange.before_value : "");
+      if (!back.ok)
+        return NextResponse.json(
+          { error: `could not put the base branch back: ${back.error} Nothing was reverted — set it by hand from the task's edit dialog.` },
+          { status: 409 }
+        );
+    }
+
+    // Deps next, exactly like updateTaskForAgent orders edges before fields:
     // a cycle can have appeared since this edit landed (a later edit, or a
     // manual change), and a refusal here must leave the row completely
     // untouched rather than half-reverted under a 200.
