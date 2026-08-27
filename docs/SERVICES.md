@@ -14,12 +14,35 @@ that value as `PORT` into managed services and the project's terminal. A service
 running is restarted when Calandria boots.
 
 If Calandria previously stopped unexpectedly, startup checks for and reaps the orphaned
-process group before relaunching the service. Port conflicts with unmanaged processes are
-shown as readable errors rather than crash loops. Log retention is bounded by
-`CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by default).
+process tree before relaunching the service — on Linux and macOS by signalling the
+process group, on Windows with `taskkill /T /F`. In both cases the reaper first confirms
+the recorded process still carries that service's command line, so a recycled PID is never
+killed. Port conflicts with unmanaged processes are shown as readable errors rather than
+crash loops. Log retention is bounded by `CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by
+default).
 
 Managed services are enabled by default. Set `CALANDRIA_FEATURE_SERVICES=0` to remove the
 feature.
+
+## Windows command syntax
+
+Service commands run through the platform's own shell: `sh -c` on Linux and macOS,
+`cmd.exe /d /s /c` on Windows. **On Windows a `dev`, `setup`, or `test` command is a
+`cmd.exe` command line**, not a POSIX one. `&&` chains, `npm run dev`, and plain paths work
+the same; these do not:
+
+- environment prefixes — `FOO=bar npm run dev` is a `cmd.exe` syntax error. Use
+  `set FOO=bar && npm run dev`.
+- `$VAR` — expansion is `%VAR%`.
+- single quotes — `cmd.exe` only understands double quotes; `'…'` is passed through
+  literally.
+- `~` — use `%USERPROFILE%`.
+
+To keep one command portable across platforms, put it in a script the project already has
+(`npm run dev`) or invoke the shell you want explicitly, for example
+`pwsh -NoProfile -Command "…"` or `bash -lc "…"` with Git Bash installed. Calandria does not
+rewrite the command or substitute a shell for you: it runs exactly what the project
+configured, so what you test in a terminal on that machine is what the service runs.
 
 ## Framework host checks
 

@@ -10,10 +10,13 @@
 // (lib/db.ts), and restoreServices() (server.js's boot ping to
 // /api/instance/services-restore) re-starts every managed service whose
 // desired_state is 'running', so a dev server survives a container restart at
-// the same public URL. Because the children are detached, a crashed server
+// the same public URL. Because the children outlive us, a crashed server
 // (kill -9) leaves them orphaned; the persisted pid column lets the next boot
-// reap the old process group before respawning (see reapOrphan), and a clean
-// process exit SIGKILLs every managed group on the way out (installExitHook).
+// reap the old process tree before respawning (see reapOrphan), and a clean
+// process exit force-kills every managed tree on the way out (installExitHook).
+// "Tree" rather than "group" because the two platforms disagree about what that
+// means — lib/processTree.ts owns the difference, and it is the only place in
+// this file that knows a negative pid from a taskkill.
 //
 // State lives on globalThis so it survives Next's dev HMR module reloads (same
 // pattern as lib/events.ts / lib/abort.ts). Each project also gets a stable PORT
@@ -21,7 +24,7 @@
 // predictable address the host-header router (lib/service-router.mjs) proxies
 // public hostnames to: <slug>--<appHost>, e.g. calc--ishan.calandria.example.com.
 
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import net from "node:net";
 import { nanoid } from "nanoid";
@@ -33,6 +36,7 @@ import { getProject, getSetting, setSetting } from "./store";
 import { resolveFeatures } from "./features";
 import { SERVICE_LOG_LINES } from "./config";
 import { appHostFromEnv, serviceHostsEnabled, slugifyServiceName } from "./service-host.mjs";
+import { hasProcessGroups, killTree, treeAlive, treeMatchesCommand } from "./processTree";
 
 // Per-service log ring buffer cap (lines) — CALANDRIA_SERVICE_LOG_LINES, default 1500.
 const LOG_CAP = SERVICE_LOG_LINES;
@@ -135,7 +139,7 @@ interface ServiceRow {
   desired_state: "running" | "stopped";
   visibility: ServiceVisibility;
   share_token: string;
-  pid: number; // process-group leader while running; 0 otherwise (orphan reaping)
+  pid: number; // the spawned shell's pid while running (tree root); 0 otherwise (orphan reaping)
 }
 
 function rowFor(projectId: string, name: string): ServiceRow | undefined {
@@ -221,9 +225,9 @@ function setDesired(projectId: string, name: string, desired: "running" | "stopp
     .run(desired, Date.now(), projectId, name);
 }
 
-// Record the live process-group leader (0 = none). Written at spawn and cleared
+// Record the live process tree's root pid (0 = none). Written at spawn and cleared
 // on exit, so a row with a nonzero pid after boot means the previous server
-// died without stopping the service — restoreServices() reaps that group.
+// died without stopping the service — restoreServices() reaps that tree.
 function setPid(projectId: string, name: string, pid: number): void {
   getDb()
     .prepare("UPDATE services SET pid = ? WHERE project_id = ? AND name = ?")
@@ -386,7 +390,7 @@ async function portBecameFree(port: number, timeoutMs: number): Promise<boolean>
 }
 
 // Resolves once the managed process has exited (or after timeoutMs — the
-// SIGKILL escalation in killProcGroup fires at 4s, so callers wait a bit past
+// SIGKILL escalation in killServiceTree fires at 4s, so callers wait a bit past
 // that). Immediate when nothing is running.
 function procExited(m: Managed, timeoutMs: number): Promise<void> {
   const proc = m.proc;
@@ -401,8 +405,8 @@ function procExited(m: Managed, timeoutMs: number): Promise<void> {
 // ---------- lifecycle ----------
 
 // Best-effort cleanup when THIS process exits cleanly (process.exit — e.g. Next
-// dev's SIGINT handler, or server.js's fallback signal handler): SIGKILL every
-// managed process group so an app restart never leaves zombie dev servers
+// dev's SIGINT handler, or server.js's fallback signal handler): force-kill
+// every managed process tree so an app restart never leaves zombie dev servers
 // holding ports. Sync-only by contract ('exit' handlers can't await); rows keep
 // desired_state='running', so boot restores the services. A kill -9 of the
 // server skips this entirely — that's what the boot reaper in restoreServices()
@@ -414,15 +418,16 @@ function installExitHook(): void {
   process.on("exit", () => {
     for (const m of reg().services.values()) {
       if (m.managed && m.proc?.pid != null) {
-        try { process.kill(-m.proc.pid, "SIGKILL"); } catch { /* already gone */ }
+        killTree(m.proc.pid, "SIGKILL");
       }
     }
   });
 }
 
 // Start (or no-op if already running) a configured service for a project. Spawns
-// the command in the project's working dir with PORT injected, as its own process
-// group (detached) so stop() can signal the whole tree (shell → npm → node).
+// the command in the project's working dir with PORT injected, in its own process
+// group where the platform has them, so stop() can signal the whole tree
+// (shell → npm → node) rather than just the shell we hold a handle to.
 // Async because a dev server's port is probed first (see probePort).
 export async function startService(project: Project, name: string): Promise<ServiceInfo> {
   const cfg = configuredCommand(project, name);
@@ -471,7 +476,10 @@ export async function startService(project: Project, name: string): Promise<Serv
     proc = spawn(cfg.command, {
       cwd: project.repo_path,
       shell: true,
-      detached: true, // own process group → stop() can kill the whole tree
+      // Own process group so killTree can signal the whole tree by negative
+      // pid. Not on win32, where `detached` means "new console" instead and
+      // buys nothing (taskkill /T walks the parent chain regardless).
+      detached: hasProcessGroups(),
       env: serviceEnv(m),
     });
   } catch (e) {
@@ -513,18 +521,22 @@ export async function startService(project: Project, name: string): Promise<Serv
   return toInfo(m);
 }
 
-// SIGTERM a managed service's process group, then SIGKILL any survivor after a
-// short grace period. Kill the whole group (negative pid) since shell:true wraps
-// the real server (shell → npm → node). No-op for an entry we don't own.
-function killProcGroup(m: Managed): void {
+// SIGTERM a managed service's whole process tree, then SIGKILL any survivor
+// after a short grace period. The tree, not the child: shell:true wraps the real
+// server (sh → npm → node, or cmd.exe → npm.cmd → node.exe). On win32 the
+// escalation is skipped — taskkill /T /F already terminated everything, and
+// there is no gentler tree signal to have tried first. No-op for an entry we
+// don't own.
+function killServiceTree(m: Managed): void {
   const proc = m.proc;
   if (!proc || proc.pid == null) return;
   const pid = proc.pid;
-  try { process.kill(-pid, "SIGTERM"); } catch { try { proc.kill("SIGTERM"); } catch { /* gone */ } }
-  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch { /* already dead */ } }, 4000).unref?.();
+  if (!killTree(pid, "SIGTERM")) { try { proc.kill("SIGTERM"); } catch { /* gone */ } }
+  if (!hasProcessGroups()) return;
+  setTimeout(() => { killTree(pid, "SIGKILL"); }, 4000).unref?.();
 }
 
-// Signal a managed service's process group to stop. Returns the settled info.
+// Signal a managed service's process tree to stop. Returns the settled info.
 // This is a PAUSE: the registry entry (and its persisted row) stay put so the
 // service can be restarted at the same public URL. To fully retire a service —
 // e.g. when its project is deleted — use removeProjectServices().
@@ -535,7 +547,7 @@ export function stopService(projectId: string, name: string): ServiceInfo | null
   // crash mid-run leaves desired_state='running' on purpose.)
   setDesired(projectId, name, "stopped");
   if (m.proc && m.proc.pid != null) {
-    killProcGroup(m);
+    killServiceTree(m);
   } else {
     m.status = "stopped";
     pushStatus(m);
@@ -554,7 +566,7 @@ export function removeProjectServices(projectId: string): void {
   const r = reg();
   for (const [k, m] of r.services) {
     if (m.projectId !== projectId) continue;
-    killProcGroup(m);
+    killServiceTree(m);
     r.services.delete(k); // router's findBySlug now misses → 404 on the public URL
     emit(projectId, { type: "removed", name: m.name });
   }
@@ -563,7 +575,7 @@ export function removeProjectServices(projectId: string): void {
 export async function restartService(project: Project, name: string): Promise<ServiceInfo> {
   const m = reg().services.get(keyOf(project.id, name));
   stopService(project.id, name);
-  // Wait for the old process group to actually die (SIGKILL escalation fires at
+  // Wait for the old process tree to actually die (SIGKILL escalation fires at
   // 4s) so the port is free — otherwise the new spawn would race its
   // predecessor and report a bogus port conflict.
   if (m) await procExited(m, 6000);
@@ -640,48 +652,34 @@ export function rotateShareToken(project: Project, name: string): ServiceInfo {
 
 // ---------- boot restore + orphan reaping ----------
 
-// Does pid still lead a live process group that looks like the service we
-// spawned? Guards the reaper against pid reuse: after a crash the pid could
-// have been recycled by an unrelated process, and killing that would be worse
-// than leaving an orphan. `ps` membership check: some process in the group must
-// still carry the service's command line (shell:true spawns `sh -c <command>`,
-// and every descendant shares the group).
-function groupLooksLikeService(pid: number, command: string): boolean {
-  try { process.kill(-pid, 0); } catch { return false; } // group gone
-  if (!command.trim()) return false;
-  try {
-    const out = execFileSync("ps", ["-A", "-o", "pgid=,command="], { encoding: "utf8" });
-    for (const line of out.split("\n")) {
-      const t = line.trim();
-      const sp = t.indexOf(" ");
-      if (sp < 1 || Number(t.slice(0, sp)) !== pid) continue;
-      if (t.slice(sp + 1).includes(command.trim())) return true;
-    }
-  } catch { /* no ps → refuse to kill on a guess */ }
-  return false;
-}
+// The recycled-pid guard lives in lib/processTree.ts (treeMatchesCommand): after
+// a crash the persisted pid could have been recycled by an unrelated process,
+// and killing that would be worse than leaving an orphan, so the reaper only
+// fires when some process under that pid still carries the service's command
+// line. Both halves of the check are platform-specific — process groups + `ps`
+// on POSIX, taskkill + a Win32_Process CommandLine lookup on Windows.
 
-// Kill a process group orphaned by a dead server (kill -9, OOM, power loss) so
+// Kill a process tree orphaned by a dead server (kill -9, OOM, power loss) so
 // the respawn doesn't fight its own predecessor for the port. SIGKILL, not
 // SIGTERM: the owning server is gone, there is no graceful state to save, and
 // the port must be free before startService probes it.
 async function reapOrphan(row: ServiceRow): Promise<void> {
   if (!row.pid) return;
-  if (groupLooksLikeService(row.pid, row.command)) {
-    try { process.kill(-row.pid, "SIGKILL"); } catch { /* died in between */ }
+  if (treeMatchesCommand(row.pid, row.command)) {
+    killTree(row.pid, "SIGKILL");
     const deadline = Date.now() + 2000;
     while (Date.now() < deadline) {
-      try { process.kill(-row.pid, 0); } catch { break; }
+      if (!treeAlive(row.pid)) break;
       await new Promise((r) => setTimeout(r, 50));
     }
-    console.log(`[services] reaped orphaned process group ${row.pid} (${row.name}) from a previous server`);
+    console.log(`[services] reaped orphaned process tree ${row.pid} (${row.name}) from a previous server`);
   }
   setPid(row.project_id, row.name, 0);
 }
 
 // Re-hydrate the registry from the services table — triggered at boot by
 // server.js's loopback ping to /api/instance/services-restore, idempotent per
-// process. First, any process group a dead server left behind is reaped (stale
+// process. First, any process tree a dead server left behind is reaped (stale
 // pid column). Then managed rows with desired_state='running' are actually
 // started; everything else (stopped services, expose_service entries whose
 // process died with the old server) is seeded stopped so its slug, visibility
@@ -697,7 +695,7 @@ export async function restoreServices(): Promise<void> {
   } catch {
     return; // fresh instance, nothing persisted yet
   }
-  // Reap orphans even when the feature flag is off — a stale process group from
+  // Reap orphans even when the feature flag is off — a stale process tree from
   // a crashed flag-on run must not survive the flag being flipped.
   for (const row of rows) {
     if (row.managed) await reapOrphan(row);
