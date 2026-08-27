@@ -83,6 +83,22 @@ describe("visibleAgentCommands", () => {
     ]);
   });
 
+  it("sorts an MCP server's prompts into the same long tail", () => {
+    // mcp__server__prompt is a namespace like plugin: is — a fleet of servers
+    // arrives in bulk under one prefix, and none of it is what a user hunting
+    // /verify from memory is scrolling past.
+    const out = visibleAgentCommands([
+      cmd("mcp__stash__analyze-performer"),
+      cmd("verify"),
+      cmd("code-review:code-review"),
+    ]);
+    expect(out.map((c) => c.name)).toEqual([
+      "verify",
+      "code-review:code-review",
+      "mcp__stash__analyze-performer",
+    ]);
+  });
+
   it("returns nothing for a driver with no commands", () => {
     expect(visibleAgentCommands([])).toEqual([]);
   });

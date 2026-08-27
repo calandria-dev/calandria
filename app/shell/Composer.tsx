@@ -180,14 +180,18 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const token = val.trim();
   const picking = token.startsWith("/") && !/\s/.test(token);
   const q = picking ? token.slice(1).toLowerCase() : "";
-  // Prefix matches first, then a match on the part after "plugin:", then any
-  // substring — so "/plan" still finds superpowers:writing-plans, but "/cl"
+  // Prefix matches first, then a match on the part after the namespace, then
+  // any substring — so "/plan" still finds superpowers:writing-plans, but "/cl"
   // puts /clear at the top where muscle memory expects it. Aliases match too
   // (the CLI resolves /cost and /stats to /usage) but the canonical name is
   // what's shown and inserted.
   const names = (c: MenuCommand) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
+  // Both namespace shapes, since typing the source is how you find either: a
+  // plugin's "plugin:command" and an MCP server's "mcp__server__prompt", where
+  // "stash" should reach mcp__stash__discover-performers.
+  const afterNs = (n: string) => (n.startsWith("mcp__") ? n.slice(5) : n.slice(n.indexOf(":") + 1));
   const rank = (c: MenuCommand) =>
-    Math.min(...names(c).map((n) => (n.startsWith(q) ? 0 : n.slice(n.indexOf(":") + 1).startsWith(q) ? 1 : 2)));
+    Math.min(...names(c).map((n) => (n.startsWith(q) ? 0 : afterNs(n).startsWith(q) ? 1 : 2)));
   const filtered = (q ? cmds.filter((c) => names(c).some((n) => n.includes(q))) : cmds)
     .map((c, i) => ({ c, i, r: rank(c) }))
     .sort((a, b) => a.r - b.r || a.i - b.i)

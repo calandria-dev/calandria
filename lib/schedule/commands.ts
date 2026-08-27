@@ -85,14 +85,19 @@ function editDistance(a: string, b: string): number {
  * A command the shared probe structurally cannot see, so its absence from the
  * registry proves nothing.
  *
- * MCP servers publish prompts as `/mcp__<server>__<prompt>`, and those names
- * live only on a session's `init` message — never in `supportedCommands()`,
- * which is what the probe reads (measured on CLI 2.1.228: 16 such prompts, 0 of
- * them returned, unchanged by strictMcpConfig and unchanged 15s in). A
- * scheduled turn DOES inherit the user's MCP servers and would expand them, so
- * rejecting one here would fail a working job every morning. Reading them costs
- * a real prompt plus the user's whole server fleet spawning unattended, which
- * is the trade this path exists to refuse — so they come back `unchecked`.
+ * MCP servers publish prompts as `/mcp__<server>__<prompt>`, and the probe runs
+ * with no MCP config at all, so it never reports one — deliberately, since the
+ * alternative spawns the user's whole server fleet on a menu keystroke and
+ * still answers with whatever raced to connect first (the measurements are in
+ * lib/agents/claude/commands.ts). A scheduled turn DOES inherit those servers
+ * and would expand the prompt, so rejecting one here would fail a working job
+ * every morning: they come back `unchecked`.
+ *
+ * The composer's menu does get these names, from the `init` message of real
+ * turns — but those are recorded against the TASK WORKTREE they ran in, and
+ * this probe asks about the project's repo, where no turn runs. If one is ever
+ * recorded for a path this validator asks about, it is a real observation and
+ * the check below simply passes before reaching here.
  */
 const isMcpPrompt = (command: string) => command.startsWith("mcp__");
 
