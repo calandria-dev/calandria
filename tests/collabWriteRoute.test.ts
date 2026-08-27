@@ -83,11 +83,20 @@ describe("POST /api/tasks/[id]/file", () => {
   it("confines writes to the worktree exactly like the read does", async () => {
     const outside = tmpDir("outside-");
     fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
-    fs.symlinkSync(path.join(outside, "secret.md"), path.join(worktree, "docs", "link.md"));
+    // A FILE symlink needs Developer Mode or elevation on Windows (a junction
+    // stands in only for a directory one), so its absence there is a fixture
+    // limitation, not a result — the link case below is conditioned on it.
+    let linked = true;
+    try {
+      fs.symlinkSync(path.join(outside, "secret.md"), path.join(worktree, "docs", "link.md"));
+    } catch {
+      linked = false;
+    }
     const attempt = (p: string) => post(taskId, { path: p, original: "nope\n", content: "pwned\n" });
     expect((await attempt("../" + path.basename(outside) + "/secret.md")).status).toBe(400);
     expect((await attempt(path.join(outside, "secret.md"))).status).toBe(400);
-    expect((await attempt("docs/link.md")).status).toBe(404); // symlink out: reads as nonexistent, never followed
+    // symlink out: reads as nonexistent, never followed
+    if (linked) expect((await attempt("docs/link.md")).status).toBe(404);
     expect((await attempt("docs/missing.md")).status).toBe(404); // creating files is the agent's job
     expect((await attempt("docs")).status).toBe(400);
     expect(fs.readFileSync(path.join(outside, "secret.md"), "utf8")).toBe("nope\n");

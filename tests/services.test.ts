@@ -27,6 +27,9 @@ import {
   serviceRoutingEnabled,
 } from "../lib/service-router.mjs";
 import { resolveFeatures } from "../lib/features";
+// Liveness the same way the supervisor asks it: a process-group probe on POSIX,
+// `tasklist` on win32, where a negative pid means nothing (lib/processTree.ts).
+import { treeAlive } from "../lib/processTree";
 
 const APP_HOST = "ishan.calandria.example.com";
 
@@ -202,7 +205,7 @@ describe("service registry persistence", () => {
     wipeRegistry();
     await restoreServices();
 
-    expect(() => process.kill(oldPid, 0)).toThrow(); // old orphan is gone
+    expect(treeAlive(oldPid)).toBe(false); // old orphan is gone
     const restored = listServices(project).find((s) => s.name === "dev");
     expect(restored!.status).toBe("running");
     expect(restored!.pid).not.toBe(oldPid);

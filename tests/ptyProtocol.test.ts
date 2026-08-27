@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import WebSocket from "ws";
+import { DETACHED, TEST_SHELL, killChildTree } from "./platform";
 
 const ROOT = path.resolve(__dirname, "..");
 const PORT = 3948; // fixed but unusual; the suite is serial so nothing contends
@@ -58,13 +59,15 @@ function collectOutput(ws: WebSocket, ms: number): Promise<string> {
 }
 
 beforeAll(async () => {
-  // Own the whole process group: accepted connections are real pty children,
-  // and killing only the parent would orphan them onto the developer's machine.
+  // Own the whole tree: accepted connections are real pty children, and killing
+  // only the parent would orphan them onto the developer's machine. A process
+  // group on POSIX, `taskkill /T` on win32 — killChildTree() picks.
   sidecar = spawn(process.execPath, [path.join(ROOT, "pty-server.js")], {
     cwd: ROOT,
-    env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", SHELL: "/bin/sh" },
+    // The knob, not $SHELL: this file needs A shell, not a POSIX one.
+    env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", CALANDRIA_PTY_SHELL: TEST_SHELL },
     stdio: "ignore",
-    detached: true,
+    detached: DETACHED,
   });
   sidecar.on("exit", (code, signal) => { exited = { code, signal }; });
   const deadline = Date.now() + 15_000;
@@ -80,10 +83,7 @@ beforeAll(async () => {
 }, 20_000);
 
 afterAll(() => {
-  // Negative pid = the group, so any pty child goes with it.
-  if (sidecar?.pid) {
-    try { process.kill(-sidecar.pid, "SIGKILL"); } catch { try { sidecar.kill("SIGKILL"); } catch {} }
-  }
+  killChildTree(sidecar);
 });
 
 describe("pty sidecar frame handling", () => {

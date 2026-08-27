@@ -17,6 +17,7 @@ import { WORKTREES_DIR } from "@/lib/config";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { getDb } from "@/lib/db";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
+import { canonicalPath } from "@/lib/paths";
 
 // Moving a task that has ALREADY RUN. The plain move refuses these: the task
 // holds a git worktree cut from its current project's repo, so re-parenting the
@@ -316,7 +317,9 @@ describe("what the next turn cuts", () => {
     expect(fresh).toBeTruthy();
     expect(fresh!.path).toBe(wt.path); // same path — worktrees are keyed by task id
     // …but a different repo, which is the whole point.
-    expect(await git(fresh!.path, "rev-parse", "--git-common-dir")).toContain(fs.realpathSync(toRepo));
+    // canonicalPath both sides: git prints C:/Users/... on Windows where
+    // realpathSync gives C:\Users\..., and NTFS case-folds (lib/paths.ts).
+    expect(canonicalPath(await git(fresh!.path, "rev-parse", "--git-common-dir"))).toContain(canonicalPath(toRepo));
     expect(await git(toRepo, "rev-parse", "--verify", `refs/heads/${fresh!.branch}`)).toBeTruthy();
   });
 
@@ -337,7 +340,7 @@ describe("what the next turn cuts", () => {
     expect(fresh!.path).toBe(stale!.path);
     // Reusing it would run the agent — and its commits, and its merge — against
     // the repo the task just left.
-    expect(await git(fresh!.path, "rev-parse", "--git-common-dir")).toContain(fs.realpathSync(newRepo));
+    expect(canonicalPath(await git(fresh!.path, "rev-parse", "--git-common-dir"))).toContain(canonicalPath(newRepo));
     expect(fs.existsSync(path.join(fresh!.path, "only-here.txt"))).toBe(true);
   });
 });

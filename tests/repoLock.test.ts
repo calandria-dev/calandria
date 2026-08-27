@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { repoLockKey, withRepoLock } from "../lib/repoLock";
 import { ensureWorktree } from "../lib/git";
 import { git, makeRepo, tmpDir, uid } from "./helpers";
+import { canonicalPath } from "@/lib/paths";
 
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
@@ -27,10 +28,21 @@ function deferred<T = void>() {
 // directly).
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
+/**
+ * `<kind>:` followed by an ABSOLUTE path — `/...` on POSIX, `C:\...` on Windows.
+ * What the assertion is really about is that the key is namespaced and can't be
+ * a relative answer two callers would spell differently; the leading slash was
+ * only ever how that looked on POSIX.
+ */
+const KEYED_ABSOLUTE = (kind: string) => new RegExp(`^${kind}:(/|[A-Za-z]:\\\\)`);
+
 /** `repo` reachable through a symlinked directory, the way /tmp -> /private/tmp is. */
 function symlinkTo(repo: string): string {
   const link = path.join(tmpDir("link-"), "repo");
-  fs.symlinkSync(repo, link);
+  // "junction" on Windows: a plain directory symlink there needs Developer Mode
+  // or an elevated process, while a junction needs neither — and both are what
+  // realpathSync resolves through, which is the property under test.
+  fs.symlinkSync(repo, link, process.platform === "win32" ? "junction" : "dir");
   return link;
 }
 
@@ -43,7 +55,7 @@ describe("repoLockKey", () => {
   it("is identical for every spelling of the same repo", async () => {
     const repo = await makeRepo();
     const canonical = await repoLockKey(repo);
-    expect(canonical).toMatch(/^git:\//);
+    expect(canonical).toMatch(KEYED_ABSOLUTE("git"));
     expect(await repoLockKey(symlinkTo(repo))).toBe(canonical);
     expect(await repoLockKey(repo + "/")).toBe(canonical);
     expect(await repoLockKey(repo + "/.")).toBe(canonical);
@@ -69,12 +81,12 @@ describe("repoLockKey", () => {
   it("falls back to the canonicalized path for a non-git directory", async () => {
     const dir = tmpDir("plain-");
     const key = await repoLockKey(dir);
-    expect(key).toMatch(/^path:\//);
+    expect(key).toMatch(KEYED_ABSOLUTE("path"));
     // A greenfield project still serializes across spellings while it waits.
     expect(await repoLockKey(dir + "/")).toBe(key);
     expect(await repoLockKey(symlinkTo(dir))).toBe(key);
     // ...and doesn't throw on a path that isn't there at all.
-    expect(await repoLockKey(path.join(dir, "missing"))).toMatch(/^path:\//);
+    expect(await repoLockKey(path.join(dir, "missing"))).toMatch(KEYED_ABSOLUTE("path"));
   });
 
   it("does not cache the miss — a dir that becomes a repo re-resolves", async () => {
@@ -82,9 +94,9 @@ describe("repoLockKey", () => {
     // A remembered "not a repo" would key the calls after the init differently
     // from the ones before it — two locks over one repo again.
     const dir = tmpDir("greenfield-");
-    expect(await repoLockKey(dir)).toMatch(/^path:\//);
+    expect(await repoLockKey(dir)).toMatch(KEYED_ABSOLUTE("path"));
     await git(dir, "init", "-b", "main");
-    expect(await repoLockKey(dir)).toMatch(/^git:\//);
+    expect(await repoLockKey(dir)).toMatch(KEYED_ABSOLUTE("git"));
   });
 
   it("caches the hit, so the hot path doesn't respawn git", async () => {
@@ -161,9 +173,15 @@ describe("withRepoLock", () => {
     // Both still got a real, distinct worktree out of the serialized run.
     expect(wtA!.path).not.toBe(wtB!.path);
     for (const wt of [wtA!, wtB!]) expect(fs.existsSync(path.join(wt.path, "file.txt"))).toBe(true);
-    const listed = await git(repo, "worktree", "list", "--porcelain");
-    expect(listed).toContain(fs.realpathSync(wtA!.path));
-    expect(listed).toContain(fs.realpathSync(wtB!.path));
+    // `git worktree list` prints C:/Users/... on Windows where path.join built
+    // C:\Users\..., so the two sides are compared through canonicalPath rather
+    // than as raw strings (lib/paths.ts).
+    const listed = (await git(repo, "worktree", "list", "--porcelain"))
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => canonicalPath(line.slice("worktree ".length).trim()));
+    expect(listed).toContain(canonicalPath(wtA!.path));
+    expect(listed).toContain(canonicalPath(wtB!.path));
   });
 
   it("still lets unrelated repos run concurrently", async () => {

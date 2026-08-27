@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ghMissingMessage, resolveGhBin } from "../lib/github";
+import { IS_WIN } from "./platform";
 
 // resolveGhBin exists because the server process never reads a shell profile:
 // a gh installed via linuxbrew/Homebrew/snap works in the user's terminal but
@@ -31,7 +32,14 @@ function winDir(withGh = true): string {
 }
 const WIN = { platform: "win32" as const, pathext: ".COM;.EXE;.BAT;.CMD" };
 
-describe("resolveGhBin", () => {
+// Split by which platform's rules a case exercises, because only one half can
+// run everywhere. The win32 cases below pass `WIN` explicitly, so they are real
+// assertions on any OS. These take the platform from the process, and their
+// fixtures are POSIX facts a Windows filesystem cannot represent: a bare `gh`
+// with no extension (which CreateProcess would never find) and the executable
+// bit (`fs.access(X_OK)` is a no-op on Windows, so mode 0o644 and 0o755 are
+// indistinguishable there). Skipped rather than ported — docs/WINDOWS.md §7.
+describe.skipIf(IS_WIN)("resolveGhBin on POSIX", () => {
   it("uses CALANDRIA_GH_BIN verbatim when set, even over a PATH hit", () => {
     const onPath = dir({ executable: true });
     expect(resolveGhBin("/pinned/gh", onPath, [dir({ executable: true })])).toBe("/pinned/gh");
@@ -62,7 +70,12 @@ describe("resolveGhBin", () => {
   it("returns bare gh when nothing is found, so callers' ENOENT handling fires", () => {
     expect(resolveGhBin("", dir(false), [dir(false)])).toBe("gh");
   });
+});
 
+// Driven through the explicit `WIN` descriptor, so these run on every platform
+// — including the Linux/macOS lanes, which is the point: the Windows rules are
+// pinned by the suite everybody runs, not only by a Windows CI lane.
+describe("resolveGhBin on win32", () => {
   // On Windows the file is gh.exe, never gh, so every candidate the old
   // extension-less probe built missed — a winget/scoop/MSI install invisible to
   // a server whose PATH doesn't carry it would have reported "not installed".

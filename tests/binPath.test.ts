@@ -8,9 +8,11 @@
  * platform, PATH and PATHEXT as arguments, and this file drives the win32 rules
  * against real fixture directories on whatever OS the suite is running on.
  *
- * The fixture filenames are exact-case on purpose: NTFS wouldn't care, but this
- * runs on a case-sensitive filesystem, which is what pins the "PATHEXT is
- * uppercase, binaries on disk are not" lowercasing.
+ * The fixture filenames are exact-case on purpose: NTFS wouldn't care, so it is
+ * the Linux/macOS lanes that pin the "PATHEXT is uppercase, binaries on disk are
+ * not" lowercasing — a Windows run can't tell the difference. Two cases go the
+ * other way and are skipped there (`onPosix`): the executable bit and `:` as a
+ * PATH separator have no Windows equivalent to assert against.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -26,6 +28,7 @@ import {
   resolveBin,
   spawnSpec,
 } from "@/lib/binPath";
+import { onPosix } from "./platform";
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-binpath-"));
 afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
@@ -66,7 +69,9 @@ describe("binCandidates", () => {
 });
 
 describe("isExecutableFile", () => {
-  it("requires the executable bit on POSIX", () => {
+  // Skipped on win32: `fs.access(X_OK)` is documented to behave like F_OK
+  // there, so a 0o644 and a 0o755 fixture are the same file to the OS.
+  onPosix("requires the executable bit on POSIX", () => {
     const d = dir(["codex"]);
     expect(isExecutableFile(path.join(d, "codex"), "linux")).toBe(false);
     fs.chmodSync(path.join(d, "codex"), 0o755);
@@ -125,7 +130,9 @@ describe("findOnPath", () => {
     expect(findOnPath("claude", { ...win, pathEnv: `C:\\Windows;${hit}` })).toBe(path.join(hit, "claude.exe"));
   });
 
-  it("splits on ':' for POSIX", () => {
+  // Skipped on win32: the fixture paths interpolated below are `C:\...`, so a
+  // ':' split would cut them in half — which is the very rule under test.
+  onPosix("splits on ':' for POSIX", () => {
     const hit = dir(["claude"], 0o755);
     expect(findOnPath("claude", { platform: "linux", pathEnv: `${dir()}:${hit}` })).toBe(path.join(hit, "claude"));
   });

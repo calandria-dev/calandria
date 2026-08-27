@@ -24,6 +24,7 @@ import {
 import { setApiKey, clearApiKey } from "../lib/anthropic-key";
 import { setOpenAiKey, clearOpenAiKey } from "../lib/openai-key";
 import { DB_DIR } from "../lib/config";
+import { IS_WIN } from "./platform";
 
 let dir = "";
 
@@ -37,7 +38,12 @@ afterEach(() => {
 
 const modeOf = (p: string) => fs.statSync(p).mode & 0o777;
 
-describe("writeSecretFile on POSIX", () => {
+// Skipped when the suite itself runs on Windows, even though every case forces
+// `platform: "linux"`: the assertions read a POSIX mode back off the disk, and
+// there isn't one to read. Node's `chmod` on NTFS toggles the read-only
+// attribute and nothing else, which is the whole reason lib/secretFile.ts
+// exists — so `statSync(...).mode` can never report 0o600 there.
+describe.skipIf(IS_WIN)("writeSecretFile on POSIX", () => {
   it("creates the file, its parent, and the 0600 mode", () => {
     const file = path.join(dir, "nested", "anthropic-api-key");
     writeSecretFile(file, "sk-ant-secret", { platform: "linux" });
@@ -150,8 +156,16 @@ describe("the persisted keys go through it", () => {
   it("writes both key files owner-only", () => {
     setApiKey("sk-ant-test-key");
     setOpenAiKey("sk-test-key");
-    expect(modeOf(path.join(DB_DIR, "anthropic-api-key"))).toBe(SECRET_FILE_MODE);
-    expect(modeOf(path.join(DB_DIR, "openai-api-key"))).toBe(SECRET_FILE_MODE);
+    // This one takes the REAL platform branch — icacls on Windows, chmod
+    // elsewhere — because it is the production path. What the two platforms
+    // share is that the file must exist afterwards: a failed lock-down deletes
+    // it and throws rather than leaving a key at permissions we couldn't set.
+    // The mode is only readable on POSIX (see the skip above).
+    for (const name of ["anthropic-api-key", "openai-api-key"]) {
+      const file = path.join(DB_DIR, name);
+      expect(fs.existsSync(file)).toBe(true);
+      if (!IS_WIN) expect(modeOf(file)).toBe(SECRET_FILE_MODE);
+    }
     expect(process.env.ANTHROPIC_API_KEY).toBe("sk-ant-test-key");
     expect(process.env.OPENAI_API_KEY).toBe("sk-test-key");
   });
