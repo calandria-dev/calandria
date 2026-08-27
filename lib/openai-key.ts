@@ -40,7 +40,7 @@ export function looksLikeOpenAiKey(key: string): boolean {
  */
 export function setOpenAiKey(key: string): void {
   const k = key.trim();
-  writeSecretFile(KEY_PATH, k);
+  writeSecretFile(KEY_PATH, k, { advice: "Pass the key in the environment with CALANDRIA_ALLOW_API_KEY_ENV=1 instead." });
   process.env.OPENAI_API_KEY = k;
 }
 
