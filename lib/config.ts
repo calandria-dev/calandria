@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { readEnv } from "./env.mjs";
+import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 
@@ -31,6 +32,18 @@ export const DB_PATH = dbLocation.path;
 
 /** Where per-task git worktrees are created (must be outside any project repo). */
 export const WORKTREES_DIR = resolveWorktreesDir().dir;
+
+/**
+ * Where `scripts/backup.mjs` writes its archives (default `<DB_DIR>/backups`).
+ *
+ * Declared here rather than only in the script because that is this repo's rule
+ * for every per-instance knob — one documented default, one place to look — even
+ * though the app itself never reads it: the backup runs as a plain-Node script
+ * that can't import TS and reads the same env name directly, exactly as
+ * server.js does. Point it at a different volume to keep backups off the disk
+ * they are backing up.
+ */
+export const BACKUP_DIR = readEnv("CALANDRIA_BACKUP_DIR") || path.join(dbLocation.dir, "backups");
 
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
 export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");
@@ -372,6 +385,146 @@ export const SCHEDULER_ENABLED = !["0", "off", "false", "no"].includes(
   String(readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase(),
 );
 
+/*
+ * ---- retention (lib/retention.ts) ----
+ *
+ * Everything except `schedule_runs` used to grow forever — rows only ever left
+ * by FK cascade behind a manual delete (issue #15). The sweep rides the
+ * schedule ticker; these are its knobs.
+ *
+ * Windows are in DAYS because that is the unit this policy is thought about in
+ * ("keep six months"), unlike every other duration here, which is a deadline.
+ */
+
+/**
+ * Master switch. On by default: an off-by-default retention policy leaves every
+ * instance exactly where the issue found it. Set to off/0/false/no to keep
+ * everything forever — the pre-retention behavior, and the right choice for an
+ * instance whose transcripts are a record somebody audits.
+ */
+export const RETENTION_ENABLED = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_RETENTION") || "").toLowerCase(),
+);
+
+const gib = (name: string, raw: string | undefined, def: number): number => {
+  const n = num(name, raw, def);
+  // Negative is meaningless (a threshold nothing can be under); 0 is the
+  // documented "off", so only negatives fall back to the default.
+  return (n >= 0 ? n : def) * 1024 ** 3;
+};
+
+const days = (name: string, raw: string | undefined, def: number): number => {
+  const n = num(name, raw, def);
+  // A negative window would delete rows from the future. 0 is meaningful — it
+  // turns that half of the sweep off — so only negatives fall back.
+  return n >= 0 ? n * 24 * 60 * 60 * 1000 : def * 24 * 60 * 60 * 1000;
+};
+
+/**
+ * How long a FINISHED task keeps its own record: transcript, review comments,
+ * the sessions a `/clear` retired, and its uploaded attachments. Six months, so
+ * that "what did that task do?" is still answerable for anything within a
+ * release cycle or two. 0 keeps them forever.
+ *
+ * Only terminal, idle, cold tasks are ever touched — see prunableTaskIds().
+ */
+export const RETENTION_MS = days("CALANDRIA_RETENTION_DAYS", readEnv("CALANDRIA_RETENTION_DAYS"), 180);
+
+/**
+ * How long the SPEND rows live: task_usage, task_merges, internal_usage. A
+ * separate and deliberately longer window, because these are not a task's
+ * record but the Insights dashboard's — /api/insights reads 180 days back and
+ * asks for the same width again to compute prior-period deltas, so anything
+ * under ~360 days would let a sweep carve a hole in a chart on screen. 400 days
+ * clears that with a margin; 0 keeps them forever.
+ */
+export const USAGE_RETENTION_MS = days(
+  "CALANDRIA_USAGE_RETENTION_DAYS",
+  readEnv("CALANDRIA_USAGE_RETENTION_DAYS"),
+  400,
+);
+
+/**
+ * How often the sweep runs. Not the ticker's interval — the ticker wakes every
+ * 30s to adjudicate firings, and re-scanning every task for retention that often
+ * would be pure waste on a policy measured in months. Six hours means an
+ * instance that is only up for part of the day still sweeps.
+ */
+export const RETENTION_SWEEP_MS = ms(readEnv("CALANDRIA_RETENTION_SWEEP_MS"), 6 * 60 * 60 * 1000);
+
+/**
+ * Run a full VACUUM after a sweep that deleted something. Off by default.
+ *
+ * The sweep always checkpoints the WAL (TRUNCATE), which is what actually
+ * reclaims the file that grows during a big delete. It cannot shrink
+ * `calandria.db` itself — freed pages go on the freelist and are reused by
+ * later writes — and only VACUUM does, by rewriting the whole database under a
+ * write lock. That is a fine trade on a small database and a stall on a large
+ * one, so it is opted into rather than assumed.
+ */
+export const RETENTION_VACUUM = ["1", "on", "true", "yes"].includes(
+  String(readEnv("CALANDRIA_RETENTION_VACUUM") || "").toLowerCase(),
+);
+
+/*
+ * ---- worktree retention + disk warning (lib/worktreeSweep.ts) ----
+ *
+ * The other half of issue #15: per-task worktrees are a full checkout of the
+ * project repo EACH, so they are the biggest disk-growth vector in the product
+ * and the only one measured in gigabytes rather than rows.
+ */
+
+/**
+ * Opt-in, unlike the table prune above, and that asymmetry is deliberate. The
+ * table windows (180/400 days) are longer than most instances have existed, so
+ * defaulting them ON changes nothing on an upgrade; a worktree window measured
+ * in WEEKS would start removing checkouts on the first tick after an upgrade
+ * nobody asked for. Set to 1/on/true/yes to sweep automatically — the manual
+ * path (Settings -> Storage) is unaffected either way.
+ */
+export const WORKTREE_SWEEP_ENABLED = ["1", "on", "true", "yes"].includes(
+  String(readEnv("CALANDRIA_WORKTREE_RETENTION") || "").toLowerCase(),
+);
+
+/**
+ * How long a FINISHED task keeps its git worktree once the sweep is on. Weeks,
+ * not months: the checkout is regenerable (`ensureWorktree` re-cuts it from the
+ * task's branch on the next turn) and its branch is never deleted here, so what
+ * ages out is disk, not history. Only terminal, idle, cold tasks are ever
+ * touched — the sweep reuses prunableTaskIds() rather than owning a predicate —
+ * and a checkout with uncommitted edits or unmerged commits is always skipped,
+ * however old. 0 keeps them forever.
+ */
+export const WORKTREE_RETENTION_MS = days(
+  "CALANDRIA_WORKTREE_RETENTION_DAYS",
+  readEnv("CALANDRIA_WORKTREE_RETENTION_DAYS"),
+  14,
+);
+
+/**
+ * Warn in the server log when WORKTREES_DIR crosses this size. Independent of
+ * the switch above on purpose: the instance that has NOT opted into automatic
+ * reclaim is exactly the one that needs telling, since the only remedy there is
+ * a human opening Settings -> Storage. In gigabytes; 0 disables the check (and
+ * with the sweep off too, the ticker no longer has to start at all).
+ */
+export const WORKTREES_DISK_WARN_BYTES = gib(
+  "CALANDRIA_WORKTREES_DISK_WARN_GB",
+  readEnv("CALANDRIA_WORKTREES_DISK_WARN_GB"),
+  20,
+);
+
+/**
+ * How long /api/instance/metrics reuses one measurement of the worktrees
+ * directory (lib/metrics.ts). Everything else on that endpoint is a counter, a
+ * Map size or three `stat` calls; this one is a `du` over every task checkout on
+ * the box, and a scraper set to 15s would otherwise walk every `node_modules`
+ * on the instance four times a minute for a number that moves in megabytes per
+ * hour. A minute is short enough that a disk alert still fires promptly; raise
+ * it on an instance carrying many large worktrees. 0 measures on every scrape.
+ */
+export const METRICS_SIZE_TTL_MS = ms(readEnv("CALANDRIA_METRICS_SIZE_TTL_MS"), 60_000);
+
 /**
  * Subscription plan-usage display (the titlebar session/week meter). On by
  * default. Set to off/0/false to hide it and never touch the provider's usage
@@ -391,3 +544,17 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  * cache plus the passive rate-limit telemetry that rides every turn for free.
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
+
+/**
+ * How every log line is rendered: `text` (default — the `[component] message
+ * key=value` form this app has always printed) or `json` (one JSON object per
+ * line, with `ts`/`level`/`component`/`msg` plus the line's own fields) for an
+ * instance whose output is being shipped somewhere that parses it.
+ *
+ * Re-exported here for discoverability alongside every other knob, but the
+ * emitters do NOT read this constant: lib/log.mjs resolves the value per line,
+ * because server.js and pty-server.js emit through the same module and can't
+ * import this file at all. Both ends call the same resolver, so they cannot
+ * disagree.
+ */
+export const LOG_FORMAT = resolveLogFormat();

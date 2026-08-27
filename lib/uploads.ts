@@ -43,11 +43,23 @@ export function taskUploadsDir(taskId: string): string {
   return path.join(UPLOADS_DIR, taskId);
 }
 
-/** Best-effort removal of a task's attachment dir (task/project hard delete). */
-export function removeTaskUploads(taskId: string): void {
+/**
+ * Best-effort removal of a task's attachment dir. Fires on task/project hard
+ * delete, and on the retention sweep (lib/retention.ts) for a finished task
+ * whose transcript has aged out — the marker lines that pointed at these files
+ * live in those messages, so the two go together.
+ *
+ * Returns whether a directory was actually there to remove, so the sweep can
+ * count what it reclaimed instead of reporting every task it considered.
+ */
+export function removeTaskUploads(taskId: string): boolean {
+  const dir = taskUploadsDir(taskId);
   try {
-    fs.rmSync(taskUploadsDir(taskId), { recursive: true, force: true });
+    if (!fs.existsSync(dir)) return false;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
   } catch {
     // best-effort — orphaned files are harmless
+    return false;
   }
 }

@@ -29,6 +29,13 @@ import { sendTurnInput } from "@/lib/turnInput";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
 import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
+import { createLogger } from "@/lib/log.mjs";
+import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
+
+// Every line this module prints. The bracket tag it used to hand console
+// becomes the logger's component, so `CALANDRIA_LOG_FORMAT=json` turns the
+// whole file into parseable output without touching a call site (lib/log.mjs).
+const log = createLogger("runner");
 
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something. Named, because the docs promise the user that a
@@ -81,7 +88,7 @@ export function startTurn(
     // supposed to claim before launching (so this shouldn't be reachable) —
     // park the message as a queued follow-up rather than double-running the
     // session with a turn the Stop button couldn't reach.
-    console.error(`[runner] startTurn(${task.id}) raced a live turn; queueing the message instead`);
+    log.error("startTurn raced a live turn; queueing the message instead", { task: task.id });
     const pm = addPendingMessage(task.id, task.generation, userText);
     publish(task.id, { type: "queued", msgId: pm.id, content: userText, generation: task.generation, ts: pm.created_at });
     return;
@@ -109,7 +116,7 @@ export function startTurn(
   // Node's default policy, crash the entire server — taking down every other
   // tenant's turn. Swallow-and-log so one deleted task can never do that.
   run(task, project, userText, syncNote, abortController, runContext, hooks).catch((err) => {
-    console.error(`[runner] turn for task ${task.id} crashed after its finally settled:`, err);
+    log.error("turn crashed after its finally settled", { task: task.id, err });
     // Best-effort settle so even this last-resort path can't wedge the task in
     // a running-forever state. unregisterTurn is identity-checked, so a newer
     // turn's registration is never wiped; if one IS registered (a queued
@@ -124,7 +131,7 @@ export function startTurn(
         publish(task.id, { type: "turn_end" });
       }
     } catch (settleErr) {
-      console.error(`[runner] could not settle task ${task.id} after crash:`, settleErr);
+      log.error("could not settle task after crash", { task: task.id, err: settleErr });
     }
     // A crash here means run()'s own finally never reached ITS settle block, so
     // a scheduled run would otherwise leak two ways: the schedule_runs row stuck
@@ -141,12 +148,12 @@ export function startTurn(
           settleRun(runContext.scheduleRunId, "failed", detail);
         }
       } catch (scheduleErr) {
-        console.error(`[runner] could not settle schedule run ${runContext.scheduleRunId} after crash:`, scheduleErr);
+        log.error("could not settle schedule run after crash", { task: task.id, run: runContext.scheduleRunId, err: scheduleErr });
       }
       try {
         clearRunContext(task.id, runContext);
       } catch (contextErr) {
-        console.error(`[runner] could not clear run context for task ${task.id} after crash:`, contextErr);
+        log.error("could not clear run context after crash", { task: task.id, err: contextErr });
       }
     }
   });
@@ -213,7 +220,7 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
     // The row went away between the two synchronous steps above (a delete
     // racing this send) — the CLI has the message and the task doesn't exist to
     // show it. Nothing left to do but say so; the turn dies with the task.
-    console.error(`[runner] sent a message into task ${taskId} but could not persist it:`, err);
+    log.error("sent a message into the live turn but could not persist it", { task: taskId, err });
   }
 }
 
@@ -387,9 +394,11 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
   ]);
   unsubscribe();
   if (timedOut && pending.size > 0) {
-    console.warn(
-      `[runner] shutdown drain timed out with ${pending.size}/${ids.length} turn(s) still unwinding: ${[...pending].join(", ")}`
-    );
+    log.warn("shutdown drain timed out with turns still unwinding", {
+      unwinding: pending.size,
+      turns: ids.length,
+      tasks: [...pending].join(","),
+    });
   }
   return { total: ids.length, settled: ids.length - pending.size };
 }
@@ -444,7 +453,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
     msgId = m.id;
     ts = m.created_at;
   } catch (err) {
-    console.error(`[runner] could not persist turn error for task ${id} (row gone?):`, err);
+    log.error("could not persist turn error (row gone?)", { task: id, err });
   }
   try {
     publish(id, { type: "error", content, msgId, generation: gen, ts });
@@ -481,6 +490,34 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // every follow-up into the same wall.
   let unattendedDeny = false;
   const startedAt = Date.now();
+  // What this turn spent, accumulated from the same `usage` events that write
+  // task_usage, so the lifecycle line in the finally can report tokens without
+  // re-reading the DB it just wrote. A turn can report usage more than once
+  // (each SDK result message carries its own), hence a running sum rather than
+  // a last-wins snapshot.
+  const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+
+  // Turn lifecycle, line 1 of 2 (issue #16). The runner used to log failures
+  // and nothing else, so a healthy instance said nothing at all about the work
+  // it was doing — no start, no duration, no spend, and the only record of a
+  // turn having happened was a row in SQLite. Emitted from here rather than
+  // from the POST route because this is where every launch path converges: a
+  // first turn, a resume, a drained follow-up, a schedule firing, an
+  // auto-started dependent.
+  //
+  // The /metrics counter (issue #16 item 3) is incremented from the same two
+  // places as the two lines, deliberately: an instance whose graph and whose
+  // logs disagree about how many turns ran tells two stories and gives whoever
+  // is reading no way to tell which one is lying.
+  countTurnStarted();
+  log.info("turn start", {
+    task: id,
+    project: project.id,
+    agent: task.agent,
+    generation: gen,
+    origin: runContext?.origin ?? "user",
+    resume: Boolean(sessionId),
+  });
 
   // Persist + publish a failed turn's transcript line (with a recovery hint when
   // we know the fix), and — for a dead login — raise the instance-wide flag every
@@ -713,6 +750,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
+        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += ev.usage[k] || 0;
         publish(id, ev);
       } else if (ev.type === "context") {
         // Measured occupancy, persisted as it arrives (not at turn end) so a
@@ -773,7 +811,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         updateMessage(t.dbId, JSON.stringify(t.data));
         publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
       } catch (err) {
-        console.error(`[runner] could not settle open permission card for task ${id}:`, err);
+        log.error("could not settle open permission card", { task: id, err });
       }
     }
     // A Stop isn't a failure (Claude swallows the abort), so it reports as a
@@ -811,6 +849,41 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // as a quiet green "ran", that is precisely the silent skip this feature
     // exists to make impossible, so it raises its hand like any other failure.
     const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
+
+    // Turn lifecycle, line 2 of 2 (issue #16): what happened, how long it took,
+    // what it cost. The outcome ladder is deliberately the SAME one the
+    // schedule-run settle below uses — a run recorded `failed` in the ledger
+    // and logged `ok` would be worse than no line at all — with `interrupted`
+    // meaning the agent session never opened, so the turn produced nothing.
+    // Tokens come from the accumulator, not a task_usage read: an agent that
+    // reported no usage (a driver that doesn't, a turn that died before its
+    // result message) logs zeros, which is the truth about THIS turn rather
+    // than the task's running total.
+    const outcome = stopped ? "stopped" : turnError || unattendedDeny ? "failed" : opened ? "ok" : "interrupted";
+    // The counter takes the SAME word: TurnOutcome is that ladder as a type, so
+    // a fifth outcome added here has to be given a series too rather than
+    // quietly landing in no bucket at all.
+    countTurnFinished(outcome);
+    log[outcome === "failed" ? "error" : outcome === "interrupted" ? "warn" : "info"](`turn ${outcome}`, {
+      task: id,
+      project: project.id,
+      agent: task.agent,
+      generation: gen,
+      origin: runContext?.origin ?? "user",
+      ms: Date.now() - startedAt,
+      tokens_in: spent.input_tokens,
+      tokens_out: spent.output_tokens,
+      cache_read: spent.cache_read_tokens,
+      cache_write: spent.cache_creation_tokens,
+      tokens_total: spent.input_tokens + spent.output_tokens + spent.cache_read_tokens + spent.cache_creation_tokens,
+      cost_usd: Math.round(spent.cost_usd * 10000) / 10000,
+      // Only when they say something: `superseded` means a Stop released this
+      // turn's slot and a successor claimed it, so this line describes a turn
+      // that settled nothing; `error` is the whole reason the line is at error
+      // level.
+      superseded: superseded || undefined,
+      error: turnError ? String(turnError).slice(0, 300) : undefined,
+    });
     if (!generationAdvanced && !superseded) {
       // background_pending settles with running: however the linger ended (all
       // work done, expiry, Stop), the session that owned the work is gone.
@@ -849,7 +922,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       try {
         settleRun(runContext.scheduleRunId, status, detail);
       } catch (err) {
-        console.error(`[runner] could not settle schedule run ${runContext.scheduleRunId}:`, err);
+        log.error("could not settle schedule run", { task: id, run: runContext.scheduleRunId, err });
       }
     }
     if (runContext) clearRunContext(id, runContext);
@@ -900,7 +973,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           const m = addMessage(id, gen, "system", note);
           publish(id, { type: "notice", content: note, msgId: m.id, generation: gen, ts: m.created_at });
         } catch (err) {
-          console.error(`[runner] could not persist parked-queue notice for task ${id} (row gone?):`, err);
+          log.error("could not persist parked-queue notice (row gone?)", { task: id, err });
         }
       }
     } else {

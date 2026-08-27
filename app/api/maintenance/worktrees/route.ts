@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { listReclaimableWorktrees, getTask, getProject, updateTask } from "@/lib/store";
 import { removeWorktree, worktreeDiskUsage, worktreePruneSafety } from "@/lib/git";
+import { worktreesDiskUsage } from "@/lib/worktreeSweep";
+import { WORKTREES_DIR, WORKTREES_DISK_WARN_BYTES } from "@/lib/config";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -46,7 +48,22 @@ export async function GET() {
   ).filter((c): c is NonNullable<typeof c> => c !== null);
 
   const totalBytes = candidates.reduce((sum, c) => sum + c.sizeBytes, 0);
-  return NextResponse.json({ candidates, totalBytes });
+  // The WHOLE directory, not just the reclaimable share of it: the same reading
+  // the scheduled sweep warns on (lib/worktreeSweep.ts), reported here because
+  // this panel is where a human acts on it. It counts the checkouts of tasks
+  // still in flight too, which is the point — "you have 40 GB of worktrees" is
+  // the fact, and "6 GB of it is reclaimable right now" is the offer below.
+  const dirBytes = await worktreesDiskUsage();
+  return NextResponse.json({
+    candidates,
+    totalBytes,
+    disk: {
+      dir: WORKTREES_DIR,
+      bytes: dirBytes,
+      warnBytes: WORKTREES_DISK_WARN_BYTES,
+      over: WORKTREES_DISK_WARN_BYTES > 0 && dirBytes >= WORKTREES_DISK_WARN_BYTES,
+    },
+  });
 }
 
 // POST: reclaim selected worktrees. Safe worktrees keep their branches unless

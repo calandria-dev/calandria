@@ -27,6 +27,10 @@ import {
 // probe target.
 const VERSION_PATH = "/api/version";
 const USAGE_PATH = "/api/instance/usage";
+// The Prometheus scrape target. Same exemption as the two above and for the same
+// reason — a scraper polling from outside the tunnel (or from the host beside the
+// container) has no Access JWT to present.
+const METRICS_PATH = "/api/instance/metrics";
 // The boot-time self-ping from server.js that restores persisted services.
 const SERVICES_RESTORE_PATH = "/api/instance/services-restore";
 // The boot-time self-ping from server.js that starts the schedule ticker.
@@ -39,7 +43,7 @@ const DRAIN_PATH = "/api/instance/drain";
 // Read-only: the fleet-wide CALANDRIA_FLEET_TOKEN is honored here (see cf-access.mjs)
 // because nothing reachable this way can mutate instance state.
 function isReadOnlyServiceTokenPath(pathname: string, method: string): boolean {
-  if (pathname === VERSION_PATH || pathname === USAGE_PATH) {
+  if (pathname === VERSION_PATH || pathname === USAGE_PATH || pathname === METRICS_PATH) {
     return true;
   }
   return pathname === SCHEDULER_PATH && method === "GET";

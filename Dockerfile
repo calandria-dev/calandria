@@ -154,7 +154,11 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # alias reader db-lock.mjs, the auth .mjs files and server.js itself all import,
 # and lib/storage.mjs (which resolves the database/worktree locations, including
 # the pre-rename fallback) is imported by server.js and db-lock.mjs alike.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs ./lib/
+# lib/log.mjs is the shared line emitter (CALANDRIA_LOG_FORMAT) both entrypoints
+# import for their own output and lib/config.ts imports for the bundled half —
+# missing here, every boot line and every turn-lifecycle line dies on an
+# unresolved import.
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/log.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The stdio MCP bridge the non-Claude drivers spawn per turn (node scripts/calandria-mcp.mjs)
 # and its shared tool defs — plain-Node .mjs the build output doesn't bundle, so
@@ -165,6 +169,10 @@ COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDe
 # package.json IS in this image, so a script it names has to exist or `npm start`
 # in a docker exec fails on a missing file rather than doing the obvious thing.
 COPY --from=build --chown=root:root /app/scripts/start.mjs ./scripts/start.mjs
+# The hot-backup script (`docker exec ... npm run backup`). It needs better-sqlite3
+# from node_modules and lib/env.mjs + lib/storage.mjs, all already above; without
+# this line the one recovery tool the image ships would be missing from the image.
+COPY --from=build --chown=root:root /app/scripts/backup.mjs ./scripts/backup.mjs
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/calandria-entrypoint
 
 # CALANDRIA_HOSTNAME, not HOSTNAME: server.js no longer reads the generic variable

@@ -29,6 +29,7 @@ const PINNED = [
   "lib/db.ts",
   "lib/db-lock.mjs", //          the boot lock; server.js loads it in plain Node, before Next exists
   "lib/env.mjs", //              the CALANDRIA_*/ORCH_* alias reader; env-only, no imports, loaded by server.js in plain Node before Next exists
+  "lib/log.mjs", //              the shared line emitter; zero imports, and BOTH plain-Node entrypoints load it before Next exists
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
@@ -47,6 +48,9 @@ const PINNED = [
   "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
+  "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
+  "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
+  "lib/metrics.ts", //           the /metrics series; imported BY lib/runner.ts and by a route entry, so it must never reach an SDK itself
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only
   "lib/runbooks/store.ts", //    saved task-launch presets; DB only, no driving
@@ -67,6 +71,7 @@ const PINNED = [
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
+  "app/api/instance/metrics/route.ts", // the scrape target — a "which agents are configured?" series later must use capabilities.ts
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.
