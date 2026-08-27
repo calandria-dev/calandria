@@ -12,10 +12,8 @@ import type { ProjectRow, TaskRow } from "./types";
 // This is what clears spinners and updates
 // the "needs you" badges for tasks whose transcript stream isn't open — only
 // the selected task has one (useTaskStream) — replacing the old 10s poll.
-export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification }: {
+export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification }: {
   selProjRef: MutableRefObject<string | null>;
-  /** Board drops this tab has in flight — see the tasks_reordered branch. */
-  reorderRef: MutableRefObject<{ pending: number; missed: boolean }>;
   setTaskRunning: (id: string, on: boolean) => void;
   setTasks: React.Dispatch<React.SetStateAction<TaskRow[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectRow[]>>;
@@ -59,26 +57,8 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
       if (sel && (sel === ev.toProjectId || ev.fromProjectIds.includes(sel))) void loadTasks(sel, false);
       return;
     }
-    // A board drop rewrote this project's manual card order (in another tab, or
-    // in this one — the publish echoes back). The event is deliberately
-    // order-free, so the response is task_edited's: refetch the tray, if it's
-    // the one on screen.
-    //
-    // Except while THIS tab has a drop in flight. The drag is optimistic, so an
-    // echo landing between two quick drops would refetch an order the user has
-    // already dragged past and snap the card back until the second drop's own
-    // event arrived. Held instead, and flushed once our writes have settled —
-    // at which point the server's order is the one we're already showing, and
-    // the refetch also picks up anything another tab did in the meantime (so
-    // holding can't lose a concurrent drag, only defer it).
-    if (ev.type === "tasks_reordered") {
-      if (selProjRef.current !== ev.projectId) return;
-      if (reorderRef.current.pending > 0) { reorderRef.current.missed = true; return; }
-      void loadTasks(ev.projectId, false);
-      return;
-    }
     // A project's saved runbooks changed — here, in another tab, or via an
-    // agent's create_runbook. Same "refetch" shape as the reorder above, but
+    // agent's create_runbook. Same "refetch" shape as task_edited, but
     // relayed as a window event rather than handled here: the consumers (the
     // Runbooks card, the ⌘K list) own their own fetches, and this hook has no
     // state of theirs to patch.
@@ -108,7 +88,12 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
       // the client already optimistically flipped to in_progress; the session-
       // open event re-fires turn_started with the settled status moments later.
       const status = ev.running && ev.status === "not_started" && t.status === "in_progress" ? t.status : ev.status;
-      return { ...t, running: ev.running ? 1 : 0, awaiting_input: ev.awaiting_input ? 1 : 0, background_pending: ev.background_pending ? 1 : 0, background_note: ev.background_note ?? "", status };
+      // Stamp the row as just-touched. The server wrote its own `updated_at`
+      // moments ago (it persists before it publishes) and the coarse payload
+      // doesn't carry it, but the trays sort by it — without this a task that
+      // just started, answered or finished a turn would stay wherever it was
+      // until something refetched the list.
+      return { ...t, running: ev.running ? 1 : 0, awaiting_input: ev.awaiting_input ? 1 : 0, background_pending: ev.background_pending ? 1 : 0, background_note: ev.background_note ?? "", status, updated_at: Date.now() };
     }));
     // Project badge + titlebar pill: the event carries the project's fresh
     // awaiting count, so no /api/projects refetch is needed.
