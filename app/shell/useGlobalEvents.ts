@@ -129,7 +129,18 @@ export function useGlobalEvents({ selProjRef, reorderRef, setTaskRunning, setTas
     // running/awaiting_input/status, so the rest would stay stale until a
     // reload — refetch the tray it lives in. The whole tray, not just this row:
     // a dependency edit changes what the NEIGHBOURING rows render too.
-    if (ev.event === "task_edited" && selProjRef.current === ev.projectId) void loadTasks(ev.projectId, false);
+    //
+    // Held while THIS tab has a drop in flight, exactly like tasks_reordered
+    // above: a drag into or out of Suggested PATCHes `suggested` first, and
+    // that echo refetched the tray before the reorder POST landed — the card
+    // arrived in the right column at the OLD slot until the second event
+    // corrected it (issue #35). Deferred, not dropped: `missed` flushes one
+    // refetch when the last drop settles, so an agent's concurrent update_task
+    // or another tab's rename still arrives, a few hundred ms late at worst.
+    if (ev.event === "task_edited" && selProjRef.current === ev.projectId) {
+      if (reorderRef.current.pending > 0) { reorderRef.current.missed = true; return; }
+      void loadTasks(ev.projectId, false);
+    }
   };
   // Route through a ref so the EventSource effect never re-subscribes.
   const handleRef = useRef(handle);
