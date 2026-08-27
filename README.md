@@ -182,7 +182,7 @@ Codex and takes you through a short hands-on tutorial.
 
 Windows runs natively, with the same three commands. It needs Windows 10
 1809+ or Server 2019+ (for ConPTY, which the terminal uses), Git for Windows
-on PATH, and Node 20.9+; `npm run typecheck` and `npm test` run on
+on PATH, and Node 20.9+; the typecheck, unit and end-to-end suites all run on
 `windows-latest` in CI. WSL2 stays a supported alternative — it is the Linux
 build, unchanged. [Windows setup, both ways](docs/INSTALLATION.md#windows).
 

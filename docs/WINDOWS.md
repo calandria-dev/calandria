@@ -23,13 +23,19 @@ that `better-sqlite3` installed from its **prebuilt** win32 binary rather than c
 with the runner's MSVC — a node-gyp fallback would pass green here while failing for
 every user who doesn't have Visual Studio build tools, so it fails the job instead.
 
-Not yet in CI: **e2e on Windows**. It wants a full `next build` plus a browser install on
-the slowest runner available, and has never run there. It is a follow-up, not a claim.
+A second `windows-latest` job runs the **end-to-end suite** — the same Playwright specs the
+Ubuntu lane runs, gated by the same expression rather than a schedule of its own, so it
+fires on main, on manual dispatch, and on a pull request carrying the `e2e` label. Its own
+job rather than three more steps in the first one: a full `next build` plus a browser
+download would serialize the two fast checks behind it on every push. This is the only job
+that *boots* Calandria on Windows — `npm start` there is `scripts/start.mjs`, which ties
+`server.js` and the pty sidecar together where there is no process group to kill — so the
+shipped launcher is now executed in CI rather than only read.
 
-The lane earned its place on its first run. Everything below had been written, reviewed and
-merged as portable, with the Ubuntu suite green throughout; 83 of 135 test files failed the
-first time it actually ran on Windows. Two were product bugs in the document-collaboration
-file route — `worktreeRelative()` read a drive-letter path as *relative*, so a file plainly
+The unit lane earned its place on its first run. Everything below had been written,
+reviewed and merged as portable, with the Ubuntu suite green throughout; 83 of 135 test
+files failed the first time it actually ran on Windows. Two were product bugs in the
+document-collaboration file route — `worktreeRelative()` read a drive-letter path as *relative*, so a file plainly
 inside the worktree 404'd and the containment check never ran, and the route's own
 malformed-path test (`rel.startsWith("/")`) reported an absolute Windows path as an
 ordinary missing file rather than a bad request. One was the refusal message that names the
@@ -38,6 +44,15 @@ shows is `C:\Users\...`. The rest were the suite's own: a teardown that deleted 
 root with the SQLite handle still open (EBUSY, 79 files), a runner `%TEMP%` in 8.3 short
 form that `fs.realpathSync` doesn't expand, and three assertions that pinned a POSIX
 spelling rather than a behaviour. None of it was visible from Linux.
+
+The e2e lane found nothing on its first run: 92 specs, green on the first attempt, in 2.7
+minutes. That is worth recording because it is the exact opposite of what the unit lane
+did, and for a traceable reason — the portability work the unit lane forced had already
+reached every file the e2e suite leans on. `e2e/env.ts` resolves its temp root through
+`fs.realpathSync.native` and strips the `\\?\` prefix; the fixture helpers and the mock
+driver shell out through `execFileSync` with an argv array rather than a shell string;
+`worktreeRelative()` was fixed for the drive-letter case `15-collab-doc.spec.ts` asserts
+on. The suite was portable before anything ran it.
 
 ## Where each platform difference lives
 
@@ -78,11 +93,14 @@ module: each takes the platform as an input so the POSIX suite pins both branche
 
 ## Still owed a real machine
 
-CI covers the unit suite and typecheck — 1462 tests, on a real Windows runner, green. Two
-things it structurally cannot, both about the shutdown path: `child.kill()` is a
-`TerminateProcess` on Windows, so no stub can observe *which* signal a process was sent, and
-`tests/startLauncher.test.ts` skips its SIGINT case there for exactly that reason. Five
-minutes on a Windows box would settle both:
+CI covers typecheck, the unit suite and the e2e suite — 1462 tests and 92 specs, on a real
+Windows runner, green. What is left is the shutdown path, and all three lanes structurally
+miss it. `child.kill()` is a `TerminateProcess` on Windows, so no stub can observe *which*
+signal a process was sent, and `tests/startLauncher.test.ts` skips its SIGINT case there for
+exactly that reason; the e2e lane really does boot `scripts/start.mjs`, but Playwright tears
+its `webServer` down with a process-tree kill, so that lane proves the launcher **starts**
+both processes and nothing about whether either drains. Five minutes on a Windows box would
+settle both:
 
 1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the transcript carries
    the interrupted-state notice rather than the next boot's crash recovery clearing a raw

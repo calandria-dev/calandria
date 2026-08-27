@@ -40,8 +40,8 @@ Every setting is an environment variable with a documented default in
 Both ways are supported. **Native** is the ordinary install above with three prerequisites
 and a few Windows-specific defaults worth knowing; **WSL2** is the Linux build unchanged,
 and is the better answer if your repos, toolchains or agent logins already live there.
-`npm run typecheck` and `npm test` run on `windows-latest` in CI, so the native path is a
-tested claim rather than a hope. [`WINDOWS.md`](WINDOWS.md) records what native support
+The typecheck, unit and end-to-end suites all run on `windows-latest` in CI — the last of
+those boots the real server there — so the native path is a tested claim rather than a hope. [`WINDOWS.md`](WINDOWS.md) records what native support
 consists of and the one thing still unverified on real hardware.
 
 ### Native Windows
