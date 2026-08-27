@@ -172,7 +172,10 @@ describe("passive rate_limit_event overlay", () => {
       status: "allowed_warning",
       rateLimitType: "seven_day",
       utilization: 0.82,
-      resetsAt: Math.floor(Date.parse("2026-08-26T07:00:00Z") / 1000),
+      // Relative, not a calendar date: a reset in the past means the quota has
+      // healed and the overlay is (correctly) ignored — a hardcoded date here
+      // turned this test red the morning it passed.
+      resetsAt: Math.floor(Date.now() / 1000) + 3600,
     });
     const snap = await getClaudePlanUsage();
     const week = snap?.windows.find((w) => w.id === "seven_day");
