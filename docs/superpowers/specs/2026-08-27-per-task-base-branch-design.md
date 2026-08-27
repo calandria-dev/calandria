@@ -381,6 +381,73 @@ slips, ship `set_base_branch` and hold `update_group`.
 - e2e: a task retargeted to a second branch, merged into it, and the main checkout
   left untouched on `main`.
 
+## Addendum, 2026-08-27 — groups became tags, and a task can carry several
+
+Everything above was written against the one-group-per-task model of
+`2026-08-24-task-grouping-design.md`. Groups have since become **tags**
+(`docs/superpowers/specs/2026-08-27-tags-design.md`): many-to-many through
+`task_tags`, a `tags` row, no `tasks.group_id`. Read the design above for the
+reasoning; the symbols have all moved:
+
+| Above | Now |
+|-|-|
+| `task_groups.base_branch` | `tags.base_branch` |
+| `tasks.group_id` | a row in `task_tags` (`task_id`, `tag_id`, `position`) |
+| `GroupStrip.tsx` | `app/shell/TagStrip.tsx` |
+| `groupContextBlock()` | `tagContextBlock()` in `lib/tagContext.ts` |
+| `list_groups` / `update_group` | `list_tags` / `update_tag` |
+
+That change breaks one assumption the middle leg of the resolution chain rested
+on: **the task had exactly one group, so "the group's base branch" named exactly
+one value.** A task can now carry three tags, two of which set a base.
+
+### Decision: the first tag by `task_tags.position` that sets a base wins
+
+```
+task.base_branch → first tag (task_tags.position ASC) with base_branch != ''
+                 → project.branch
+```
+
+Not an error, not a refusal at tagging time, not "they must agree". Two reasons:
+
+- **`task_tags.position` already means "the tag this task is mostly about".** It
+  is the order the badges render on the card, the order `getTaskTags` returns,
+  and the order `lib/tagContext.ts` injects the context blocks in — so the first
+  tag is already the first thing the session reads about itself. Resolving a
+  disagreement by that order adds no new concept; it reuses the one ordering the
+  row already carries.
+- **The alternative is a refusal at the wrong moment.** Making a conflict an
+  error means adding a second tag to a task can fail, or tagging succeeds and the
+  *worktree cut* fails later — a launch-time failure for a labelling action taken
+  days earlier. Tags are meant to be cheap to add; "this task is also part of the
+  flaky-test sweep" must not be able to break its next turn.
+
+Ties are therefore resolved rather than reported — **but silently resolving one
+is not acceptable either**, because a base branch would appear on a task from a
+tag the user wasn't looking at. So the resolution is stated on the surface where
+it is decided:
+
+- `TagStrip`'s consequence line names the members whose base comes from a
+  *different* tag, and which one: `2 tasks take their base from another tag
+  (Release 3.2) instead.` Without it, a user setting `feature/auth` on the auth
+  tag would be told "N new tasks branch from feature/auth" while some of them
+  quietly branch from somewhere else.
+- The same first-wins order is what `listReclaimableWorktrees` expresses in SQL,
+  and `tests/baseBranch.test.ts`'s "agrees with the COALESCE" case covers all
+  three legs, so the TS and SQL orders cannot drift apart on the tag leg the way
+  they could on a two-leg chain.
+
+**Pin-at-the-cut is unchanged and does the rest of the work.** A tag's base only
+ever reaches a task that hasn't been cut yet; the moment `ensureWorktree` runs,
+the resolved name is written into `tasks.base_branch` and the task stops asking
+its tags. So a re-ordered tag list, a tag added later, or a tag's base edited
+mid-plan can never move a started task's merge target — which is what makes both
+the tie-break and tag-level editing safe to hand to an agent.
+
+`moveTasks` clears `tags.base_branch` on a CARRIED tag for the same reason it
+clears `tasks.base_branch` on every mover: a branch name means nothing in another
+repository.
+
 ## Out of scope
 
 - **Stacked tasks** — a task based on another task's `calandria/` branch. Needs a

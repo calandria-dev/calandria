@@ -74,10 +74,87 @@ export function memberProgress(members: TaskRow[]): { done: number; of: number; 
   return { done, of, pct: of > 0 ? (done / of) * 100 : 0, parts };
 }
 
-export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: {
+/**
+ * What setting this tag's base branch would actually do — the line under the
+ * field, computed against the members on screen.
+ *
+ * This exists because `base_branch` is the one tag field whose blast radius
+ * isn't obvious from the form, and the count is the whole reason editing it is
+ * safe: inheritance stops at the worktree cut, so a member that has already been
+ * cut keeps the branch its work is built on no matter what is typed here.
+ *
+ * It also has to name the OTHER-TAG case. A task carries as many tags as it has
+ * reasons to, and the base comes from the first one (in tag order) that sets a
+ * branch — so a member of this tag can perfectly well take its base from a
+ * different tag. Resolving that silently would make a branch appear from a tag
+ * the user wasn't looking at; saying which tag won is the price of resolving it
+ * instead of refusing it (lib/baseBranch.ts).
+ *
+ * `base` is the PENDING value in the form, not the saved one, so the line moves
+ * as the field is typed into.
+ */
+export function baseConsequence(args: {
+  tag: TagRow;
+  base: string;
+  members: TaskRow[];
+  /** Every tag in the project — a member's base may come from any of them. */
+  allTags: TagRow[];
+  projectBranch: string;
+}): string[] {
+  const { tag, members, allTags, projectBranch } = args;
+  const base = args.base.trim();
+  const byId = new Map(allTags.map((t) => [t.id, t]));
+  // This tag's base as the form currently has it; every other tag's as stored.
+  const baseOf = (id: string) => (id === tag.id ? base : byId.get(id)?.base_branch ?? "");
+
+  const pinned = new Map<string, number>(); // already has a base of its own → branch → count
+  const overridden = new Map<string, number>(); // another tag wins → that tag's name → count
+  let inherits = 0;
+  for (const m of members) {
+    if (m.base_branch) {
+      if (m.base_branch !== base) pinned.set(m.base_branch, (pinned.get(m.base_branch) ?? 0) + 1);
+      continue;
+    }
+    const winner = (m.tag_ids ?? []).find((id) => baseOf(id));
+    if (!winner) continue; // nothing sets a base — it follows the project either way
+    if (winner === tag.id) inherits++;
+    else {
+      const name = byId.get(winner)?.name ?? "another tag";
+      overridden.set(name, (overridden.get(name) ?? 0) + 1);
+    }
+  }
+
+  const n = (c: number, one: string, many: string) => `${c} ${c === 1 ? one : many}`;
+  const lines: string[] = [];
+  lines.push(
+    base
+      ? `New tasks tagged this branch from ${base}.` +
+        (inherits ? ` So do ${n(inherits, "task", "tasks")} already tagged but not yet cut.` : "")
+      : `Tasks tagged this follow the project's default (${projectBranch || "unset"}).`
+  );
+  // "Already based on", not "already cut from": a base is usually pinned by the
+  // worktree cut, but an explicit retarget can pin one before a task ever runs.
+  if (pinned.size) {
+    const where = [...pinned.entries()].map(([b, c]) => `${b} (${c})`).join(", ");
+    const total = [...pinned.values()].reduce((a, b) => a + b, 0);
+    lines.push(`${n(total, "task", "tasks")} already based on ${pinned.size === 1 ? [...pinned.keys()][0] : where} keep${total === 1 ? "s" : ""} it.`);
+  }
+  if (overridden.size) {
+    const who = [...overridden.entries()].map(([name, c]) => `${name}${overridden.size > 1 ? ` (${c})` : ""}`).join(", ");
+    const total = [...overridden.values()].reduce((a, b) => a + b, 0);
+    lines.push(`${n(total, "task takes", "tasks take")} the base from an earlier tag instead: ${who}.`);
+  }
+  return lines;
+}
+
+export function TagStrip({ tag, members, allTags, projectBranch, originTask, onSelectTask, onDeleted }: {
   tag: TagRow;
   /** Every task carrying the tag, in tray order — the strip sorts them itself. */
   members: TaskRow[];
+  /** Every tag in the project, so the base-branch line can name the tag that wins. */
+  allTags: TagRow[];
+  /** The project's default base, what an unset tag base falls back to. */
+  projectBranch: string;
   /** The planning session that filed this tag, when it's still in this project. */
   originTask?: TaskRow;
   onSelectTask: (id: string) => void;
@@ -91,6 +168,7 @@ export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: 
   const [name, setName] = useState(tag.name);
   const [desc, setDesc] = useState(tag.description);
   const [color, setColor] = useState<string | null>(tag.color);
+  const [base, setBase] = useState(tag.base_branch);
 
   // Another tab (or the delete below) can change the tag under the form.
   // Re-seed the fields whenever the row we're editing actually changes.
@@ -98,7 +176,8 @@ export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: 
     setName(tag.name);
     setDesc(tag.description);
     setColor(tag.color);
-  }, [tag.id, tag.name, tag.description, tag.color]);
+    setBase(tag.base_branch);
+  }, [tag.id, tag.name, tag.description, tag.color, tag.base_branch]);
 
   const ordered = topoMembers(members);
   const p = memberProgress(members);
@@ -111,7 +190,9 @@ export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: 
       // The tags_changed echo refetches the project, so nothing is
       // written into local state here — the chip bar and this strip re-render
       // from the same read.
-      await jsend(`/api/tags/${tag.id}`, "PATCH", { name: name.trim(), description: desc, color: color ?? "" });
+      await jsend(`/api/tags/${tag.id}`, "PATCH", {
+        name: name.trim(), description: desc, color: color ?? "", base_branch: base.trim(),
+      });
       setEditing(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -148,6 +229,20 @@ export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: 
           <textarea className="gs-desc-in" value={desc} rows={2} aria-label="Tag description"
             placeholder="What this tag means — shown here and given to every session carrying it."
             onChange={(e) => setDesc(e.target.value)} />
+          {/* The plan's base branch, set once here instead of on every task.
+              It is a DEFAULT: inheritance stops at the worktree cut, so the
+              line below says how many members are already past that point and
+              which of them take their base from a different tag. */}
+          <label className="gs-base">
+            <span className="gs-base-lbl">Base branch</span>
+            <input className="gs-base-in mono" value={base} aria-label="Tag base branch"
+              placeholder={`${projectBranch || "the project's default"} — inherited`}
+              onChange={(e) => setBase(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }} />
+          </label>
+          <div className="gs-base-note">
+            {baseConsequence({ tag, base, members, allTags, projectBranch }).map((l, i) => <div key={i}>{l}</div>)}
+          </div>
           <div className="gs-colors" role="group" aria-label="Tag color">
             <button type="button" className={`gs-sw none ${color === null ? "on" : ""}`} title="No tint"
               aria-pressed={color === null} onClick={() => setColor(null)} />
@@ -166,7 +261,14 @@ export function TagStrip({ tag, members, originTask, onSelectTask, onDeleted }: 
             <span className="gs-name">{tag.name}</span>
             <span className="gs-frac mono">{p.parts.join(" · ")}</span>
             <span className="spacer" />
-            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Rename, describe or recolor this tag">
+            {/* Shown only when the tag sets one: every tag reading "main" would
+                be noise, the one reading "feature/auth" is the whole point. */}
+            {tag.base_branch && (
+              <span className="gs-base-badge mono" title={`Tasks tagged this are cut from ${tag.base_branch} instead of ${projectBranch}`}>
+                {tag.base_branch}
+              </span>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Rename, describe, recolor or re-base this tag">
               {Icon.edit()} Edit
             </button>
             <button className={`btn btn-sm ${confirmDel ? "btn-danger" : "btn-ghost"}`} disabled={busy} onClick={() => void del()}

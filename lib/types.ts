@@ -703,6 +703,15 @@ export interface Tag {
   color: string | null;
   /** The session that filed this tag, when an agent did; null when the user made it. */
   origin_task_id: string | null;
+  /**
+   * The base branch tasks carrying this tag are cut from — the whole plan's
+   * base, configured once instead of on every task. `""` = no opinion, follow
+   * the project's default. It reaches a task only until its worktree is cut,
+   * after which `tasks.base_branch` holds the pinned answer; a task carrying
+   * several tags takes the first non-empty one in tag order. See
+   * lib/baseBranch.ts and the 2026-08-27 addendum in the design spec.
+   */
+  base_branch: string;
   position: number;
   created_at: number;
   updated_at: number;

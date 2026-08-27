@@ -855,6 +855,15 @@ export function migrate(db: Database.Database) {
   if (!schedCols.includes("runbook_id")) {
     db.exec("ALTER TABLE schedules ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
   }
+  // A tag's DEFAULT base branch: where a whole plan's tasks are cut from, set
+  // once instead of N times (phase 2 of the per-task base branch design). Same
+  // '' = inherit convention as tasks.base_branch, so every existing row keeps
+  // behaving exactly as it does today. Read AFTER the task_groups → tags
+  // migration above, so a database arriving on the old table gets the column
+  // too. A task carrying several tags takes the base from the first one that
+  // sets it, in task_tags.position order — see lib/baseBranch.ts.
+  const tagCols = (db.prepare("PRAGMA table_info(tags)").all() as { name: string }[]).map((c) => c.name);
+  if (!tagCols.includes("base_branch")) db.exec("ALTER TABLE tags ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''");
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

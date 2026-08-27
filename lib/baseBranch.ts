@@ -36,26 +36,67 @@ import {
   worktreeMergeStatus,
   worktreeSyncStatus,
 } from "./git";
-import { getTask, updateTask } from "./store";
+import { getTask, getTaskTags, updateTask } from "./store";
 import type { Project, Task } from "./types";
 
 /**
- * The branch this task is actually based on: its own if it has one, else the
- * project's default.
+ * The branch this task is actually based on:
  *
- * The middle leg of the chain — a tag's default base — arrives in phase 2 of the
- * build order and slots in here, between the task and the project. Its SQL twin
- * is the COALESCE in `listReclaimableWorktrees` (lib/store.ts), which has no
- * Task in hand; the two orders must stay identical and tests/baseBranch.test.ts
- * asserts that they do.
+ *   task.base_branch → the first of its TAGS that sets one → project.branch
+ *
+ * The middle leg is what makes a tag the place a whole plan's base is configured
+ * once instead of N times. A task can carry several tags, and two of them may
+ * disagree; the tie-break is **the first tag by `task_tags.position` that sets a
+ * non-empty base**, which is the order `getTaskTags` returns, the order the
+ * badges render, and the order lib/tagContext.ts injects the context blocks in —
+ * so "the tag this task is mostly about" is a fact the row already carries. It
+ * is resolved rather than refused (adding a second tag must never be able to
+ * break a task's next turn), and the tag strip SAYS when a member's base comes
+ * from a different tag, so nothing appears out of nowhere. Reasoning: the
+ * 2026-08-27 addendum in the design spec.
+ *
+ * The tag leg only ever reaches an UNCUT task: `ensureWorktree` pins the
+ * resolved name into `tasks.base_branch`, after which the first leg answers and
+ * the tags are never consulted again. That is what makes tag-level editing safe
+ * mid-plan — a started member keeps the branch its work is built on.
+ *
+ * The SQL twin is the lookup in `listReclaimableWorktrees` (lib/store.ts), which
+ * has no Task in hand; the two orders must stay identical, and
+ * tests/baseBranch.test.ts asserts that all three legs agree.
  */
-export function resolveBaseBranch(task: Pick<Task, "base_branch">, project: Pick<Project, "branch">): string {
-  return task.base_branch || project.branch;
+export function resolveBaseBranch(task: Pick<Task, "id" | "base_branch">, project: Pick<Project, "branch">): string {
+  if (task.base_branch) return task.base_branch;
+  return tagBaseBranch(task.id) || project.branch;
 }
 
-/** Whether this task has a base of its own rather than following the project. */
-export function hasOwnBase(task: Pick<Task, "base_branch">, project: Pick<Project, "branch">): boolean {
-  return !!task.base_branch && task.base_branch !== project.branch;
+/**
+ * The default this task inherits from its tags — the first non-empty one in tag
+ * order — or "" when none of them has an opinion. Exported because the surfaces
+ * that explain the inheritance (the tag strip's consequence line, the task edit
+ * placeholder) need to name WHICH tag won, not just the branch it named.
+ */
+export function tagBaseBranch(taskId: string): string {
+  return tagBaseSource(taskId)?.base_branch ?? "";
+}
+
+/** The winning tag itself: id and name, so a surface can say where the base came from. */
+export function tagBaseSource(taskId: string): { id: string; name: string; base_branch: string } | undefined {
+  if (!taskId) return undefined;
+  const tag = getTaskTags(taskId).find((t) => t.base_branch);
+  return tag ? { id: tag.id, name: tag.name, base_branch: tag.base_branch } : undefined;
+}
+
+/**
+ * Whether this task is on a base other than the project's default — the badge
+ * and the context-block parenthetical.
+ *
+ * Compares the RESOLVED value, not the raw column: a task that hasn't been cut
+ * yet takes its base from a tag, and that is just as much "not the project
+ * default" as a pinned one. A task pinned to the default reads as false, which
+ * is the case the pin-at-the-cut behaviour creates on every ordinary task.
+ */
+export function hasOwnBase(task: Pick<Task, "id" | "base_branch">, project: Pick<Project, "branch">): boolean {
+  return resolveBaseBranch(task, project) !== project.branch;
 }
 
 export interface RetargetResult {

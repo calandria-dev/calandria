@@ -34,6 +34,10 @@ import {
   setTaskTags,
 } from "./store";
 import { topoMembers } from "./tagContext";
+// The resolved-base helper only (SDK-free, and already pinned that way): task
+// rows carry the effective answer rather than the raw column, so an agent never
+// reimplements the fallback chain.
+import { resolveBaseBranch } from "./baseBranch";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
@@ -185,6 +189,14 @@ export interface AgentTagInfo {
   /** Derived, never stored: every member terminal (and at least one member). */
   done: boolean;
   counts: Tag["counts"];
+  /**
+   * The branch tasks carrying this tag are cut from; "" = they follow the
+   * project's default. It applies until a task's worktree is cut, after which
+   * that task's own base is pinned — so this is the plan's default, not a
+   * statement about every member (`get_task` carries each member's resolved
+   * answer).
+   */
+  base_branch: string;
   /** The session that planned this tag, when an agent filed it. */
   origin_task_id: string | null;
   /** Its members. Titles ride along so "how's the migration going" needs no second call. */
@@ -209,6 +221,7 @@ export function listTagsForAgent(project: Project): AgentTagInfo[] {
     description: tag.description,
     done: tagIsDone(tag),
     counts: tag.counts,
+    base_branch: tag.base_branch,
     origin_task_id: tag.origin_task_id,
     // Plan order, not the tray's recency order: topoMembers is what numbers
     // the steps on screen and in a session's tag context block, and an agent
@@ -406,6 +419,15 @@ export interface AgentTaskInfo {
   blocked_by: string[];
   /** The tags it carries, in tag order; [] when untagged. Carried on every row, filtered or not. */
   tags: { id: string; name: string }[];
+  /**
+   * The RESOLVED base branch — what this task was cut from, what Sync catches it
+   * up to and what Merge lands it into. The effective answer, never the raw
+   * column: the chain is the task's own base → the first of its tags that sets
+   * one → the project's default (lib/baseBranch.ts), and an agent asking "what
+   * am I based on" must not have to reimplement it. "" only when the project has
+   * no base branch configured at all.
+   */
+  base_branch: string;
   /** True for the task the calling session is running in. */
   current: boolean;
 }
@@ -441,7 +463,13 @@ export interface AgentTaskDetail extends Omit<AgentTaskInfo, "blocked_by"> {
 // lived board doesn't bury the open work under everything ever finished.
 const TERMINAL: Status[] = ["done", "cancelled"];
 
-function taskInfo(t: Task & { tag_ids?: string[] }, deps: string[], currentTaskId: string, tagNamesById: Map<string, string>): AgentTaskInfo {
+function taskInfo(
+  t: Task & { tag_ids?: string[] },
+  deps: string[],
+  currentTaskId: string,
+  tagNamesById: Map<string, string>,
+  projectBranch: string
+): AgentTaskInfo {
   return {
     id: t.id,
     title: t.title,
@@ -457,6 +485,7 @@ function taskInfo(t: Task & { tag_ids?: string[] }, deps: string[], currentTaskI
     tags: (t.tag_ids ?? getTaskTagIds(t.id))
       .filter((id) => tagNamesById.has(id))
       .map((id) => ({ id, name: tagNamesById.get(id)! })),
+    base_branch: resolveBaseBranch(t, { branch: projectBranch }),
     current: t.id === currentTaskId,
   };
 }
@@ -486,7 +515,7 @@ export function listTasksForAgent(project: Project, currentTaskId: string, inclu
   return listTasks(project.id)
     .filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId)
     .filter((t) => !tagId || t.tag_ids.includes(tagId))
-    .map((t) => taskInfo(t, t.depends_on, currentTaskId, names));
+    .map((t) => taskInfo(t, t.depends_on, currentTaskId, names, project.branch));
 }
 
 /**
@@ -505,7 +534,7 @@ export function getTaskForAgent(taskId: string, currentTaskId: string): AgentTas
     return dep ? [{ id: dep.id, title: dep.title, status: dep.status, cleared: TERMINAL.includes(dep.status) }] : [];
   });
   return {
-    ...taskInfo(t, [], currentTaskId, tagNames(t.project_id)),
+    ...taskInfo(t, [], currentTaskId, tagNames(t.project_id), project?.branch ?? ""),
     blocked_by,
     description: t.description,
     project_id: t.project_id,

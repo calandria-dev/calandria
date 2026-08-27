@@ -321,8 +321,11 @@ success, is worse than refusing. It resolves in the TARGET's project, not the ca
 the same reason the tool can write any task anywhere. `list_tasks` gains a `tag` filter
 (resolved strictly — an unrecognized one is an error, never a silently unfiltered board) and
 every row carries `tags: [{id, name}]` either way, and **`list_tags(project?)`** returns each
-tag's description, derived counts and tasks with titles and statuses, so "how is the
-migration going" is one call rather than N `get_task`s.
+tag's description, base branch, derived counts and tasks with titles and statuses, so "how is
+the migration going" is one call rather than N `get_task`s. Task rows on both `list_tasks` and
+`get_task` carry `base_branch` **already resolved** through the task → first tag → project
+chain (`lib/baseBranch.ts`), so an agent asking what it is based on never reimplements the
+fallback.
 
 The receiving end is **`lib/tagContext.ts`**: `tagContextBlock(task)`, called from
 `buildProjectContext()`, emits ONE BLOCK PER TAG the task carries, in tag order

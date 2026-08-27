@@ -94,6 +94,14 @@ function blockFor(tag: Tag, task: Task, projectTasks: (Task & { depends_on: stri
   const where = step > 0 ? ` (step ${step} of ${members.length})` : "";
   const lines = [`\n--- This task is tagged "${tag.name}"${where} ---`];
   if (tag.description) lines.push(tag.description);
+  // The plan's base branch, when it sets one. Under the description because it
+  // is part of what the tag IS: "these tasks land on feature/auth" is a fact
+  // about the feature, not about this session's checkout. The session's own
+  // resolved base is already on buildProjectContext's `Base branch:` line —
+  // this says where it came from, and it says so even on a member whose base
+  // was pinned elsewhere at its cut, which is the honest reading of a tag that
+  // was retargeted mid-plan.
+  if (tag.base_branch) lines.push(`Tasks with this tag are based on ${tag.base_branch}.`);
 
   if (members.length > 1) {
     lines.push(`Other tasks with this tag:`);
