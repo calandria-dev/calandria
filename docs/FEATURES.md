@@ -104,7 +104,7 @@ touch your checkout at all, so they are unaffected.
 ## Planning and orchestration
 
 Use a compact list or a full-width kanban board with Suggested, Not started, In progress,
-Needs input, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
+Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other tasks; **Start when unblocked**
 launches an opted-in task as soon as its final blocker is marked done.
 
 Everywhere tasks are listed — every group in the list, every board column, the Suggested
@@ -438,6 +438,17 @@ When that happens the run is recorded as **failed**, not as a quiet green "ran",
 the exact failure this feature exists to prevent. The same applies to a question — if the
 agent asks one mid-run, it's declined immediately with the question preserved in the
 transcript, rather than parking the run forever waiting on an answer that isn't coming.
+
+**Where a clean run comes to rest.** A firing that gets the job done is not waiting on an
+answer, so it deliberately stays out of the "N need you" pill — a permanent daily item nobody
+can reply to is how people learn to ignore that pill. But it isn't working any more either,
+and it isn't done: nobody has read it. So it rests in a state of its own, **Ran clean**, with
+its own group in the task list and its own column on the board. The card says when it ran and
+carries one button, **Mark done** — you read the run, you close it, the row leaves the board.
+Replying to it does the same thing the other way round: the next turn takes the task back to
+In progress. Before this, a successful run had no terminal state at all and sat under **In
+progress** forever, looking exactly like live work, so a weekday schedule quietly added five
+permanent rows a week.
 
 The card also watches **the ticker itself**. If the scheduler isn't running, or its sweeps
 stop completing (a wedged check hangs every schedule on the instance at once), a banner says

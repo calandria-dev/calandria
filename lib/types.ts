@@ -73,6 +73,14 @@ export interface Task {
   // "was snoozed" chip. `status` is deliberately untouched by a snooze — that's
   // what makes going back to the previous category free rather than restored.
   snoozed_until: number;
+  // When an unattended run finished cleanly and nobody has acknowledged it yet
+  // (ms epoch; 0 = nothing outstanding). A scheduled turn that succeeds sets
+  // this INSTEAD of awaiting_input: it isn't waiting on an answer, so it must
+  // stay out of the "N need you" pill, but it isn't still working either —
+  // without a mark of its own the task rested under "In progress" forever
+  // (issue #28). Cleared by the next turn that starts on the task and by any
+  // explicit status write; `status` itself is untouched, exactly like a snooze.
+  unread_run_at: number;
   // Queued to start on its own at this instant (ms epoch; 0 = not queued) —
   // "start at the usage-window reset" (lib/deferredStart.ts). For a never-
   // started task the sweep launches its first turn; for a started one it
@@ -572,6 +580,13 @@ export type GlobalTaskEvent = {
   /** What the linger is waiting on ("waiting to wake at 12:00"); "" when not lingering. */
   background_note: string;
   status: Status;
+  /**
+   * A clean unattended run nobody has acknowledged yet (ms epoch; 0 = none) —
+   * the resting state of a scheduled success. Carried alongside the flags
+   * above because it settles at the same instant they do, and a client that
+   * only learned running/awaiting_input would draw the row as still working.
+   */
+  unread_run_at: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
   /**

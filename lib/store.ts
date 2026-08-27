@@ -993,9 +993,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 

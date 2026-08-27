@@ -102,7 +102,9 @@ straight in and starts the next turn.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
   own timezone, with nobody logged in. Each firing mints a fresh task you
   review like any other, and can fire a runbook so one recipe serves both
-  the clock and the button.
+  the clock and the button. A run that finished cleanly rests in **Ran clean**
+  — its own group, out of the "needs you" pill because there's nothing to
+  answer, with a Mark done button for once you've read it.
 - **Notifications:** when a task stops and waits for you, when a turn fails,
   or when a scheduled run fails — as a browser notification in any open tab,
   and as a push to your phone with the app closed. Quiet only when you're

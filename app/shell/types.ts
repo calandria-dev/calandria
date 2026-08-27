@@ -69,6 +69,7 @@ export interface TaskRow {
   context_pct: number; // context_tokens as a percent (0–100) of the model's window
   context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
+  unread_run_at: number; // an unattended run finished cleanly and nobody has acknowledged it (ms epoch; 0 = nothing outstanding) — see isUnreadRun in ./format.ts
   start_at: number; // queued to start/resume on its own at this instant (ms epoch; 0 = not queued) — see ./queuedStart.ts
   work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
@@ -316,6 +317,10 @@ export const AWAIT_LABEL = "Needs your input";
 // a Status: a snooze leaves the status alone, which is what the task goes back
 // to when it wakes (see ./snooze.ts).
 export const SNOOZE_LABEL = "Snoozed";
+// The ran-clean group/column: a scheduled run that finished on its own with
+// nothing to answer. Named for what HAPPENED rather than for a status, because
+// it isn't one — the task is still `in_progress` underneath (see ./format.ts).
+export const RAN_LABEL = "Ran clean";
 export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused — pick up later", done: "work complete / merged", cancelled: "abandoned — won't be finished" };
 export const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done", "cancelled"];
 export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo: "Low" };

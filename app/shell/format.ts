@@ -259,6 +259,21 @@ export function duration(start: number, end: number | null): string {
 export const isAwaiting = (t: TaskRow) =>
   t.status === "in_progress" && !!t.awaiting_input;
 
+// A task whose last UNATTENDED run finished cleanly and which nobody has looked
+// at yet — the resting state of a scheduled success (lib/runner.ts). It is
+// deliberately not "needs you": nothing is waiting on an answer, so it stays
+// out of the pill. But it isn't working either, and it isn't done — the output
+// hasn't been read — so it gets a category of its own instead of resting in
+// "In progress", where it was indistinguishable from live work and where
+// nothing ever moved it (issue #28).
+//
+// `running` is part of the predicate, not a nicety: the coarse /api/events
+// payload settles running before a client would ever refetch the row, so a
+// task the mark still sits on because its NEXT turn is already streaming must
+// read as working, not as finished.
+export const isUnreadRun = (t: TaskRow) =>
+  t.status === "in_progress" && t.unread_run_at > 0 && !t.running && !t.awaiting_input;
+
 // A tray suggestion an agent has retracted (the withdraw_suggestion tool): still
 // `suggested`, so it stays in the tray for the user to revive or dismiss, but
 // cancelled — and therefore no longer proposing anything. Without this the tray
