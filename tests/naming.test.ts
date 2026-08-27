@@ -121,7 +121,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   "app/TaskChanges.tsx": [/"orch:diffViewMode"/],
   "app/shell/AgentConnect.tsx": [/"orch_agent_nudge_dismissed"/],
   "app/shell/Composer.tsx": [/orch:draft:/],
-  "app/shell/GroupChips.tsx": [/orch_group_filter_/],
+  "app/shell/TagChips.tsx": [/orch_group_filter_/], // legacy localStorage key, kept as-read on miss
   "app/shell/TasksColumn.tsx": [/orch_(done|cancelled)_collapsed_/],
   "app/shell/Welcome.tsx": [/"orch:welcomeCoach:dismissed"/],
   "app/shell/persist.ts": [/orchestrator-era/], // the comment explaining the pair above

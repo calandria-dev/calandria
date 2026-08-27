@@ -121,8 +121,8 @@ export async function GET(req: Request) {
         }
         // A project's task groups changed. Same shape and same reason as
         // runbooks_changed: no task row is involved, so nothing to re-read.
-        if (ev.type === "task_groups_changed") {
-          send({ type: "task_groups_changed", projectId: ev.projectId });
+        if (ev.type === "tags_changed") {
+          send({ type: "tags_changed", projectId: ev.projectId });
           return;
         }
         // A composed notification (lib/notifications/notify.ts). Bypasses the

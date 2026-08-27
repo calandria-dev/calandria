@@ -26,7 +26,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_GROUPS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
@@ -110,10 +110,10 @@ server.registerTool(
       priority: z.enum(SUGGEST_TASK.priorities).default(SUGGEST_TASK.defaultPriority),
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
-      group: z.string().optional().describe(SUGGEST_TASK.params.group),
+      tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
     },
   },
-  async ({ title, description, priority, project, blocked_by, group }) => {
+  async ({ title, description, priority, project, blocked_by, tags }) => {
     // Resolve refs (id passes through; a title from earlier this turn, filed
     // into the same project → its id) before handing off — the endpoint just
     // forwards ids to setTaskDeps, which only keeps same-project ones.
@@ -121,10 +121,10 @@ server.registerTool(
       const hit = createdByTitle.get(titleKey(project, ref));
       return hit && hit !== AMBIGUOUS ? hit : ref;
     });
-    // `group` is forwarded as the model typed it: the endpoint resolves it in
+    // `tags` are forwarded as the model typed them: the endpoint resolves them in
     // the project the task actually lands in (creating it on a miss), which is
     // the only place that knows what `project` resolved to.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, group });
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags });
     if (data.id) {
       // The ref as typed is the alias that always exists ("" when omitted); the
       // resolved id/name (echoed by the endpoint) additionally let a later call
@@ -149,24 +149,24 @@ server.registerTool(
     inputSchema: {
       project: z.string().optional().describe(LIST_TASKS.params.project),
       include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-      group: z.string().optional().describe(LIST_TASKS.params.group),
+      tag: z.string().optional().describe(LIST_TASKS.params.tag),
     },
   },
-  async ({ project, include_done, group }) => {
-    const data = await callInternal("list-tasks", { project, include_done, group });
+  async ({ project, include_done, tag }) => {
+    const data = await callInternal("list-tasks", { project, include_done, tag });
     return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tasks: data.tasks ?? [] }, null, 2) }] };
   }
 );
 
 server.registerTool(
-  LIST_GROUPS.name,
+  LIST_TAGS.name,
   {
-    description: LIST_GROUPS.description,
-    inputSchema: { project: z.string().optional().describe(LIST_GROUPS.params.project) },
+    description: LIST_TAGS.description,
+    inputSchema: { project: z.string().optional().describe(LIST_TAGS.params.project) },
   },
   async ({ project }) => {
-    const data = await callInternal("list-groups", { project });
-    return { content: [{ type: "text", text: JSON.stringify({ project: data.project, groups: data.groups ?? [] }, null, 2) }] };
+    const data = await callInternal("list-tags", { project });
+    return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tags: data.tags ?? [] }, null, 2) }] };
   }
 );
 
@@ -196,16 +196,16 @@ server.registerTool(
       // would resolve in one turn and be refused in the next; the two-phase
       // recipe hands the model real ids anyway.
       blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
-      group: z.string().optional().describe(UPDATE_TASK.params.group),
+      tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
     },
   },
-  async ({ task, title, description, priority, status, blocked_by, group }) => {
+  async ({ task, title, description, priority, status, blocked_by, tags }) => {
     // `task` is the target the MODEL chose, and it is forwarded unvalidated —
     // this bridge deliberately holds no policy. The endpoint decides what may
     // be written (any task in any project, refused only while it has a turn
     // running right now), against CALANDRIA_TASK_ID (sent by callInternal as
     // the trusted caller identity, which nothing here can override).
-    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, group });
+    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

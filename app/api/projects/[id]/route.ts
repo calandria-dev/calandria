@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProject, updateProject, deleteProject, listTasks, listGroups, type TaskWithUsage } from "@/lib/store";
+import { getProject, updateProject, deleteProject, listTasks, listTags, type TaskWithUsage } from "@/lib/store";
 import { removeWorktree, taskDiffStat } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
@@ -52,10 +52,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const project = getProject(id);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
-  // Groups ride the same read as the tasks they contain: their counts are
+  // Tags ride the same read as the tasks that carry them: their counts are
   // derived from these very rows, so one fetch can't show a chip and a list
   // that disagree.
-  return NextResponse.json({ ...project, tasks: await withDiffStats(project, listTasks(id)), groups: listGroups(id) });
+  return NextResponse.json({ ...project, tasks: await withDiffStats(project, listTasks(id)), tags: listTags(id) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

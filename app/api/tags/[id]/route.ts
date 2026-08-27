@@ -1,22 +1,22 @@
 import { NextResponse } from "next/server";
 import { publishGlobal } from "@/lib/events";
-import { getGroup, updateGroup, deleteGroup, GroupNameConflictError } from "@/lib/store";
-import { parseGroupColor } from "@/lib/types";
+import { getTag, updateTag, deleteTag, TagNameConflictError } from "@/lib/store";
+import { parseTagColor } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const group = getGroup(id);
-  if (!group) return NextResponse.json({ error: "no such group" }, { status: 404 });
-  return NextResponse.json(group);
+  const tag = getTag(id);
+  if (!tag) return NextResponse.json({ error: "no such tag" }, { status: 404 });
+  return NextResponse.json(tag);
 }
 
-/** Rename, describe, recolor. Membership is NOT here — that's a task edit (PATCH /api/tasks/[id] group_id). */
+/** Rename, describe, recolor. Membership is NOT here — that's a task edit (PATCH /api/tasks/[id] tag_ids). */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const before = getGroup(id);
-  if (!before) return NextResponse.json({ error: "no such group" }, { status: 404 });
+  const before = getTag(id);
+  if (!before) return NextResponse.json({ error: "no such tag" }, { status: 404 });
   const body = await req.json();
   const fields: { name?: string; description?: string; color?: string | null; position?: number } = {};
   if (body.name !== undefined) {
@@ -28,7 +28,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     fields.description = body.description;
   }
   if (body.color !== undefined) {
-    const color = parseGroupColor(body.color);
+    const color = parseTagColor(body.color);
     if (!color.ok) return NextResponse.json({ error: color.error }, { status: 400 });
     fields.color = color.color;
   }
@@ -37,24 +37,29 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     fields.position = body.position;
   }
   try {
-    const group = updateGroup(id, fields);
-    publishGlobal("", { type: "task_groups_changed", projectId: before.project_id });
-    return NextResponse.json(group);
+    const tag = updateTag(id, fields);
+    publishGlobal("", { type: "tags_changed", projectId: before.project_id });
+    return NextResponse.json(tag);
   } catch (e) {
-    if (e instanceof GroupNameConflictError) return NextResponse.json({ error: e.message }, { status: 409 });
+    if (e instanceof TagNameConflictError) return NextResponse.json({ error: e.message }, { status: 409 });
     throw e;
   }
 }
 
-/** Hard delete. Members are ungrouped (tasks.group_id ON DELETE SET NULL), never deleted. */
+/**
+ * Hard delete. The tasks carrying the tag are UNTAGGED (task_tags is ON DELETE
+ * CASCADE), never deleted, and each keeps whatever OTHER tags it had — which is
+ * the difference from the one-container-per-task version of this feature: a
+ * deleted tag takes exactly one label off a task, not its whole membership.
+ */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const before = getGroup(id);
-  if (!before) return NextResponse.json({ error: "no such group" }, { status: 404 });
-  deleteGroup(id);
-  publishGlobal("", { type: "task_groups_changed", projectId: before.project_id });
+  const before = getTag(id);
+  if (!before) return NextResponse.json({ error: "no such tag" }, { status: 404 });
+  deleteTag(id);
+  publishGlobal("", { type: "tags_changed", projectId: before.project_id });
   // Membership changed on every former member, but no task_edited fires per
-  // row: the client refetches the whole project on task_groups_changed, which
-  // re-reads the rows' now-null group_id along with the chip bar.
-  return NextResponse.json({ ok: true, ungrouped: before.counts.total });
+  // row: the client refetches the whole project on tags_changed, which
+  // re-reads the rows' now-shorter tag lists along with the chip bar.
+  return NextResponse.json({ ok: true, untagged: before.counts.total });
 }

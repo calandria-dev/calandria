@@ -6,7 +6,7 @@
 
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
 import { listSummaries } from "../store";
-import { groupContextBlock } from "../groupContext";
+import { tagContextBlock } from "../tagContext";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS } from "../config";
 
@@ -36,15 +36,16 @@ export function buildProjectContext(project: Project, task: Task): string {
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
 
-  // Where this task sits in the feature it's a step of — the group's name and
+  // Where this task sits in the features it's part of — each tag's name and
   // description, the siblings in dependency order, and the planning session
-  // that filed them. Empty for an ungrouped task, and suppressed by
-  // send_context = 0 exactly like the project context above (lib/groupContext.ts).
+  // that filed them — one block per tag, in tag order. Empty for an untagged
+  // task, and suppressed by send_context = 0 exactly like the project context
+  // above (lib/tagContext.ts).
   // Placed here, straight after the brief, because it is the FRAMING of that
   // brief: "port the login route" reads differently once the session knows two
   // earlier steps already landed AuthService.
-  const groupBlock = groupContextBlock(task);
-  if (groupBlock) lines.push(groupBlock);
+  const tagBlocks = tagContextBlock(task);
+  if (tagBlocks) lines.push(tagBlocks);
 
   if (summaries.length > 0) {
     lines.push(`\n--- Carried context from previous sessions of this task ---`);
@@ -117,7 +118,15 @@ export function buildProjectContext(project: Project, task: Task): string {
       `ids it waits on. Both phases can be parallel internally; what matters is that phase 2 ` +
       `starts only after you have real ids. Independent tasks stay unblocked — don't invent a ` +
       `chain where the work can genuinely run in any order. Dependencies never cross projects: ` +
-      `refs must be tasks in the same project the dependent task is filed into.`
+      `refs must be tasks in the same project the dependent task is filed into.\n` +
+      // Ordering is only half of what makes a batch a plan; the other half is
+      // saying it IS one. Stated here as well as in the tool description
+      // because this is the standing instruction a planning turn reads before
+      // it decides how to file, and a plan filed untagged can't be named after
+      // the fact without one edit per task.
+      `NAME THE PLAN. Pass the same \`tags\` to every task of one feature, migration or refactor — ` +
+      `a tag is created on first use, the user gets one chip for the whole plan, and each session ` +
+      `is told which step of it it is. A task can carry several, so add the cross-cutting ones too.`
   );
   lines.push(
     `\n\`update_task\` also reaches tasks already on the board, in any project — including ones ` +

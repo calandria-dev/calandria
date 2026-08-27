@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
@@ -12,14 +12,14 @@ import { TasksColumn } from "./shell/TasksColumn";
 import { BoardWorkspace } from "./shell/TaskBoard";
 import { SessionView } from "./shell/SessionView";
 import { ProjectLanding } from "./shell/ProjectLanding";
-import { selectGroupFilter } from "./shell/GroupChips";
+import { selectOneTag } from "./shell/TagChips";
 import { SettingsView } from "./shell/SettingsView";
 import { InsightsView } from "./shell/InsightsView";
 import { AppearancePanel } from "./shell/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
 import { ServicesDrawer } from "./shell/Services";
 import { clientFeatures } from "@/lib/features";
-import { NewTaskModal, EditTaskModal, MoveTasksModal, GroupTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
+import { NewTaskModal, EditTaskModal, MoveTasksModal, TagTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
 import { OnboardingWizard } from "./shell/OnboardingWizard";
 import { AgentNudge, AgentAuthBanner } from "./shell/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./shell/Welcome";
@@ -98,9 +98,10 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
 export default function Shell() {
   const o = useShell();
   const { project, task, selProj, selTask, layout } = o;
-  // The selected task's group, for the session header's badge. Looked up here
-  // because both SessionView mounts (list layout, board slide-over) need it.
-  const taskGroup = task?.group_id ? o.groups.find((g) => g.id === task.group_id) ?? null : null;
+  // Tags by id, for the session header's badges (a task can carry several).
+  // Looked up here because both SessionView mounts (list layout, board
+  // slide-over) need it.
+  const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
   const features = clientFeatures();
   // Resolves "system" against the OS preference for this quick toggle's icon/
@@ -137,9 +138,9 @@ export default function Shell() {
   // by the shell; the column keeps owning the selection itself, so a task the
   // server refuses stays picked when the modal closes.
   const [bulkMoveIds, setBulkMoveIds] = useState<string[] | null>(null);
-  // The same shape for the selection bar's other verb — one group over a whole
-  // selection (app/shell/modals GroupTasksModal).
-  const [bulkGroupIds, setBulkGroupIds] = useState<string[] | null>(null);
+  // The same shape for the selection bar's other verb — add/remove tags over a
+  // whole selection (app/shell/modals TagTasksModal).
+  const [bulkTagIds, setBulkTagIds] = useState<string[] | null>(null);
   const [clearRequest, setClearRequest] = useState<string | null>(null);
   useEffect(() => setClearRequest(null), [selTask]);
   const requestClear = (taskId: string) => setClearRequest(taskId);
@@ -207,7 +208,7 @@ export default function Shell() {
   // "project" is the phone's fourth level, and it exists because ProjectLanding
   // had no mount point here at all: on desktop that pane IS "a project is open
   // and no task is selected", but on a phone that same state shows the task
-  // list, so Runbooks, Schedules, the Groups card and the recap — every
+  // list, so Runbooks, Schedules, the Tags card and the recap — every
   // project-level surface ProjectLanding hosts — were unreachable by
   // construction. It's entered by tapping the project name in the task list's
   // header (the same "Project home" control desktop has) and sits between the
@@ -272,7 +273,7 @@ export default function Shell() {
       onBack={isMobile ? () => window.history.back() : undefined}
       width={layout.taskW}
       onCollapse={() => o.setLayout((l) => ({ ...l, taskCollapsed: true }))}
-      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} groups={o.groups} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
+      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} tags={o.tags} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
       sparklines={o.sparklines}
       loading={o.tasksLoading}
       view={o.taskView} onSetView={setTaskView} onMoveTask={o.moveTask}
@@ -281,7 +282,7 @@ export default function Shell() {
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
       onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask}
       onBulkMove={setBulkMoveIds}
-      onBulkGroup={setBulkGroupIds}
+      onBulkTag={setBulkTagIds}
       baseBranchTick={o.baseBranchTick}
     />
   );
@@ -295,7 +296,7 @@ export default function Shell() {
             key={task.id}
             mobile={isMobile}
             onBack={isMobile ? () => window.history.back() : undefined}
-            project={project} task={task} group={taskGroup} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
+            project={project} task={task} tagsById={tagsById} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
             transcriptLoading={o.transcriptLoading}
             onSend={(text) => o.runTurn(task.id, text, false)}
             onStart={() => o.runTurn(task.id, "", true)}
@@ -325,8 +326,8 @@ export default function Shell() {
             projects={o.activeProjects}
             agents={o.agents}
             recap={o.recaps[project.id]}
-            groups={o.groups}
-            onSelectGroup={(id) => selectGroupFilter(project.id, id)}
+            tags={o.tags}
+            onSelectTag={(id) => selectOneTag(project.id, id)}
             onNewTask={() => o.setModal("task")}
             onRefreshRecap={() => o.fetchRecap(project.id, true)}
             onOpenTask={o.setSelTask}
@@ -387,7 +388,7 @@ export default function Shell() {
   // Services/Terminal toggles keep working while the board is up).
   const boardWorkspace = project && (
     <BoardWorkspace
-      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} groups={o.groups}
+      project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} tags={o.tags}
       selTaskId={selTask} running={o.running} blockedBy={o.blockedBy} sparklines={o.sparklines} loading={o.tasksLoading}
       onSetView={setTaskView} onMoveTask={o.moveTask}
       onSelectTask={openBoardTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
@@ -408,7 +409,7 @@ export default function Shell() {
             <div className="session-body">
               <SessionView
                 key={task.id}
-                project={project} task={task} group={taskGroup} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
+                project={project} task={task} tagsById={tagsById} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
                 transcriptLoading={o.transcriptLoading}
                 onSend={(text) => o.runTurn(task.id, text, false)}
                 onStart={() => o.runTurn(task.id, "", true)}
@@ -468,7 +469,7 @@ export default function Shell() {
   // it; on a phone that frame is a different pane, so the back chevron (to the
   // task list, one Back level — navHistory.ts), the project name and the New
   // task action have to travel with the pane. Everything below the header is
-  // the same component desktop renders, so Runbooks/Schedules/Groups/recap
+  // the same component desktop renders, so Runbooks/Schedules/Tags/recap
   // can't drift between the two.
   const projectColumn = project && (
     <div className="col col-project">
@@ -492,10 +493,10 @@ export default function Shell() {
           projects={o.activeProjects}
           agents={o.agents}
           recap={o.recaps[project.id]}
-          groups={o.groups}
-          // A group chip is a filter on the TASK LIST, so picking one has to
+          tags={o.tags}
+          // A tag chip is a filter on the TASK LIST, so picking one has to
           // leave this pane — otherwise the tap looks dead on a phone.
-          onSelectGroup={(id) => { selectGroupFilter(project.id, id); o.setProjectHome(false); }}
+          onSelectTag={(id) => { selectOneTag(project.id, id); o.setProjectHome(false); }}
           onNewTask={() => o.setModal("task")}
           onRefreshRecap={() => o.fetchRecap(project.id, true)}
           onOpenTask={o.setSelTask}
@@ -726,9 +727,9 @@ export default function Shell() {
         <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
       )}
 
-      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} groups={o.groups} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateGroup={o.createGroup} onOpenSetup={o.rerunOnboarding} />}
+      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
-        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} groups={o.groups} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateGroup={o.createGroup} onOpenSetup={o.rerunOnboarding} />
+        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} tags={o.tags} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />
       )}
       {bulkMoveIds && project && (
         <MoveTasksModal
@@ -741,15 +742,15 @@ export default function Shell() {
           onMoved={(moved) => setBulkMoveIds((ids) => (ids ?? []).filter((id) => !moved.includes(id)))}
         />
       )}
-      {bulkGroupIds && bulkGroupIds.length > 0 && project && (
-        <GroupTasksModal
+      {bulkTagIds && bulkTagIds.length > 0 && project && (
+        <TagTasksModal
           // Resolved from the live rows, like the move modal's: a task that
           // vanished under the selection simply isn't in it.
-          selected={o.tasks.filter((t) => bulkGroupIds.includes(t.id))}
-          groups={o.groups}
-          onClose={() => setBulkGroupIds(null)}
-          onApply={o.groupTasks}
-          onCreateGroup={o.createGroup}
+          selected={o.tasks.filter((t) => bulkTagIds.includes(t.id))}
+          tags={o.tags}
+          onClose={() => setBulkTagIds(null)}
+          onApply={o.tagTasks}
+          onCreateTag={o.createTag}
         />
       )}
       {o.modal === "context" && project && <ContextModal project={project} agents={o.agents} onSetDefaultAgent={o.setProjectDefaultAgent} onClose={() => o.setModal(null)} onSave={o.saveContext} onDelete={() => o.removeProject(project.id)} onDeprecate={() => o.setDeprecated(project.id, true)} />}

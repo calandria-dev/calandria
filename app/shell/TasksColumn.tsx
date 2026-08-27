@@ -8,9 +8,9 @@ import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { SnoozeButton } from "./SnoozeMenu";
-import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TaskGroupRow } from "./types";
-import { GroupChips, GroupBadge, useGroupFilter, inGroup } from "./GroupChips";
-import { GroupStrip } from "./GroupStrip";
+import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
+import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
+import { TagStrip } from "./TagStrip";
 import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge } from "./shared";
 import { TaskCardSkeleton } from "./Layout";
@@ -39,7 +39,7 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
   );
 }
 
-function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparkline, group, onSelectGroup }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparkline?: number[]; group?: TaskGroupRow; onSelectGroup: (id: string) => void }) {
+function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparkline, tagsById, onSelectTag }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting: the whole point of parking a task that's asking you
@@ -77,12 +77,12 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           <PickBox picked={picked} pickable={pickable} onPick={(range) => onPick(task.id, range)} />
         </span>
         <span className="ttitle">{task.title}</span>
-        {/* Which feature this is a step of. After the title, per the groups
-            spec; clicking it narrows the list to the group. */}
-        {group && <GroupBadge group={group} onSelect={() => onSelectGroup(group.id)} />}
-        {/* Snoozed reports the category it came from, not "Snoozed": the group
-            header already says that, and where it goes BACK to is the fact the
-            row can't otherwise show. */}
+        {/* Which feature(s) this is a step of — a task can carry several. After
+            the title, per the tags spec; clicking one lights that tag alone. */}
+        <TagBadges tagIds={task.tag_ids} tagsById={tagsById} onSelect={onSelectTag} />
+        {/* Snoozed reports the category it came from, not "Snoozed": the status
+            group header already says that, and where it goes BACK to is the
+            fact the row can't otherwise show. */}
         <span className={`slabel ${awaiting ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
         <PriPill p={task.priority} />
       </div>
@@ -158,13 +158,13 @@ const canPick = (t: TaskRow) => t.running === 0;
 // they're passed explicitly rather than derived from SCLS.
 type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z";
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparklines, groupsById, onSelectGroup, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparklines: Record<string, number[]>; groupsById: Map<string, TaskGroupRow>; onSelectGroup: (id: string) => void; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, sparklines, tagsById, onSelectTag, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   if (tasks.length === 0) return null;
   const cards = tasks.map((t) => (
     <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
       blockedBy={blockedBy.get(t.id)} onSelect={() => onSelect(t.id)} picked={picked.has(t.id)} onPick={onPick}
       onSnooze={onSnooze} onUnsnooze={onUnsnooze} sparkline={sparklines[t.id]}
-      group={t.group_id ? groupsById.get(t.group_id) : undefined} onSelectGroup={onSelectGroup} />
+      tagsById={tagsById} onSelectTag={onSelectTag} />
   ));
   const dotEl = dot && <span className={`sdot sm ${dot}`} />;
   if (collapsible) {
@@ -284,18 +284,18 @@ function useCollapsed(key: string, legacyKey: string, def: boolean) {
   return [collapsed, toggle] as const;
 }
 
-export function TasksColumn({ project, agents, tasks, suggested, groups: taskGroups, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onBulkGroup, onCollapse, mobile, onBack, baseBranchTick }: {
-  project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; groups: TaskGroupRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; width: number; loading?: boolean;
+export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onBulkMove, onBulkTag, onCollapse, mobile, onBack, baseBranchTick }: {
+  project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; tags: TagRow[]; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; width: number; loading?: boolean;
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
   onSelectTask: (id: string) => void; onNewTask: () => void; onEditContext: () => void; onShowSessions: () => void; onShowRecap: () => void;
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
-  // Hand a multi-select off to the bulk-move / bulk-group modal. Owned by the
+  // Hand a multi-select off to the bulk-move / bulk-tag modal. Owned by the
   // shell (it owns every modal) — this column only decides WHAT is selected.
   onBulkMove: (ids: string[]) => void;
-  onBulkGroup: (ids: string[]) => void;
+  onBulkTag: (ids: string[]) => void;
   mobile?: boolean; onBack?: () => void;
   // Bumped when a merge lands, so the base-branch banner re-reads a branch the merge just moved.
   baseBranchTick?: number;
@@ -307,18 +307,24 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   // graveyard, not the working set.
   const [doneCollapsed, toggleDone] = useCollapsed(`calandria_done_collapsed_${project.id}`, `orch_done_collapsed_${project.id}`, false);
   const [cancelledCollapsed, toggleCancelled] = useCollapsed(`calandria_cancelled_collapsed_${project.id}`, `orch_cancelled_collapsed_${project.id}`, true);
-  // The group chip narrows every bucket below — the Suggested tray included —
-  // to one group's members. Applied before the search so the two compose.
-  // (`taskGroups`, not `groups`: the status buckets below already own that name.)
-  const { selected: groupSel, select: selectGroup } = useGroupFilter(project.id, taskGroups);
-  const groupsById = useMemo(() => new Map(taskGroups.map((g) => [g.id, g])), [taskGroups]);
-  const selectedGroup = groupSel ? groupsById.get(groupSel) ?? null : null;
+  // The tag chips narrow every bucket below — the Suggested tray included —
+  // to the lit tags' members (any/all — TagChips.tsx). Applied before the
+  // search so the two compose. (`tags`, not `groups`: the status buckets below
+  // keep that name — a task carrying several tags never collides with them.)
+  const { filter: tagFilter, set: setTagFilter, toggle: toggleTag } = useTagFilter(project.id, tags);
+  const tagsById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
+  // The strip is single-tag only (TagStrip.tsx's own reasoning) — two lit chips
+  // are a filter over two plans, not one plan's detail view.
+  const selectedTag = tagFilter.ids.length === 1 ? tagsById.get(tagFilter.ids[0]) ?? null : null;
+  // A badge click lights exactly one tag, from any surface — the chip bar's
+  // own toggle (above) is the only thing that builds a multi-tag filter.
+  const selectTag = (id: string) => selectOneTag(project.id, id);
   const q = query.trim().toLowerCase();
   const match = (t: TaskRow) => !q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q);
-  const shown = inGroup(tasks, groupSel).filter(match);
+  const shown = inTags(tasks, tagFilter).filter(match);
   // Withdrawn suggestions sink to the bottom of the tray: they're retractions
   // awaiting a decision, not proposals competing for attention.
-  const shownSuggested = inGroup(suggested, groupSel).filter(match).sort(withdrawnLast);
+  const shownSuggested = inTags(suggested, tagFilter).filter(match).sort(withdrawnLast);
   // Snoozed is a category ABOVE the status groups, not one of them: a parked
   // task keeps its status the whole time (that's what it returns to), so it has
   // to be lifted out of `awake` before anything else partitions the list, or it
@@ -336,10 +342,15 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
   };
   const canSearch = tasks.length + suggested.length >= SEARCH_MIN;
   const noMatches = q && shown.length === 0 && shownSuggested.length === 0;
-  // A group with nothing left after the filter (every member deleted, or the
-  // remembered chip names a group whose members all moved) — say so rather
-  // than showing "No tasks yet" for a project that has plenty.
-  const groupEmpty = !q && !!groupSel && shown.length === 0 && shownSuggested.length === 0;
+  // Nothing left after the tag filter (every member deleted, or the remembered
+  // chips name tags whose members all moved) — say so rather than showing "No
+  // tasks yet" for a project that has plenty. One lit tag names it; several
+  // name the plural, since "these tags" is the honest description of an
+  // intersection or union over more than one.
+  const tagEmpty = !q && tagFilter.ids.length > 0 && shown.length === 0 && shownSuggested.length === 0;
+  const tagEmptyMsg = tagFilter.ids.length === 1
+    ? `No tasks in ${tagsById.get(tagFilter.ids[0])?.name ?? "this tag"}.`
+    : "No tasks with these tags.";
 
   // The rows a shift-click range runs over: every group in render order, then
   // the Suggested tray. Collapsed groups are excluded — a range must not sweep
@@ -355,13 +366,13 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
     ...(cancelledCollapsed && !q ? [] : groups.x),
     ...shownSuggested,
   ].filter(canPick).map((t) => t.id);
-  // The group filter is part of the scope: narrowing the list is a navigation,
+  // The tag filter is part of the scope: narrowing the list is a navigation,
   // and a selection surviving it would act on rows no longer on screen.
-  const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}:${groupSel ?? ""}`, order);
+  const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}:${tagFilter.ids.join(",")}:${tagFilter.match}`, order);
   const { expanded, toggleExpanded } = useExpanded(project.id);
 
   // Everything above the list — the project banner, the search field, the
-  // group chips and the selected group's summary strip — scrolls WITH the
+  // tag chips and the selected tag's summary strip — scrolls WITH the
   // tasks rather than being pinned above them. Stacked, they took most of a
   // narrow column's height and left the list itself a couple of cards tall,
   // and none of them is something you need while scrolling a backlog: the app
@@ -399,20 +410,23 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
         <BaseBranchBanner projectId={project.id} refreshKey={baseBranchTick} />
       </div>
       {canSearch && <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" />}
-      <GroupChips groups={taskGroups} selected={groupSel} onSelect={selectGroup} />
+      <TagChips tags={tags} filter={tagFilter} onToggle={toggleTag} onSet={setTagFilter} />
       {/* The selected chip's detail: description, progress, provenance, the
-          members in dependency order, and the two verbs a group has. A group
-          gets no route of its own — this band IS the epic page. Members come
-          from both lists because a plan lands in the tray first. */}
-      {selectedGroup && (
-        <GroupStrip
-          group={selectedGroup}
-          members={[...tasks, ...suggested].filter((t) => t.group_id === selectedGroup.id)}
-          originTask={selectedGroup.origin_task_id
-            ? [...tasks, ...suggested].find((t) => t.id === selectedGroup.origin_task_id)
+          members in dependency order, and the two verbs a tag has. A tag gets
+          no route of its own — this band IS the epic page. Members come from
+          both lists because a plan lands in the tray first; shown only with
+          exactly one chip lit (two lit chips are a filter over two plans), and
+          filtered by THAT tag alone rather than the compound filter — a second
+          lit chip elsewhere doesn't narrow what the strip itself shows. */}
+      {selectedTag && (
+        <TagStrip
+          tag={selectedTag}
+          members={[...tasks, ...suggested].filter((t) => t.tag_ids.includes(selectedTag.id))}
+          originTask={selectedTag.origin_task_id
+            ? [...tasks, ...suggested].find((t) => t.id === selectedTag.origin_task_id)
             : undefined}
           onSelectTask={onSelectTask}
-          onDeleted={() => selectGroup(null)}
+          onDeleted={() => setTagFilter({ ids: [], match: "any" })}
         />
       )}
     </>
@@ -434,11 +448,11 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
         {head}
         <div className="board-wrap">
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
-          {groupEmpty && <div className="search-empty">No tasks in {groupsById.get(groupSel!)?.name ?? "this group"} yet.</div>}
+          {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
           <TaskBoard
             tasks={shown} suggested={shownSuggested} agents={agents} selTaskId={selTaskId}
             running={running} blockedBy={blockedBy} sparklines={sparklines}
-            groupsById={groupsById} onSelectGroup={selectGroup}
+            tagsById={tagsById} onSelectTag={selectTag}
             onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
             onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
             onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask}
@@ -457,16 +471,16 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
             </div>
           )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
-          {groupEmpty && <div className="search-empty">No tasks in {groupsById.get(groupSel!)?.name ?? "this group"} yet.</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} accent dot="c" />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="a" />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="h" />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="r" />
+          {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
+          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} accent dot="c" />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="a" />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="h" />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="r" />
           {/* Parked work sits between the live groups and the terminal ones —
               it isn't finished, but it isn't asking for anything either. */}
-          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="z" />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} groupsById={groupsById} onSelectGroup={selectGroup} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="z" />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">
@@ -488,7 +502,7 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
                 <>
                   <div className="sg-name">
                     {s.title}
-                    {s.group_id && groupsById.get(s.group_id) && <GroupBadge group={groupsById.get(s.group_id)!} onSelect={() => selectGroup(s.group_id)} />}
+                    <TagBadges tagIds={s.tag_ids} tagsById={tagsById} onSelect={selectTag} />
                   </div>
                   {gone ? (
                     <div className="sg-why gone" title={open ? undefined : s.withdrawn_reason || undefined}>
@@ -542,8 +556,8 @@ export function TasksColumn({ project, agents, tasks, suggested, groups: taskGro
         <div className="pick-bar">
           <span className="pb-count">{picked.size} selected</span>
           <span className="spacer" />
-          <button className="btn btn-line btn-sm" onClick={() => onBulkGroup([...picked])} title="Put every selected task in one group — the quick way to group a plan an agent filed before the group existed">
-            {Icon.spark()} Group…
+          <button className="btn btn-line btn-sm" onClick={() => onBulkTag([...picked])} title="Add or remove tags across every selected task — the quick way to tag a plan an agent filed before the tag existed">
+            {Icon.spark()} Tags…
           </button>
           <button className="btn btn-line btn-sm" onClick={() => onBulkMove([...picked])} title="Re-file every selected task under another project">
             {Icon.chevRight()} Move to project…

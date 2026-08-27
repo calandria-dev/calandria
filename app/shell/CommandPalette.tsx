@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { jget } from "./api";
-import type { PaletteGroupRow, PaletteTaskRow, ProjectRow } from "./types";
+import type { PaletteTagRow, PaletteTaskRow, ProjectRow } from "./types";
 import { StatusDot } from "./shared";
-import { GroupBadge, groupProgress, groupTint, selectGroupFilter } from "./GroupChips";
+import { TagBadge, tagProgress, tagTint, selectOneTag } from "./TagChips";
 
 // One executable command surfaced by the palette. Callers pass only the
 // commands that currently make sense (e.g. no "Toggle Terminal" without a
@@ -48,20 +48,20 @@ export function fuzzyScore(query: string, text: string): number {
 
 type Entry =
   | { kind: "project"; project: ProjectRow }
-  | { kind: "group"; group: PaletteGroupRow }
+  | { kind: "tag"; tag: PaletteTagRow }
   | { kind: "task"; task: PaletteTaskRow }
   | { kind: "command"; command: PaletteCommand };
 
 const entryKey = (e: Entry) =>
   e.kind === "project" ? `p:${e.project.id}`
-    : e.kind === "group" ? `g:${e.group.id}`
+    : e.kind === "tag" ? `g:${e.tag.id}`
     : e.kind === "task" ? `t:${e.task.id}`
     : `c:${e.command.id}`;
 
 // With no query the palette is a launcher (a few recent things + every command);
-// once you type, it's a search (more room for matches per group).
-const EMPTY_LIMITS = { project: 5, group: 4, task: 6 };
-const QUERY_LIMITS = { project: 6, group: 6, task: 10 };
+// once you type, it's a search (more room for matches per section).
+const EMPTY_LIMITS = { project: 5, tag: 4, task: 6 };
+const QUERY_LIMITS = { project: 6, tag: 6, task: 10 };
 
 // The ⌘K command palette: fuzzy search over projects, sessions (tasks across
 // ALL active projects) and commands, grouped, keyboard-first. The overlay is a
@@ -78,15 +78,15 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [tasks, setTasks] = useState<PaletteTaskRow[]>([]);
-  const [groups, setGroups] = useState<PaletteGroupRow[]>([]);
+  const [tags, setTags] = useState<PaletteTagRow[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Sessions across every project are server state (the client only holds the
   // selected project's tasks) — fetched fresh each open, like NeedsYouMenu.
   useEffect(() => {
     let alive = true;
-    jget<{ tasks: PaletteTaskRow[]; groups: PaletteGroupRow[] }>("/api/tasks")
-      .then((d) => { if (alive) { setTasks(d.tasks); setGroups(d.groups ?? []); } })
+    jget<{ tasks: PaletteTaskRow[]; tags: PaletteTagRow[] }>("/api/tasks")
+      .then((d) => { if (alive) { setTasks(d.tasks); setTags(d.tags ?? []); } })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -103,25 +103,23 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
         .slice(0, limit)
         .map((x) => x.i);
     };
-    // `buckets`, not `groups`: task groups are one of the things being searched
-    // now, and the section list can't own that name too.
     const buckets: { title: string; entries: Entry[] }[] = [
       { title: "Projects", entries: rank(projects, (p) => `${p.name} ${p.sub}`, limits.project).map((project) => ({ kind: "project", project })) },
-      // "group" in the searched text so typing the word finds them, the way
-      // the commands' `keywords` work. Finished groups are still matchable —
+      // "tag" in the searched text so typing the word finds them, the way
+      // the commands' `keywords` work. Finished tags are still matchable —
       // "what did the auth migration cost" is a question about a done one.
-      { title: "Groups", entries: rank(groups, (g) => `group ${g.name} ${g.description} ${g.project_name}`, limits.group).map((group) => ({ kind: "group", group })) },
-      { title: "Sessions", entries: rank(tasks, (t) => `${t.title} ${t.project_name} ${t.group_name ?? ""}`, limits.task).map((task) => ({ kind: "task", task })) },
+      { title: "Tags", entries: rank(tags, (t) => `tag ${t.name} ${t.description} ${t.project_name}`, limits.tag).map((tag) => ({ kind: "tag", tag })) },
+      { title: "Sessions", entries: rank(tasks, (t) => `${t.title} ${t.project_name} ${t.tags.map((g) => g.name).join(" ")}`, limits.task).map((task) => ({ kind: "task", task })) },
       { title: "Commands", entries: rank(commands, (c) => `${c.label} ${c.keywords ?? ""}`, commands.length).map((command) => ({ kind: "command", command })) },
     ];
-    // Flatten in display order so ↑/↓ walk straight through the groups.
+    // Flatten in display order so ↑/↓ walk straight through the sections.
     const flat: Entry[] = buckets.flatMap((b) => b.entries);
     let idx = 0;
     const sections = buckets
       .filter((b) => b.entries.length > 0)
       .map((b) => ({ title: b.title, rows: b.entries.map((entry) => ({ entry, idx: idx++ })) }));
     return { sections, flat };
-  }, [query, projects, groups, tasks, commands]);
+  }, [query, projects, tags, tasks, commands]);
 
   // Typing (or the async session load) reshapes the list — snap the highlight
   // back to the top / into range rather than leaving it on a stale row.
@@ -130,11 +128,11 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
 
   const run = (e: Entry) => {
     if (e.kind === "project") onPickProject(e.project.id);
-    // A group has no route of its own — "opening" one IS the project with its
-    // chip selected, which is what its detail (the strip) hangs off. The chip
+    // A tag has no route of its own — "opening" one IS the project with its
+    // chip lit alone, which is what its detail (the strip) hangs off. The chip
     // is set BEFORE the navigation so the list renders narrowed on first paint
     // rather than flashing every task.
-    else if (e.kind === "group") { selectGroupFilter(e.group.project_id, e.group.id); onPickProject(e.group.project_id); }
+    else if (e.kind === "tag") { selectOneTag(e.tag.project_id, e.tag.id); onPickProject(e.tag.project_id); }
     else if (e.kind === "task") onPickTask(e.task.project_id, e.task.id);
     else e.command.run();
     onClose();
@@ -176,16 +174,16 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
         </button>
       );
     }
-    if (entry.kind === "group") {
-      const g = entry.group;
+    if (entry.kind === "tag") {
+      const g = entry.tag;
       return (
         <button key={entryKey(entry)} {...props}>
           <span className="pr-chip" style={{ background: g.project_color }} title={g.project_name}>
             {(g.project_icon || g.project_name[0] || "?").toUpperCase()}
           </span>
-          <span className="gc-dot" style={groupTint(g.color)} />
+          <span className="gc-dot" style={tagTint(g.color)} />
           <span className="pr-title">{g.name}</span>
-          <span className="pr-sub">{g.project_name} · {groupProgress(g).label}</span>
+          <span className="pr-sub">{g.project_name} · {tagProgress(g).label}</span>
           {idx === active && <span className="pr-hint">⏎ show</span>}
         </button>
       );
@@ -199,9 +197,13 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
           </span>
           <StatusDot status={t.status} running={t.running === 1} awaiting={t.awaiting_input === 1 && t.running !== 1} />
           <span className="pr-title">{t.title}</span>
-          {/* Which feature this session is a step of — the same pill the list
-              row carries, inert here (the row itself is the navigation). */}
-          {t.group_name && <GroupBadge group={{ name: t.group_name, color: t.group_color }} />}
+          {/* Which feature(s) this session is a step of — the same pills the
+              list row carries, inert here (the row itself is the navigation).
+              A task can carry several, so this can be more than one badge. */}
+          {t.tags.slice(0, 3).map((tag, i) => <TagBadge key={i} tag={tag} />)}
+          {t.tags.length > 3 && (
+            <span className="gbadge more" title={t.tags.slice(3).map((tag) => tag.name).join("\n")}>+{t.tags.length - 3}</span>
+          )}
           <span className="pr-sub">{t.project_name}</span>
           {idx === active && <span className="pr-hint">⏎ open</span>}
         </button>

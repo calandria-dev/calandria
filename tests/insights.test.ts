@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ensureWorktree, mergeTask } from "../lib/git";
 import {
   addUsage,
-  createGroup,
+  createTag,
   createProject,
   createTask,
   deleteTask,
@@ -135,13 +135,14 @@ describe("getInsightsData", () => {
     expect(taskRows[0].inp).toBe(100);
   });
 
-  // The Groups leaderboard ("what did the auth migration cost") reads the same
-  // usage cube, one dimension finer.
-  it("tags task usage with its group and leaves ungrouped spend in the same cube", () => {
+  // The Tags leaderboard ("what did the auth migration cost") reads a SEPARATE
+  // cube (tagUsage), one dimension finer than `usage` — folding it into `usage`
+  // would double-count a task carrying more than one tag.
+  it("attributes spend to tags in a separate cube, leaving `usage` untouched and unsummed", () => {
     const { project, task } = makeProjectTask();
-    const group = createGroup({ project_id: project.id, name: "Auth migration" });
-    const member = createTask({ project_id: project.id, title: "member", group_id: group.id });
-    const doomed = createTask({ project_id: project.id, title: "doomed", group_id: group.id });
+    const tag = createTag({ project_id: project.id, name: "Auth migration" });
+    const member = createTask({ project_id: project.id, title: "member", tag_ids: [tag.id] });
+    const doomed = createTask({ project_id: project.id, title: "doomed", tag_ids: [tag.id] });
     addUsage({ project_id: project.id, task_id: member.id, generation: 1, agent: "claude", usage: usage() });
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 2 }) });
     addUsage({ project_id: project.id, task_id: doomed.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 4 }) });
@@ -151,13 +152,38 @@ describe("getInsightsData", () => {
     deleteTask(doomed.id);
 
     const data = getInsightsData(Date.now() - DAY);
-    const rows = data.usage.filter((r) => r.p === project.id);
-    expect(rows.find((r) => r.g === group.id)!.cost).toBeCloseTo(1.5);
-    // Ungrouped spend keys on "" rather than vanishing — the day/project/agent
+    // `usage` (the existing task-turn cube) has no `g` field at all any more —
+    // it must not change shape just because tags exist.
+    expect((data.usage[0] as unknown as { g?: unknown }).g).toBeUndefined();
+    const usageRows = data.usage.filter((r) => r.p === project.id);
+    expect(usageRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
+
+    const tagRows = data.tagUsage.filter((r) => r.p === project.id);
+    expect(tagRows.find((r) => r.g === tag.id)!.cost).toBeCloseTo(1.5);
+    // Untagged spend keys on "" rather than vanishing — the day/project/agent
     // totals every chart above the leaderboard is built on must not change.
-    expect(rows.find((r) => r.g === "")!.cost).toBeCloseTo(2);
-    expect(rows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
-    // The group itself rides along so the leaderboard has a label for that key.
-    expect(data.groups.find((g) => g.id === group.id)).toMatchObject({ name: "Auth migration", project_id: project.id });
+    expect(tagRows.find((r) => r.g === "")!.cost).toBeCloseTo(2);
+    expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
+    // The tag itself rides along so the leaderboard has a label for that key.
+    expect(data.tags.find((g) => g.id === tag.id)).toMatchObject({ name: "Auth migration", project_id: project.id });
+  });
+
+  it("a task with two tags contributes usage to BOTH — tagUsage does not sum to `usage`", () => {
+    const { project } = makeProjectTask();
+    const first = createTag({ project_id: project.id, name: "Auth migration" });
+    const second = createTag({ project_id: project.id, name: "Flaky tests" });
+    const both = createTask({ project_id: project.id, title: "both", tag_ids: [first.id, second.id] });
+    addUsage({ project_id: project.id, task_id: both.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 3 }) });
+
+    const data = getInsightsData(Date.now() - DAY);
+    const usageRows = data.usage.filter((r) => r.p === project.id);
+    expect(usageRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3);
+
+    const tagRows = data.tagUsage.filter((r) => r.p === project.id);
+    // Both tags get the full $3 — the row genuinely belongs to both plans.
+    expect(tagRows.find((r) => r.g === first.id)!.cost).toBeCloseTo(3);
+    expect(tagRows.find((r) => r.g === second.id)!.cost).toBeCloseTo(3);
+    // So the tag cube's total (6) does NOT equal the task cube's total (3).
+    expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(6);
   });
 });

@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, TaskGroup, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -153,22 +153,40 @@ export function listAllTasksLite(): {
   project_name: string;
   project_color: string;
   project_icon: string;
-  /** The group this is a step of, for the palette's badge; null when ungrouped. */
-  group_name: string | null;
-  group_color: string | null;
+  /** The tags it carries, for the palette's badges — name + tint, in tag order. */
+  tags: { name: string; color: string | null }[];
 }[] {
-  return getDb()
+  const db = getDb();
+  const rows = db
     .prepare(
       `SELECT t.id, t.project_id, t.title, t.status, t.running, t.awaiting_input, t.updated_at,
-         p.name AS project_name, p.color AS project_color, p.icon AS project_icon,
-         g.name AS group_name, g.color AS group_color
+         p.name AS project_name, p.color AS project_color, p.icon AS project_icon
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
-       LEFT JOIN task_groups g ON g.id = t.group_id
        WHERE t.suggested = 0 AND p.deprecated = 0
        ORDER BY t.updated_at DESC`
     )
-    .all() as ReturnType<typeof listAllTasksLite>;
+    .all() as Omit<ReturnType<typeof listAllTasksLite>[number], "tags">[];
+  // The badges in one more query rather than a correlated one per row — the
+  // same shape listTasks attaches `depends_on` with, and for the same reason:
+  // GROUP_CONCAT would have to guess at ordering, and this keeps tag order
+  // (task_tags.position) exactly as the task carries it.
+  const pairs = db
+    .prepare(
+      `SELECT tt.task_id, g.name, g.color FROM task_tags tt
+         JOIN tags g ON g.id = tt.tag_id
+         JOIN tasks t ON t.id = tt.task_id
+        WHERE t.suggested = 0
+        ORDER BY tt.position ASC, tt.created_at ASC`
+    )
+    .all() as { task_id: string; name: string; color: string | null }[];
+  const byTask = new Map<string, { name: string; color: string | null }[]>();
+  for (const p of pairs) {
+    const list = byTask.get(p.task_id);
+    if (list) list.push({ name: p.name, color: p.color });
+    else byTask.set(p.task_id, [{ name: p.name, color: p.color }]);
+  }
+  return rows.map((r) => ({ ...r, tags: byTask.get(r.id) ?? [] }));
 }
 
 export function createProject(input: {
@@ -261,7 +279,8 @@ export function setProjectRefresh(
 // agent's own report of the latest request's context size, NOT a cumulative
 // sum, with `context_estimated` flagging the rows where it's only derived from
 // a usage report (see getTaskContext for both).
-// `depends_on` lists the task ids this task is blocked by (see task_dependencies).
+// `depends_on` lists the task ids this task is blocked by (see task_dependencies);
+// `tag_ids` the tags it carries, in tag order (see task_tags).
 export type TaskWithUsage = Task & {
   cost_usd: number;
   total_tokens: number;
@@ -271,6 +290,7 @@ export type TaskWithUsage = Task & {
   context_pct: number;
   context_estimated: boolean;
   depends_on: string[];
+  tag_ids: string[];
 };
 
 // The two halves of the context gauge as SQL, shared by listTasks (aliased on
@@ -338,11 +358,27 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     if (list) list.push(e.depends_on_id);
     else byTask.set(e.task_id, [e.depends_on_id]);
   }
+  // Tag membership the same way, in tag order — one query for the project, not
+  // one per row. This is what the chips filter on and what every badge renders.
+  const memberships = db
+    .prepare(
+      `SELECT tt.task_id, tt.tag_id FROM task_tags tt
+         JOIN tasks t ON t.id = tt.task_id WHERE t.project_id = ?
+        ORDER BY tt.position ASC, tt.created_at ASC`
+    )
+    .all(projectId) as { task_id: string; tag_id: string }[];
+  const tagsByTask = new Map<string, string[]>();
+  for (const m of memberships) {
+    const list = tagsByTask.get(m.task_id);
+    if (list) list.push(m.tag_id);
+    else tagsByTask.set(m.task_id, [m.tag_id]);
+  }
   return rows.map((r) => ({
     ...r,
     context_pct: contextPct(r.context_tokens, r.agent, r.model),
     context_estimated: r.context_estimated === 1,
     depends_on: byTask.get(r.id) ?? [],
+    tag_ids: tagsByTask.get(r.id) ?? [],
   }));
 }
 
@@ -558,8 +594,8 @@ export function createTask(input: {
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
   runbook_id?: string | null;
-  /** The task group this joins at birth (validated against the project by the caller). null = ungrouped. */
-  group_id?: string | null;
+  /** The tags it carries at birth (validated against the project by the caller). */
+  tag_ids?: string[];
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -579,14 +615,20 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, group_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
       agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      input.group_id ?? null, position, now, now
+      position, now, now
     );
+  // Tags are a second write because they are a second table. setTaskTags does
+  // the project check for us, so a caller that got the tags wrong fails here
+  // with the row already created — deliberate: every creation path validates
+  // its tags first (the routes and lib/agentTools.ts resolve them before the
+  // insert), and a tag that vanished in between must not lose the task.
+  if (input.tag_ids?.length) setTaskTags([id], input.tag_ids);
   return getTask(id)!;
 }
 
@@ -646,19 +688,20 @@ export interface TaskMoveBatch {
   /** Edges that survived because both of their ends moved together. */
   kept: TaskEdge[];
   /**
-   * Moved rows whose group stayed behind, because some of its members weren't
-   * coming. The group's name travels with the report so the caller can say
-   * WHICH feature the task just left rather than "a group".
+   * Tags a moved row LOST, because some of that tag's members weren't coming.
+   * One entry per (task, tag): a task carrying three tags can leave one behind
+   * and keep two. The name travels with the report so the caller can say WHICH
+   * label the task just lost rather than "a tag".
    */
-  ungrouped: { id: string; group_id: string; group_name: string }[];
-  /** Groups whose every member was in the selection, so the group row moved too. */
-  carried: MovedGroup[];
+  untagged: { id: string; tag_id: string; tag_name: string }[];
+  /** Tags whose every member was in the selection, so the tag row moved too. */
+  carried: MovedTag[];
 }
 
-/** A group re-keyed to the destination project along with its whole membership. */
-export interface MovedGroup {
+/** A tag re-keyed to the destination project along with its whole membership. */
+export interface MovedTag {
   id: string;
-  /** Its name in the destination — suffixed when a group there already had that name. */
+  /** Its name in the destination — suffixed when a tag there already had that name. */
   name: string;
   /** The name it arrived with, when the collision above renamed it; null otherwise. */
   renamed_from: string | null;
@@ -733,7 +776,7 @@ export function moveTasks(
       else movers.push({ ...task, picked });
     }
   });
-  if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [], ungrouped: [], carried: [] };
+  if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [], untagged: [], carried: [] };
 
   // Append in SOURCE order, not click order, so a selection keeps the shape it
   // had in the tray it left. Positions only mean something WITHIN a project — a
@@ -754,23 +797,28 @@ export function moveTasks(
   const kept = touching.filter((e) => moving.has(e.task_id) && moving.has(e.depends_on_id));
   const dropped = touching.filter((e) => !(moving.has(e.task_id) && moving.has(e.depends_on_id)));
 
-  // Groups get the same both-ends-moving rule the edges above do. A group is
-  // project-scoped, so a moved row can't keep pointing at one in the project it
-  // left — UNLESS the whole group is leaving with it, which is what "both ends
-  // are moving" means for a container: it follows its contents. A feature
-  // selected whole therefore arrives whole, badges intact; a feature selected
-  // in part leaves the group (and its remaining members) behind.
-  const carried: MovedGroup[] = [];
-  const ungrouped: { id: string; group_id: string; group_name: string }[] = [];
-  const carriedGroups: TaskGroup[] = [];
-  const membersOf = db.prepare("SELECT id FROM tasks WHERE group_id = ?");
-  for (const gid of new Set(movers.map((t) => t.group_id).filter((g): g is string => !!g))) {
-    const group = getGroup(gid);
-    // The FK says a member's group exists; a missing one just means nothing to carry.
-    if (!group) continue;
-    const members = (membersOf.all(gid) as { id: string }[]).map((m) => m.id);
-    if (members.every((id) => moving.has(id))) carriedGroups.push(group);
-    else for (const t of movers) if (t.group_id === gid) ungrouped.push({ id: t.id, group_id: gid, group_name: group.name });
+  // Tags get the same both-ends-moving rule the edges above do. A tag is
+  // project-scoped, so a moved row can't keep carrying one from the project it
+  // left — UNLESS the whole tag is leaving with it, which is what "both ends
+  // are moving" means for a label: it follows its members. A feature selected
+  // whole therefore arrives whole, badges intact; a feature selected in part
+  // leaves that tag (and its remaining members) behind. Decided PER TAG, not
+  // per task: a task in the auth migration and in "flaky-tests" can carry one
+  // across and drop the other, and telling it which is the whole point of
+  // making these many-to-many.
+  const carried: MovedTag[] = [];
+  const untagged: { id: string; tag_id: string; tag_name: string }[] = [];
+  const carriedTags: Tag[] = [];
+  const tagsOfMovers = new Map<string, string[]>();
+  for (const t of movers) tagsOfMovers.set(t.id, getTaskTagIds(t.id));
+  const membersOf = db.prepare("SELECT task_id FROM task_tags WHERE tag_id = ?");
+  for (const tagId of new Set([...tagsOfMovers.values()].flat())) {
+    const tag = getTag(tagId);
+    // The FK says a membership's tag exists; a missing one just means nothing to carry.
+    if (!tag) continue;
+    const members = (membersOf.all(tagId) as { task_id: string }[]).map((m) => m.task_id);
+    if (members.every((id) => moving.has(id))) carriedTags.push(tag);
+    else for (const t of movers) if (tagsOfMovers.get(t.id)!.includes(tagId)) untagged.push({ id: t.id, tag_id: tagId, tag_name: tag.name });
   }
 
   // Position is per-project (createTask appends at MAX+1 within the project), so
@@ -784,23 +832,25 @@ export function moveTasks(
   // waiting on lost nothing when that edge went, and reaping its (already dead)
   // auto_start would bump an updated_at on a row this move never touched.
   const touched = new Set([...moving, ...dropped.map((e) => e.task_id)]);
-  const leftBehind = new Set(ungrouped.map((u) => u.id));
+  // Which memberships to sever, keyed by task: only the tags that stayed.
+  const leftBehind = new Map<string, string[]>();
+  for (const u of untagged) leftBehind.set(u.id, [...(leftBehind.get(u.id) ?? []), u.tag_id]);
   const now = Date.now();
 
   db.transaction(() => {
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
-    // Re-key the carried groups FIRST, so nothing in between ever reads a
-    // member in one project and its group in another.
-    let groupPos = (
-      db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM task_groups WHERE project_id = ?").get(projectId) as { n: number }
+    // Re-key the carried tags FIRST, so nothing in between ever reads a
+    // member in one project and its tag in another.
+    let tagPos = (
+      db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tags WHERE project_id = ?").get(projectId) as { n: number }
     ).n;
-    const nameTaken = db.prepare("SELECT 1 AS x FROM task_groups WHERE project_id = ? AND name = ?");
+    const nameTaken = db.prepare("SELECT 1 AS x FROM tags WHERE project_id = ? AND name = ?");
     const rekey = db.prepare(
-      "UPDATE task_groups SET project_id = ?, name = ?, position = ?, origin_task_id = ?, updated_at = ? WHERE id = ?"
+      "UPDATE tags SET project_id = ?, name = ?, position = ?, origin_task_id = ?, updated_at = ? WHERE id = ?"
     );
-    for (const g of carriedGroups) {
-      // UNIQUE(project_id, name), and a same-named group in the destination is
+    for (const g of carriedTags) {
+      // UNIQUE(project_id, name), and a same-named tag in the destination is
       // NOT this feature: suffix rather than merge, because merging two plans
       // is a decision and this is a move. The report names what happened.
       let name = g.name;
@@ -808,17 +858,17 @@ export function moveTasks(
       // Provenance can't span projects either — the planning session stays put
       // unless it was selected too, in which case the link survives intact.
       const origin = g.origin_task_id && moving.has(g.origin_task_id) ? g.origin_task_id : null;
-      rekey.run(projectId, name, groupPos++, origin, now, g.id);
+      rekey.run(projectId, name, tagPos++, origin, now, g.id);
       carried.push({ id: g.id, name, renamed_from: name === g.name ? null : g.name });
     }
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
         reasoning = ?, permission_mode = ?, session_id = ?, updated_at = ? WHERE id = ?`
     );
-    // The group a row leaves behind, when the rest of it stayed. Not folded
-    // into the reparent above: a whole selection now KEEPS its group, so
-    // clearing one is the exception — the way the checkout reset below is.
-    const clearGroup = db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ?");
+    // The tags a row leaves behind, when the rest of their members stayed. Not
+    // folded into the reparent above: a whole selection now KEEPS its tags, so
+    // severing one is the exception — the way the checkout reset below is.
+    const untag = db.prepare("DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?");
     // Everything that described the checkout being thrown away. Its own
     // statement, run AFTER the reparent: it's the exception rather than part of
     // every move, so the ordinary unstarted move still writes exactly the
@@ -862,7 +912,7 @@ export function moveTasks(
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
       if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
-      if (leftBehind.has(r.id)) clearGroup.run(r.id);
+      for (const tagId of leftBehind.get(r.id) ?? []) untag.run(r.id, tagId);
       for (const stmt of repoint) stmt.run(projectId, r.id);
     }
     // A blocker-less task can never auto-start (lib/autoStart.ts selects through
@@ -883,7 +933,7 @@ export function moveTasks(
     skipped,
     dropped,
     kept,
-    ungrouped,
+    untagged,
     carried,
   };
 }
@@ -943,9 +993,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, group_id=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.group_id ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -994,115 +1044,136 @@ export function listReclaimableWorktrees(): ReclaimableWorktree[] {
 // user chose to stop being asked about, scoped to one project. Matching logic
 // lives in lib/permissions.ts; this is storage only.
 
-// ---------- task groups ----------
-// A named, project-scoped container of tasks (lib/types TaskGroup; design in
-// docs/superpowers/specs/2026-08-24-task-grouping-design.md). Everything about
-// a group's PROGRESS is derived here at read time from its members — no cached
-// column, no trigger — so a deleted or moved task can never leave it stale.
+// ---------- tags ----------
+// A named, project-scoped label a task can carry (lib/types Tag; design in
+// docs/superpowers/specs/2026-08-27-tags-design.md). Membership is a row in
+// task_tags, not a column on tasks: a task belongs to as many tags as it has
+// reasons to, and takes context from every one of them. Everything about a
+// tag's PROGRESS is derived here at read time from its members — no cached
+// column, nothing to go stale when a task is deleted or moved.
 
-// done/cancelled are terminal the way lib/autoStart's blocks() counts them: a
-// withdrawn suggestion is `cancelled` and counts as finished-with, not as
-// outstanding. `awaiting` is the project badge's own NEEDS_YOU predicate.
-const GROUP_COUNTS_SQL = `
-  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id) AS c_total,
-  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.status = 'done') AS c_done,
-  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.status = 'cancelled') AS c_cancelled,
-  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND t.running = 1) AS c_running,
-  (SELECT COUNT(*) FROM tasks t WHERE t.group_id = g.id AND ${NEEDS_YOU}) AS c_awaiting`;
+/** The derived member counts, as correlated subqueries over the join table. */
+const TAG_COUNTS_SQL = `
+  (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id WHERE tt.tag_id = g.id) AS c_total,
+  (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id WHERE tt.tag_id = g.id AND t.status = 'done') AS c_done,
+  (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id WHERE tt.tag_id = g.id AND t.status = 'cancelled') AS c_cancelled,
+  (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id WHERE tt.tag_id = g.id AND t.running = 1) AS c_running,
+  (SELECT COUNT(*) FROM task_tags tt JOIN tasks t ON t.id = tt.task_id WHERE tt.tag_id = g.id AND ${NEEDS_YOU}) AS c_awaiting`;
 
-type GroupRow = Omit<TaskGroup, "counts"> & { c_total: number; c_done: number; c_cancelled: number; c_running: number; c_awaiting: number };
+type TagRow = Omit<Tag, "counts"> & { c_total: number; c_done: number; c_cancelled: number; c_running: number; c_awaiting: number };
 
-function groupFromRow(r: GroupRow): TaskGroup {
+function tagFromRow(r: TagRow): Tag {
   const { c_total, c_done, c_cancelled, c_running, c_awaiting, ...rest } = r;
   return { ...rest, counts: { total: c_total, done: c_done, cancelled: c_cancelled, running: c_running, awaiting: c_awaiting } };
 }
 
-const SELECT_GROUP = `SELECT g.*, ${GROUP_COUNTS_SQL} FROM task_groups g`;
+const SELECT_TAG = `SELECT g.*, ${TAG_COUNTS_SQL} FROM tags g`;
 
-/** A rename or create that would collide with UNIQUE(project_id, name). Routes map it to 409. */
-export class GroupNameConflictError extends Error {
-  readonly code = "group_name_taken" as const;
-  constructor(name: string) {
-    super(`A group named "${name}" already exists in this project`);
-    this.name = "GroupNameConflictError";
+/** UNIQUE(project_id, name) lost. Its own class so the routes can answer 409. */
+export class TagNameConflictError extends Error {
+  readonly code = "tag_name_taken" as const;
+  constructor(readonly tagName: string) {
+    super(`A tag named "${tagName}" already exists in this project`);
+    this.name = "TagNameConflictError";
   }
 }
 
-export function listGroups(projectId: string): TaskGroup[] {
-  return (getDb().prepare(`${SELECT_GROUP} WHERE g.project_id = ? ORDER BY g.position ASC, g.created_at ASC`).all(projectId) as GroupRow[]).map(groupFromRow);
+export function listTags(projectId: string): Tag[] {
+  return (getDb().prepare(`${SELECT_TAG} WHERE g.project_id = ? ORDER BY g.position ASC, g.created_at ASC`).all(projectId) as TagRow[]).map(tagFromRow);
 }
 
 /**
- * Every group in every active project, with its project's identity — the ⌘K
- * palette's list, which is cross-project the way its session list is. Rides the
- * same fetch as listAllTasksLite (one request when the palette opens) and takes
- * the same deprecated-project exclusion: a shelved project's features are not
- * somewhere you want to be sent.
+ * Every tag in every active project, with its project's identity — the ⌘K
+ * palette's jump targets.
  */
-export function listAllGroupsLite(): (TaskGroup & { project_name: string; project_color: string; project_icon: string })[] {
+export function listAllTagsLite(): (Tag & { project_name: string; project_color: string; project_icon: string })[] {
   const rows = getDb()
     .prepare(
-      `SELECT g.*, ${GROUP_COUNTS_SQL}, p.name AS project_name, p.color AS project_color, p.icon AS project_icon
-       FROM task_groups g JOIN projects p ON p.id = g.project_id
+      `SELECT g.*, ${TAG_COUNTS_SQL}, p.name AS project_name, p.color AS project_color, p.icon AS project_icon
+       FROM tags g JOIN projects p ON p.id = g.project_id
        WHERE p.deprecated = 0
        ORDER BY p.position ASC, g.position ASC, g.created_at ASC`
     )
-    .all() as (GroupRow & { project_name: string; project_color: string; project_icon: string })[];
-  return rows.map((r) => ({ ...groupFromRow(r), project_name: r.project_name, project_color: r.project_color, project_icon: r.project_icon }));
+    .all() as (TagRow & { project_name: string; project_color: string; project_icon: string })[];
+  return rows.map((r) => ({ ...tagFromRow(r), project_name: r.project_name, project_color: r.project_color, project_icon: r.project_icon }));
 }
 
-export function getGroup(id: string): TaskGroup | undefined {
-  const r = getDb().prepare(`${SELECT_GROUP} WHERE g.id = ?`).get(id) as GroupRow | undefined;
-  return r ? groupFromRow(r) : undefined;
+export function getTag(id: string): Tag | undefined {
+  const r = getDb().prepare(`${SELECT_TAG} WHERE g.id = ?`).get(id) as TagRow | undefined;
+  return r ? tagFromRow(r) : undefined;
+}
+
+/**
+ * The tags one task carries, in the order it carries them — `position`, which
+ * is the order the badges render and the order lib/tagContext.ts injects their
+ * blocks in, so the first tag on a card is the first thing its session reads.
+ */
+export function getTaskTags(taskId: string): Tag[] {
+  return (
+    getDb()
+      .prepare(
+        `${SELECT_TAG} JOIN task_tags tt ON tt.tag_id = g.id WHERE tt.task_id = ?
+         ORDER BY tt.position ASC, tt.created_at ASC`
+      )
+      .all(taskId) as TagRow[]
+  ).map(tagFromRow);
+}
+
+/** Just the ids, in the same order — what the client rows carry. */
+export function getTaskTagIds(taskId: string): string[] {
+  return (
+    getDb()
+      .prepare("SELECT tag_id FROM task_tags WHERE task_id = ? ORDER BY position ASC, created_at ASC").all(taskId) as { tag_id: string }[]
+  ).map((r) => r.tag_id);
 }
 
 // Exact match, case-sensitive, like the UNIQUE constraint it mirrors. A near
-// miss creating a second group is bounded by that constraint plus the tool
-// result naming what happened (resolveGroup's `created`).
-function groupByName(projectId: string, name: string): TaskGroup | undefined {
-  const r = getDb().prepare(`${SELECT_GROUP} WHERE g.project_id = ? AND g.name = ?`).get(projectId, name) as GroupRow | undefined;
-  return r ? groupFromRow(r) : undefined;
+// miss creating a second tag is bounded by that constraint plus the tool
+// result naming what happened (resolveTag's `created`).
+function tagByName(projectId: string, name: string): Tag | undefined {
+  const r = getDb().prepare(`${SELECT_TAG} WHERE g.project_id = ? AND g.name = ?`).get(projectId, name) as TagRow | undefined;
+  return r ? tagFromRow(r) : undefined;
 }
 
-export function createGroup(input: {
+export function createTag(input: {
   project_id: string;
   name: string;
   description?: string;
   color?: string | null;
   /** The session that filed it, when an agent did. */
   origin_task_id?: string | null;
-}): TaskGroup {
+}): Tag {
   const name = input.name.trim();
-  if (!name) throw new Error("group name required");
-  // Checked rather than left to the constraint so the error names the group,
+  if (!name) throw new Error("tag name required");
+  // Checked rather than left to the constraint so the error names the tag,
   // and so the throw is the same class whether it came from create or rename.
-  if (groupByName(input.project_id, name)) throw new GroupNameConflictError(name);
+  if (tagByName(input.project_id, name)) throw new TagNameConflictError(name);
   const now = Date.now();
   const id = nanoid();
   const position = (
-    getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM task_groups WHERE project_id = ?").get(input.project_id) as { n: number }
+    getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tags WHERE project_id = ?").get(input.project_id) as { n: number }
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO task_groups (id, project_id, name, description, color, origin_task_id, position, created_at, updated_at)
+      `INSERT INTO tags (id, project_id, name, description, color, origin_task_id, position, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(id, input.project_id, name, input.description ?? "", input.color ?? null, input.origin_task_id ?? null, position, now, now);
-  return getGroup(id)!;
+  return getTag(id)!;
 }
 
-export function updateGroup(
+export function updateTag(
   id: string,
-  fields: Partial<Pick<TaskGroup, "name" | "description" | "color" | "position">>
-): TaskGroup | undefined {
-  const cur = getGroup(id);
+  fields: Partial<Pick<Tag, "name" | "description" | "color" | "position">>
+): Tag | undefined {
+  const cur = getTag(id);
   if (!cur) return undefined;
   const patch: Record<string, string | number | null> = {};
   if (fields.name !== undefined) {
     const name = fields.name.trim();
-    if (!name) throw new Error("group name required");
-    const other = groupByName(cur.project_id, name);
-    if (other && other.id !== id) throw new GroupNameConflictError(name);
+    if (!name) throw new Error("tag name required");
+    const other = tagByName(cur.project_id, name);
+    if (other && other.id !== id) throw new TagNameConflictError(name);
     patch.name = name;
   }
   if (fields.description !== undefined) patch.description = fields.description;
@@ -1111,18 +1182,19 @@ export function updateGroup(
   const keys = Object.keys(patch);
   if (!keys.length) return cur;
   getDb()
-    .prepare(`UPDATE task_groups SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
+    .prepare(`UPDATE tags SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
     .run(...keys.map((k) => patch[k]), Date.now(), id);
-  return getGroup(id);
+  return getTag(id);
 }
 
 /**
- * Hard delete, like everything else. Members are UNGROUPED, never deleted —
- * tasks.group_id is ON DELETE SET NULL, and that is the whole policy: a group
- * is a label over work, not the work. Returns whether a row was removed.
+ * Hard delete, like everything else. Members are UNTAGGED, never deleted —
+ * task_tags is ON DELETE CASCADE from this side, and that is the whole policy:
+ * a tag is a label over work, not the work. A member carrying other tags keeps
+ * them. Returns whether a row was removed.
  */
-export function deleteGroup(id: string): boolean {
-  return getDb().prepare("DELETE FROM task_groups WHERE id = ?").run(id).changes > 0;
+export function deleteTag(id: string): boolean {
+  return getDb().prepare("DELETE FROM tags WHERE id = ?").run(id).changes > 0;
 }
 
 /**
@@ -1130,53 +1202,100 @@ export function deleteGroup(id: string): boolean {
  * ONE project. Two policies behind one flag, because the two callers mean
  * different things by a miss:
  *   - `create: true` is the planning verb (suggest_task): the common case IS
- *     "this group doesn't exist yet", so a miss creates it, tagged with the
+ *     "this tag doesn't exist yet", so a miss creates it, tagged with the
  *     session that filed it, and `created` says so in the tool result.
  *   - strict (the default) is for update_task and the PATCH routes, where a
  *     typo must fail the call rather than mint a near-duplicate.
  * Returns null on a strict miss or an empty ref.
  */
-export function resolveGroup(
+export function resolveTag(
   projectId: string,
   ref: string,
   opts: { create?: boolean; originTaskId?: string | null } = {}
-): { group: TaskGroup; created: boolean } | null {
+): { tag: Tag; created: boolean } | null {
   const key = ref.trim();
   if (!key) return null;
-  const byId = getGroup(key);
-  if (byId && byId.project_id === projectId) return { group: byId, created: false };
-  const byName = groupByName(projectId, key);
-  if (byName) return { group: byName, created: false };
+  const byId = getTag(key);
+  if (byId && byId.project_id === projectId) return { tag: byId, created: false };
+  const byName = tagByName(projectId, key);
+  if (byName) return { tag: byName, created: false };
   if (!opts.create) return null;
-  return { group: createGroup({ project_id: projectId, name: key, origin_task_id: opts.originTaskId ?? null }), created: true };
+  return { tag: createTag({ project_id: projectId, name: key, origin_task_id: opts.originTaskId ?? null }), created: true };
 }
 
 /**
- * Assign (or with null, clear) the group on a batch of tasks, in one
- * transaction. Refuses the WHOLE batch when any task lives outside the group's
- * project — a group never spans repositories, and a batch that silently
- * skipped the strays would report success for a half-applied selection.
- * Returns the ids actually rewritten (a task already in the group is skipped,
- * so callers can tell "nothing changed" from "changed").
+ * Replace the tag set on a batch of tasks, in one transaction — the write
+ * behind the edit dialog's field, the selection bar's Tag…, and update_task.
+ * Refuses the WHOLE batch when any tag lives outside a task's project: a tag
+ * never spans repositories, and a batch that silently skipped the strays would
+ * report success for a half-applied selection.
+ *
+ * Returns the ids actually rewritten (a task already carrying exactly these
+ * tags is skipped), so callers can tell "nothing changed" from "changed".
  */
-export function setTaskGroup(ids: string[], groupId: string | null): string[] {
+export function setTaskTags(ids: string[], tagIds: string[]): string[] {
+  const wanted = dedupe(tagIds);
+  return writeTaskTags(ids, () => wanted);
+}
+
+/** Dedupe preserving order — the tag order a caller passes is the order it means. */
+function dedupe(ids: string[]): string[] {
+  return [...new Set(ids)];
+}
+
+/**
+ * The one write every membership change goes through: `next` names the tag set
+ * each task should end up with, given the set it has now. Bulk add and bulk
+ * remove are that function, which is why they are not three near-copies of one
+ * transaction with three chances to skip the project check.
+ */
+function writeTaskTags(ids: string[], next: (current: string[]) => string[]): string[] {
   const db = getDb();
-  const unique = [...new Set(ids)];
+  const unique = dedupe(ids);
   if (!unique.length) return [];
-  const group = groupId ? getGroup(groupId) : null;
-  if (groupId && !group) throw new Error("no such group");
   const rows = unique.map((id) => getTask(id)).filter((t): t is Task => !!t);
-  if (group) {
-    const stray = rows.find((t) => t.project_id !== group.project_id);
-    if (stray) throw new Error(`task "${stray.title}" is in another project — a group can't span projects`);
-  }
-  const changed = rows.filter((t) => (t.group_id ?? null) !== (group?.id ?? null));
   const now = Date.now();
+  const changed: string[] = [];
+  const plans = rows.map((t) => {
+    const current = getTaskTagIds(t.id);
+    const wanted = dedupe(next(current));
+    for (const tagId of wanted) {
+      const tag = getTag(tagId);
+      if (!tag) throw new Error("no such tag");
+      // A tag never spans repositories, so this is checked per task rather
+      // than once per batch: a selection may legitimately span trays.
+      if (tag.project_id !== t.project_id) throw new Error(`task "${t.title}" is in another project — a tag can't span projects`);
+    }
+    return { task: t, current, wanted };
+  });
   db.transaction(() => {
-    const stmt = db.prepare("UPDATE tasks SET group_id = ?, updated_at = ? WHERE id = ?");
-    for (const t of changed) stmt.run(group?.id ?? null, now, t.id);
+    const del = db.prepare("DELETE FROM task_tags WHERE task_id = ?");
+    const ins = db.prepare("INSERT INTO task_tags (task_id, tag_id, position, created_at) VALUES (?, ?, ?, ?)");
+    const touch = db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?");
+    for (const { task, current, wanted } of plans) {
+      if (current.length === wanted.length && current.every((id, i) => id === wanted[i])) continue;
+      // Rewritten wholesale rather than diffed: `position` is the order the
+      // caller passed, so a reorder with the same membership is still a real
+      // change, and a diff would have to renumber the survivors anyway.
+      del.run(task.id);
+      wanted.forEach((tagId, i) => ins.run(task.id, tagId, i, now));
+      touch.run(now, task.id);
+      changed.push(task.id);
+    }
   })();
-  return changed.map((t) => t.id);
+  return changed;
+}
+
+/** Add tags to a selection, keeping whatever each task already carried. */
+export function addTaskTags(ids: string[], tagIds: string[]): string[] {
+  const add = dedupe(tagIds);
+  return writeTaskTags(ids, (current) => [...current, ...add.filter((id) => !current.includes(id))]);
+}
+
+/** Take tags off a selection, leaving the rest of each task's set alone. */
+export function removeTaskTags(ids: string[], tagIds: string[]): string[] {
+  const drop = new Set(tagIds);
+  return writeTaskTags(ids, (current) => current.filter((id) => !drop.has(id)));
 }
 
 export function listPermissionRules(projectId: string): PermissionRule[] {
@@ -1715,10 +1834,19 @@ export function getInstanceUsage(): InstanceUsage {
  */
 export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
-  /** Per-day token/cost usage. `g` is the task's group id, "" when it has none. */
-  usage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
-  /** The groups those `g` keys name, for the leaderboard's labels. */
-  groups: { id: string; name: string; color: string | null; project_id: string }[];
+  /** Per-day token/cost usage, one row per (day, project, agent). */
+  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /**
+   * The same spend attributed to TAGS — `g` is the tag id, "" for usage by a
+   * task carrying none (or by a task since deleted). A task with three tags
+   * appears under all three, so these rows deliberately do NOT sum to `usage`:
+   * "what did the auth migration cost" is a question about a label, and a task
+   * that is part of two features really did cost both of them its time. The
+   * leaderboard says so rather than dividing spend it has no basis to divide.
+   */
+  tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** The tags those `g` keys name, for the leaderboard's labels. */
+  tags: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
   internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
@@ -1734,27 +1862,43 @@ export function getInsightsData(sinceMs: number): InsightsData {
   const projects = db
     .prepare("SELECT id, name, color, deprecated FROM projects ORDER BY position ASC, created_at ASC")
     .all() as InsightsData["projects"];
-  // A LEFT JOIN, so usage whose task has since been deleted still counts toward
-  // the day/project/agent totals every chart above the leaderboard is built on —
-  // it just lands in the "" group. Grouping one dimension finer changes no total:
-  // the client sums these rows back up per (day, project, agent) as it always has.
   const usage = db
     .prepare(
       `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
               CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
-              COALESCE(t.group_id, '') AS g,
               SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
               SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
-       FROM task_usage u LEFT JOIN tasks t ON t.id = u.task_id
-       WHERE u.created_at >= ? GROUP BY d, p, a, g`
+       FROM task_usage u
+       WHERE u.created_at >= ? GROUP BY d, p, a`
     )
     .all(sinceMs) as InsightsData["usage"];
-  // Every group, not just the ones with spend: the leaderboard says "no spend
+  // The tag attribution is its OWN read rather than a finer GROUP BY on the one
+  // above, because tags are many-to-many: a task with three of them joins to
+  // three rows, and folding that into `usage` would triple its spend on every
+  // chart in the dashboard. Kept apart, the charts stay exact and the tag
+  // leaderboard gets the overlapping answer it wants.
+  // LEFT JOIN twice, so usage whose task has since been deleted (or which
+  // carries no tag) still lands somewhere — the "" bucket the leaderboard shows
+  // as untagged.
+  const tagUsage = db
+    .prepare(
+      `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
+              CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
+              COALESCE(tt.tag_id, '') AS g,
+              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
+       FROM task_usage u
+         LEFT JOIN tasks t ON t.id = u.task_id
+         LEFT JOIN task_tags tt ON tt.task_id = t.id
+       WHERE u.created_at >= ? GROUP BY d, p, a, g`
+    )
+    .all(sinceMs) as InsightsData["tagUsage"];
+  // Every tag, not just the ones with spend: the leaderboard says "no spend
   // yet" for a feature that's been planned and not run, which is a different
   // fact from a feature that isn't there.
-  const groups = db
-    .prepare("SELECT id, name, color, project_id FROM task_groups ORDER BY position ASC, created_at ASC")
-    .all() as InsightsData["groups"];
+  const tags = db
+    .prepare("SELECT id, name, color, project_id FROM tags ORDER BY position ASC, created_at ASC")
+    .all() as InsightsData["tags"];
   const internal = db
     .prepare(
       `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
@@ -1783,7 +1927,7 @@ export function getInsightsData(sinceMs: number): InsightsData {
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  return { projects, groups, usage, internal, shipped, merges, models };
+  return { projects, tags, usage, tagUsage, internal, shipped, merges, models };
 }
 
 // ---------- recaps ----------

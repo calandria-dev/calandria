@@ -227,7 +227,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .col-tasks{flex:0 0 var(--col-task);min-width:0;border-right:1px solid var(--line);}
 .col-session{flex:1;min-width:0;background:var(--surface);}
 .col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab — full-pane TaskChanges */
-/* mobile project pane — ProjectLanding (recap, Groups, Runbooks, Schedules)
+/* mobile project pane — ProjectLanding (recap, Tags, Runbooks, Schedules)
    with a header of its own. Column so the header sits above the scrolling body. */
 .col-project{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
 
@@ -2061,9 +2061,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .in-pname{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .in-pmore{width:100%;text-align:center;font-size:11px;letter-spacing:.06em;color:var(--ink-3);background:var(--bg-2);border:none;padding:12px;cursor:pointer;}
 .in-pmore:hover{color:var(--accent);}
-/* groups leaderboard — the projects table's language with fewer columns (a
-   group has no branch, so no lines/last-active), and no click behavior: the
-   dashboard filters by project and agent, not by feature. */
+/* tags leaderboard — the projects table's language with fewer columns (a
+   tag has no branch, so no lines/last-active), and no click behavior: the
+   dashboard filters by project and agent, not by feature. A multi-tagged
+   task's spend counts toward each of its tags (lib/store.ts tagUsage), so
+   this column deliberately does not sum to the project total above it. */
 .in-gtable{display:flex;flex-direction:column;overflow-x:auto;}
 .in-grow{display:grid;grid-template-columns:1.8fr 1.1fr 1fr .9fr 132px;gap:12px;align-items:center;padding:14px 20px;min-width:640px;font-size:12.5px;border-bottom:1px solid var(--line-2);}
 .in-grow:last-child{border-bottom:none;}
@@ -2151,8 +2153,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .collab-hint{display:none;}
 }
 
-/* ---- task groups: chip bar over the list/board, badge on rows and cards (GroupChips.tsx) ----
-   --gc is the group's tint; unset, everything below falls back to the neutral ink. */
+/* ---- tags: chip bar over the list/board, badge on rows and cards (TagChips.tsx) ----
+   --gc is the tag's tint; unset, everything below falls back to the neutral ink. */
 .gchips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px 4px;}
 .board-ws .gchips{padding:6px 18px 2px;}
 .gchip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;max-width:220px;border-radius:999px;border:1px solid var(--line-2);background:var(--raise);color:var(--ink-2);font-size:11.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .12s,background .12s,color .12s;}
@@ -2163,20 +2165,29 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .gchip .gc-frac{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--ink-4);}
 .gchip.on .gc-frac{color:var(--ink-3);}
 .gchip .gc-need{width:6px;height:6px;border-radius:50%;background:var(--blue);flex:0 0 auto;}
-/* the same dot outside a chip: the palette's group rows and the landing card. */
-.pal-row .gc-dot,.grp-head .gc-dot{width:7px;height:7px;border-radius:50%;background:var(--gc,var(--ink-4));flex:0 0 auto;}
+/* the same dot outside a chip: the palette's tag rows and the landing card. */
+.pal-row .gc-dot,.tag-head .gc-dot{width:7px;height:7px;border-radius:50%;background:var(--gc,var(--ink-4));flex:0 0 auto;}
 .gchip.fold{color:var(--ink-3);border-style:dashed;}
 .gchip.fold.open{border-style:solid;}
+/* The any/all match toggle: only appears with two-or-more chips lit, so it
+   reads as a control over the selection rather than a tag of its own —
+   neutral by default, accented once "all" (the narrower, opt-in reading) is on. */
+.gchip.match{color:var(--ink-4);font-family:var(--mono);}
+.gchip.match.on{background:color-mix(in oklab,var(--accent) 14%,var(--raise));border-color:var(--accent);color:var(--accent);}
 .gbadge{display:inline-flex;align-items:center;max-width:160px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto;font-family:var(--sans);
   color:var(--gc,var(--ink-3));background:color-mix(in oklab,var(--gc,var(--ink-3)) 13%,transparent);border:1px solid color-mix(in oklab,var(--gc,var(--ink-3)) 35%,transparent);}
 button.gbadge{cursor:pointer;transition:background .12s,border-color .12s;}
 button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,transparent);border-color:var(--gc,var(--ink-3));}
+/* "+N": the badges TagBadges' `max` cropped off a row with several tags. No
+   single tag's tint applies to a pill naming more than one, so it stays the
+   neutral ink rather than reading as an untinted tag of its own. */
+.gbadge.more{color:var(--ink-4);background:var(--surface-2);border-color:var(--line-2);cursor:default;}
 .task .task-top .gbadge{min-width:0;flex:0 1 auto;}
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
 .sess-head .gbadge{max-width:200px;}
-/* The group strip (GroupStrip.tsx): what a selected chip expands into, sitting
-   directly under the bar. Tinted with the group's own --gc like the chips. */
+/* The tag strip (TagStrip.tsx): what a selected chip expands into, sitting
+   directly under the bar. Tinted with the tag's own --gc like the chips. */
 .gstrip{margin:2px 12px 6px;padding:10px 12px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r);background:var(--surface);display:flex;flex-direction:column;gap:8px;}
 .board-ws .gstrip{margin:2px 18px 6px;}
 .gs-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -2209,30 +2220,32 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-sw.none{background:var(--surface-2);}
 .gs-sw.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--accent);}
 
-/* Groups card on the project landing — the same rows as the chip bar, with room
+/* Tags card on the project landing — the same rows as the chip bar, with room
    for a description and a progress bar. Shares the schedules/runbooks card
    language it sits between. */
-.grp-card{margin:18px 0;display:flex;flex-direction:column;gap:8px;}
-.grp-card h3{margin:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
-.grp-row{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;padding:11px 13px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--sh-1);cursor:pointer;}
-.grp-row:hover{border-color:var(--line-strong);border-left-color:var(--gc,var(--ink-3));}
-.grp-head{display:flex;align-items:center;gap:8px;}
-.grp-head .spacer{flex:1;}
-.grp-head strong{font-size:13.5px;color:var(--ink);}
-.grp-frac{font-size:11px;color:var(--ink-4);}
-.grp-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;}
-.grp-tag.run{color:var(--accent);background:var(--accent-soft);}
-.grp-tag.need{color:var(--blue);background:color-mix(in oklab,var(--blue) 14%,transparent);}
-.grp-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
-.grp-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));}
-.grp-desc{font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tags-card{margin:18px 0;display:flex;flex-direction:column;gap:8px;}
+.tags-card h3{margin:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.tag-row{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;padding:11px 13px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--sh-1);cursor:pointer;}
+.tag-row:hover{border-color:var(--line-strong);border-left-color:var(--gc,var(--ink-3));}
+.tag-head{display:flex;align-items:center;gap:8px;}
+.tag-head .spacer{flex:1;}
+.tag-head strong{font-size:13.5px;color:var(--ink);}
+.tag-frac{font-size:11px;color:var(--ink-4);}
+.tag-stat{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;}
+.tag-stat.run{color:var(--accent);background:var(--accent-soft);}
+.tag-stat.need{color:var(--blue);background:color-mix(in oklab,var(--blue) 14%,transparent);}
+.tag-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.tag-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));}
+.tag-desc{font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-/* Full-width <select> fields: Group and Model in the task dialogs, and the
-   default-model picker in Settings → Run defaults. Model is a select rather
-   than the segmented control its neighbours use because Claude Code's catalog
-   runs to a dozen-plus entries across three <optgroup>s. */
-.group-field select,.model-field select{width:100%;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
-.group-field select:focus,.model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
-.model-field select{max-width:520px;}
-.group-field .group-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
-.group-field .group-new input[type=text]{flex:1;min-width:0;}
+/* Full-width <select> field: Model in the task dialogs, and the default-model
+   picker in Settings → Run defaults. A select rather than the segmented
+   control its neighbours use because Claude Code's catalog runs to a
+   dozen-plus entries across three <optgroup>s. Tags is a checkbox list
+   (like Blocked-by) rather than a select — many-to-many needs a set, not one
+   choice — so it only borrows the plain field input styling for its inline
+   "New tag…" text field. */
+.model-field select{width:100%;max-width:520px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
+.model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.tag-field .tag-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.tag-field .tag-new input[type=text]{flex:1;min-width:0;}

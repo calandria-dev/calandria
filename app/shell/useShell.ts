@@ -7,7 +7,7 @@ import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
-import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TaskGroupRow } from "./types";
+import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TagRow } from "./types";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
@@ -37,10 +37,11 @@ export function useShell() {
   const [selProj, setSelProj] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [runbooks, setRunbooks] = useState<RunbookRow[]>([]);
-  // The selected project's task groups, with their derived counts. Loaded on
-  // the same fetch as `tasks` (the counts are computed from those rows) and
-  // refetched on task_groups_changed; membership rides the task rows' group_id.
-  const [groups, setGroups] = useState<TaskGroupRow[]>([]);
+  // The selected project's tags, with their derived counts. Loaded on the
+  // same fetch as `tasks` (the counts are computed from those rows) and
+  // refetched on tags_changed; membership rides the task rows' tag_ids —
+  // many-to-many, so a task can carry several.
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [selTask, setSelTask] = useState<string | null>(null);
   // First-paint state: booted flips once the initial project fetch lands, so the
   // shell can show a column skeleton instead of a blank flash; a failed boot
@@ -163,9 +164,9 @@ export function useShell() {
   useEffect(() => { agentsRef.current = agents; }, [agents]);
 
   const loadTasks = useCallback(async (projectId: string, selectFirst = true) => {
-    const data = await jget<{ tasks: TaskRow[]; groups?: TaskGroupRow[] }>(`/api/projects/${projectId}`);
+    const data = await jget<{ tasks: TaskRow[]; tags?: TagRow[] }>(`/api/projects/${projectId}`);
     setTasks(data.tasks);
-    setGroups(data.groups ?? []);
+    setTags(data.tags ?? []);
     setTasksFor(projectId);
     if (selectFirst) {
       const first = data.tasks.find((t) => !t.suggested);
@@ -750,13 +751,13 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; group_id: string | null }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => {
     if (!project) return;
     // model and permission_mode go in the CREATE, not a follow-up PATCH:
     // `startNow` below launches the first turn, and either applied after that
-    // would miss the very turn the user picked it for. The group rides the
-    // create too, so the first turn's context (phase 2 of the groups spec) sees it.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), ...(input.group_id ? { group_id: input.group_id } : {}) });
+    // would miss the very turn the user picked it for. The tags ride the
+    // create too, so the first turn's context (phase 2 of the tags spec) sees them.
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -783,26 +784,34 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  // Mint a group from the edit/new-task dialogs' "New group…" — name only;
-  // description and color come later from the group strip. Rejects on a name
-  // collision (409), which the field shows. The task_groups_changed echo
-  // refetches the list; the row is added here too so the field can select it
-  // before that lands.
-  const createGroup = useCallback(async (name: string): Promise<TaskGroupRow> => {
+  // Mint a tag from the edit/new-task dialogs' "New tag…" — name only;
+  // description and color come later from the tag strip. Rejects on a name
+  // collision (409), which the field shows. The tags_changed echo refetches
+  // the list; the row is added here too so the field can select it before
+  // that lands.
+  const createTag = useCallback(async (name: string): Promise<TagRow> => {
     if (!selProjRef.current) throw new Error("no project selected");
-    const g = await jsend<TaskGroupRow>(`/api/projects/${selProjRef.current}/groups`, "POST", { name });
-    setGroups((prev) => (prev.some((x) => x.id === g.id) ? prev : [...prev, g]));
+    const g = await jsend<TagRow>(`/api/projects/${selProjRef.current}/tags`, "POST", { name });
+    setTags((prev) => (prev.some((x) => x.id === g.id) ? prev : [...prev, g]));
     return g;
   }, []);
 
-  // Put a whole selection in one group (or, with null, take it out of one) —
-  // the selection bar's Group…. One request, one transaction; the server's
-  // task_groups_changed echo refetches the tray, but the rows are patched here
-  // too so the badges land with the modal closing rather than a beat later.
-  const groupTasks = useCallback(async (ids: string[], groupId: string | null) => {
-    const { changed } = await jsend<{ changed: string[] }>("/api/tasks/group", "POST", { ids, group_id: groupId });
+  // Add or remove a set of tags across a whole selection — the selection bar's
+  // Tags…. Not a replace: a mixed selection rarely shares tags, so "set" over
+  // it would silently strip whatever each row already carried that wasn't in
+  // the picked set. One request, one transaction; the server's tags_changed
+  // echo refetches the tray, but the rows are patched here too so the badges
+  // land with the modal closing rather than a beat later.
+  const tagTasks = useCallback(async (ids: string[], tagIds: string[], mode: "add" | "remove") => {
+    const { changed } = await jsend<{ changed: string[] }>("/api/tasks/tags", "POST", { ids, [mode]: tagIds });
     const set = new Set(changed);
-    setTasks((prev) => prev.map((t) => (set.has(t.id) ? { ...t, group_id: groupId } : t)));
+    setTasks((prev) => prev.map((t) => {
+      if (!set.has(t.id)) return t;
+      const next = mode === "add"
+        ? [...new Set([...t.tag_ids, ...tagIds])]
+        : t.tag_ids.filter((id) => !tagIds.includes(id));
+      return { ...t, tag_ids: next };
+    }));
   }, []);
 
   // `action` is the edit dialog's Add / Start: the same write, plus accepting
@@ -812,7 +821,7 @@ export function useShell() {
   // clears a withdrawal (reason + cancelled status) for free.
   const saveTask = async (
     id: string,
-    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; group_id: string | null },
+    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] },
     action?: SaveAction,
   ) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {
@@ -981,7 +990,7 @@ export function useShell() {
     // state + derived
     booted, bootError, retryBoot: boot, tasksLoading, transcriptLoading,
     projects, activeProjects, deprecatedProjects, selProj, setSelProj, project,
-    tasks, realTasks, suggested, selTask, task, messages, running, runbooks, groups, sparklines,
+    tasks, realTasks, suggested, selTask, task, messages, running, runbooks, tags, sparklines,
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
@@ -993,7 +1002,7 @@ export function useShell() {
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, queueStart, cancelQueuedStart,
-    setReasoning, setPermission, setSendContext, createTask, createGroup, groupTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSendContext, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

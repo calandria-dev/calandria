@@ -49,7 +49,7 @@ fields the snapshot can't carry (title, priority, dependency edges) — the clie
 the row instead of patching it. And some events aren't about a single task at all, so they
 carry their own project id and skip the relay's re-read entirely: `task_deleted` (the row is
 gone), `tasks_moved` (both ends, since the trays a selection LEFT have to lose it),
-`runbooks_changed` and `task_groups_changed` (no task row is involved at all).
+`runbooks_changed` and `tags_changed` (no task row is involved at all).
 
 Task order is not one of those facts, because it isn't stored: `listTasks` sorts by
 `updated_at DESC`, so the coarse lifecycle events that already flow for every turn are what
@@ -211,14 +211,14 @@ controls show their run count and API-price-equivalent cost without polling.
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task` / `list_tasks` / `get_task` / `update_task` / `withdraw_suggestion` /
-`list_groups` / `list_projects` / `expose_service` / `ask_user` are the same Calandria
+`list_tags` / `list_projects` / `expose_service` / `ask_user` are the same Calandria
 tools every driver exposes. The Claude driver mounts all but `ask_user` as an in-process SDK MCP server
 (`createSdkMcpServer`) and gets asks natively via its AskUserQuestion hook; the portable
 equivalent is **`scripts/calandria-mcp.mjs`**, a plain-Node stdio MCP server
 (`@modelcontextprotocol/sdk`) the non-Claude drivers spawn per turn. It's a thin proxy: it
 reads `CALANDRIA_TASK_ID` / `CALANDRIA_PROJECT_ID` / `CALANDRIA_BASE_URL` / `SERVICE_TOKEN` from env
 (injected by the driver) and POSTs each tool call to the app's internal endpoints
-(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-groups,list-projects,expose-service,ask-user}`,
+(`app/api/internal/agent-tools/{suggest-task,list-tasks,get-task,update-task,withdraw-suggestion,list-tags,list-projects,expose-service,ask-user}`,
 gated by the strict per-instance `SERVICE_TOKEN` in `middleware.ts`). `ask_user` is the asynchronous one: the
 endpoint persists + publishes the same interactive question card the Claude hook produces,
 parks a **detached** waiter on the user's answer (`lib/asks.ts`, tied to the turn's abort
@@ -294,36 +294,42 @@ straight through, while the bridge's endpoint takes the caller from the env-inje
 `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge against the real endpoint and
 asserts on the database rather than on the refusal text.
 
-**Groups** ride the same three tools plus one new read, and the create-vs-strict split is the
-whole policy (`resolveGroupRef()` in `lib/agentTools.ts`, over `resolveGroup()` in the store).
-`suggest_task`'s `group` is resolved AFTER `resolveTargetProject`, in the project the task is
-actually filed into — a group never spans repositories, so a cross-project suggestion must
-group where it lands — and a name that matches nothing is CREATED there with
-`origin_task_id` set to the calling task. That's right for the planning verb: the common case
-really is "this group doesn't exist yet", and a `create_group` round trip would repeat the
-two-phase dance `blocked_by` already forces; a near-miss minting a duplicate is bounded by
-`UNIQUE(project_id, name)` plus a result that names which of the two happened.
-`update_task`'s `group` is the opposite — an existing id or exact name, `""` to ungroup,
-never a create — because the task exists already and a typo would split a feature the user is
-filtering by; an unknown ref fails the WHOLE call, the same fail-closed rule an unusable
-`blocked_by` ref gets, so a rename sharing that call can't land under a refusal saying
-nothing did. It resolves in the TARGET's project, not the caller's, for the same reason the
-tool can write any task anywhere. `list_tasks` gains a `group` filter (resolved
-strictly — an unrecognized one is an error, never a silently unfiltered board) and every row
-carries `group: {id, name}` either way, and **`list_groups(project?)`** returns each group's
-description, derived counts and members with titles and statuses, so "how is the migration
-going" is one call rather than N `get_task`s.
+**Tags** ride the same three tools plus one new read, and the create-vs-strict split is the
+whole policy (`resolveTagRefs()` in `lib/agentTools.ts`, over `resolveTag()` in the store).
+`suggest_task`'s `tags` are resolved AFTER `resolveTargetProject`, in the project the task is
+actually filed into — a tag never spans repositories, so a cross-project suggestion must tag
+where it lands — and a name that matches nothing is CREATED there with `origin_task_id` set
+to the calling task. That's right for the planning verb: the common case really is "this tag
+doesn't exist yet", and a `create_tag` round trip would repeat the two-phase dance
+`blocked_by` already forces; a near-miss minting a duplicate is bounded by
+`UNIQUE(project_id, name)` plus a result that names the reused tags and the created ones
+separately. `update_task`'s `tags` is the opposite — existing ids or exact names, never a
+create — because the task exists already and a typo would split a feature the user is
+filtering by; it REPLACES the set (`[]` clears it), and an unknown ref fails the WHOLE call,
+the same fail-closed rule an unusable `blocked_by` ref gets, so a rename sharing that call
+can't land under a refusal saying nothing did. Resolution is all-or-nothing across the list
+for the same reason: filing under two of the three tags an agent named, and reporting
+success, is worse than refusing. It resolves in the TARGET's project, not the caller's, for
+the same reason the tool can write any task anywhere. `list_tasks` gains a `tag` filter
+(resolved strictly — an unrecognized one is an error, never a silently unfiltered board) and
+every row carries `tags: [{id, name}]` either way, and **`list_tags(project?)`** returns each
+tag's description, derived counts and tasks with titles and statuses, so "how is the
+migration going" is one call rather than N `get_task`s.
 
-The receiving end is **`lib/groupContext.ts`**: `groupContextBlock(task)`, called from
-`buildProjectContext()`, tells a member session which group it belongs to, what the group is
-for, which step of how many it is (a topological sort over `depends_on` restricted to the
-group, ties by `position` — the same order `GroupStrip.tsx` numbers, so the prompt and the
-screen agree), its siblings with status markers and `← this task`, and `Planned in task "…"`
-pointing at the session that filed the plan. Sibling DESCRIPTIONS are deliberately not
-inlined — a seven-task group would spend a fifth of the session's starting context on work
-this task isn't doing, and `get_task` is one call away. `send_context = 0` suppresses the
-block exactly as it suppresses project context. The module is pinned SDK-free
-(`tests/importGraph.test.ts`) because `lib/agents/shared.ts` reaches every driver.
+The receiving end is **`lib/tagContext.ts`**: `tagContextBlock(task)`, called from
+`buildProjectContext()`, emits ONE BLOCK PER TAG the task carries, in tag order
+(`task_tags.position`) — each naming the tag, what it's for, which step of how many this
+task is (a topological sort over `depends_on` restricted to that tag, ties by
+`tasks.position` — the same order `TagStrip.tsx` numbers, so the prompt and the screen
+agree), its siblings with status markers and `← this task`, and `Planned in task "…"`
+pointing at the session that filed the plan. One block per tag is the whole reason tags
+replaced groups: a task that is step 3 of the auth migration and also part of the 0.4
+release needs both facts, and neither implies the other. Sibling DESCRIPTIONS are
+deliberately not inlined — a seven-task plan would spend a fifth of the session's starting
+context on work this task isn't doing, and with three tags that would be three plans' worth;
+`get_task` is one call away. `send_context = 0` suppresses every block exactly as it
+suppresses project context. The module is pinned SDK-free (`tests/importGraph.test.ts`)
+because `lib/agents/shared.ts` reaches every driver.
 
 **`withdraw_suggestion(task, reason)`** is the retraction verb, and it exists because the
 nearest alternative was wrong twice over: an agent reaching for `status: "done"` to mean

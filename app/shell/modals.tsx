@@ -5,8 +5,8 @@ import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TaskGroupRow } from "./types";
-import { groupProgress } from "./GroupChips";
+import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
 import { Modal, BrowseDirButton, ModelField, PrioritySeg, DepPicker } from "./Modal";
@@ -55,23 +55,25 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-// The Group field — which feature this task is a step of. A select over the
-// project's groups plus an inline "New group…" (name only; description and
-// color come from the group strip later). Sits above Blocked by in both task
-// dialogs, since "which feature" is decided before "which step". Without
-// `onCreate` (no project to mint into) it only offers the existing groups.
-export function GroupField({ groups, value, onChange, onCreate }: {
-  groups: TaskGroupRow[]; value: string | null; onChange: (id: string | null) => void;
-  onCreate?: (name: string) => Promise<TaskGroupRow>;
+// The Tags field — which features this task is a step of, MANY at once (a
+// task can belong to several plans). A checkbox list over the project's tags,
+// styled like DepPicker's Blocked-by list rather than a <select>, since a
+// single-choice control can't express a set — plus an inline "New tag…" (name
+// only; description and color come from the tag strip later). Sits above
+// Blocked by in both task dialogs, since "which feature(s)" is decided before
+// "which step". Without `onCreate` (no project to mint into, or the bulk
+// modal's Remove mode, where minting a tag nobody has yet is meaningless) it
+// only offers the existing tags.
+export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "— which features this is a step of" }: {
+  tags: TagRow[]; value: string[]; onChange: (ids: string[]) => void;
+  onCreate?: (name: string) => Promise<TagRow>;
+  label?: string; hint?: string;
 }) {
-  const NEW = "__new__";
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // A remembered id that no longer names a group (deleted under the dialog)
-  // reads as "No group" rather than as an empty select.
-  const current = value && groups.some((g) => g.id === value) ? value : "";
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const cancel = () => { setCreating(false); setName(""); setErr(null); };
   const create = async () => {
     const n = name.trim();
@@ -79,49 +81,54 @@ export function GroupField({ groups, value, onChange, onCreate }: {
     setBusy(true);
     setErr(null);
     try {
-      const g = await onCreate(n);
-      onChange(g.id);
+      const t = await onCreate(n);
+      onChange([...value, t.id]);
       cancel();
     } catch (e) {
-      // 409 on a name collision: the group exists, so say so and leave the
-      // name in place — picking it from the select is one click away.
+      // 409 on a name collision: the tag exists, so say so and leave the
+      // name in place — ticking it in the list below is one click away.
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
-  if (groups.length === 0 && !onCreate) return null;
+  if (tags.length === 0 && !onCreate) return null;
   return (
-    <div className="field group-field">
-      <div className="lab">Group <span className="opt">— which feature this is a step of</span></div>
-      <select value={creating ? NEW : current} aria-label="Group"
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v === NEW) { setCreating(true); return; }
-          cancel();
-          onChange(v || null);
-        }}>
-        <option value="">No group</option>
-        {groups.map((g) => <option key={g.id} value={g.id}>{g.name} · {groupProgress(g).label}</option>)}
-        {onCreate && <option value={NEW}>New group…</option>}
-      </select>
-      {creating && (
-        <div className="group-new">
-          <input type="text" value={name} placeholder="Group name, e.g. Auth migration" autoFocus aria-label="New group name"
+    <div className="field tag-field">
+      <div className="lab">{label} {hint && <span className="opt">{hint}</span>}</div>
+      {tags.length > 0 ? (
+        <div className="dep-list">
+          {tags.map((t) => (
+            <label key={t.id} className={`dep-row ${value.includes(t.id) ? "on" : ""}`}>
+              <input type="checkbox" checked={value.includes(t.id)} onChange={() => toggle(t.id)} />
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: t.color ?? "var(--ink-4)", flex: "0 0 auto" }} />
+              <span className="dep-title">{t.name}</span>
+              <span className="dep-status">{tagProgress(t).label}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <div className="hlp">No tags in this project yet.</div>
+      )}
+      {creating ? (
+        <div className="tag-new">
+          <input type="text" value={name} placeholder="Tag name, e.g. Auth migration" autoFocus aria-label="New tag name"
             onChange={(e) => { setName(e.target.value); setErr(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void create(); } if (e.key === "Escape") { e.stopPropagation(); cancel(); } }} />
           <button className="btn btn-line btn-sm" disabled={!name.trim() || busy} onClick={() => void create()}>{busy ? "Creating…" : "Create"}</button>
           <button className="btn btn-ghost btn-sm" onClick={cancel}>Cancel</button>
         </div>
+      ) : onCreate && (
+        <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCreating(true)}>{Icon.plus()} New tag…</button>
       )}
       {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
-      <div className="hlp">Groups filter the list and board, and badge every member. A group never spans projects.</div>
+      <div className="hlp">Tags filter the list and board, and badge every member. A task can carry several; a tag never spans projects.</div>
     </div>
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate, onCreateGroup, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; groups: TaskGroupRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; group_id: string | null }) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onOpenSetup?: () => void }) {
-  const [groupId, setGroupId] = useState<string | null>(null);
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState<Priority>("med");
@@ -175,7 +182,7 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
   // (null) can resolve to one that does, so it counts as unsafe-for-unattended
   // too — we deliberately don't guess what it resolves to and claim it's fine.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, group_id: groupId });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -232,7 +239,7 @@ export function NewTaskModal({ project, agents, tasks, groups, onClose, onCreate
           </div>
         </div>
       )}
-      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -299,8 +306,8 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
 // (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
 // which can keep a link whose both ends are moving, as one task alone can't,
 // and which asks this same question once per started row.)
-function MoveProjectField({ task, tasks, groups, projects, agents, onMove }: {
-  task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle;
+function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
+  task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle;
   onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>;
 }) {
   const [target, setTarget] = useState("");
@@ -321,12 +328,20 @@ function MoveProjectField({ task, tasks, groups, projects, agents, onMove }: {
   useEffect(() => { if (target) loadPreview(); }, [target, loadPreview]);
 
   if (targets.length === 0) return null;
-  // A group follows its whole contents or not at all (the both-ends rule the
-  // links get), so a task moving ALONE takes its group with it exactly when it
-  // is the only member left in it. Read off the group's own derived count, not
-  // by filtering `tasks` — that list is the REAL tasks, and a sibling still
-  // sitting in the Suggested tray is a member like any other.
-  const soloMember = !!task.group_id && groups.find((g) => g.id === task.group_id)?.counts.total === 1;
+  // A tag follows its whole membership or not at all (the both-ends rule the
+  // dependency links get), so a task moving ALONE takes a tag with it exactly
+  // when it is that tag's only member. Read off each tag's own derived count,
+  // not by filtering `tasks` — that list is the REAL tasks, and a sibling still
+  // sitting in the Suggested tray is a member like any other. Unlike the old
+  // single group this can split both ways in one move: some of the task's tags
+  // may be solo, others shared.
+  const carriedTags: string[] = [];
+  const droppedTags: string[] = [];
+  for (const id of task.tag_ids) {
+    const t = tags.find((x) => x.id === id);
+    if (!t) continue;
+    (t.counts.total === 1 ? carriedTags : droppedTags).push(t.name);
+  }
   // Every edge touching this task goes — the ones it owns and the ones pointing
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
@@ -369,9 +384,8 @@ function MoveProjectField({ task, tasks, groups, projects, agents, onMove }: {
           <div className="hlp" style={{ color: "var(--amber)" }}>
             Moves this task to {dest.name} right away — unsaved edits above are discarded.
             {links > 0 && ` ${links} blocked-by link${links !== 1 ? "s" : ""} drop${links === 1 ? "s" : ""}: dependencies can't span projects.`}
-            {task.group_id && (soloMember
-              ? " Its group has no other members, so the group comes along too — renamed if that name is taken there."
-              : " Its group is cleared: a group moves only when every one of its members does, and the others are staying.")}
+            {carriedTags.length > 0 && ` ${carriedTags.length === 1 ? `Its “${carriedTags[0]}” tag has` : `${carriedTags.length} of its tags have`} no other members, so ${carriedTags.length === 1 ? "it comes" : "they come"} along too — renamed if that name is taken there.`}
+            {droppedTags.length > 0 && ` ${droppedTags.length === 1 ? `Its “${droppedTags[0]}” tag is` : `${droppedTags.length} of its tags are`} cleared: a tag moves only when every one of its members does, and the others are staying.`}
             {switching && ` It will run on ${agentLabel(agents, switching)}, ${dest.name}'s default.`}
             {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
             {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
@@ -500,22 +514,24 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
-  // Groups get the links' both-ends rule: a group whose EVERY member is in the
+  // Tags get the links' both-ends rule: a tag whose EVERY member is in the
   // selection travels with it (re-keyed to the destination, suffixed there if
   // the name is taken), and one selected only in part stays behind — with the
-  // rows that go losing their badge. Counted over the whole project, since a
-  // member left out of the selection is exactly what decides this.
-  const groupTally = new Map<string, { total: number; going: number }>();
+  // rows that go losing that badge. Counted per tag over the whole project
+  // (a task can carry several, so it can appear in more than one tally), since
+  // a member left out of the selection is exactly what decides this.
+  const tagTally = new Map<string, { total: number; going: number }>();
   for (const t of tasks) {
-    if (!t.group_id) continue;
-    const e = groupTally.get(t.group_id) ?? { total: 0, going: 0 };
-    e.total++;
-    if (moving_.has(t.id)) e.going++;
-    groupTally.set(t.group_id, e);
+    for (const tagId of t.tag_ids) {
+      const e = tagTally.get(tagId) ?? { total: 0, going: 0 };
+      e.total++;
+      if (moving_.has(t.id)) e.going++;
+      tagTally.set(tagId, e);
+    }
   }
-  const inPlay = [...groupTally.values()].filter((e) => e.going > 0);
+  const inPlay = [...tagTally.values()].filter((e) => e.going > 0);
   const carried = inPlay.filter((e) => e.going === e.total).length;
-  const ungrouped = inPlay.filter((e) => e.going < e.total).reduce((n, e) => n + e.going, 0);
+  const untagged = inPlay.filter((e) => e.going < e.total).reduce((n, e) => n + e.going, 0);
   let dropped = 0;
   for (const t of tasks) {
     for (const dep of t.depends_on ?? []) {
@@ -593,9 +609,9 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
               {result.carried.map((g) => g.renamed_from ? `“${g.renamed_from}” arrived as “${g.name}” (that name was taken)` : `“${g.name}” came along whole`).join("; ")}.
             </div>
           )}
-          {result.ungrouped.length > 0 && (
+          {result.untagged.length > 0 && (
             <div className="hlp" style={{ color: "var(--amber)", marginTop: 4 }}>
-              {result.ungrouped.length} left {[...new Set(result.ungrouped.map((u) => u.group_name))].map((n) => `“${n}”`).join(", ")} behind — the rest of the group stayed.
+              {result.untagged.length} task{result.untagged.length !== 1 ? "s" : ""} left {[...new Set(result.untagged.map((u) => u.tag_name))].map((n) => `“${n}”`).join(", ")} behind — the rest of that tag stayed.
             </div>
           )}
           {result.skipped.length > 0 && (
@@ -670,8 +686,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
               <div className="hlp" style={{ color: "var(--amber)" }}>
                 Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.
                 {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""} — the other end isn't coming.`}
-                {carried > 0 && ` ${carried} group${carried !== 1 ? "s" : ""} come${carried === 1 ? "s" : ""} along whole — every member is in the selection.`}
-                {ungrouped > 0 && ` ${ungrouped} ${ungrouped === 1 ? "task loses its" : "tasks lose their"} group: the rest of it isn't moving.`}
+                {carried > 0 && ` ${carried} tag${carried !== 1 ? "s" : ""} come${carried === 1 ? "s" : ""} along whole — every member is in the selection.`}
+                {untagged > 0 && ` ${untagged} ${untagged === 1 ? "task loses a" : "tasks lose a"} tag: the rest of it isn't moving.`}
                 {kept > 0 && ` ${kept} link${kept !== 1 ? "s" : ""} survive${kept === 1 ? "s" : ""}: both ends are moving together.`}
                 {switching > 0 && ` ${switching} will switch to ${agentLabel(agents, dest.default_agent || "claude")}, ${dest.name}'s default agent.`}
                 {contextFlips > 0 && ` ${contextFlips} will follow ${dest.name}'s project-context setting.`}
@@ -688,42 +704,44 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
 }
 
 /**
- * Put a whole selection in one group — the list's selection bar beside
- * "Move to project…". The cheap path for the case groups were designed around:
- * an agent filed seven suggestions before the group existed, and regrouping
- * them one edit dialog at a time is seven round trips.
+ * Add or remove a set of tags across a whole selection — the list's selection
+ * bar beside "Move to project…". The cheap path for the case tags were
+ * designed around: an agent filed seven suggestions before the tag existed,
+ * and tagging them one edit dialog at a time is seven round trips.
  *
- * Whole-batch, unlike the move beside it: there is nothing per-row to refuse
- * (no worktree, no turn, nothing irreversible), so the route applies all of it
- * or none, and this modal only has to decide WHICH group. "No group" is a real
- * choice here — it's the only way to ungroup a batch.
+ * Add/Remove rather than the old single group's replace-the-set: a mixed
+ * selection rarely shares the same tags (many-to-many means each row can
+ * already carry a different set), so "these and only these" would silently
+ * strip whatever a row had that wasn't picked. Whole-batch, unlike the move
+ * beside it: there is nothing per-row to refuse (no worktree, no turn,
+ * nothing irreversible), so the route applies all of it or none, and this
+ * modal only has to decide which tags and which direction.
  */
-export function GroupTasksModal({ selected, groups, onClose, onApply, onCreateGroup }: {
+export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }: {
   /** The picked rows, in list order. */
   selected: TaskRow[];
-  groups: TaskGroupRow[];
+  tags: TagRow[];
   onClose: () => void;
-  onApply: (ids: string[], groupId: string | null) => Promise<void>;
-  onCreateGroup: (name: string) => Promise<TaskGroupRow>;
+  onApply: (ids: string[], tagIds: string[], mode: "add" | "remove") => Promise<void>;
+  onCreateTag: (name: string) => Promise<TagRow>;
 }) {
-  // Seeded from the selection when it already agrees on a group, so re-opening
-  // the modal on a grouped batch doesn't read as "these are ungrouped".
-  const shared = selected.length > 0 && selected.every((t) => t.group_id === selected[0].group_id) ? selected[0].group_id : null;
-  const [groupId, setGroupId] = useState<string | null>(shared);
+  const [mode, setMode] = useState<"add" | "remove">("add");
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const n = selected.length;
-  const target = groups.find((g) => g.id === groupId) ?? null;
-  // Rows already in the target group aren't rewritten server-side; saying so
-  // keeps the button honest about what it's about to do.
-  const changing = selected.filter((t) => (t.group_id ?? null) !== groupId).length;
+  // Rows that already agree with the write aren't touched server-side; saying
+  // so keeps the button honest about what it's about to do.
+  const changing = tagIds.length === 0 ? 0 : selected.filter((t) =>
+    mode === "add" ? tagIds.some((id) => !t.tag_ids.includes(id)) : tagIds.some((id) => t.tag_ids.includes(id))
+  ).length;
 
   const apply = async () => {
-    if (busy || changing === 0) return;
+    if (busy || tagIds.length === 0) return;
     setBusy(true);
     setErr(null);
     try {
-      await onApply(selected.map((t) => t.id), groupId);
+      await onApply(selected.map((t) => t.id), tagIds, mode);
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -732,15 +750,23 @@ export function GroupTasksModal({ selected, groups, onClose, onApply, onCreateGr
   };
 
   return (
-    <Modal title={`Group ${n} task${n !== 1 ? "s" : ""}`} sub="Which feature these are steps of" onClose={onClose}
+    <Modal title={`Tags for ${n} task${n !== 1 ? "s" : ""}`} sub="A mixed selection rarely shares tags, so add or remove rather than replace" onClose={onClose}
       footer={<>
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={busy || changing === 0} onClick={apply}>
-          {Icon.check()} {busy ? "Saving…" : target ? `Add ${changing} to ${target.name}` : changing === 0 ? "No change" : `Ungroup ${changing}`}
+        <button className="btn btn-accent" disabled={busy || tagIds.length === 0 || changing === 0} onClick={apply}>
+          {Icon.check()} {busy ? "Saving…" : tagIds.length === 0 ? "Pick a tag" : changing === 0 ? "No change" : mode === "add" ? `Add to ${changing}` : `Remove from ${changing}`}
         </button>
       </>}>
-      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
+      <div className="field">
+        <div className="lab">Action</div>
+        <div className="seg">
+          <button className={mode === "add" ? "on" : ""} onClick={() => setMode("add")}>Add</button>
+          <button className={mode === "remove" ? "on" : ""} onClick={() => setMode("remove")}>Remove</button>
+        </div>
+      </div>
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={mode === "add" ? onCreateTag : undefined}
+        label={mode === "add" ? "Tags to add" : "Tags to remove"} hint="" />
       <div className="field">
         <div className="lab">Selection</div>
         <div className="dep-list">
@@ -748,7 +774,11 @@ export function GroupTasksModal({ selected, groups, onClose, onApply, onCreateGr
             <div key={t.id} className="dep-row" style={{ cursor: "default" }}>
               <StatusDot status={t.status} />
               <span className="dep-title">{t.title}</span>
-              <span className="dep-status">{t.group_id === groupId ? "already there" : t.group_id ? "regrouped" : ""}</span>
+              <span className="dep-status">
+                {tagIds.length === 0 ? "" : mode === "add"
+                  ? tagIds.every((id) => t.tag_ids.includes(id)) ? "already tagged" : "will be tagged"
+                  : tagIds.some((id) => t.tag_ids.includes(id)) ? "will be untagged" : "not tagged"}
+              </span>
             </div>
           ))}
         </div>
@@ -758,7 +788,7 @@ export function GroupTasksModal({ selected, groups, onClose, onApply, onCreateGr
   );
 }
 
-export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, onSave, onDelete, onMove, onCreateGroup, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; groups: TaskGroupRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; group_id: string | null }, action?: SaveAction) => void; onCreateGroup: (name: string) => Promise<TaskGroupRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -768,7 +798,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
   // value the session rail's picker writes) and takes effect on the next turn.
   const [model, setModel] = useState<string | null>(task.model);
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
-  const [groupId, setGroupId] = useState<string | null>(task.group_id ?? null);
+  const [tagIds, setTagIds] = useState<string[]>(task.tag_ids ?? []);
   const [autoStart, setAutoStart] = useState(!!task.auto_start);
   const [confirmDel, setConfirmDel] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -776,7 +806,7 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
   const can = title.trim().length > 0;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, group_id: groupId }, action);
+  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
   // gesture, rather than saving, closing, and hunting for the row again.
@@ -860,14 +890,14 @@ export function EditTaskModal({ task, tasks, groups, projects, agents, onClose, 
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
-      <GroupField groups={groups} value={groupId} onChange={setGroupId} onCreate={onCreateGroup} />
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {/* Unlike the agent picker above, this is NOT gated on the task being
           unstarted: a started one can move by discarding the worktree it cut
           from this project's repo, which the field asks for explicitly. Only a
           live turn is refused outright, and the field surfaces the server's
           reason. */}
-      <MoveProjectField task={task} tasks={tasks} groups={groups} projects={projects} agents={agents} onMove={onMove} />
+      <MoveProjectField task={task} tasks={tasks} tags={tags} projects={projects} agents={agents} onMove={onMove} />
       {confirmDel && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 16 }}>
           This permanently removes “{task.title}”, its agent session and git worktree from Calandria. Any unmerged work in the worktree is discarded.

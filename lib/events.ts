@@ -49,7 +49,7 @@ export type TaskMutationEvent =
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
   | { type: "runbooks_changed"; projectId: string }
-  | { type: "task_groups_changed"; projectId: string }
+  | { type: "tags_changed"; projectId: string }
   | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
@@ -90,13 +90,15 @@ export type RunbooksChangedWireEvent = {
   projectId: string;
 };
 /**
- * A project's task groups changed (created, renamed, recolored, described,
- * deleted). Modelled on runbooks_changed exactly — no task row is involved, the
- * publishers key the bus with "", and the client refetches the project.
- * MEMBERSHIP changes (a task's group_id) are task edits and ride task_edited.
+ * A project's tags changed — created, renamed, recolored, described, deleted,
+ * or applied to a selection of tasks. Modelled on runbooks_changed exactly: no
+ * task row is involved, the publishers key the bus with "", and the client
+ * refetches the project. Membership changes ride this too rather than N
+ * task_edited events, because a tag write is the one edit whose blast radius is
+ * the whole chip bar (every count moves) as well as the rows.
  */
-export type TaskGroupsChangedWireEvent = {
-  type: "task_groups_changed";
+export type TagsChangedWireEvent = {
+  type: "tags_changed";
   projectId: string;
 };
 /** A composed, ready-to-render notification. See lib/notifications/. */
@@ -106,7 +108,7 @@ export type GlobalWireEvent =
   | TaskDeletedWireEvent
   | TasksMovedWireEvent
   | RunbooksChangedWireEvent
-  | TaskGroupsChangedWireEvent
+  | TagsChangedWireEvent
   | NotificationWireEvent
   | AgentAuthEvent;
 

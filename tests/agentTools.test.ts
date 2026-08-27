@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { createGroup, createProject, createTask, deleteTask, getTask, getTaskDeps, listGroups, setTaskDeps, updateTask } from "@/lib/store";
+import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps, getTaskTagIds, listTags, setTaskDeps, updateTask } from "@/lib/store";
 import {
   createSuggestedTask,
   getTaskForAgent,
-  listGroupsForAgent,
+  listTagsForAgent,
   listTasksForAgent,
   registerExposedService,
   resolveTitleRefs,
@@ -19,7 +19,7 @@ import { POST as listTasksEp } from "@/app/api/internal/agent-tools/list-tasks/r
 import { POST as getTaskEp } from "@/app/api/internal/agent-tools/get-task/route";
 import { POST as updateTaskEp } from "@/app/api/internal/agent-tools/update-task/route";
 import { POST as withdrawEp } from "@/app/api/internal/agent-tools/withdraw-suggestion/route";
-import { POST as listGroupsEp } from "@/app/api/internal/agent-tools/list-groups/route";
+import { POST as listTagsEp } from "@/app/api/internal/agent-tools/list-tags/route";
 import { instanceServiceTokenOk } from "@/lib/cf-access.mjs";
 
 function post(handler: (req: NextRequest) => Promise<Response>, url: string, body: unknown) {
@@ -627,171 +627,195 @@ describe("instance service token gate", () => {
   });
 });
 
-// ── Groups on the agent tools ────────────────────────────────────────────────
-// The half of docs/superpowers/specs/2026-08-24-task-grouping-design.md that
-// lets a PLANNING TURN file a named plan instead of N unrelated rows. The
-// asymmetry between the two writers is the thing under test: suggest_task
-// creates a group it doesn't recognize (a plan being born names itself once),
+// ── Tags on the agent tools ──────────────────────────────────────────────────
+// The half of docs/superpowers/specs/2026-08-27-tags-design.md that lets a
+// PLANNING TURN file a named plan instead of N unrelated rows, many-to-many.
+// The asymmetry between the two writers is the thing under test: suggest_task
+// creates a tag it doesn't recognize (a plan being born names itself once),
 // update_task refuses one (the task exists, so a typo would split a feature the
-// user is already filtering by in two).
-describe("group on the agent tools", () => {
-  it("suggest_task creates the named group in the TARGET project, tagged with the caller", () => {
-    const project = createProject({ name: "G-Suggest" });
+// user is already filtering by in two) — and update_task REPLACES the set
+// rather than adding to it, exactly like blocked_by.
+describe("tags on the agent tools", () => {
+  it("suggest_task creates the named tags in the TARGET project, tagged with the caller", () => {
+    const project = createProject({ name: "T-Suggest" });
     const planner = createTask({ project_id: project.id, title: "Plan it", description: "" });
 
     const first = createSuggestedTask(project, {
       title: "Step one",
       description: "",
-      group: "Auth migration",
+      tags: ["Auth migration"],
       origin_task_id: planner.id,
     });
-    expect(first.text).toContain('Created group "Auth migration" in G-Suggest.');
-    const group = listGroups(project.id)[0];
-    expect(group.name).toBe("Auth migration");
-    // Provenance: the group links back to the session that planned it, which is
-    // what lib/groupContext.ts turns into "Planned in task …" for every member.
-    expect(group.origin_task_id).toBe(planner.id);
-    expect(getTask(first.task!.id)!.group_id).toBe(group.id);
+    expect(first.text).toContain('Created tag "Auth migration" in T-Suggest.');
+    const tag = listTags(project.id)[0];
+    expect(tag.name).toBe("Auth migration");
+    // Provenance: the tag links back to the session that planned it, which is
+    // what lib/tagContext.ts turns into "Planned in task …" for every member.
+    expect(tag.origin_task_id).toBe(planner.id);
+    expect(getTaskTagIds(first.task!.id)).toEqual([tag.id]);
 
     // The rest of the batch REUSES it rather than minting a near-duplicate, and
     // says so — an exact-match-or-create verb is only safe if the result
     // distinguishes the two outcomes while the agent can still fix its spelling.
-    const second = createSuggestedTask(project, { title: "Step two", description: "", group: "Auth migration", origin_task_id: planner.id });
-    expect(second.text).toContain('Filed under group "Auth migration".');
-    expect(second.text).not.toContain("Created group");
-    expect(listGroups(project.id)).toHaveLength(1);
-    expect(getTask(second.task!.id)!.group_id).toBe(group.id);
+    const second = createSuggestedTask(project, { title: "Step two", description: "", tags: ["Auth migration"], origin_task_id: planner.id });
+    expect(second.text).toContain('Tagged "Auth migration".');
+    expect(second.text).not.toContain("Created tag");
+    expect(listTags(project.id)).toHaveLength(1);
+    expect(getTaskTagIds(second.task!.id)).toEqual([tag.id]);
 
     // An id resolves too, and is not mistaken for a name to create.
-    const byId = createSuggestedTask(project, { title: "Step three", description: "", group: group.id });
-    expect(getTask(byId.task!.id)!.group_id).toBe(group.id);
-    expect(listGroups(project.id)).toHaveLength(1);
+    const byId = createSuggestedTask(project, { title: "Step three", description: "", tags: [tag.id] });
+    expect(getTaskTagIds(byId.task!.id)).toEqual([tag.id]);
+    expect(listTags(project.id)).toHaveLength(1);
+
+    // A task can carry several tags at once, mixing a reused one with a new one.
+    const both = createSuggestedTask(project, { title: "Step four", description: "", tags: [tag.id, "Flaky tests"] });
+    expect(both.text).toContain('Tagged "Auth migration".');
+    expect(both.text).toContain('Created tag "Flaky tests" in T-Suggest.');
+    expect(getTaskTagIds(both.task!.id).sort()).toEqual([tag.id, listTags(project.id).find((t) => t.name === "Flaky tests")!.id].sort());
   });
 
-  it("suggest_task groups a cross-project suggestion in the project it LANDS in", () => {
-    // The group is resolved after the target project, so a session planning
-    // into another repo names a group there — never one in its own, which the
-    // task could not legally belong to.
-    const here = createProject({ name: "G-Here" });
-    const there = createProject({ name: "G-There" });
-    createGroup({ project_id: here.id, name: "Shared name" });
+  it("suggest_task tags a cross-project suggestion in the project it LANDS in", () => {
+    // Tags are resolved after the target project, so a session planning into
+    // another repo names a tag there — never one in its own, which the task
+    // could not legally belong to.
+    const here = createProject({ name: "T-Here" });
+    const there = createProject({ name: "T-There" });
+    createTag({ project_id: here.id, name: "Shared name" });
 
-    const filed = createSuggestedTask(there, { title: "Elsewhere", description: "", group: "Shared name" });
-    expect(filed.text).toContain('Created group "Shared name" in G-There.');
-    const mine = listGroups(there.id);
+    const filed = createSuggestedTask(there, { title: "Elsewhere", description: "", tags: ["Shared name"] });
+    expect(filed.text).toContain('Created tag "Shared name" in T-There.');
+    const mine = listTags(there.id);
     expect(mine).toHaveLength(1);
-    expect(getTask(filed.task!.id)!.group_id).toBe(mine[0].id);
-    // …and the same-named group in the other project is untouched.
-    expect(listGroups(here.id)).toHaveLength(1);
-    expect(listGroups(here.id)[0].id).not.toBe(mine[0].id);
+    expect(getTaskTagIds(filed.task!.id)).toEqual([mine[0].id]);
+    // …and the same-named tag in the other project is untouched.
+    expect(listTags(here.id)).toHaveLength(1);
+    expect(listTags(here.id)[0].id).not.toBe(mine[0].id);
   });
 
-  it("update_task moves a task between groups by id or exact name, and ungroups on \"\"", () => {
-    const project = createProject({ name: "G-Update" });
+  it("update_task moves a task between tags by id or exact name, and REPLACES the whole set", () => {
+    const project = createProject({ name: "T-Update" });
     const task = createTask({ project_id: project.id, title: "Mine", description: "" });
-    const a = createGroup({ project_id: project.id, name: "Auth migration" });
-    const b = createGroup({ project_id: project.id, name: "Mobile PWA" });
+    const a = createTag({ project_id: project.id, name: "Auth migration" });
+    const b = createTag({ project_id: project.id, name: "Mobile PWA" });
 
-    const named = updateTaskForAgent(task, undefined, { group: "Auth migration" });
-    expect(named.text).toContain('group → "Auth migration"');
-    expect(getTask(task.id)!.group_id).toBe(a.id);
+    const named = updateTaskForAgent(task, undefined, { tags: ["Auth migration"] });
+    expect(named.text).toContain('tags → "Auth migration"');
+    expect(getTaskTagIds(task.id)).toEqual([a.id]);
 
-    expect(updateTaskForAgent(task, undefined, { group: b.id }).task).toBeTruthy();
-    expect(getTask(task.id)!.group_id).toBe(b.id);
+    // A second tags call REPLACES rather than adds — "Auth migration" is gone.
+    expect(updateTaskForAgent(task, undefined, { tags: [b.id] }).task).toBeTruthy();
+    expect(getTaskTagIds(task.id)).toEqual([b.id]);
 
-    // Re-stating the same group is a no-op, not a spurious write — and the
-    // no-change text names the group, or it would read as if `group` had been
-    // ignored (the same rider `blocked_by` gets).
-    const noop = updateTaskForAgent(task, undefined, { group: b.id });
+    // Re-stating the same set is a no-op, not a spurious write — and the
+    // no-change text names it, or it would read as if `tags` had been ignored
+    // (the same rider `blocked_by` gets).
+    const noop = updateTaskForAgent(task, undefined, { tags: [b.id] });
     expect(noop.text).toContain("No change");
-    expect(noop.text).toContain('in group "Mobile PWA"');
+    expect(noop.text).toContain('tagged "Mobile PWA"');
 
-    const cleared = updateTaskForAgent(task, undefined, { group: "" });
-    expect(cleared.text).toContain("no longer in a group");
-    expect(getTask(task.id)!.group_id).toBeNull();
+    const cleared = updateTaskForAgent(task, undefined, { tags: [] });
+    expect(cleared.text).toContain("no longer tagged");
+    expect(getTaskTagIds(task.id)).toEqual([]);
+
+    // A set of two replaces a set of one, in the order given.
+    updateTaskForAgent(task, undefined, { tags: [b.id, a.id] });
+    expect(getTaskTagIds(task.id)).toEqual([b.id, a.id]);
   });
 
-  it("update_task refuses an unknown group and lands NOTHING else in the call", () => {
-    const project = createProject({ name: "G-Strict" });
+  it("update_task refuses an unknown tag and lands NOTHING else in the call", () => {
+    const project = createProject({ name: "T-Strict" });
     const task = createTask({ project_id: project.id, title: "Original", description: "" });
-    createGroup({ project_id: project.id, name: "Auth migration" });
+    createTag({ project_id: project.id, name: "Auth migration" });
 
     // Same fail-closed rule as an unusable blocked_by ref: wiring the half we
     // recognized would rename the task under a refusal claiming nothing changed.
-    const miss = updateTaskForAgent(task, undefined, { title: "Renamed", group: "auth migration" });
+    const miss = updateTaskForAgent(task, undefined, { title: "Renamed", tags: ["auth migration"] });
     expect(miss.task).toBeNull();
     expect(miss.text).toContain("Nothing was changed");
-    // The refusal names the groups that DO exist, so the agent can retry.
+    // The refusal names the tags that DO exist, so the agent can retry.
     expect(miss.text).toContain('"Auth migration"');
-    expect(getTask(task.id)).toMatchObject({ title: "Original", group_id: null });
+    expect(getTask(task.id)).toMatchObject({ title: "Original" });
+    expect(getTaskTagIds(task.id)).toEqual([]);
 
     // Never creates, however plausible the name: that's suggest_task's verb.
-    expect(listGroups(project.id)).toHaveLength(1);
+    expect(listTags(project.id)).toHaveLength(1);
   });
 
-  it("update_task refuses a group from another project — a group can't span repos", () => {
-    const here = createProject({ name: "G-Own" });
-    const there = createProject({ name: "G-Foreign" });
-    const task = createTask({ project_id: here.id, title: "Mine", description: "" });
-    const foreign = createGroup({ project_id: there.id, name: "Elsewhere" });
+  it("update_task refuses one unusable ref out of several — the whole call fails, nothing lands", () => {
+    const project = createProject({ name: "T-Strict-Partial" });
+    const task = createTask({ project_id: project.id, title: "Mine", description: "" });
+    const real = createTag({ project_id: project.id, name: "Real tag" });
 
-    const res = updateTaskForAgent(task, undefined, { group: foreign.id });
+    const res = updateTaskForAgent(task, undefined, { tags: [real.id, "ghost-name"] });
     expect(res.task).toBeNull();
-    expect(getTask(task.id)!.group_id).toBeNull();
+    // Neither the good ref nor the bad one landed.
+    expect(getTaskTagIds(task.id)).toEqual([]);
   });
 
-  it("update_task resolves the group in the TARGET's project, not the caller's", () => {
-    // The tool writes inert tray suggestions in any project; the group has to be
-    // looked up where the task lives, or a planning session could never group a
+  it("update_task refuses a tag from another project — a tag can't span repos", () => {
+    const here = createProject({ name: "T-Own" });
+    const there = createProject({ name: "T-Foreign" });
+    const task = createTask({ project_id: here.id, title: "Mine", description: "" });
+    const foreign = createTag({ project_id: there.id, name: "Elsewhere" });
+
+    const res = updateTaskForAgent(task, undefined, { tags: [foreign.id] });
+    expect(res.task).toBeNull();
+    expect(getTaskTagIds(task.id)).toEqual([]);
+  });
+
+  it("update_task resolves tags in the TARGET's project, not the caller's", () => {
+    // The tool writes inert tray suggestions in any project; the tag has to be
+    // looked up where the task lives, or a planning session could never tag a
     // suggestion it just filed into another repo.
-    const here = createProject({ name: "G-Caller" });
-    const there = createProject({ name: "G-Target" });
+    const here = createProject({ name: "T-Caller" });
+    const there = createProject({ name: "T-Target" });
     const caller = createTask({ project_id: here.id, title: "Caller", description: "" });
     const target = createSuggestedTask(there, { title: "Filed there", description: "" }).task!;
-    const group = createGroup({ project_id: there.id, name: "Their feature" });
+    const tag = createTag({ project_id: there.id, name: "Their feature" });
 
-    const res = updateTaskForAgent(caller, target.id, { group: "Their feature" });
+    const res = updateTaskForAgent(caller, target.id, { tags: ["Their feature"] });
     expect(res.task).toBeTruthy();
-    expect(getTask(target.id)!.group_id).toBe(group.id);
+    expect(getTaskTagIds(target.id)).toEqual([tag.id]);
   });
 
-  it("list_tasks carries every row's group and filters by one", () => {
-    const project = createProject({ name: "G-List" });
-    const group = createGroup({ project_id: project.id, name: "Auth migration" });
-    const mine = createTask({ project_id: project.id, title: "Mine", description: "", group_id: group.id });
-    createTask({ project_id: project.id, title: "Sibling", description: "", group_id: group.id });
+  it("list_tasks carries every row's tags and filters by one", () => {
+    const project = createProject({ name: "T-List" });
+    const tag = createTag({ project_id: project.id, name: "Auth migration" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [tag.id] });
+    createTask({ project_id: project.id, title: "Sibling", description: "", tag_ids: [tag.id] });
     createTask({ project_id: project.id, title: "Unrelated", description: "" });
 
     const all = listTasksForAgent(project, mine.id);
     expect(all.map((t) => t.title).sort()).toEqual(["Mine", "Sibling", "Unrelated"]);
-    // Name as well as id, on every row — an id alone would need a list_groups
+    // Name as well as id, on every row — an id alone would need a list_tags
     // call to mean anything.
-    expect(all.find((t) => t.id === mine.id)!.group).toEqual({ id: group.id, name: "Auth migration" });
-    expect(all.find((t) => t.title === "Unrelated")!.group).toBeNull();
+    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([{ id: tag.id, name: "Auth migration" }]);
+    expect(all.find((t) => t.title === "Unrelated")!.tags).toEqual([]);
 
-    const filtered = listTasksForAgent(project, mine.id, false, group.id);
+    const filtered = listTasksForAgent(project, mine.id, false, tag.id);
     expect(filtered.map((t) => t.title).sort()).toEqual(["Mine", "Sibling"]);
     // The caller's own row is exempt from the STATUS filter but not this one: a
     // filtered list that always contained the caller would misreport membership.
-    const other = listTasksForAgent(project, mine.id, false, group.id).filter((t) => t.title === "Unrelated");
+    const other = listTasksForAgent(project, mine.id, false, tag.id).filter((t) => t.title === "Unrelated");
     expect(other).toEqual([]);
   });
 
-  it("list_groups answers \"how is it going\" in one call", () => {
-    const project = createProject({ name: "G-Groups" });
+  it("list_tags answers \"how is it going\" in one call", () => {
+    const project = createProject({ name: "T-Tags" });
     const planner = createTask({ project_id: project.id, title: "Planner", description: "" });
-    const live = createGroup({ project_id: project.id, name: "Auth migration", description: "behind AuthService", origin_task_id: planner.id });
-    const shipped = createGroup({ project_id: project.id, name: "Mobile PWA" });
-    const a = createTask({ project_id: project.id, title: "Step one", description: "", group_id: live.id });
-    createTask({ project_id: project.id, title: "Step two", description: "", group_id: live.id });
-    const closed = createTask({ project_id: project.id, title: "Shipped", description: "", group_id: shipped.id });
+    const live = createTag({ project_id: project.id, name: "Auth migration", description: "behind AuthService", origin_task_id: planner.id });
+    const shipped = createTag({ project_id: project.id, name: "Mobile PWA" });
+    const a = createTask({ project_id: project.id, title: "Step one", description: "", tag_ids: [live.id] });
+    createTask({ project_id: project.id, title: "Step two", description: "", tag_ids: [live.id] });
+    const closed = createTask({ project_id: project.id, title: "Shipped", description: "", tag_ids: [shipped.id] });
     updateTask(a.id, { status: "done" });
     updateTask(closed.id, { status: "done" });
-    createGroup({ project_id: createProject({ name: "G-Elsewhere" }).id, name: "Not mine" });
+    createTag({ project_id: createProject({ name: "T-Elsewhere" }).id, name: "Not mine" });
 
-    const groups = listGroupsForAgent(project);
-    expect(groups.map((g) => g.name)).toEqual(["Auth migration", "Mobile PWA"]);
-    const auth = groups[0];
+    const tags = listTagsForAgent(project);
+    expect(tags.map((g) => g.name)).toEqual(["Auth migration", "Mobile PWA"]);
+    const auth = tags[0];
     expect(auth).toMatchObject({ description: "behind AuthService", origin_task_id: planner.id, done: false });
     expect(auth.counts).toMatchObject({ total: 2, done: 1 });
     // Members with titles, so the answer needs no follow-up get_task per row.
@@ -799,62 +823,64 @@ describe("group on the agent tools", () => {
       { id: a.id, title: "Step one", status: "done" },
       { id: auth.tasks[1].id, title: "Step two", status: "not_started" },
     ]);
-    // Derived, never stored: every member terminal = the group is done.
-    expect(groups[1].done).toBe(true);
+    // Derived, never stored: every member terminal = the tag is done.
+    expect(tags[1].done).toBe(true);
   });
 
-  it("endpoints carry the same group policy over the wire", async () => {
-    const project = createProject({ name: "EP-Group" });
+  it("endpoints carry the same tag policy over the wire", async () => {
+    const project = createProject({ name: "EP-Tag" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 
-    // suggest-task: creates the group and records the CALLER as its origin —
+    // suggest-task: creates the tag and records the CALLER as its origin —
     // taskId is the trusted, env-injected id, never a model-set field.
     const made = await post(suggestTask, "/api/internal/agent-tools/suggest-task", {
       projectId: project.id,
       taskId: caller.id,
-      title: "Grouped",
+      title: "Tagged",
       description: "",
-      group: "Auth migration",
+      tags: ["Auth migration"],
     });
     const madeJson = (await made.json()) as { id: string; text: string };
-    expect(madeJson.text).toContain('Created group "Auth migration" in EP-Group.');
-    const group = listGroups(project.id)[0];
-    expect(group.origin_task_id).toBe(caller.id);
-    expect(getTask(madeJson.id)!.group_id).toBe(group.id);
+    expect(madeJson.text).toContain('Created tag "Auth migration" in EP-Tag.');
+    const tag = listTags(project.id)[0];
+    expect(tag.origin_task_id).toBe(caller.id);
+    expect(getTaskTagIds(madeJson.id)).toEqual([tag.id]);
 
     // list-tasks: filters, and refuses an unknown filter rather than quietly
     // handing back the whole board as if that were the feature's membership.
     const filtered = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", {
       projectId: project.id,
       taskId: caller.id,
-      group: "Auth migration",
+      tag: "Auth migration",
     });
-    const filteredJson = (await filtered.json()) as { tasks: { title: string; group: { name: string } | null }[] };
-    expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Grouped"]);
-    expect(filteredJson.tasks[0].group!.name).toBe("Auth migration");
-    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, group: "ghost" });
+    const filteredJson = (await filtered.json()) as { tasks: { title: string; tags: { name: string }[] }[] };
+    expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Tagged"]);
+    expect(filteredJson.tasks[0].tags[0]!.name).toBe("Auth migration");
+    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tag: "ghost" });
     expect(badFilter.status).toBe(400);
 
     // update-task: strict, and a refusal writes nothing.
     const refused = await post(updateTaskEp, "/api/internal/agent-tools/update-task", {
       taskId: caller.id,
       title: "Renamed",
-      group: "ghost",
+      tags: ["ghost"],
     });
     expect(refused.status).toBe(400);
-    expect(getTask(caller.id)).toMatchObject({ title: "Caller", group_id: null });
+    expect(getTask(caller.id)).toMatchObject({ title: "Caller" });
+    expect(getTaskTagIds(caller.id)).toEqual([]);
 
-    const moved = await post(updateTaskEp, "/api/internal/agent-tools/update-task", { taskId: caller.id, group: "Auth migration" });
+    const moved = await post(updateTaskEp, "/api/internal/agent-tools/update-task", { taskId: caller.id, tags: ["Auth migration"] });
     expect(moved.status).toBe(200);
-    expect(getTask(caller.id)!.group_id).toBe(group.id);
+    expect(getTaskTagIds(caller.id)).toEqual([tag.id]);
 
-    // list-groups: the read behind "how is the migration going".
-    const listed = await post(listGroupsEp, "/api/internal/agent-tools/list-groups", { projectId: project.id, taskId: caller.id });
-    const listedJson = (await listed.json()) as { project: string; groups: { name: string; counts: { total: number } }[] };
-    expect(listedJson.project).toBe("EP-Group");
-    expect(listedJson.groups.map((g) => g.name)).toEqual(["Auth migration"]);
-    expect(listedJson.groups[0].counts.total).toBe(2);
-    const badProject = await post(listGroupsEp, "/api/internal/agent-tools/list-groups", { projectId: project.id, project: "nope" });
+    // list-tags: the read behind "how is the migration going". This is the
+    // real stdio bridge endpoint (list-tags, not the old list-groups path).
+    const listed = await post(listTagsEp, "/api/internal/agent-tools/list-tags", { projectId: project.id, taskId: caller.id });
+    const listedJson = (await listed.json()) as { project: string; tags: { name: string; counts: { total: number } }[] };
+    expect(listedJson.project).toBe("EP-Tag");
+    expect(listedJson.tags.map((g) => g.name)).toEqual(["Auth migration"]);
+    expect(listedJson.tags[0].counts.total).toBe(2);
+    const badProject = await post(listTagsEp, "/api/internal/agent-tools/list-tags", { projectId: project.id, project: "nope" });
     expect(badProject.status).toBe(400);
   });
 });
