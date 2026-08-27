@@ -8,6 +8,37 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.3.0](https://github.com/calandria-dev/calandria/compare/v0.2.0...v0.3.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* ORCH_* env vars, the `orchestrator` MCP server name (the mcp__orchestrator__* tools), `orch/<id>` task branches, /home/orch and the ORCH_* compose variables are replaced by their CALANDRIA / calandria spellings. Old env names are honored as deprecated aliases and pre-rename on-disk state (~/.zen-orchestrator/orchestrator.db, ~/.agent-orchestrator/worktrees, orch/ branches) is found in place — but anything the user wrote against the old names, such as a ~/.claude allow rule on mcp__orchestrator__* or a compose override naming /home/orch or ORCH_USER, needs the new spelling. Upgrading needs no data migration.
+
+### Features
+
+* **agents:** update_task can edit any task, and the user sees what changed ([bb6f4a6](https://github.com/calandria-dev/calandria/commit/bb6f4a6ee43c31630a606c24723cc4af6d34eca4))
+* rename the product surface from Operator/orchestrator to Calandria ([bb6f4a6](https://github.com/calandria-dev/calandria/commit/bb6f4a6ee43c31630a606c24723cc4af6d34eca4))
+* **storage:** default instance state to ~/.calandria, with a pre-rename fallback ([bb6f4a6](https://github.com/calandria-dev/calandria/commit/bb6f4a6ee43c31630a606c24723cc4af6d34eca4))
+
+
+### Bug Fixes
+
+* **agent-edits:** refuse a Revert that would overwrite a later change; ack per row ([903b2da](https://github.com/calandria-dev/calandria/commit/903b2daad9dfc93389ad6bc6555e5b91416f628f))
+* **autoStart:** declare a RunContext for dependency-triggered launches ([be0a345](https://github.com/calandria-dev/calandria/commit/be0a3457da503e5c7f32e3caf1a67dc71c0b24a2)), closes [#37](https://github.com/calandria-dev/calandria/issues/37)
+* **board:** hold task_edited while this tab's drop is in flight ([b07eb1b](https://github.com/calandria-dev/calandria/commit/b07eb1b1efa566c013e2bc1b60f2da5fec6843b0)), closes [#35](https://github.com/calandria-dev/calandria/issues/35)
+* **ci:** hand the notify job a token so it can actually file an issue ([b86ce31](https://github.com/calandria-dev/calandria/commit/b86ce31c695cc64eb2066709c16d6e397a16da19)), closes [#26](https://github.com/calandria-dev/calandria/issues/26)
+* **ci:** make the release gate wait for test.yml instead of racing it ([41adba4](https://github.com/calandria-dev/calandria/commit/41adba41e7cc91f19bb057805b7ad79f0bc0db5f))
+* **gauge:** size an unknown model id by the narrowest window, not the widest ([d4032cf](https://github.com/calandria-dev/calandria/commit/d4032cffea9b827ecddf872655a453c864c3ff67)), closes [#39](https://github.com/calandria-dev/calandria/issues/39)
+* **git:** key the fetch cooldown on repo identity and branch, not the raw path ([dbd854d](https://github.com/calandria-dev/calandria/commit/dbd854d74d810625790ab5fb30e118b9ce5f9a64)), closes [#41](https://github.com/calandria-dev/calandria/issues/41)
+* **git:** reattach a pruned pre-rename task to its orch/ branch, not a fresh calandria/ one ([fe2b0a2](https://github.com/calandria-dev/calandria/commit/fe2b0a2aa6d3167667a88048f605c15f80643555))
+* **git:** surface a rejected push's hook output instead of the generic line ([0a993c9](https://github.com/calandria-dev/calandria/commit/0a993c9eb01fe833f7c6b013909d3be25277bfaa)), closes [#45](https://github.com/calandria-dev/calandria/issues/45)
+* **scripts:** make the npm scripts run from a Windows shell ([bb6f4a6](https://github.com/calandria-dev/calandria/commit/bb6f4a6ee43c31630a606c24723cc4af6d34eca4))
+* **start:** ship cross-env and concurrently as runtime dependencies ([5acb043](https://github.com/calandria-dev/calandria/commit/5acb04384afa2bb7536908feb65d2afdd684377d)), closes [#32](https://github.com/calandria-dev/calandria/issues/32)
+* **tests:** pin CALANDRIA_PROJECTS_DIR so the unit suite never writes ~/projects ([550e90f](https://github.com/calandria-dev/calandria/commit/550e90fa7f94e50e0685e18c26707c04a997d195)), closes [#34](https://github.com/calandria-dev/calandria/issues/34)
+* **tests:** stop the plan-usage overlay test expiring on a calendar date ([96ba9cc](https://github.com/calandria-dev/calandria/commit/96ba9cc0d5512182fc85d4addaa10a78138eb6c9)), closes [#31](https://github.com/calandria-dev/calandria/issues/31)
+* **tests:** treat the generated CHANGELOG as frozen history in the naming guard ([a40ee80](https://github.com/calandria-dev/calandria/commit/a40ee80704805a4b0e3f9fde627eb7f1ed583000))
+
 ## [0.2.0](https://github.com/calandria-dev/calandria/compare/v0.1.0...v0.2.0) (2026-08-25)
 
 
