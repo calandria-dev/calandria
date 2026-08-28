@@ -9,7 +9,7 @@ import { listSummaries } from "../store";
 import { tagContextBlock } from "../tagContext";
 import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
 import { getCapabilities } from "./capabilities";
-import { BACKGROUND_LINGER_MS } from "../config";
+import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
 // already supplied by buildProjectContext(). Keep this prompt deliberately
@@ -183,6 +183,50 @@ export function buildProjectContext(project: Project, task: Task): string {
       `CRA/webpack-dev-server is pre-cleared via env. CALANDRIA_PUBLIC_HOST is injected into services ` +
       `Calandria starts.`
   );
+
+  // Bulk collection goes to subagents. Last on purpose: this block countermands
+  // instructions the CLI puts in the same window (auto mode's "do your work
+  // through the Bash tool", and — on Opus — "do not call the AgentTool unless
+  // the user requested it"), and the append lands after both.
+  //
+  // It is here rather than in a CLAUDE.md file because that was tried and
+  // measured losing: same rule, same repo, same prompts, it delegated only
+  // after a median of two read-only commands and ran 10.3 Bash calls to this
+  // version's 3.6 (docs/DELEGATION.md). A project's own instructions are read as context; the
+  // CLI's are read as the rules of the harness, and a general principle does
+  // not beat a specific instruction. The trigger is stated as a COUNT for the
+  // same reason — the CLAUDE.md version said "a third read-only command in a
+  // row against the same question", and a model that judges each command a
+  // different question never fires it by its own reckoning.
+  if (DELEGATE_COLLECTION && getCapabilities(task.agent).dispatchesSubagents) {
+    lines.push(
+      `\n---\nCollecting context: the bulk reads go to a subagent.\n\n` +
+        `Dispatching a subagent to COLLECT CONTEXT is requested work here — read this as the ` +
+        `request. It overrides both the standing caution against unprompted subagents and auto ` +
+        `mode's instruction to do the work through Bash, which are defaults for a session nobody ` +
+        `has told otherwise. It covers gathering only, never deciding.\n\n` +
+        `The trigger is a count, not a judgement. Once you have run two read-only commands ` +
+        `(\`cat\`, \`sed -n\`, \`head\`, \`grep\`, \`find\`, \`ls\`, \`git log\`, \`git show\`) since ` +
+        `your last edit or decision, the third one goes to a subagent instead — whatever it is ` +
+        `about.\n\n` +
+        `- \`Agent(subagent_type: "Explore", model: "haiku", run_in_background: false)\` when the ` +
+        `answer is a list: call sites, \`file:line\`, what exists, what a config says.\n` +
+        `- \`Agent(subagent_type: "general-purpose", model: "sonnet", run_in_background: false)\` ` +
+        `when the answer needs judgement about what it found.\n\n` +
+        `\`run_in_background: false\` is required and is not the default. A backgrounded agent ` +
+        `reports by notification, which does not arrive inside the turn that launched it: the ` +
+        `call returns an id, you carry on without the answer, and the sweep you delegated is ` +
+        `silently lost. Send independent sweeps in ONE message — dispatched one at a time they ` +
+        `cost one agent's latency each. Ask for the conclusion and the \`file:line\`s, never for ` +
+        `file contents.\n\n` +
+        `A task that is entirely research is not exempt; it splits by facet (client side / server ` +
+        `side / the tests) and the facets go out together.\n\n` +
+        `Keep in your own loop: the edits themselves; test, typecheck and build runs whose output ` +
+        `drives your next change; \`git diff\` of your own work; and anything whose full output ` +
+        `you need to decide. And never substitute a cheaper proxy for a measurement — if the ` +
+        `answer is a count, a duration or a pass/fail, run the thing and read the number.`
+    );
+  }
   return lines.join("\n");
 }
 

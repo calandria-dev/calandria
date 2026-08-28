@@ -178,6 +178,28 @@ export const BACKGROUND_LINGER_ENABLED = !["0", "off", "false", "no"].includes(
 export const BACKGROUND_LINGER_MS = ms(readEnv("CALANDRIA_BACKGROUND_LINGER_MS"), 0);
 
 /**
+ * Whether a task session is told to push bulk context-collection into
+ * subagents (buildProjectContext in lib/agents/shared.ts, and only for agents
+ * whose capability descriptor says they have subagents at all).
+ *
+ * On by default, and it is a directive rather than a suggestion because it is
+ * countermanding one: measured across 198 task sessions, 79% of a first turn's
+ * tool calls are Bash and only ~12% of those are decisions, because the CLI's
+ * own auto-mode guidance asks for work to go through Bash and says not to call
+ * the Agent tool unless the user requested it. The same rule in a CLAUDE.md
+ * file was measured firing late or not at all — a dispatch after a median of
+ * two read-only commands, and once in nine runs as the turn's opening move;
+ * appended to the prompt it opens with one five times in nine and reads a
+ * median of nothing first (docs/DELEGATION.md). Set to off/0/false to leave
+ * every session on the CLI's defaults — the escape hatch for an instance whose
+ * plan makes subagent turns expensive, or whose work is small enough that the
+ * dispatch overhead is the whole cost.
+ */
+export const DELEGATE_COLLECTION = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_DELEGATE_COLLECTION") || "").toLowerCase(),
+);
+
+/**
  * How long a LIVE turn may go without producing anything — no assistant text,
  * no tool call, no event — before the UI marks it as idle. Not a deadline:
  * nothing is stopped, nothing is killed, and the turn keeps its slot. The mark

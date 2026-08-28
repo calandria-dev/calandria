@@ -77,6 +77,13 @@ export interface AgentCapabilities {
    * never comes.
    */
   backgroundTasksLinger: boolean;
+  /**
+   * The agent can dispatch subagents of its own, so buildProjectContext
+   * (lib/agents/shared.ts) may tell a session to push bulk context collection
+   * into them. False = the block is omitted rather than describing a tool the
+   * session doesn't have; Codex has no subagent verb at all.
+   */
+  dispatchesSubagents: boolean;
   /** Usage events carry a real dollar cost (not just token counts). */
   reportsCostUsd: boolean;
   /**

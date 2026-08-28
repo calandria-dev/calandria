@@ -47,6 +47,32 @@ A session that never opens `lib/agents/` starts 5,159 tokens lighter. One that d
 about 5% more than the single file cost, which is the price of the pointer paragraphs and of
 saying things in sentences instead of dash-chains.
 
+Re-measured 2026-08-28 against the same 44,507-token baseline: root `CLAUDE.md` had drifted up to
+19,617 tokens, and the `Collecting context` section written for `docs/DELEGATION.md` took it to
+**21,348** (+1,731). That section is the kind of material this file's keep-list calls for in root —
+it governs how a session behaves from its first tool call, before it knows which directory it is
+heading for.
+
+Then most of it moved out again the same day, which is the more interesting entry. The section's
+*rule* was measured losing to the CLI's own auto-mode instructions and now lives in the session
+prompt (`buildProjectContext()`), leaving root `CLAUDE.md` only what this repo knows: the
+measurement, its four worked dispatches, and the anti-proxy rule. Measured in isolated directories
+against a 44,503-token empty-directory baseline, same machine and same day:
+
+| Text | Before | After | Paid by |
+|-|-|-|-|
+| Root `CLAUDE.md` | **21,362** | **20,810** (−552) | every session in this repo |
+| `lib/agents/CLAUDE.md` | 6,641 | **7,395** (+754) | a session that opens `lib/agents/` |
+| The appended directive itself | — | **620** | every turn of every task on the instance |
+
+Note what the third row is not: it is not a per-session cost like the other two but a per-turn one,
+and it is not confined to this repo. That is the trade the move makes — a rule that fires (round two
+in `docs/DELEGATION.md`) and reaches every project, against 620 tokens on each turn's system prompt.
+A per-turn line item is the expensive kind, so it is worth re-reading whenever this file is: the
+directive is the shortest wording that was actually measured working, and shortening it further
+without re-running that measurement would be exactly the estimate-instead-of-measure move it warns
+sessions off.
+
 The rewrite kept every fact, so it is not where the saving came from: the driver material
 compressed by 26% on the way into `lib/agents/CLAUDE.md`, while "Key modules" stayed within 2% of
 its old size no matter how hard it was squeezed. That section is invariants and identifiers with
