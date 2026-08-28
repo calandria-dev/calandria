@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
  * future one) Calandria's task tools (suggest_task / list_tasks /
- * get_task / update_task / withdraw_suggestion / set_base_branch / update_tag),
+ * get_task / update_task / withdraw_suggestion / set_base_branch / update_tag /
+ * create_pr),
  * its runbook tools
  * (create_runbook / list_runbooks / update_runbook), list_projects,
  * expose_service and ask_user.
@@ -17,6 +18,7 @@
  * server (lib/agents/codex/driver.ts):
  *   CALANDRIA_TASK_ID     the task this turn belongs to
  *   CALANDRIA_PROJECT_ID  the owning project (tasks/services are created under it)
+ *   CALANDRIA_LANDING_MODE  "merge" | "pr" — whether create_pr is offered at all
  *   CALANDRIA_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
  *   SERVICE_TOKEN         the per-instance secret the internal endpoints require
  *
@@ -27,12 +29,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
 const BASE_URL = (process.env.CALANDRIA_BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
 const SERVICE_TOKEN = process.env.SERVICE_TOKEN || "";
+// How this project lands work — "merge" or "pr" (lib/types.ts LandingMode).
+// The ONLY thing it decides here is whether create_pr is registered at all; the
+// endpoint re-checks it against the project row, so a stale value cannot grant
+// anything.
+const LANDING_MODE = process.env.CALANDRIA_LANDING_MODE || "merge";
 
 // Titles created this turn → their task ids, so `blocked_by` can reference an
 // earlier suggestion by title (mirrors the in-process server's per-turn map).
@@ -247,6 +254,30 @@ server.registerTool(
     return { content: [{ type: "text", text: data.text }] };
   }
 );
+
+// Only on a project that lands by pull request, exactly as the Claude driver
+// gates it (lib/agents/claude/driver.ts). On a merge project there is nothing to
+// open, so the tool is absent rather than present-and-refusing — an offered tool
+// reads as a sanctioned move.
+if (LANDING_MODE === "pr") {
+  server.registerTool(
+    CREATE_PR.name,
+    {
+      description: CREATE_PR.description,
+      inputSchema: {
+        title: z.string().optional().describe(CREATE_PR.params.title),
+        body: z.string().optional().describe(CREATE_PR.params.body),
+      },
+    },
+    async ({ title, body }) => {
+      // No task ref: this tool acts on CALANDRIA_TASK_ID's own row, which
+      // callInternal sends, and there is no parameter that could point it
+      // elsewhere. The endpoint re-checks the landing mode and the worktree.
+      const data = await callInternal("create-pr", { title, body });
+      return { content: [{ type: "text", text: data.text }] };
+    }
+  );
+}
 
 server.registerTool(
   UPDATE_TAG.name,

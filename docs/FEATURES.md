@@ -131,6 +131,17 @@ that Merge will be rejected, and that finishing means opening a PR. On a repo wi
 ruleset, the old unconditional wording sent every session off to press a button that could
 not work.
 
+Under `pr` the session also gets the verb to go with the sentence: **`create_pr(title?,
+body?)`** commits the worktree, pushes the work branch and runs `gh pr create` — the same
+machinery the PR button runs, so a session's PR and a human's are the same operation.
+Calling it again after more work updates the same PR rather than opening a second one. It
+exists because a session's own `git push` and `gh pr create` are normally refused — the
+server is where the network git lives — so without it a finished task had no way to say so
+in git and landing was entirely a human click. It is registered only on a `pr` project: on a
+`merge` project there is nothing for it to open, so it is absent rather than
+present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
+merging is deciding, and that stays yours.
+
 **Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
 `pull_request` rule, and classic branch protection, neither of which reports the other. It
 runs on its own when you open the settings dialog and when you point a new project at a

@@ -40,6 +40,7 @@ const PINNED = [
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
   "lib/prState.ts", //          keeps tasks.pr_* fresh from `gh pr view`; store + github + bus, no driving, and both PR routes sit on it
+  "lib/prTools.ts", //          the commit/push/`gh pr create` both POST /api/tasks/[id]/pr and the create_pr tool run; store + git + github, no driving
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here

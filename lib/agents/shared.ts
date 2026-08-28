@@ -31,7 +31,9 @@ export function landingSentence(project: Pick<Project, "landing_mode">, base: st
     return (
       `this worktree was cut from it and Sync catches up to it, but it does NOT land by merge. ` +
       `${base} is protected: this project lands work by pull request, so Merge is rejected. ` +
-      `Finishing this task means opening a PR against ${base} and leaving it for review, not merging.`
+      `Finishing this task means opening a PR against ${base} and leaving it for review, not merging. ` +
+      `Use the \`create_pr\` tool for that: it pushes and opens the PR server-side, where a shell \`git push\` is usually ` +
+      `refused. Merging it afterwards is the user's call, and there is no tool for it.`
     );
   return "this worktree was cut from it, Sync catches up to it, and Merge lands into it.";
 }
