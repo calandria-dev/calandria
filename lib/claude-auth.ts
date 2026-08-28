@@ -149,7 +149,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
   st.timer = setTimeout(() => {
     if (st.status !== "success") {
       st.status = "error";
-      st.error = "login timed out — start again to get a fresh link";
+      st.error = "login timed out. Start again to get a fresh link";
       try {
         st.proc?.kill();
       } catch {}
@@ -188,7 +188,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
     }
     if (st.status === "submitting" && /Invalid code|incorrect|expired|did not match|authentication failed/i.test(st.buf)) {
       st.status = "error";
-      st.error = "that code didn't work — start again to get a fresh link";
+      st.error = "that code didn't work. Start again to get a fresh link";
     }
   });
 
@@ -244,7 +244,7 @@ async function finishSuccess(st: LoginState) {
     } catch {}
   } else if (st.status === "submitting") {
     st.status = "error";
-    st.error = s.error || "login did not complete — please try again";
+    st.error = s.error || "login did not complete. Please try again";
   }
 }
 

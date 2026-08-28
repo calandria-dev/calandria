@@ -136,11 +136,11 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
           term!.write(new Uint8Array(e.data));
         }
       };
-      ws.onerror = () => { if (!disposed) term!.write(`\r\n\x1b[31m[terminal unreachable — is the pty-server sidecar running?]\x1b[0m\r\n`); };
+      ws.onerror = () => { if (!disposed) term!.write(`\r\n\x1b[31m[terminal unreachable: is the pty-server sidecar running?]\x1b[0m\r\n`); };
       ws.onclose = () => {
         if (disposed) return;
         dead = true;
-        term!.write("\r\n\x1b[90m[disconnected — press Enter to start a new shell]\x1b[0m\r\n");
+        term!.write("\r\n\x1b[90m[disconnected: press Enter to start a new shell]\x1b[0m\r\n");
       };
 
       // Single input path for both typed keystrokes and the mobile button-bar:

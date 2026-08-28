@@ -497,7 +497,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   if (error)
     return (
       <div className="col col-session insights">
-        <div className="in-wrap"><div className="in-card-s" style={{ padding: 40, textAlign: "center" }}>Couldn&apos;t load insights — try reloading.</div></div>
+        <div className="in-wrap"><div className="in-card-s" style={{ padding: 40, textAlign: "center" }}>Couldn&apos;t load insights. Try reloading.</div></div>
       </div>
     );
   if (!data || !model) return <div className="col col-session insights" />;
@@ -561,7 +561,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
             <button className="in-back mono" onClick={onClose}>← WORKSPACE</button>
             <div>
               <div className="in-title">Insights</div>
-              <div className="in-sub">Your workshop&apos;s odometer — {rangeText}, local to this machine.</div>
+              <div className="in-sub">Your workshop&apos;s odometer for {rangeText}, local to this machine.</div>
             </div>
           </div>
           {!isEmpty && activeDays > 0 && activeDays < 7 && range !== "7d" && (
@@ -632,7 +632,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
               <div className="in-empty-t">No activity yet</div>
               <div className="in-empty-s">
                 Insights fills in as your agents work. Kick off a session and this view will start tracking
-                spend, tokens, tasks shipped, and code merged — all computed locally, nothing leaves this machine.
+                spend, tokens, tasks shipped, and code merged. All computed locally, nothing leaves this machine.
               </div>
             </div>
             <button className="btn btn-accent" onClick={onClose}>Start a session</button>
@@ -784,7 +784,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   );
                 })}
                 {jobRows.length === 0 && (
-                  <div className="in-oempty">No Calandria convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here—not your task chats.</div>
+                  <div className="in-oempty">No Calandria convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here. Your task chats don&apos;t.</div>
                 )}
               </div>
             </section>

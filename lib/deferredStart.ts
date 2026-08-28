@@ -50,15 +50,15 @@ import { AUTO_START_HOOKS, blocks, launchInitialTurn } from "@/lib/autoStart";
 import type { Project, Task } from "@/lib/types";
 
 /** Rides the runner's sync-note slot at the top of a queued first turn. */
-export const DEFERRED_START_NOTE = "▶ Started automatically — queued for the usage-window reset.";
+export const DEFERRED_START_NOTE = "▶ Started automatically: queued for the usage-window reset.";
 /** Persisted just before a queued resume's user message, so the transcript says why it moved. */
-export const DEFERRED_RESUME_NOTE = "▶ Resumed automatically — queued for the usage-window reset.";
+export const DEFERRED_RESUME_NOTE = "▶ Resumed automatically: queued for the usage-window reset.";
 /** What a queued resume sends when nothing was parked in the follow-up queue. */
-export const DEFERRED_RESUME_PROMPT = "The usage limit has reset — continue where you left off.";
+export const DEFERRED_RESUME_PROMPT = "The usage limit has reset. Continue where you left off.";
 
-const SKIPPED_LIVE = "ℹ Queued start skipped — a turn was already running.";
-const SKIPPED_BLOCKED = "ℹ Queued start skipped — this task is still blocked by another task.";
-const SKIPPED_NO_REPO = "ℹ Queued start skipped — set this project's working directory first.";
+const SKIPPED_LIVE = "ℹ Queued start skipped: a turn was already running.";
+const SKIPPED_BLOCKED = "ℹ Queued start skipped: this task is still blocked by another task.";
+const SKIPPED_NO_REPO = "ℹ Queued start skipped: set this project's working directory first.";
 
 interface TickerState {
   timer: NodeJS.Timeout | null;

@@ -323,7 +323,7 @@ export const SNOOZE_LABEL = "Snoozed";
 // nothing to answer. Named for what HAPPENED rather than for a status, because
 // it isn't one — the task is still `in_progress` underneath (see ./format.ts).
 export const RAN_LABEL = "Ran clean";
-export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused — pick up later", done: "work complete / merged", cancelled: "abandoned — won't be finished" };
+export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused, pick up later", done: "work complete / merged", cancelled: "abandoned, won't be finished" };
 export const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done", "cancelled"];
 export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo: "Low" };
 

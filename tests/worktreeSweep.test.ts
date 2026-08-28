@@ -86,7 +86,7 @@ describe("scheduled worktree sweep", () => {
 
     expect(result.reclaimed).toEqual([]);
     expect(result.skipped).toEqual([
-      { taskId, reason: "the worktree has unsaved work — uncommitted changes not saved to any branch" },
+      { taskId, reason: "the worktree has unsaved work: uncommitted changes not saved to any branch" },
     ]);
     expect(fs.existsSync(wt.path)).toBe(true);
     expect(getTask(taskId)?.worktree_path).toBe(wt.path);

@@ -1,3 +1,7 @@
+---
+title: "Calandria community"
+---
+
 # Calandria community
 
 Calandria's community lives on GitHub so decisions remain searchable and connected to the

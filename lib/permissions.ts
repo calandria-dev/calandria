@@ -143,7 +143,7 @@ function prefixVerdict(command: string): PrefixVerdict {
   const second = parts[1];
   if (second && /^[a-z][a-z0-9:_-]*$/.test(second)) return { prefix: `${head} ${second}` };
   if (parts.length === 1) return { prefix: head };
-  return { refused: `\`${second}\` is a flag or an operand rather than a subcommand, so the rule would have to be \`${head} …\` — every other use of \`${head}\` included` };
+  return { refused: `\`${second}\` is a flag or an operand rather than a subcommand, so the rule would have to be \`${head} …\`. That would include every other use of \`${head}\`` };
 }
 
 /**
@@ -205,13 +205,13 @@ export function ruleFromTypedCommand(rawCommand: string, matchKind: PermissionMa
   const command = String(rawCommand ?? "").trim();
   if (!command) return { ok: false, error: "Type the command you want to allow." };
   if (command.length > TYPED_COMMAND_CAP)
-    return { ok: false, error: `That's longer than ${TYPED_COMMAND_CAP.toLocaleString()} characters — approve something that size from the permission card, where you can read what's being run.` };
+    return { ok: false, error: `That's longer than ${TYPED_COMMAND_CAP.toLocaleString()} characters. Approve something that size from the permission card, where you can read what's being run.` };
   if (matchKind === "bash_exact") return { ok: true, tool: "Bash", match_kind: "bash_exact", value: command };
   const verdict = prefixVerdict(command);
   if ("refused" in verdict)
     return {
       ok: false,
-      error: `\`${command}\` can't be allowed by prefix — ${verdict.refused}. Add it as an exact command instead, and it will match that line and nothing else.`,
+      error: `\`${command}\` can't be allowed by prefix: ${verdict.refused}. Add it as an exact command instead, and it will match that line and nothing else.`,
     };
   return { ok: true, tool: "Bash", match_kind: "bash_prefix", value: verdict.prefix };
 }

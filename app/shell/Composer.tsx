@@ -350,7 +350,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // Inert: added on the since-disproven theory that an unnamed field
               // invited the one-time-code guess. Harmless, so left alone.
               name="message"
-              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now — the session is held open…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
+              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
               onChange={(e) => {
                 const v = e.target.value;
                 setVal(v); autosize(e.target); setActive(0);
@@ -397,7 +397,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // still open, so the server sends it straight in (see
               // sendToLingeringTurn in lib/runner.ts). Same button, honest label.
               <div className="send-group">
-                {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now — the session is held open and picks this up as its next turn" : "Queue this follow-up — it'll send when the current turn ends"}>{Icon.send()}</button>}
+                {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now: the session is held open and picks this up as its next turn" : "Queue this follow-up: it'll send when the current turn ends"}>{Icon.send()}</button>}
                 <button className="send stop" onMouseDown={keepFocus} onClick={() => { setStopping(true); onStop(); }} disabled={stopping} title={stopping ? "Stopping…" : "Stop the current turn"}>{Icon.stop()}</button>
               </div>
             ) : (
@@ -408,7 +408,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             {blockedClear ? (
               // The one input the composer refuses outright — say so, rather
               // than leaving Enter silently dead (see blockedClear).
-              <span className="hint warn">/clear can’t run mid-turn — stop the turn first</span>
+              <span className="hint warn">/clear can’t run mid-turn. Stop the turn first</span>
             ) : (
               <>
                 <span className="hint"><span className="kbd">⏎</span> send</span>

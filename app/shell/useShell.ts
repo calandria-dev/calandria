@@ -460,7 +460,7 @@ export function useShell() {
         setOutcomeOnMsg(taskId, permId, {
           decision: "deny",
           auto: true,
-          note: "This request expired — the turn is no longer waiting on it. Send a message to pick the work back up.",
+          note: "This request expired. The turn is no longer waiting on it. Send a message to pick the work back up.",
         });
       }
     } catch (err) {

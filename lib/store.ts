@@ -649,7 +649,7 @@ export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolea
   if (task.running === 1) return "a task with a running turn can't be moved";
   if (opts.resetCheckout) return null;
   if (task.started === 1 || task.worktree_path || task.work_branch || task.base_sha)
-    return "a started task can't be moved — its git worktree belongs to the current project's repo";
+    return "a started task can't be moved. Its git worktree belongs to the current project's repo";
   return null;
 }
 
@@ -1314,7 +1314,7 @@ function writeTaskTags(ids: string[], next: (current: string[]) => string[]): st
       if (!tag) throw new Error("no such tag");
       // A tag never spans repositories, so this is checked per task rather
       // than once per batch: a selection may legitimately span trays.
-      if (tag.project_id !== t.project_id) throw new Error(`task "${t.title}" is in another project — a tag can't span projects`);
+      if (tag.project_id !== t.project_id) throw new Error(`task "${t.title}" is in another project. A tag can't span projects`);
     }
     return { task: t, current, wanted };
   });

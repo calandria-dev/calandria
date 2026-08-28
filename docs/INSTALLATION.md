@@ -1,3 +1,7 @@
+---
+title: "Installation and development"
+---
+
 # Installation and development
 
 ## Requirements

@@ -343,7 +343,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
           const why = j.error || `HTTP ${r.status}`;
           throw new Error(
             typeof j.current === "string"
-              ? `${why}. Your edits were made against text that is no longer on disk — send them as a patch so the agent can reconcile, or cancel and reopen the document.`
+              ? `${why}. Your edits were made against text that is no longer on disk. Send them as a patch so the agent can reconcile, or cancel and reopen the document.`
               : why
           );
         }
@@ -414,7 +414,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
       width={1180}
       footer={
         <>
-          <span className="collab-status">{sendError ? <span className="collab-send-err">{sendError}</span> : status || "No changes yet — edit the text or select a passage to comment."}</span>
+          <span className="collab-status">{sendError ? <span className="collab-send-err">{sendError}</span> : status || "No changes yet. Edit the text or select a passage to comment."}</span>
           <span className="spacer" />
           {edited && (
             <label className="collab-mode" title={running ? "The agent is working, so the worktree is its to write; your edits go as a patch until the turn ends." : "How your edits reach the file"}>

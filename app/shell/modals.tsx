@@ -45,7 +45,7 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
       </div>
       {sel && !sel.authenticated ? (
         <div className="hlp" style={{ color: "var(--amber)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span>{sel.label} isn’t connected — connect it before starting a session.</span>
+          <span>{sel.label} isn’t connected. Connect it before starting a session.</span>
           {onConnect && <button className="btn btn-line btn-sm" onClick={onConnect}>Connect {sel.label}</button>}
         </div>
       ) : (
@@ -64,7 +64,7 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
 // "which step". Without `onCreate` (no project to mint into, or the bulk
 // modal's Remove mode, where minting a tag nobody has yet is meaningless) it
 // only offers the existing tags.
-export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "— which features this is a step of" }: {
+export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "(which features this is a step of)" }: {
   tags: TagRow[]; value: string[]; onChange: (ids: string[]) => void;
   onCreate?: (name: string) => Promise<TagRow>;
   label?: string; hint?: string;
@@ -187,7 +187,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
-          title={blocked ? "Can't start now — this task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
+          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
@@ -200,9 +200,9 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) create(); }} />
       </div>
       <div className="field">
-        <div className="lab">Description <span className="opt">— what to do</span></div>
+        <div className="lab">Description <span className="opt">(what to do)</span></div>
         <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
-        {sendContext && <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>}
+        {sendContext && <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>}
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
           title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
           <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
@@ -211,7 +211,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       <ModelField options={modelOpts} value={model} onChange={setModel}
-        help=" — changeable later from the session rail." />
+        help=" (changeable later from the session rail)." />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -235,7 +235,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           </div>
           <div className="hlp">
             {permissionOpts.find((p) => p.value === permission)?.sub ?? permissionOpts[0]?.sub}
-            {" — changeable later from the session rail."}
+            {" (changeable later from the session rail)."}
           </div>
         </div>
       )}
@@ -324,10 +324,10 @@ function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRo
 
   return (
     <div className="field">
-      <div className="lab">Base branch <span className="opt">— cut from, synced to, merged into</span></div>
+      <div className="lab">Base branch <span className="opt">(cut from, synced to, merged into)</span></div>
       <div style={{ display: "flex", gap: 8 }}>
         <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={value}
-          placeholder={`${inherited} — from the project`}
+          placeholder={`${inherited} (from the project)`}
           onChange={(e) => { setValue(e.target.value); setErr(null); setNote(null); }} disabled={busy} />
         <button className="btn btn-line" disabled={!dirty || busy} onClick={apply}
           title={value.trim() ? `Point this task at ${value.trim()}` : `Go back to inheriting ${inherited}`}>
@@ -339,7 +339,7 @@ function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRo
       ) : task.started === 1 ? (
         <div className="hlp">
           Currently {current}. Changing it never rewrites anything: a task that has already committed keeps every commit
-          and is told how far behind the new base it is — one Sync catches it up.
+          and is told how far behind the new base it is. One Sync catches it up.
         </div>
       ) : (
         <div className="hlp">Leave empty to follow the project&rsquo;s default. The worktree is cut from this branch on the first turn.</div>
@@ -436,18 +436,18 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
   const label = !needsAck ? `Move to ${dest?.name}` : confirm ? "Move and discard the worktree" : "Discard worktree and move…";
   return (
     <div className="field">
-      <div className="lab">Move to project <span className="opt">{task.started === 1 ? "— discards this task's worktree" : "— transcript and history come along"}</span></div>
+      <div className="lab">Move to project <span className="opt">{task.started === 1 ? "(discards this task's worktree)" : "(transcript and history come along)"}</span></div>
       <ProjectTargetList targets={targets} value={target} name="move-project" onChange={(id) => { setTarget(id); setErr(null); setConfirm(false); }} />
       {dest ? (
         <>
           <div className="hlp" style={{ color: "var(--amber)" }}>
-            Moves this task to {dest.name} right away — unsaved edits above are discarded.
+            Moves this task to {dest.name} right away. Unsaved edits above are discarded.
             {links > 0 && ` ${links} blocked-by link${links !== 1 ? "s" : ""} drop${links === 1 ? "s" : ""}: dependencies can't span projects.`}
-            {carriedTags.length > 0 && ` ${carriedTags.length === 1 ? `Its “${carriedTags[0]}” tag has` : `${carriedTags.length} of its tags have`} no other members, so ${carriedTags.length === 1 ? "it comes" : "they come"} along too — renamed if that name is taken there.`}
+            {carriedTags.length > 0 && ` ${carriedTags.length === 1 ? `Its “${carriedTags[0]}” tag has` : `${carriedTags.length} of its tags have`} no other members, so ${carriedTags.length === 1 ? "it comes" : "they come"} along too, renamed if that name is taken there.`}
             {droppedTags.length > 0 && ` ${droppedTags.length === 1 ? `Its “${droppedTags[0]}” tag is` : `${droppedTags.length} of its tags are`} cleared: a tag moves only when every one of its members does, and the others are staying.`}
             {switching && ` It will run on ${agentLabel(agents, switching)}, ${dest.name}'s default.`}
             {contextFlip === 1 && ` Sessions will include ${dest.name}'s saved project context.`}
-            {contextFlip === 0 && ` Sessions won't include project context — ${dest.name}'s default.`}
+            {contextFlip === 0 && ` Sessions won't include project context: ${dest.name}'s default.`}
           </div>
           {needsAck && (
             <div className="hlp" style={{ color: unsafe ? "var(--red)" : "var(--amber)", marginTop: 8 }}>
@@ -456,7 +456,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
                   This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belong to{" "}
                   {src?.name ?? "its current project"}&rsquo;s repo, so moving deletes them.{" "}
                   {unsafe
-                    ? `That destroys ${preview.reason} — permanently, with no way back.`
+                    ? `That destroys ${preview.reason}, permanently, with no way back.`
                     : "Nothing is lost: it's clean and everything on it is already in the base branch."}
                 </>
               ) : (
@@ -670,7 +670,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
           )}
           {result.untagged.length > 0 && (
             <div className="hlp" style={{ color: "var(--amber)", marginTop: 4 }}>
-              {result.untagged.length} task{result.untagged.length !== 1 ? "s" : ""} left {[...new Set(result.untagged.map((u) => u.tag_name))].map((n) => `“${n}”`).join(", ")} behind — the rest of that tag stayed.
+              {result.untagged.length} task{result.untagged.length !== 1 ? "s" : ""} left {[...new Set(result.untagged.map((u) => u.tag_name))].map((n) => `“${n}”`).join(", ")} behind. The rest of that tag stayed.
             </div>
           )}
           {result.skipped.length > 0 && (
@@ -682,7 +682,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
                 {result.skipped.map((s) => (
                   <div key={s.id} className="dep-row" style={{ cursor: "default" }}>
                     <span className="dep-title">{byId.get(s.id)?.title ?? s.id}</span>
-                    <span className="dep-status">{s.reason.split(" — ")[0]}</span>
+                    <span className="dep-status">{s.reason.split(/[:.] /)[0]}</span>
                   </div>
                 ))}
               </div>
@@ -692,7 +692,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
       ) : (
         <>
           <div className="field">
-            <div className="lab">Moving <span className="opt">— tick a started task to discard its worktree</span></div>
+            <div className="lab">Moving <span className="opt">(tick a started task to discard its worktree)</span></div>
             <div className="dep-list">
               {selected.map((t) => {
                 const ack = needsAck(t);
@@ -708,12 +708,12 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
                     <StatusDot status={t.status} />
                     <span className="dep-title">{t.title}</span>
                     <span className="dep-status" style={{ color: unsafe || previewErr ? "var(--red)" : ack || isLive(t) ? "var(--amber)" : undefined }}>
-                      {isLive(t) ? "running — stays"
+                      {isLive(t) ? "running: stays"
                         : !ack ? ""
                         : !canAck ? (previewErr ? "couldn't read its worktree" : "reading its worktree…")
                         : unsafe ? `${on ? "discards" : "holds"} ${p!.reason}`
                         : p?.has_worktree ? `${on ? "discards" : "holds"} worktree ${p.branch}`
-                        : on ? "started — moves, no worktree left" : "started — nothing to discard"}
+                        : on ? "started: moves, no worktree left" : "started: nothing to discard"}
                     </span>
                   </label>
                 );
@@ -721,7 +721,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
             </div>
             {previewErr && (
               <div className="hlp" style={{ color: "var(--red)" }}>
-                Couldn&rsquo;t read what these worktrees hold, so none of them can be discarded from here — a checkbox that
+                Couldn&rsquo;t read what these worktrees hold, so none of them can be discarded from here. A checkbox that
                 can&rsquo;t say what it destroys isn&rsquo;t worth ticking. The rest of the selection still moves.
               </div>
             )}
@@ -733,7 +733,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
             )}
             {stuck > 0 && (
               <div className="hlp" style={{ color: "var(--amber)" }}>
-                {stuck} of these {stuck === 1 ? "stays" : "stay"} put — {stuck === 1 ? "it holds" : "they hold"} a git worktree cut
+                {stuck} of these {stuck === 1 ? "stays" : "stay"} put. {stuck === 1 ? "It holds" : "They hold"} a git worktree cut
                 from {src?.name ?? "this project"}&rsquo;s repo, or {stuck === 1 ? "is" : "are"} mid-turn. The rest still move.
               </div>
             )}
@@ -744,8 +744,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
             {dest ? (
               <div className="hlp" style={{ color: "var(--amber)" }}>
                 Moves {movable.length} task{movable.length !== 1 ? "s" : ""} to {dest.name} right away.
-                {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""} — the other end isn't coming.`}
-                {carried > 0 && ` ${carried} tag${carried !== 1 ? "s" : ""} come${carried === 1 ? "s" : ""} along whole — every member is in the selection.`}
+                {dropped > 0 && ` ${dropped} blocked-by link${dropped !== 1 ? "s" : ""} drop${dropped === 1 ? "s" : ""}. The other end isn't coming.`}
+                {carried > 0 && ` ${carried} tag${carried !== 1 ? "s" : ""} come${carried === 1 ? "s" : ""} along whole. Every member is in the selection.`}
                 {untagged > 0 && ` ${untagged} ${untagged === 1 ? "task loses a" : "tasks lose a"} tag: the rest of it isn't moving.`}
                 {kept > 0 && ` ${kept} link${kept !== 1 ? "s" : ""} survive${kept === 1 ? "s" : ""}: both ends are moving together.`}
                 {switching > 0 && ` ${switching} will switch to ${agentLabel(agents, dest.default_agent || "claude")}, ${dest.name}'s default agent.`}
@@ -890,7 +890,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     if (!modelOpts.some((m) => m.value === model)) setModel(null);
   }, [agent, task.agent, modelOpts, model]);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks — clear them or drop the dependency first"
+  const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks. Clear them or drop the dependency first"
     : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
   const canStartNow = can && !blocked && agentReady;
   return (
@@ -913,7 +913,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         </button>
         {isSuggestion && (
           <button className="btn btn-line" disabled={!can} onClick={() => save("add")}
-            title={task.status === "cancelled" ? "Disagree with the withdrawal — save and restore it to the task list" : "Save and move this out of the suggestions tray, to start later"}>
+            title={task.status === "cancelled" ? "Disagree with the withdrawal: save and restore it to the task list" : "Save and move this out of the suggestions tray, to start later"}>
             {Icon.plus()} {task.status === "cancelled" ? "Restore" : "Add"}
           </button>
         )}
@@ -929,7 +929,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) save(); }} />
       </div>
       <div className="field">
-        <div className="lab">Description <span className="opt">— what to do</span></div>
+        <div className="lab">Description <span className="opt">(what to do)</span></div>
         <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
         {/* The description is injected into each SESSION's system prompt at
             session start, so once a task has run this field is no longer the
@@ -937,14 +937,14 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
             session gets. Said plainly, because the pre-start wording ("the body
             of the prompt the agent starts with") invites the opposite reading. */}
         {task.started === 1 ? (
-          <div className="hlp">Already sent to the agent — edits here update the task record and any future sessions, not the running one.</div>
+          <div className="hlp">Already sent to the agent. Edits here update the task record and any future sessions, not the running one.</div>
         ) : (
-          <div className="hlp">Project context is prepended automatically — no need to restate the stack or conventions.</div>
+          <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>
         )}
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       <ModelField options={modelOpts} value={model} onChange={setModel}
-        help={task.started === 1 ? " — takes effect on this task's next turn." : undefined} />
+        help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -1071,7 +1071,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         ) : (
           <>
             <button className="btn-danger" onClick={() => setConfirmDel(true)}>{Icon.x()} Delete project</button>
-            <button className="btn btn-line" onClick={onDeprecate} title="Hide this project under the sidebar's deprecated area. Nothing is deleted — restore it any time.">{Icon.archive()} Deprecate</button>
+            <button className="btn btn-line" onClick={onDeprecate} title="Hide this project under the sidebar's deprecated area. Nothing is deleted. Restore it any time.">{Icon.archive()} Deprecate</button>
           </>
         )}
         <span className="spacer" />
@@ -1124,10 +1124,10 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         ) : refreshing ? (
           <div className="hlp" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="typing"><i /><i /><i /></span>
-            Exploring {repo.split("/").pop() || "the repo"} to draft fresh context — this can take a minute.
+            Exploring {repo.split("/").pop() || "the repo"} to draft fresh context. This can take a minute.
           </div>
         ) : prevContext != null ? (
-          <div className="hlp">Drafted from the repo. Review and edit it, then Save — or Undo to revert.</div>
+          <div className="hlp">Drafted from the repo. Review and edit it, then Save, or Undo to revert.</div>
         ) : (
           <div className="hlp">Be specific about stack, conventions, and constraints. Every task in this project inherits it.</div>
         )}
@@ -1141,7 +1141,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       </div>
       <div style={{ display: "flex", gap: 14 }}>
         <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <div className="lab">{Icon.folder()} Working dir <span className="opt">— required to run tasks</span></div>
+          <div className="lab">{Icon.folder()} Working dir <span className="opt">(required to run tasks)</span></div>
           <div style={{ display: "flex", gap: 8 }}>
             <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={repo} placeholder="/Users/you/code/project" onChange={(e) => setRepo(e.target.value)} />
             <BrowseDirButton initial={repo} onPick={setRepo} />
@@ -1166,7 +1166,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
             <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "—"}</code> injected as <code className="ctx-mono">PORT</code></span>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
-            Calandria supervises these in {repo ? repo.split("/").pop() : "the working dir"} — start/stop them from the Services panel; they outlive the tab.
+            Calandria supervises these in {repo ? repo.split("/").pop() : "the working dir"}: start/stop them from the Services panel; they outlive the tab.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <label className="svc-cfg-row">
@@ -1174,11 +1174,11 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
               <input type="text" className="ctx-mono" value={devCmd} placeholder="npm run dev" onChange={(e) => setDevCmd(e.target.value)} />
             </label>
             <label className="svc-cfg-row">
-              <span className="svc-cfg-lab">Setup <span className="opt">— optional</span></span>
+              <span className="svc-cfg-lab">Setup <span className="opt">(optional)</span></span>
               <input type="text" className="ctx-mono" value={setupCmd} placeholder="npm install" onChange={(e) => setSetupCmd(e.target.value)} />
             </label>
             <label className="svc-cfg-row">
-              <span className="svc-cfg-lab">Test <span className="opt">— optional</span></span>
+              <span className="svc-cfg-lab">Test <span className="opt">(optional)</span></span>
               <input type="text" className="ctx-mono" value={testCmd} placeholder="npm test" onChange={(e) => setTestCmd(e.target.value)} />
             </label>
           </div>
@@ -1343,7 +1343,7 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
       </div>
       {mode === "fresh" ? (
         <div className="field">
-          <div className="lab">Working dir <span className="opt">— pick an existing repo or folder, or leave blank to start fresh and add one later</span></div>
+          <div className="lab">Working dir <span className="opt">(pick an existing repo or folder, or leave blank to start fresh and add one later)</span></div>
           <div style={{ display: "flex", gap: 8 }}>
             <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={repo} placeholder="/Users/you/code/project" onChange={(e) => setRepo(e.target.value)} />
             <BrowseDirButton initial={repo} onPick={setRepo} />
@@ -1360,7 +1360,7 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
         />
       )}
       <div className="field">
-        <div className="lab">What we&apos;re building <span className="opt">— optional, can add later</span></div>
+        <div className="lab">What we&apos;re building <span className="opt">(optional, can add later)</span></div>
         <textarea value={context} placeholder="Description, stack, conventions…" onChange={(e) => setContext(e.target.value)} />
       </div>
     </Modal>

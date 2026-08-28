@@ -80,16 +80,16 @@ const DETACHED_HEAD_RES = [
 const HINTS: Record<Exclude<WorktreePrepKind, "unknown">, string> = {
   stale_lock:
     "A git process crashed in this repository earlier and left a lock file behind, so git refuses " +
-    "to touch the index. No work was lost — the lock is an empty file, not a change.",
+    "to touch the index. No work was lost. The lock is an empty file, not a change.",
   stale_registration:
     "This task's worktree is still in git's registry but its directory is gone, so git won't cut it " +
-    "again until the stale registration is pruned. The task's branch — and every commit on it — is untouched.",
+    "again until the stale registration is pruned. The task's branch (and every commit on it) is untouched.",
   disk_full:
     "There is no room left on the volume holding the repository or the worktrees directory, so git " +
     "could not write the checkout. Free some space (or point CALANDRIA_WORKTREES_DIR at a bigger volume) and send this again.",
   detached_head:
     "The project's repository is on a detached HEAD, so there is no branch for this task to be cut " +
-    "from. Check out a branch there — or set the project's base branch in its settings — and send this again.",
+    "from. Check out a branch there (or set the project's base branch in its settings) and send this again.",
 };
 
 /**

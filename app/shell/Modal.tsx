@@ -166,7 +166,7 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
         })}
         {value && !known && <option value={value}>{value} (not in this agent’s list)</option>}
       </select>
-      <div className="hlp">{known ? sel?.sub : "This id isn’t one this agent offers — it may not run."}{help}</div>
+      <div className="hlp">{known ? sel?.sub : "This id isn’t one this agent offers. It may not run."}{help}</div>
     </div>
   );
 }
@@ -199,7 +199,7 @@ export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart 
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className="field">
-      <div className="lab">Blocked by <span className="opt">— must finish first</span></div>
+      <div className="lab">Blocked by <span className="opt">(must finish first)</span></div>
       {candidates.length === 0 ? (
         <div className="hlp">No other tasks in this project yet.</div>
       ) : (
@@ -217,7 +217,7 @@ export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart 
       {value.length > 0 ? (
         <label className="dep-autostart" title="When the last blocker above is marked Done, this task sends its initial prompt by itself">
           <input type="checkbox" checked={autoStart} onChange={(e) => onAutoStart(e.target.checked)} />
-          Start when unblocked <span className="opt">— session launches itself once every blocker is done</span>
+          Start when unblocked <span className="opt">(session launches itself once every blocker is done)</span>
         </label>
       ) : (
         <div className="hlp">This task can&apos;t be started until every selected task is marked Done.</div>

@@ -46,7 +46,7 @@ const COLS: Record<ColKey, {
     label: "Suggested", derived: true, always: true,
     member: (t) => !!t.suggested,
     patchFor: (t) => (t.suggested ? {} : null),
-    noDropWhy: "Suggested is where agents propose work — accept a card out instead.",
+    noDropWhy: "Suggested is where agents propose work. Accept a card out instead.",
   },
   not_started: {
     label: "Not started", always: true,
@@ -65,7 +65,7 @@ const COLS: Record<ColKey, {
     label: "Needs input", accent: true, derived: true, always: true,
     member: (t) => inStatusColumn(t) && isAwaiting(t),
     patchFor: (t) => (inStatusColumn(t) && isAwaiting(t) ? {} : null),
-    noDropWhy: "Needs input is derived from session state — the agent sets it when it asks you a question.",
+    noDropWhy: "Needs input is derived from session state. The agent sets it when it asks you a question.",
   },
   ran: {
     // A scheduled run that finished on its own with nothing to answer. Derived
@@ -76,7 +76,7 @@ const COLS: Record<ColKey, {
     label: RAN_LABEL, derived: true, always: false,
     member: (t) => inStatusColumn(t) && isUnreadRun(t),
     patchFor: (t) => (inStatusColumn(t) && isUnreadRun(t) ? {} : null),
-    noDropWhy: "Ran clean is what an unattended run settles as — drag a card out to Done once you've read it.",
+    noDropWhy: "Ran clean is what an unattended run settles as. Drag a card out to Done once you've read it.",
   },
   snoozed: {
     // Parked work. Derived like Needs-input, but for a different reason: there
@@ -91,7 +91,7 @@ const COLS: Record<ColKey, {
     label: SNOOZE_LABEL, derived: true, always: false,
     member: (t) => !t.suggested && isSnoozed(t),
     patchFor: (t) => (!t.suggested && isSnoozed(t) ? {} : null),
-    noDropWhy: "A snooze needs a wake-up time — use the moon button on the card to pick one.",
+    noDropWhy: "A snooze needs a wake-up time. Use the moon button on the card to pick one.",
   },
   on_hold: {
     label: "On hold", always: false,
@@ -216,7 +216,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
       {/* The one way out of the ran-clean column that doesn't need a drag —
           and the only affordance that says what the state expects of you. */}
       {ranClean && !mini && (
-        <button className="bc-chip ran" title="Mark done — you've read this run"
+        <button className="bc-chip ran" title="Mark done: you've read this run"
           onClick={(e) => { e.stopPropagation(); onAckRun(); }}>
           {Icon.check()} Mark done
         </button>
@@ -234,7 +234,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
       {!mini && !task.suggested && (
         <div className="bc-snz">
           {snoozed ? (
-            <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)} — click to wake it now`}
+            <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now`}
               onClick={(e) => { e.stopPropagation(); onUnsnooze(); }}>{Icon.sun()}</button>
           ) : (
             <SnoozeButton className="snz-set" onSnooze={onSnooze} />
@@ -246,7 +246,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         <div className="bc-foot">
           <AgentEditedChip task={task} variant="board" />
           {queued && (
-            <span className="bc-chip autostart" title={`Queued for the usage-window reset — ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
+            <span className="bc-chip autostart" title={`Queued for the usage-window reset: ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
               {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
             </span>
           )}
@@ -347,7 +347,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
               <span className={`cn ${def.accent ? "needs-you" : ""}`}><span className="bcol-dot" />{key === "suggested" && Icon.spark()}{def.label}</span>
               <span className={`ct ${def.accent ? "needs-you" : ""}`}>{colTasks.length}</span>
               <span className="sp" />
-              {def.derived && <span className="derived" title="Reflects agent/session state — drag cards out, not in">derived</span>}
+              {def.derived && <span className="derived" title="Reflects agent/session state. Drag cards out, not in">derived</span>}
             </div>
             <div className="bcol-rule" />
             {reject && isOver && (
@@ -393,7 +393,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                               suggestion IS reviving it (the server clears the
                               cancel and the reason together) — but the label has
                               to say which of the two you're doing. */}
-                          <button onClick={() => onAcceptSuggestion(t.id)} title={isWithdrawn(t) ? "Disagree — restore it to the list" : "Add to list to start later"}>
+                          <button onClick={() => onAcceptSuggestion(t.id)} title={isWithdrawn(t) ? "Disagree: restore it to the list" : "Add to list to start later"}>
                             {Icon.plus()} {isWithdrawn(t) ? "Restore" : "Add"}
                           </button>
                           <button className="no" onClick={() => onDismissSuggestion(t.id)} title="Dismiss">{Icon.x()}</button>

@@ -58,7 +58,7 @@ function knownPermissionModes(): Set<string> {
 function refuseUnsafePermissionMode(mode: string, verb: "created" | "changed"): string | null {
   if (mode === "bypassPermissions") {
     return (
-      `permission_mode "bypassPermissions" runs unattended with no permission card to stop it — only a human can turn that ` +
+      `permission_mode "bypassPermissions" runs unattended with no permission card to stop it. Only a human can turn that ` +
       `on, from the UI. Nothing was ${verb}.`
     );
   }
@@ -108,7 +108,7 @@ export function createRunbookForAgent(
 ): { runbook: Runbook | null; text: string } {
   if (!input.name?.trim()) return { runbook: null, text: "A runbook needs a name. Nothing was created." };
   if (!input.prompt?.trim()) {
-    return { runbook: null, text: "A runbook needs a prompt — the message its first turn sends. Nothing was created." };
+    return { runbook: null, text: "A runbook needs a prompt: the message its first turn sends. Nothing was created." };
   }
   const permissionMode = normalizeMode(input.permission_mode);
   if (permissionMode !== undefined) {
@@ -206,7 +206,7 @@ export function updateRunbookForAgent(
       runbook: null,
       text:
         `"${cur.name}" is fired by ${used.length === 1 ? "the schedule" : "the schedules"} ${names}, so editing it would ` +
-        `silently change work that runs unattended. Nothing was changed — tell the user what you would have changed and ` +
+        `silently change work that runs unattended. Nothing was changed. Tell the user what you would have changed and ` +
         `let them edit it, or save a new runbook with create_runbook instead.`,
     };
   }

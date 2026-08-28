@@ -126,7 +126,7 @@ export async function enablePush(): Promise<PushDevice> {
   const perm = await Notification.requestPermission();
   if (perm !== "granted") {
     throw new Error(perm === "denied"
-      ? "Notifications are blocked for this site — unblock them in the browser's site settings."
+      ? "Notifications are blocked for this site. Unblock them in the browser's site settings."
       : "Notification permission wasn't granted.");
   }
   const { publicKey } = await jget<{ publicKey: string }>("/api/notifications/push");

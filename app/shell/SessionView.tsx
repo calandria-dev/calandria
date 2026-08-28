@@ -152,16 +152,16 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // side moved is the difference between "something is wrong with my task" and
   // "main moved on", so the message names it.
   const why = resolved
-    ? `The resolution turn edited the conflicted files but did not commit — the merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
-    : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task — it just needs the newer commits before its own work can land.`;
+    ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
+    : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task. It just needs the newer commits before its own work can land.`;
 
   const msg = resolved
-    ? `Conflicts with ${st.baseBranch} resolved — review the result, then Accept & merge or Discard`
+    ? `Conflicts with ${st.baseBranch} resolved: review the result, then Accept & merge or Discard`
     : paused
-      ? `${st.baseBranch} moved on — ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
+      ? `${st.baseBranch} moved on: ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
       : conflicts > 0
-        ? `${st.baseBranch} moved on — ${st.behind} ahead of this task, conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
-        : `${st.baseBranch} moved on — ${st.behind} commit${st.behind === 1 ? "" : "s"} to pick up`;
+        ? `${st.baseBranch} moved on: ${st.behind} ahead of this task, conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
+        : `${st.baseBranch} moved on: ${st.behind} commit${st.behind === 1 ? "" : "s"} to pick up`;
 
   return (
     <div className={`sync-banner${conflicts ? " conflict" : ""}${resolved ? " resolved" : ""}`} title={why} data-sync-state={resolved ? "resolved" : conflicts ? "conflict" : "behind"}>
@@ -236,7 +236,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
           reason. */}
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
-          {Icon.bolt()} <span>Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done.</span>
+          {Icon.bolt()} <span>Queued: starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done.</span>
           <button className="btn btn-line btn-sm" onClick={() => onSetAutoStart(false)} disabled={running} title="Leave it for you to start by hand once the blockers are done">Cancel</button>
         </div>
       ) : (
@@ -249,8 +249,8 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         </div>
       ))}
       {queued && !blocked && (
-        <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)} — a minute after the usage window resets`}>
-          {Icon.clock()} <span>Queued — starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
+        <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)}, a minute after the usage window resets`}>
+          {Icon.clock()} <span>Queued: starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
           <button className="btn btn-line btn-sm" onClick={onCancelQueuedStart} title="Leave it for you to start by hand">Cancel</button>
         </div>
       )}
@@ -265,7 +265,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
             blocked (a dependency decides when it may start, not the clock). */}
         {!queued && !blocked && resetAt != null && (
           <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={() => onQueueStart(deferredStartFor(resetAt))} disabled={running}
-            title="Queue this task to start on its own a minute after the usage window resets — no need to come back for it">
+            title="Queue this task to start on its own a minute after the usage window resets, no need to come back for it">
             {Icon.clock()} Start at reset ({resetClock(resetAt)})
           </button>
         )}
@@ -557,7 +557,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             // the session is held open for run_in_background work — say so, or
             // the dots promise imminent output that may be minutes away.
             task.background_pending ? (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open — ${task.background_note}. It continues on its own when that settles.` : "Working in background — the session stays open and continues when the task finishes."}</span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It continues on its own when that settles.` : "Working in background: the session stays open and continues when the task finishes."}</span></div></div>
             ) : (
               <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
             )
@@ -592,7 +592,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const infoChips = (
     <>
       {task.pr_url && (
-        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request — ${task.pr_url}`}>
+        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request: ${task.pr_url}`}>
           {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
         </a>
       )}
@@ -751,7 +751,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 deadline passes. While parked, the control becomes the wake
                 button and says when it would have come back on its own. */}
             {isSnoozed(task) ? (
-              <button className="status-ctl snz-on" title={`Snoozed — wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
+              <button className="status-ctl snz-on" title={`Snoozed: wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
                 onClick={onUnsnooze}>
                 {Icon.moon()} <span className="cv">Wakes {wakeLabel(task.snoozed_until)}</span>
               </button>
@@ -783,7 +783,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 reason shown inline, and Delete aborts the turn under the task
                 lock before it tears the worktree down. */}
             {hasSession && (
-              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies — or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
+              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies; or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
             )}
             {hasSession && task.started === 1 && (
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>

@@ -570,7 +570,7 @@ export default function Shell() {
         </div>
 
         {omniEnabled && (
-          <button className="tb-omni" onClick={() => setPaletteOpen(true)} title="Command palette — jump to a project, session, or command">
+          <button className="tb-omni" onClick={() => setPaletteOpen(true)} title="Command palette: jump to a project, session, or command">
             <span className="omni-ic">{Icon.search()}</span>
             <span className="omni-txt">Jump to project, session, or command…</span>
             <span className="omni-k">⌘K</span>
@@ -621,7 +621,7 @@ export default function Shell() {
             <button
               className={`tb-btn${o.termOpen ? " on" : ""}`}
               disabled={!project}
-              title={project ? "Toggle terminal (project working dir — switch it to the selected task's worktree from the drawer)" : "Select a project first"}
+              title={project ? "Toggle terminal (project working dir: switch it to the selected task's worktree from the drawer)" : "Select a project first"}
               onClick={() => { if (!project) return; o.setTermMounted(true); o.setTermOpen((t) => !t); }}
             >
               {Icon.terminal()} Terminal
@@ -631,7 +631,7 @@ export default function Shell() {
 
           <button
             className={`tb-icon${o.view === "insights" ? " on" : ""}`}
-            title="Insights — spend, tokens, tasks shipped, code merged" aria-label="Insights"
+            title="Insights: spend, tokens, tasks shipped, code merged" aria-label="Insights"
             onClick={() => o.setView(o.view === "insights" ? "workspace" : "insights")}
           >
             {Icon.chart()}
@@ -708,7 +708,7 @@ export default function Shell() {
                       <div className="e-t">{o.projects.length > 0 ? "No active projects" : "No projects yet"}</div>
                       <div className="e-s">
                         {o.projects.length > 0
-                          ? "Everything is deprecated — restore a project from the sidebar, or start a new one."
+                          ? "Everything is deprecated. Restore a project from the sidebar, or start a new one."
                           : "Each project is an app you're building: its own working directory, context, and agent sessions."}
                       </div>
                       <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={() => o.setModal("project")}>

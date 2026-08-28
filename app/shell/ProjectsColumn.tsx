@@ -104,7 +104,7 @@ export function ProjectsColumn({ projects, deprecated, agents, selId, running, w
                 <span className="dep-count">{deprecated.length}</span>
               </button>
               {showDeprecated && deprecated.map((p) => (
-                <div key={p.id} className="proj dep" title={`${p.name} — deprecated. Restore to continue building on it.`}>
+                <div key={p.id} className="proj dep" title={`${p.name}: deprecated. Restore to continue building on it.`}>
                   <div className="pic" style={{ background: p.color }}>{p.name[0]}</div>
                   <div className="pmeta">
                     <div className="pname">{p.name}</div>

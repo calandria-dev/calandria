@@ -29,7 +29,7 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
     <div className="auth-banner" role="alert">
       <span className="ab-ic">{Icon.bolt()}</span>
       <span className="ab-msg">
-        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working — the sign-in expired.</b> {AUTH_BANNER_HINT}
+        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working. The sign-in expired.</b> {AUTH_BANNER_HINT}
         {detail && <span className="ab-why" title={detail}>{detail}</span>}
       </span>
       <span className="ab-spacer" />
@@ -67,7 +67,7 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
   return (
     <Modal
       title="Add another agent"
-      sub="Run tasks on more than one coding agent — entirely optional."
+      sub="Run tasks on more than one coding agent (entirely optional)."
       onClose={close}
       width={480}
       footer={<>
@@ -323,7 +323,7 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
     <div className="field" style={{ maxWidth: 560 }}>
       {!compact && (
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          You&apos;ll get a sign-in link to open in any browser. This stores your login in this workspace and survives restarts — you only do it once.
+          You&apos;ll get a sign-in link to open in any browser. This stores your login in this workspace and survives restarts. You only do it once.
         </div>
       )}
       <button className="btn btn-accent" disabled={busy || verifying} onClick={start} style={{ alignSelf: "flex-start" }}>
@@ -331,7 +331,7 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
       </button>
       {verifying ? (
         <div className="wiz-verify" style={{ marginTop: 10 }}>
-          <span className="wiz-spin" /> <span>Checking your existing sign-in — running a quick test turn…</span>
+          <span className="wiz-spin" /> <span>Checking your existing sign-in: running a quick test turn…</span>
         </div>
       ) : (
         <div className="hlp" style={{ marginTop: 10 }}>

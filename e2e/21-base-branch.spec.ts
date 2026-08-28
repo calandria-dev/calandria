@@ -49,7 +49,7 @@ test("retargets a started task to another branch from the edit dialog", async ({
   const field = dialog.locator(".field", { hasText: "Base branch" });
   // The placeholder states what an empty field inherits, so the current answer
   // is readable without the field being filled in.
-  await expect(field.locator("input")).toHaveAttribute("placeholder", "main — from the project");
+  await expect(field.locator("input")).toHaveAttribute("placeholder", "main (from the project)");
 
   await field.locator("input").fill("feature/auth");
   await field.getByRole("button", { name: "Retarget" }).click();
