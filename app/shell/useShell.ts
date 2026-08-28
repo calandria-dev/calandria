@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
+import type { LandingMode, Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
@@ -939,14 +939,14 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; dev_command: string; setup_command: string; test_command: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
     setProjects(ps);
     setModal(null);
   };
-  const createProject = async (input: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string }) => {
+  const createProject = async (input: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string; landing_mode?: LandingMode }) => {
     const p = await jsend<ProjectRow>("/api/projects", "POST", input);
     const ps = await jget<ProjectRow[]>("/api/projects");
     setProjects(ps);

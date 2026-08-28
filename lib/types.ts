@@ -4,6 +4,23 @@ export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 export type Status = "not_started" | "in_progress" | "on_hold" | "done" | "cancelled";
 export type MsgRole = "user" | "assistant" | "tool" | "system" | "session_break";
 
+/**
+ * How a project's work is meant to LAND: a local merge of the task branch into
+ * the base branch, or a pull request against it.
+ *
+ * This is a fact about the REPOSITORY, not a preference: on a repo whose base
+ * branch carries a ruleset requiring a pull request, Merge cannot land anything,
+ * so a session told "Merge lands into it" is being lied to. `buildProjectContext`
+ * (lib/agents/shared.ts) writes a different sentence for each mode.
+ *
+ * No CHECK constraint backs the column, so `isLandingMode` is the gate — every
+ * writer runs a value through it, and anything else falls back to "merge", the
+ * behavior every pre-existing project already had.
+ */
+export type LandingMode = "merge" | "pr";
+export const LANDING_MODES: LandingMode[] = ["merge", "pr"];
+export const isLandingMode = (v: unknown): v is LandingMode => v === "merge" || v === "pr";
+
 export interface Project {
   id: string;
   name: string;
@@ -15,6 +32,7 @@ export interface Project {
   conventions: string; // legacy — kept for back-compat, folded into context
   repo_path: string; // working dir for Claude Code
   branch: string; // the project's DEFAULT base branch: what a task is cut from, syncs to and merges into unless the task names its own (lib/baseBranch.ts)
+  landing_mode: LandingMode; // how work lands on the base branch: "merge" (local merge) or "pr" (base is protected, finish by opening a PR)
   dev_command: string; // long-running dev server command supervised by lib/services.ts ("" = none)
   setup_command: string; // optional one-shot setup command (install/migrate/etc.)
   test_command: string; // optional one-shot test command

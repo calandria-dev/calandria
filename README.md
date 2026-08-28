@@ -40,6 +40,10 @@ covers it. No API key needed.
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
   rest keep shipping to `main`.
+- **Say how work lands.** A project lands by merge or by pull request, and
+  every session in it is told which. On a repo whose base branch requires a
+  PR, agents stop reaching for a Merge that GitHub will reject. Calandria can
+  read the branch's rules from GitHub and preselect the answer.
 
 ## How it works
 

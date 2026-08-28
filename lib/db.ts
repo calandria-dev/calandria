@@ -44,6 +44,11 @@ export function init(db: Database.Database) {
       conventions TEXT NOT NULL DEFAULT '',
       repo_path   TEXT NOT NULL DEFAULT '',
       branch      TEXT NOT NULL DEFAULT 'main',
+      -- How work is meant to LAND on that branch: 'merge' (Calandria merges the
+      -- task branch locally) or 'pr' (the branch is protected, so finishing means
+      -- opening a pull request). See LandingMode in lib/types.ts; the agent is
+      -- told which one is true by buildProjectContext (lib/agents/shared.ts).
+      landing_mode TEXT NOT NULL DEFAULT 'merge',
       -- Per-project managed services: the dev server command (long-running) plus
       -- optional one-shot setup/test commands, supervised by lib/services.ts.
       -- port is the project's stable, deterministic port (see lib/config.ts),
@@ -725,6 +730,11 @@ export function migrate(db: Database.Database) {
   add("color", "TEXT NOT NULL DEFAULT '#C2603C'");
   add("context", "TEXT NOT NULL DEFAULT ''");
   add("branch", "TEXT NOT NULL DEFAULT 'main'");
+  // How work lands on that branch (lib/types.ts LandingMode). 'merge' is right
+  // for every pre-existing project: it is exactly what they were already doing,
+  // and the ruleset probe (lib/github.ts detectLandingMode) only ever PRESELECTS
+  // a different answer in the settings form for a human to save.
+  add("landing_mode", "TEXT NOT NULL DEFAULT 'merge'");
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");

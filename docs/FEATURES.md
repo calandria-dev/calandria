@@ -115,6 +115,32 @@ strip names it. Resolution order: the task's own base, then the first of its tag
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
 
+### How work lands: merge or pull request
+
+A project also records **how** its work is meant to reach that branch, in the project
+settings dialog under **How work lands**:
+
+- **Merge** — Calandria merges the finished task branch into the base branch itself. This is
+  the default, and what every project did before this setting existed.
+- **Pull request** — the base branch is protected, so a merge is rejected by GitHub.
+  Finishing a task means opening a PR against it and leaving it for review.
+
+The setting is not cosmetic: it is the sentence every session in the project is told. Under
+`merge` the agent reads "Merge lands into it"; under `pr` it is told the branch is protected,
+that Merge will be rejected, and that finishing means opening a PR. On a repo with a branch
+ruleset, the old unconditional wording sent every session off to press a button that could
+not work.
+
+**Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
+`pull_request` rule, and classic branch protection, neither of which reports the other. It
+runs on its own when you open the settings dialog and when you point a new project at a
+folder or clone one. Detection only ever *proposes*: at project creation it preselects the
+answer, and on an existing project it shows what GitHub said beside a one-click **Use pull
+request** rather than overwriting a choice you made. A repo that requires PRs while you
+deliberately merge into a staging branch locally is a real configuration, and only you know
+about it. When GitHub can't be reached, or the repo is private to a login `gh` doesn't have,
+the probe says so instead of guessing "merge".
+
 Agents can retarget tasks too. `set_base_branch(branch, task?)` defaults to the session's own
 task mid-turn, or can name any other task in the same project, running the same retarget as
 the edit dialog, refusals included. It's a separate tool from `update_task` because it moves

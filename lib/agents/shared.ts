@@ -17,6 +17,26 @@ import { BACKGROUND_LINGER_MS } from "../config";
 export const INITIAL_TASK_PROMPT = "Start working on the task described in the task context.";
 
 /**
+ * The truthful second half of the "Base branch:" line, per the project's
+ * landing mode. Exported so tests can pin both wordings without rebuilding a
+ * whole context string.
+ *
+ * Under `pr` the session is told three separate things, because knowing only the
+ * first two still ends with it clicking Merge: the branch is protected, Merge
+ * will be REJECTED, and what finishing actually means instead. The `merge`
+ * wording is the historic sentence, unchanged.
+ */
+export function landingSentence(project: Pick<Project, "landing_mode">, base: string): string {
+  if (project.landing_mode === "pr")
+    return (
+      `this worktree was cut from it and Sync catches up to it, but it does NOT land by merge. ` +
+      `${base} is protected: this project lands work by pull request, so Merge is rejected. ` +
+      `Finishing this task means opening a PR against ${base} and leaving it for review, not merging.`
+    );
+  return "this worktree was cut from it, Sync catches up to it, and Merge lands into it.";
+}
+
+/**
  * Build the context string that is prepended to every task's session via the
  * agent's system prompt. This is the "write project context once" feature:
  * project description + conventions + the task framing + any prior-session
@@ -34,14 +54,21 @@ export function buildProjectContext(project: Project, task: Task): string {
   lines.push(`You are working inside the project "${project.name}".`);
   if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
   // The base branch, not "the project's branch": what this worktree was cut
-  // from is also what Sync catches it up to and what Merge lands it into, and a
-  // task on a feature branch has to know that before it reasons about any of the
-  // three. The parenthetical only when the task has a base of its own — on every
-  // other task it would just restate the line above it.
+  // from is also what Sync catches it up to and what it LANDS on, and a task on
+  // a feature branch has to know that before it reasons about any of the three.
+  // The parenthetical only when the task has a base of its own — on every other
+  // task it would just restate the line above it.
+  //
+  // How it lands is the project's landing_mode, and the difference is not a
+  // preference the model can ignore: on a repo whose base branch carries a
+  // ruleset requiring a pull request, Merge is rejected by the server, so the
+  // old unconditional "Merge lands into it" sent every such session off to press
+  // a button that cannot work. Say which one is true here (lib/types.ts
+  // LandingMode, set per project in the settings form).
   const base = resolveBaseBranch(task, project);
   if (base)
     lines.push(
-      `\nBase branch: ${base} — this worktree was cut from it, Sync catches up to it, and Merge lands into it.` +
+      `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
   lines.push(`\n---\nThe current task is: "${task.title}"`);

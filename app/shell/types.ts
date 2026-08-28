@@ -1,8 +1,9 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
-import type { Priority, Status, Tag } from "@/lib/types";
+import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
+export type { LandingMode };
 /** A tag as the project GET embeds it — lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
@@ -18,6 +19,7 @@ export interface ProjectRow {
   context: string;
   repo_path: string;
   branch: string;
+  landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected — finish by opening a PR)
   dev_command: string;
   setup_command: string;
   test_command: string;
