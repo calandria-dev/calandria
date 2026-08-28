@@ -47,6 +47,15 @@ let win = null;
 let supervisor = null;
 let appUrl = null;
 let quitting = false;
+// A fatal failure is reported once, by whichever path notices it first. A
+// sidecar that dies DURING boot trips both of them: the Supervisor's `onExit`
+// fires, and `supervisor.start()` then rejects with that same child's reason —
+// so the user gets the specific dialog and a second, vaguer one stacked on it.
+// In production the first `app.exit(1)` usually tears the process down before
+// the second is drawn, which is what makes this a race rather than a constant;
+// the interlock makes the outcome the same on a loaded machine as on an idle
+// one. Same shape as `quitting` above, and checked alongside it.
+let failed = false;
 let tray = null;
 // Whether that icon is actually IN a status area — which is a different fact
 // from `tray` being an object, and the one the close handler needs. See
@@ -315,7 +324,8 @@ async function boot() {
       win?.webContents.executeJavaScript(write).catch(() => {});
     },
     onExit: ({ name, code, dbLockHeld }) => {
-      if (quitting) return;
+      if (quitting || failed) return;
+      failed = true;
       // A sidecar dying while the app is up is not recoverable in place: the
       // renderer's SSE streams are already broken and the db lock may be gone.
       const detail = dbLockHeld
@@ -336,6 +346,12 @@ async function boot() {
     createTray();
     startEvents();
   } catch (err) {
+    // `onExit` gets first claim when the failure was a sidecar dying, because
+    // it knows WHICH one and whether the database was already held; this path
+    // only has the rejection `start()` re-raised from it. Nothing left to do —
+    // that path has already shown its dialog and asked for the exit.
+    if (failed) return;
+    failed = true;
     dialog.showErrorBox("Calandria could not start", `${err?.message || err}\n\n${supervisor?.recentLog(20) || ""}`);
     app.exit(1);
   }
