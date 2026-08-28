@@ -1,7 +1,7 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Six jobs, deliberately on different schedules:
+# Seven jobs, deliberately on different schedules:
 #
 #   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
@@ -22,6 +22,13 @@
 #           slow to sit in front of every PR push, so it runs on main, on manual
 #           dispatch, and on a PR that carries the `e2e` label — the escape
 #           hatch for a change that obviously touches the app's core flow.
+#   desktop — the Electron shell in `desktop/` is a spike wired into no other
+#           lane, so without this job its two existing test scripts
+#           (`test:desktop:supervisor`, `test:desktop:boot`) run nowhere at all,
+#           and the window layer — menu, single-instance lock, permission
+#           handler, external links, quit-drains — has no automated coverage on
+#           any OS. Same schedule as `e2e`, and costs a couple of minutes on top
+#           of a build.
 #   windows — `npm run typecheck` + `npm test` on windows-latest. Calandria
 #           supports native Windows (docs/WINDOWS.md), and nothing else here
 #           would notice it breaking: every other job runs on Ubuntu, so a
@@ -298,6 +305,87 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  desktop:
+    name: Desktop shell (Electron)
+    # Byte-for-byte the same expression as `e2e` above, on purpose — see the
+    # comment on `windows-e2e` below for why. This job keeps step with both:
+    # the desktop shell serves the same build `e2e` exercises in a browser, so
+    # there is no reason for its schedule to answer a different question.
+    if: >-
+      ${{ inputs.e2e == 'on'
+          || (inputs.e2e != 'off'
+              && (github.event_name == 'push'
+                  || github.event_name == 'workflow_dispatch'
+                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # The only Linux-specific step in this job — a macOS or Windows desktop
+      # lane would copy this job and drop exactly this step plus the
+      # `xvfb-run` prefix on the final one. Electron's own `--headless` mode is
+      # not a substitute: docs/DESKTOP_E2E.md §1 measured the process dying
+      # with SIGTRAP before the CDP socket settles, so a virtual display is
+      # mandatory here, not a preference.
+      - name: Install a virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # Electron ships its own Chromium binary, so no browser download is
+      # needed here — unlike the `e2e` job above, `playwright install` is
+      # deliberately not run. But a bare runner image still lacks the shared
+      # libraries that Chromium links against, and `install-deps` is the
+      # maintained list of them.
+      - name: Install Chromium's shared libraries
+        run: npx playwright install-deps chromium
+
+      # desktop/supervisor.js refuses to start without a production build at
+      # .next/ and says so; desktop/test-real-boot.js and the window suite
+      # both boot the real server.js.
+      - name: Build the app the shell serves
+        run: npm run build
+
+      # desktop/ is its own private package (calandria-desktop) so ~280 MB of
+      # Electron never lands in the app's node_modules, the Docker image, or
+      # any other lane. The install script passes --include=dev and then runs
+      # node desktop/node_modules/electron/install.js explicitly, because
+      # Electron is a devDependency and any environment exporting
+      # NODE_ENV=production makes npm install report "up to date" and fetch
+      # nothing — see desktop/README.md.
+      - name: Install Electron
+        run: npm run desktop:install
+
+      # Three scripts, none of which ran anywhere before this job existed.
+      # test:desktop:supervisor (desktop/test-supervisor.js) is 21 headless
+      # assertions over the process supervisor; test:desktop:boot
+      # (desktop/test-real-boot.js) boots the real server.js/pty-server.js
+      # through the supervisor. test:desktop:window is the Playwright
+      # `_electron` suite in desktop/e2e/, under playwright.desktop.config.ts.
+      # --no-sandbox is passed because an unpacked Electron has no SUID
+      # chrome-sandbox helper — that is CI-only, and the lane that tests a
+      # packaged install must set CALANDRIA_DESKTOP_SANDBOX=1 so this flag is
+      # not what makes it pass there.
+      - name: Run the desktop suite
+        run: xvfb-run -a npm run test:desktop
+
+      - name: Upload desktop artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-artifacts-${{ github.run_attempt }}
           path: |
             test-results/
             playwright-report/
