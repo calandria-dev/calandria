@@ -110,6 +110,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   "lib/db-lock.mjs": [LEGACY_STORAGE],
   "lib/config.ts": [LEGACY_STORAGE],
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE, SYSADMIN],
+  // (c) too: the desktop suite reads the database file straight off disk after
+  // the shell has exited, so it has to resolve the name the way the app does
+  // rather than hardcode the current one.
+  "desktop/e2e/03-quit-drain.spec.ts": [LEGACY_STORAGE],
   // The backup script follows lib/storage.mjs rather than assuming a filename,
   // so both it and its test name the pre-rename database they have to archive.
   "scripts/backup.mjs": [LEGACY_STORAGE],

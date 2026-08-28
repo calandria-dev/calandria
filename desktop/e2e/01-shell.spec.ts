@@ -54,12 +54,15 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   await expect(shell.win.locator("body")).not.toBeEmpty();
 });
 
-test("the window renders under the virtual display", async () => {
+test("the window renders and can be captured", async () => {
   const shot = `${shell.root}/window.png`;
   await shell.win.screenshot({ path: shot });
-  // SwiftShader is the only rendering path on any machine this runs on (no GPU
-  // exists on the fleet, and a runner has none either); a blank or truncated
-  // PNG is what a broken one looks like.
+  // The display underneath differs by lane — Xvfb on the Ubuntu runner, a real
+  // window station on the Windows one, the bench VM's session on the bench —
+  // and this asserts the part that does not: SwiftShader is the only rendering
+  // path on any machine this runs on (no GPU exists on the fleet, and a runner
+  // has none either), and a blank or truncated PNG is what a broken one looks
+  // like.
   expect(statSync(shot).size).toBeGreaterThan(5000);
 });
 

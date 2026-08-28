@@ -48,12 +48,12 @@ inherited unchanged.
 | `test-supervisor.js` | 21 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, quit-drains-in-flight-work, and one smoke path through the app inside the window. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
-| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). |
+| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
 
 ## Tests
 
 All three run from the **repo root**, and CI runs exactly these (the `desktop`
-job in `.github/workflows/test.yml`):
+job in `.github/workflows/test.yml`, and `windows-desktop` on `windows-latest`):
 
 ```bash
 npm run desktop:install         # Electron, once (see the NODE_ENV note below)
@@ -83,6 +83,21 @@ dev dependency for the browser suite) and needs `xvfb` plus Chromium's usual
 library set on a headless box. It passes `--no-sandbox` because an unpacked
 Electron has no SUID `chrome-sandbox`; a packaged install does, which is what
 `CALANDRIA_DESKTOP_SANDBOX=1` is for.
+
+**On Windows and macOS drop the `xvfb-run` prefix** — both have a real window
+station and need no display to be installed, which is why the `windows-desktop`
+CI job has no display step in it at all. `--no-sandbox` is not passed there
+either (`e2e/fixtures.ts` gates it on Linux): neither platform has a setuid
+helper to be missing, so the flag would only weaken what those lanes test.
+
+`e2e/05-windows-quit.spec.ts` is win32-only and skips itself elsewhere. It
+covers what happens when something *outside* the app ends it — a plain
+`taskkill` runs `before-quit` and the sidecars go with the shell; `taskkill /F`
+without `/T` is a `TerminateProcess` that orphans them. What no test here covers
+is a real Windows shutdown or logout, where `before-quit`/`will-quit` are not
+emitted at all. Relatedly, `03-quit-drain.spec.ts`'s database assertion is
+marked `test.fail()` on Windows: there is no deliverable SIGTERM, so
+`supervisor.stop()` terminates `server.js` before it can drain.
 
 One environment gotcha it handles for you, worth knowing if you run the shell by
 hand on a headless box: `Notification.permission` is `granted` in Electron

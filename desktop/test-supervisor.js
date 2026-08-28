@@ -16,6 +16,12 @@ const fs = require("node:fs");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 
 const HERE = __dirname;
+// Three cases below assert POSIX process semantics rather than merely using
+// them, and one asserts the win32 branch. Following tests/platform.ts's rule:
+// a construct a test only USES gets a portable spelling; a test ABOUT a
+// platform's semantics gets a branch that says what the other platform does,
+// never a skip that quietly pins nothing.
+const IS_WIN = process.platform === "win32";
 const stubOpts = (extra = {}) => ({
   repoRoot: HERE,
   serverScript: path.join(HERE, "stub-server.js"),
@@ -95,7 +101,40 @@ function hold(port) {
     assert.equal(env.HOME, "/home/x");
   });
 
+  await test("sidecarEnv gives the pty sidecar a shell it can actually spawn on Windows", async () => {
+    // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
+    // default (docs/WINDOWS.md). $SHELL is a POSIX convention, so a Windows
+    // desktop launch has none — and the supervisor filling it in is the
+    // shell-side half of that, needing no app change.
+    const win = sidecarEnv({ env: { COMSPEC: "C:\\Windows\\system32\\cmd.exe" }, port: 1, ptyPort: 2 });
+    const noComspec = sidecarEnv({ env: {}, port: 1, ptyPort: 2 });
+    const preset = sidecarEnv({ env: { SHELL: "C:\\ProgramData\\nu\\nu.exe", COMSPEC: "cmd.exe" }, port: 1, ptyPort: 2 });
+    if (IS_WIN) {
+      assert.equal(win.SHELL, "C:\\Windows\\system32\\cmd.exe", "COMSPEC is the first choice");
+      assert.equal(noComspec.SHELL, "powershell.exe", "and PowerShell the fallback when even COMSPEC is unset");
+      assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe", "an inherited SHELL is never overwritten");
+    } else {
+      // The POSIX half of the same contract: nothing is invented, because
+      // pty-server.js's own fallback is the right answer here.
+      assert.equal(win.SHELL, undefined);
+      assert.equal(noComspec.SHELL, undefined);
+      assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe");
+    }
+  });
+
   await test("needsPathRepair fires on launchd's stub PATH and not on a real one", async () => {
+    if (IS_WIN) {
+      // There is no launchd and no GUI-vs-shell PATH split on Windows: a
+      // process started from Explorer inherits the same machine+user PATH a
+      // console does. So the repair is refused outright rather than reaching
+      // for a login shell that does not exist — asserted here, because the
+      // failure mode of getting this wrong is a `sh -ilc` spawn on every
+      // desktop launch.
+      assert.equal(needsPathRepair({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }), false);
+      assert.equal(needsPathRepair({}), false);
+      assert.equal(needsPathRepair({ PATH: "C:\\Windows\\system32" }), false);
+      return;
+    }
     assert.equal(needsPathRepair({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }), true);
     assert.equal(needsPathRepair({}), true);
     assert.equal(needsPathRepair({ PATH: "" }), true);
@@ -104,6 +143,13 @@ function hold(port) {
   });
 
   await test("loginShellPath fences the PATH out of a chatty login shell", async () => {
+    if (IS_WIN) {
+      // Not "unavailable here" — refused by contract. `-ilc`, `printf` and
+      // `$PATH` are POSIX shell syntax, and there is nothing on Windows that
+      // both understands them and would answer with a PATH worth adopting.
+      assert.equal(loginShellPath({ env: { ...process.env, SHELL: "powershell.exe" } }), null);
+      return;
+    }
     // /bin/sh is the one shell present on every POSIX box CI might run on.
     const p = loginShellPath({ env: { ...process.env, SHELL: "/bin/sh" } });
     if (p === null) {
@@ -174,13 +220,51 @@ function hold(port) {
     }
   });
 
+  await test("a sidecar is a bare node process carrying the env the shell built", async () => {
+    // The end-to-end half of `sidecarEnv` above: what the child's OWN
+    // process.env says, after a real spawn. Both facts are Windows facts.
+    //
+    //   nodeenv  — package.json's scripts reach NODE_ENV through cross-env
+    //              because an inline `NODE_ENV=production node …` prefix is
+    //              POSIX shell syntax that cmd.exe reads as a program name.
+    //              The shell sidesteps the question entirely: it spawns the
+    //              resolved node binary with the script as argv[1] and puts
+    //              NODE_ENV in the env object, so no shell parses anything.
+    //   argv0    — the same claim from the other side. `npm`/`npm.cmd` or a
+    //              `shell: true` spawn would put a wrapper here.
+    const sup = new Supervisor(stubOpts({ port: 45110, ptyPort: 45111 }));
+    try {
+      await sup.start();
+      const line = sup.recentLog(50).split("\n").find((l) => l.includes("[stub-server] listening"));
+      assert.ok(line, "the stub never announced itself");
+      assert.match(line, /nodeenv=production/);
+      assert.match(line, IS_WIN ? /argv0=node\.exe/i : /argv0=node/);
+      assert.match(line, new RegExp(`ppid=${process.pid}\\b`), "the sidecar's parent should be this process, with no shell in between");
+      if (IS_WIN) assert.doesNotMatch(line, /shell=unset/, "pty-server.js would fall through to a POSIX default");
+    } finally {
+      await sup.stop();
+    }
+  });
+
   await test("stop() lets the server drain before it exits, and reaps both", async () => {
     const sup = new Supervisor(stubOpts({ port: 45120, ptyPort: 45121 }));
     await sup.start();
     await sup.stop();
+    assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
+    if (IS_WIN) {
+      // The documented Windows gap, pinned rather than skipped: there is no
+      // deliverable SIGTERM, so `child.kill("SIGTERM")` is a TerminateProcess
+      // and the stub's handler never runs. The shell reaps both sidecars —
+      // that half is what stop() still guarantees — but nothing drains, which
+      // is why desktop/e2e/03-quit-drain.spec.ts marks its DB assertion
+      // test.fail() here and why the shell needs to POST /api/instance/drain
+      // itself before killing. When that lands, this branch changes with it.
+      assert.ok(!sup.recentLog(50).includes("draining"), "a SIGTERM handler cannot have run on win32");
+      assert.notEqual(sup.children.find((c) => c.name === "app").exited.code, 0);
+      return;
+    }
     assert.ok(sup.recentLog(50).includes("draining"), "server should have run its drain handler");
     assert.ok(sup.recentLog(50).includes("drained, exiting"), "drain should have been allowed to finish");
-    assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
     assert.equal(sup.children.find((c) => c.name === "app").exited.code, 0);
   });
 
@@ -190,9 +274,17 @@ function hold(port) {
     );
     await sup.start();
     await sup.stop({ graceMs: 400 });
-    assert.ok(sup.recentLog(50).includes("SIGKILL"), "should have escalated");
     const app = sup.children.find((c) => c.name === "app");
     assert.ok(app.exited, "killed child should be reaped");
+    if (IS_WIN) {
+      // "ignore-term" is unreachable on Windows — the first kill is already
+      // the termination, so there is nothing left to escalate to. Asserting
+      // the ABSENCE of the escalation is what makes that visible: a SIGKILL
+      // line here would mean a child had somehow survived a TerminateProcess.
+      assert.ok(!sup.recentLog(50).includes("SIGKILL"), "nothing to escalate: the first kill is terminal");
+      return;
+    }
+    assert.ok(sup.recentLog(50).includes("SIGKILL"), "should have escalated");
     assert.equal(app.exited.signal, "SIGKILL");
   });
 

@@ -34,7 +34,15 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`[stub-server] listening on 127.0.0.1:${server.address().port} shell=${process.env.SHELL || "unset"}`);
+  // The three facts test-supervisor.js reads back out of this line: which env
+  // the shell built for us (NODE_ENV without a POSIX `NODE_ENV=x` prefix, and a
+  // SHELL the pty sidecar can spawn), and that we were started as a bare node
+  // process rather than through an npm/cmd wrapper.
+  console.log(
+    `[stub-server] listening on 127.0.0.1:${server.address().port}` +
+      ` shell=${process.env.SHELL || "unset"} nodeenv=${process.env.NODE_ENV || "unset"}` +
+      ` argv0=${require("node:path").basename(process.argv[0])} ppid=${process.ppid}`
+  );
 });
 
 process.on("SIGTERM", () => {
