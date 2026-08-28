@@ -9,9 +9,11 @@
  * way that leaves processes behind.
  *
  *   `taskkill /pid n`        posts WM_CLOSE to the process's windows. Electron
- *                            closes the BrowserWindow, `window-all-closed`
- *                            fires `app.quit()`, and `before-quit` runs — so
- *                            the supervisor stops the sidecars on the way out.
+ *                            turns that into the BrowserWindow's `close` event,
+ *                            and `main.js` answers it by HIDING into the tray:
+ *                            the window goes away, the process does not, and no
+ *                            quit lifecycle runs at all. Ending a task is not a
+ *                            quit here, and neither is clicking the X.
  *   `taskkill /pid n /F`     is `TerminateProcess`. No window message, no
  *                            handler, no supervisor. The sidecars are not in a
  *                            job object and were spawned without `detached`
@@ -19,6 +21,16 @@
  *                            window), so nothing reaps them: they survive,
  *                            holding the instance's ports and its database
  *                            lock. `/T` is what walks the tree.
+ *
+ * The first of those changed under us, and the test below now pins the current
+ * answer rather than the old one. Close-to-quit was replaced by close-to-tray
+ * (`decideClose()` in `main.js`, and the "Close vs quit" note it carries):
+ * hiding is gated on a status area that is ACTUALLY drawing the icon, and on
+ * win32 `confirmTrayResidency` answers `hosted: true` unconditionally, because
+ * the status area is part of the platform. So the sidecars outliving a plain
+ * `taskkill` is not a leak — it is the app still running, exactly as it would
+ * be after the user clicked X. Reaping is `app.quit()`'s job, and the test
+ * still ends by proving it does it.
  *
  * WHAT THIS FILE DOES NOT COVER, AND CANNOT. On a real Windows shutdown or
  * logout, `before-quit` and `will-quit` are **not emitted at all** — the
@@ -55,29 +67,37 @@ test.describe("Windows process termination", () => {
     await quitShell(shell);
   });
 
-  test("a plain taskkill runs before-quit, so the sidecars are reaped with the shell", async () => {
+  test("a plain taskkill is a WM_CLOSE, so the shell hides into the tray and keeps its sidecars", async () => {
     shell = await launchShell("win-taskkill");
     const origin = shell.origin;
     const marker = await quitEventRecorder(shell);
-    const sidecars = sidecarPids(shell.proc.pid!);
+    const electron = await electronPid(shell);
+    const sidecars = sidecarPids(electron);
 
-    expect(sidecars.app, "no server.js child of the Electron process").toBeTruthy();
-    expect(sidecars.pty, "no pty-server.js child of the Electron process").toBeTruthy();
+    expect(sidecars.app, sidecars.why("no server.js child of the Electron process")).toBeTruthy();
+    expect(sidecars.pty, sidecars.why("no pty-server.js child of the Electron process")).toBeTruthy();
 
     // No /F: this is a WM_CLOSE, i.e. the polite request Task Manager's
     // "End task" sends before it offers to force one.
-    taskkill(shell.proc.pid!);
+    taskkill(electron);
 
     await expect
-      .poll(() => alive(shell!.proc.pid!), { timeout: 90_000, message: "the shell never exited" })
+      .poll(() => windowVisible(shell!), { timeout: 60_000, message: "the window never hid" })
       .toBe(false);
 
-    // The lifecycle really ran — this is the claim, and the sidecar reaping
-    // below is its consequence rather than a separate fact.
-    expect(fs.readFileSync(marker, "utf8"), "before-quit did not fire on a plain taskkill").toContain(
+    // The claim, stated in all three places it is observable: the process, the
+    // lifecycle, and the sidecars it supervises.
+    expect(alive(electron), "the shell exited on a WM_CLOSE instead of hiding into the tray").toBe(true);
+    expect(fs.readFileSync(marker, "utf8"), "a hide ran the quit lifecycle").toBe("");
+    expect(alive(sidecars.app!) && alive(sidecars.pty!), "a hide stopped a sidecar").toBe(true);
+    expect(await serverIsUp(origin), "a hide took the server down").toBe(true);
+
+    // ...and quitting for real is what reaps them — the same `app.quit()` the
+    // tray's Quit item reaches, and the only path that drains.
+    await quitShell(shell);
+    expect(fs.readFileSync(marker, "utf8"), "before-quit did not fire on app.quit()").toContain(
       "before-quit"
     );
-
     await expect
       .poll(() => alive(sidecars.app!) || alive(sidecars.pty!), {
         timeout: 60_000,
@@ -92,14 +112,15 @@ test.describe("Windows process termination", () => {
   test("taskkill /F without /T orphans the sidecars, and /T is what reaps them", async () => {
     shell = await launchShell("win-taskkill-force");
     const marker = await quitEventRecorder(shell);
-    const sidecars = sidecarPids(shell.proc.pid!);
+    const electron = await electronPid(shell);
+    const sidecars = sidecarPids(electron);
     const pids = [sidecars.app, sidecars.pty].filter((p): p is number => !!p);
-    expect(pids, "no node sidecars under the Electron process").toHaveLength(2);
+    expect(pids, sidecars.why("no node sidecars under the Electron process")).toHaveLength(2);
 
-    taskkill(shell.proc.pid!, ["/F"]);
+    taskkill(electron, ["/F"]);
 
     await expect
-      .poll(() => alive(shell!.proc.pid!), { timeout: 60_000, message: "the shell survived taskkill /F" })
+      .poll(() => alive(electron), { timeout: 60_000, message: "the shell survived taskkill /F" })
       .toBe(false);
 
     // TerminateProcess delivers nothing the app can hear.
@@ -123,6 +144,9 @@ test.describe("Windows process termination", () => {
     await expect
       .poll(() => pids.some(alive), { timeout: 30_000, message: "taskkill /T left a sidecar running" })
       .toBe(false);
+    // The launch wrapper too (see `electronPid`): `cmd.exe` normally exits with
+    // the child it is waiting on, and this is only in case it doesn't.
+    taskkill(shell.proc.pid!, ["/T", "/F"]);
 
     shell = null;
   });
@@ -135,13 +159,41 @@ test.describe("Windows process termination", () => {
  * be reading the answer through the abstraction it is checking.
  */
 
-function ps(script: string): string {
+/** What `powershell.exe` said, including the halves a bare stdout read drops. */
+type PsResult = {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+  /** A one-line account of why this run produced nothing usable, or null. */
+  failure: string | null;
+};
+
+/**
+ * Run a PowerShell one-liner and keep ALL of its output.
+ *
+ * `stdout` alone is not enough, and that is a lesson rather than a preference:
+ * this helper used to return `r.stdout || ""`, so a query that errored out and
+ * a query that genuinely found nothing were the same empty string, and the
+ * assertion above could only ever say "null". Whatever goes wrong in here has
+ * to reach the report, because the report is the only thing a Windows CI lane
+ * hands back.
+ */
+function ps(script: string): PsResult {
   const r = spawnSync(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
     { encoding: "utf8", windowsHide: true, timeout: 30_000 }
   );
-  return r.stdout || "";
+  const stdout = r.stdout || "";
+  const stderr = (r.stderr || "").trim();
+  const failure = r.error
+    ? `powershell.exe did not run: ${r.error.message}`
+    : r.status !== 0
+      ? `powershell.exe exited ${r.status ?? "on a signal"}`
+      : stderr
+        ? "powershell.exe exited 0 but wrote to stderr"
+        : null;
+  return { stdout, stderr, status: r.status, failure };
 }
 
 /** `taskkill` with no output capture — exit 128 (no such pid) is not an error here. */
@@ -164,30 +216,87 @@ function alive(pid: number): boolean {
 }
 
 /**
+ * The Electron main process's own pid.
+ *
+ * NOT `shell.proc.pid`, and this is the whole reason the sidecar lookup below
+ * used to read null on this platform and only this one. On win32
+ * `_electron.launch()` folds the binary and its arguments into a single quoted
+ * command line and spawns it with `shell: true` (playwright-core's
+ * `Electron.launch`: `if (process.platform === 'win32') { shell = true; command
+ * = [command, ...electronArguments].map(...).join(' ') }`), so the child Node
+ * hands back — and therefore what `app.process()` returns — is the
+ * `cmd.exe /d /s /c "…"` wrapper. `electron.exe` is that wrapper's only child,
+ * and the two sidecars are its GRANDchildren, so a Win32_Process query for
+ * `ParentProcessId = <wrapper>` finds exactly one row, `electron.exe`, and
+ * neither sidecar. Nothing was wrong with the query, the parenting, or
+ * `supervisor.spawnChild`; the pid was one generation too high. That wrapper is
+ * win32-only, which is why 06/09/10/11 read `shell.proc.pid` as the Electron
+ * pid and are right to.
+ *
+ * Asking the main process for its own `process.pid` is preferred over walking
+ * the tree looking for something named `electron.exe`: it is the very process
+ * `supervisor.spawnChild` runs in, so "a child of this process" here means the
+ * same thing it means in `desktop/supervisor.js`, with no name matching in
+ * between to drift. It does require a live CDP connection, so every caller
+ * takes the pid BEFORE it kills anything.
+ */
+async function electronPid(shell: Shell): Promise<number> {
+  return await shell.app.evaluate(() => process.pid);
+}
+
+/** Is the shell's one window on screen? `win.hide()` leaves it in place, so this is not `win === null`. */
+async function windowVisible(shell: Shell): Promise<boolean> {
+  return await shell.app.evaluate(
+    ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible() ?? false
+  );
+}
+
+type Sidecars = {
+  app: number | null;
+  pty: number | null;
+  /**
+   * `claim`, followed by everything the query saw. The assertion messages go
+   * through this rather than stating a bare claim, so a red run reports whether
+   * the lookup FAILED or merely found nothing — the two are otherwise the same
+   * `null` from out here.
+   */
+  why: (claim: string) => string;
+};
+
+/**
  * The two node sidecars, found by command line among the Electron process's
  * children.
  *
  * By parent AND command line, because Electron's own renderer, GPU and utility
  * processes are children too. The `-server.js` vs `\server.js` distinction is
  * load-bearing: "pty-server.js" contains "server.js".
+ *
+ * Direct children only, and that is the correct depth rather than a shortcut:
+ * `supervisor.spawnChild` is a plain `spawn(node, [script])` with no shell
+ * wrapper, running in the process `electronPid()` names. The single-quoted WQL
+ * filter matches lib/processTree.ts's spelling for the reason that file gives —
+ * no double quote ever reaches the argument, which is the one thing Node's
+ * win32 argument escaping and PowerShell's own re-parsing disagree about.
  */
-function sidecarPids(electronPid: number): { app: number | null; pty: number | null } {
-  const raw = ps(
-    `Get-CimInstance Win32_Process -Filter "ParentProcessId=${electronPid}" | ` +
-      `Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
-  ).trim();
-  if (!raw) return { app: null, pty: null };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { app: null, pty: null };
+function sidecarPids(electronPid: number): Sidecars {
+  const r = ps(
+    `Get-CimInstance Win32_Process -Filter 'ParentProcessId = ${electronPid}' | ` +
+      `Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress`
+  );
+  const raw = r.stdout.trim();
+  type Row = { ProcessId?: number; Name?: string | null; CommandLine?: string | null };
+  let rows: Row[] = [];
+  let parseError: string | null = null;
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      // ConvertTo-Json emits a bare object for a single row and an array otherwise.
+      rows = (Array.isArray(parsed) ? parsed : [parsed]) as Row[];
+    } catch (err) {
+      parseError = `the query ran but its stdout was not JSON: ${(err as Error).message}`;
+    }
   }
-  // ConvertTo-Json emits a bare object for a single row and an array otherwise.
-  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{
-    ProcessId?: number;
-    CommandLine?: string | null;
-  }>;
+
   let app: number | null = null;
   let pty: number | null = null;
   for (const row of rows) {
@@ -196,7 +305,24 @@ function sidecarPids(electronPid: number): { app: number | null; pty: number | n
     if (/pty-server\.js/i.test(cmd)) pty = row.ProcessId;
     else if (/[\\/]server\.js/i.test(cmd)) app = row.ProcessId;
   }
-  return { app, pty };
+
+  const why = (claim: string) =>
+    [
+      claim,
+      `queried: child processes of pid ${electronPid}`,
+      r.failure ??
+        parseError ??
+        `the query ran clean and returned ${rows.length} child process(es)`,
+      r.stderr ? `stderr: ${r.stderr}` : null,
+      raw ? `stdout: ${raw.slice(0, 2000)}` : "stdout: (empty)",
+      ...rows.map(
+        (row) => `  child ${row.ProcessId} ${row.Name ?? "?"} — ${row.CommandLine ?? "(no command line)"}`
+      ),
+    ]
+      .filter((line): line is string => !!line)
+      .join("\n");
+
+  return { app, pty, why };
 }
 
 /**
