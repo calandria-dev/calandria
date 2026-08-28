@@ -27,6 +27,7 @@ import {
   launchShell,
   quitShell,
   sendMessage,
+  trayIsHosted,
   type Shell,
 } from "./fixtures";
 import { BENCH, assertBenchSession, benchEnv, poll, trayItemForPid, trayMenuItems, type TrayItem } from "./bench";
@@ -73,6 +74,16 @@ test("the tray icon is registered with the session's status-notifier host", asyn
   // behaviour in 11-bench-window.spec.ts quit instead of hide. Named here so a
   // red run points at the session rather than at the window specs.
   expect(shell.log.join("\n")).not.toContain("[shell] no tray available");
+
+  // AND THE SHELL AGREES WITH THE HOST, which is the assertion only this lane
+  // can make. `desktop/tray-residency.js` asks the session the same question
+  // this test just asked it, and the answer is what decides whether the X
+  // button hides or quits; a shell that read this session as trayless would
+  // quit on a close with the icon sitting right there, and one that read a
+  // trayless session as hosted is the bug that module exists for. Polled for
+  // the same reason the item above is: the confirmation is a round trip after
+  // `createTray()` returns.
+  expect(await trayIsHosted(shell), "the shell did not see the icon this test just found").toBe(true);
 });
 
 test("the tray menu carries the shell's actions as the panel would draw them", async () => {

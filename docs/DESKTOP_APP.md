@@ -418,7 +418,7 @@ Three platforms, two APIs:
 |-|-|-|
 | macOS | `app.setBadgeCount` — `dock.setBadge` underneath | `trayTemplate.png` + `@2x`, monochrome; AppKit inverts it for the dark menu bar |
 | Windows | No numeric badge exists: the taskbar overlay is a 16×16 image, so the digits are pre-rendered PNGs (`badge-1` … `badge-9`, `badge-9plus`) and `setOverlayIcon` picks one | `tray.png`, in the brand colour |
-| Linux | `app.setBadgeCount` — a Unity launcher entry, a no-op on desktops that have none, so it is called rather than probed | `tray.png`; a session with no status area logs and carries on |
+| Linux | `app.setBadgeCount` — a Unity launcher entry, a no-op on desktops that have none, so it is called rather than probed | `tray.png`; a session with no status area logs and carries on, and the close button goes back to quitting (below) |
 
 The assets are committed PNGs. `desktop/scripts/make-assets.py` regenerates them
 from primitives (ImageMagick and a font, neither of which any CI lane needs) so
@@ -433,7 +433,7 @@ the application menu.
 | | Before | Now |
 |-|-|-|
 | macOS | Close destroys the window; app stays in the dock; `activate` builds a new one | Close hides it; `activate` shows the same one, with the SPA's state intact |
-| Windows / Linux | Close quits: `window-all-closed` → `quit()` → drain → exit | Close hides to the tray; the server keeps running — unless there is no tray, where it still quits |
+| Windows / Linux | Close quits: `window-all-closed` → `quit()` → drain → exit | Close hides to the tray; the server keeps running — unless the session is not drawing the tray icon, where it still quits |
 
 Closing used to quit on Windows and Linux because "leaving turns running
 invisibly with no window is worse than stopping them", and that was right while
@@ -448,22 +448,74 @@ transcript, the scroll position and the SSE streams survive and reopening is
 instant instead of a cold reload.
 
 Three closes are still let through, all deliberate, and the first is the
-load-bearing one: **hiding happens only where there is a tray to hide into.**
-`Tray` construction fails soft on a session with no status area, and hiding
-there would put the app somewhere the user cannot retrieve it from — which is
-the old rationale, still correct in the one case that still matches it. So on a
-trayless desktop, close quits, exactly as it used to. A close that arrives
-*before* the server is up is let through for the same reason (no server to keep
-alive, no tray yet) and `window-all-closed` turns it into a quit. And one that
-arrives *during* a drain is honoured, because by then the user has seen the
-drain state and asked twice.
+load-bearing one: **hiding happens only where a status area is really drawing
+the icon.** Hiding somewhere the user cannot retrieve the app from is the old
+rationale, still correct in the one case that still matches it. So on a trayless
+desktop, close quits, exactly as it used to. A close that arrives *before* the
+server is up is let through for the same reason (no server to keep alive, no
+tray yet) and `window-all-closed` turns it into a quit. And one that arrives
+*during* a drain is honoured, because by then the user has seen the drain state
+and asked twice.
+
+**"Is there a tray?" is a question for the session, not for Electron**, and
+getting that wrong is how this shell lost a window. The gate used to be `new
+Tray()` not throwing, which on Linux says nothing: the constructor builds a
+Chromium `StatusIconLinuxDbus`, registers a `StatusNotifierItem` on the session
+bus and never reports back, so it succeeds whether or not an icon ever appears —
+and Electron documents no callback for a host that later goes away. Measured on
+the desktop bench 2026-08-28 (Ubuntu 24.04, Xfce, Electron 44): xfce4-panel
+4.18.4's `systray` plugin crashes when Electron registers its item and takes
+`org.kde.StatusNotifierWatcher` off the bus with it, so no icon is drawn — while
+`tray` was a live object, the close hid the window, and the "open it again from
+the tray icon" toast named an icon that did not exist. The window was then
+reachable only by launching the app again (`second-instance` → `showWindow()`),
+which is not what the toast said to do. One panel bug, but the class is every
+session with no status-notifier host — GNOME without the AppIndicator extension,
+a bare window manager, a headless X server — and Chromium has no XEmbed fallback
+left to catch them.
+
+So `desktop/tray-residency.js` asks the session, over `gdbus` (falling back to
+`dbus-send`; Electron ships no D-Bus binding and this spike is not adding a
+native dependency for one question). Both halves of the answer are on the
+watcher: `IsStatusNotifierHostRegistered` says somebody is drawing icons at all,
+and `RegisteredStatusNotifierItems` says whether OURS is among them — matched by
+the owner of the D-Bus connection, since Electron's item is
+`org.kde.StatusNotifierItem-<pid>-<n>` on some hosts and a bare unique name on
+others. The same read `desktop/e2e/bench.ts` makes from outside. On Windows and
+macOS there is nothing to ask: a notification area and a menu bar are part of
+the platform.
+
+Three rules make that safe to act on:
+
+- **The verdict is three-valued.** "The session says no" and "the session could
+  not be asked" are different answers, and `main.js` moves its flag only on the
+  first. A missing `gdbus` or a timed-out call is not evidence that a working
+  tray vanished — collapsing them would turn every X on a healthy desktop into a
+  quit. An *unreachable* bus is a definite no, though: Electron had nowhere to
+  register the icon either.
+- **It is re-asked on every close**, not trusted from boot, because the way this
+  shell loses a window is a host that goes away *mid-session*. That is also why
+  there is no `NameOwnerChanged` subscription: it would mean a long-lived `gdbus
+  monitor` child for a fact nothing consults in between, and the close is the
+  only moment the answer decides anything. Budgeted at 1.5 s and retried inside
+  it, so a panel that is restarting is waited through rather than read as gone.
+- **Unconfirmed means quit.** The fallback is the behaviour the shell had before
+  the tray landed, and still the right one when there is nowhere to be present.
+
+The close handler is therefore asynchronous: it prevents the close
+unconditionally and decides afterwards, since a close that has been allowed
+through cannot be taken back.
 
 Because quit can now be asked for with nothing on screen, `showDraining()`
 un-hides the window first — the drain overlay and title were always addressed to
 someone who could see them. The first hide of each launch also raises a one-time
 notification saying the app is still running, since hiding is the one action
 here with no visible result and, on Windows and Linux, a change from what the
-button used to do.
+button used to do. It is gated on the same confirmed tray rather than on
+`Tray` having been constructed, and that gate matters more here than anywhere
+else: it is the one message that tells the user where the window went, so
+raising it on a session with no icon sends them looking for something that is
+not there.
 
 One thing this leaves owing, recorded rather than fixed. On Linux an
 Electron notification is a libnotify call on the UI thread, and with a session

@@ -23,6 +23,7 @@ const {
   shouldNotify,
   trayTooltip,
 } = require("./notifier");
+const { confirmTrayResidency } = require("./tray-residency");
 
 // Where the server payload lives — the thing supervisor.js runs `node server.js`
 // out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
@@ -56,6 +57,19 @@ let quitting = false;
 // one. Same shape as `quitting` above, and checked alongside it.
 let failed = false;
 let tray = null;
+// Whether that icon is actually IN a status area — which is a different fact
+// from `tray` being an object, and the one the close handler needs. See
+// tray-residency.js, and `refreshTrayResidency()` below for the rule that moves
+// it. False until the session says otherwise, so nothing promises a tray it has
+// not seen.
+let trayHosted = false;
+// Has the session ever answered? Only so the first answer is logged even when
+// it agrees with the pessimistic default — a launch that found no status area
+// has to say so.
+let trayResidencyKnown = false;
+// One close decision at a time: the handler now answers asynchronously, and a
+// second X while the first is still asking would ask again rather than wait.
+let closePending = false;
 let events = null;
 let needsYou = null;
 let needsYouCount = 0;
@@ -82,10 +96,11 @@ function main() {
     // than destroying it, on every platform (see "Close vs quit" in
     // docs/DESKTOP_APP.md §5.1). The one way here is a close that arrives
     // BEFORE boot() finished — that handler lets those through, since there is
-    // no server to keep alive and no tray to be present in yet — and there,
-    // quitting is exactly what the user asked for. Gated on the tray rather
-    // than on the platform so a hide can never be mistaken for a quit.
-    if (!tray) app.quit();
+    // no server to keep alive and no confirmed tray to be present in yet — and
+    // there, quitting is exactly what the user asked for. Gated on the same
+    // confirmed tray the close handler uses, rather than on the platform, so a
+    // hide can never be mistaken for a quit.
+    if (!trayHosted) app.quit();
   });
 
   app.on("activate", () => showWindow());
@@ -109,6 +124,8 @@ function main() {
       // behind as a dead slot by several Linux status-bar implementations.
       tray?.destroy();
       tray = null;
+      trayHosted = false;
+      trayResidencyKnown = false;
       app.exit(0);
     }
   });
@@ -184,27 +201,30 @@ function createWindow() {
   // shows the same window instead of building a new one.
   //
   // Three escapes, all deliberate, and the first is the load-bearing one: this
-  // only hides while there IS a tray. `createTray()` fails soft on a session
-  // with no status area, and hiding there would put the app somewhere the user
-  // cannot get it back from — which is the old rationale, still correct in the
-  // one case that still matches it. A close BEFORE boot() finished is let
-  // through for the same reason (no server to keep alive, no tray yet), and
-  // `window-all-closed` turns it into a quit. And a close DURING the drain is
-  // let through as well — by then the user has seen the drain state and asked
-  // twice, and `supervisor.stop()` is bounded anyway, so the wait cannot
-  // outlive the grace.
+  // hides only while a status area is ACTUALLY DRAWING the tray icon. The gate
+  // used to be `new Tray()` not throwing, which is a much weaker thing and is
+  // not true of the case it was written for: on Linux the constructor succeeds
+  // on a session with no status-notifier host, so the window hid into nowhere
+  // and the "open it again from the tray icon" toast named an icon that did not
+  // exist (tray-residency.js carries the measurement). Refusing to hide
+  // somewhere the user cannot get the app back from is the old rationale, still
+  // correct — it just needs the session's answer rather than Electron's. A
+  // close BEFORE boot() finished is let through for the same reason (no server
+  // to keep alive, no tray yet), and `window-all-closed` turns it into a quit.
+  // And a close DURING the drain is let through as well — by then the user has seen
+  // the drain state and asked twice, and `supervisor.stop()` is bounded anyway,
+  // so the wait cannot outlive the grace.
   win.on("close", (event) => {
     if (quitting || !supervisor) return;
-    if (!tray) {
-      // No tray, so no way back: closing means quitting, and `app.quit()` is
-      // what keeps the drain (and the on-screen wait for it) in the chain.
-      event.preventDefault();
-      app.quit();
-      return;
-    }
+    // Always prevented here and resolved in `decideClose()`: the answer is a
+    // question for the session bus, which cannot be asked synchronously, and a
+    // close that is allowed through cannot be taken back.
     event.preventDefault();
-    win.hide();
-    announceTrayResidency();
+    if (closePending) return;
+    closePending = true;
+    void decideClose().finally(() => {
+      closePending = false;
+    });
   });
 
   win.on("closed", () => {
@@ -405,6 +425,74 @@ function showWindow() {
   win.focus();
 }
 
+/**
+ * Hide, or quit — decided by asking the session whether the tray icon is really
+ * there, not by trusting that it was there at boot.
+ *
+ * Re-asked on every close ON PURPOSE, because the way this shell loses a window
+ * is a status-notifier host that goes away MID-SESSION: Electron offers no
+ * callback for it, so the only cheap moment to notice is the moment the answer
+ * decides something. That is also why there is no `NameOwnerChanged`
+ * subscription here — it would mean a long-lived `gdbus monitor` child for a
+ * fact nothing consults in between.
+ *
+ * Budgeted at 1.5 s and retried inside that, so a panel that is restarting is
+ * waited through rather than read as gone. A probe that cannot ANSWER leaves
+ * the last answer standing (see `refreshTrayResidency`), so a machine with no
+ * D-Bus CLI keeps whatever boot established rather than flipping on a timeout.
+ */
+async function decideClose() {
+  const hosted = await refreshTrayResidency(1500);
+  // The quit path may have started while we were asking — `before-quit` shows
+  // the window again for the drain, so hiding it now would undo that.
+  if (quitting) return;
+  if (!hosted) {
+    // Nowhere to hide into, so closing means quitting, and `app.quit()` is what
+    // keeps the drain (and the on-screen wait for it) in the chain.
+    app.quit();
+    return;
+  }
+  if (!win || win.isDestroyed()) return;
+  win.hide();
+  announceTrayResidency();
+}
+
+/**
+ * Re-read whether the tray icon is in a status area, and report the current
+ * belief.
+ *
+ * ONE RULE, and it is the whole reason this is not a boolean assignment:
+ * `trayHosted` moves only when the session gives an ANSWER. A probe that could
+ * not run — no `gdbus`, no `dbus-send`, a timed-out call — is not evidence that
+ * a working tray disappeared, and treating it as one would turn every X on a
+ * healthy desktop into a quit.
+ */
+async function refreshTrayResidency(timeoutMs) {
+  if (!tray) return false;
+  const verdict = await confirmTrayResidency({ pid: process.pid, timeoutMs });
+  if (verdict.hosted === null) {
+    console.log(
+      `[shell] could not confirm the tray icon (${verdict.reason}) — keeping the last answer: ` +
+        `${trayHosted ? "hosted" : "not hosted"}`,
+    );
+    return trayHosted;
+  }
+  // Logged on the first answer and on every change after it, never on a repeat:
+  // the first is what a launch needs to state (and what the e2e suite branches
+  // on, since the two close behaviours are both correct and only the session
+  // says which), the rest are the mid-session flips this exists to catch.
+  if (!trayResidencyKnown || verdict.hosted !== trayHosted) {
+    console.log(
+      verdict.hosted
+        ? `[shell] tray icon confirmed in the status area (${verdict.reason})`
+        : `[shell] tray icon is not in any status area (${verdict.reason}) — closing the window will quit`,
+    );
+  }
+  trayResidencyKnown = true;
+  trayHosted = verdict.hosted;
+  return trayHosted;
+}
+
 // Hiding a window is the one action here with no visible result, and on
 // Windows and Linux it is also a CHANGE from what this shell used to do (the X
 // used to quit). Say so once per launch, through the same channel everything
@@ -413,7 +501,11 @@ function showWindow() {
 let trayResidencyAnnounced = false;
 
 function announceTrayResidency() {
-  if (trayResidencyAnnounced || !tray || !Notification.isSupported()) return;
+  // `trayHosted`, never `tray`: this is the one message that tells the user
+  // where the window went, so raising it on a session with no icon is worse
+  // than saying nothing at all. `decideClose()` has already re-confirmed by the
+  // time this runs, and only calls it on the hide branch.
+  if (trayResidencyAnnounced || !trayHosted || !Notification.isSupported()) return;
   trayResidencyAnnounced = true;
   new Notification({
     title: "Calandria is still running",
@@ -440,12 +532,17 @@ function createTray() {
   try {
     tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, icon)));
   } catch (err) {
-    // No status area at all (a bare window manager, a headless session). The
-    // window and the badge still work; only the close-to-tray promise is off,
-    // which is why the close handler checks `tray` rather than assuming it.
+    // The constructor itself failed, which on Windows and macOS is the only way
+    // to have no tray at all. The window and the badge still work; only the
+    // close-to-tray promise is off.
     console.log(`[shell] no tray available: ${err?.message || err}`);
     return;
   }
+  // Constructing it is not the same as it appearing, so find out — the flag the
+  // close handler reads stays false until the session confirms. Not awaited:
+  // registration is a round trip on the session bus and nothing else here waits
+  // on it, and a close arriving before it lands asks again for itself.
+  void refreshTrayResidency(5000);
   tray.setToolTip(trayTooltip(needsYouCount));
   // A left click opens the menu on macOS by convention, so leave it alone
   // there; everywhere else a click on a tray icon is expected to bring the
