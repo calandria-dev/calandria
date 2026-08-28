@@ -121,10 +121,32 @@ test("the renderer stayed a hardened browser tab", async () => {
   expect(prefs.preload).toBeNull();
 });
 
-test("the permission handler grants notifications and denies everything else", async () => {
-  // Granted: turn-finished pings are the point of a desktop shell.
-  const notifications = await shell.win.evaluate(async () => Notification.requestPermission());
-  expect(notifications).toBe("granted");
+test("the permission handler denies everything, notifications included", async () => {
+  // Notifications used to be the ONE grant here, and the reason for the
+  // handler's existence: turn-finished pings are the point of a desktop shell.
+  // They still are — they just come from the main process now (`new
+  // Notification` in main.js, fed by the same GET /api/events payload the
+  // renderer would have used). Granting the renderer as well would give the
+  // user two toasts for every event, so the page's channel is switched off at
+  // the source: `notificationPermission()` in app/shell/useNotifications.ts
+  // reports `denied` and the hook returns before constructing anything.
+  //
+  // BOTH readings are asserted because they are answered by different handlers
+  // and only the second one is on the path that matters: the hook checks
+  // `Notification.permission`, which is a permission CHECK, and Electron
+  // answers those with a hardcoded "granted" unless a check handler says
+  // otherwise — so a shell that only denied the REQUEST would still have shown
+  // the duplicate toast.
+  const notifications = await shell.win.evaluate(async () => ({
+    requested: await Notification.requestPermission(),
+    checked: Notification.permission,
+  }));
+  expect(notifications.requested, "the renderer must not also raise notifications — main.js owns that channel").toBe(
+    "denied"
+  );
+  expect(notifications.checked, "app/shell/useNotifications.ts reads THIS, and stands down only on 'denied'").toBe(
+    "denied"
+  );
 
   // Denied — and geolocation is the one that can PROVE denial rather than
   // merely fail. Its error code discriminates: 1 is PERMISSION_DENIED (the

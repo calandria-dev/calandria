@@ -26,7 +26,9 @@
     "files": [
       "main.js",
       "supervisor.js",
+      "notifier.js",
       "loading.html",
+      "assets/**",
       "package.json"
     ],
     "extraResources": [
