@@ -127,6 +127,23 @@ files), a runner `%TEMP%` in 8.3 short form that `fs.realpathSync` doesn't expan
 assertions that pinned a POSIX spelling rather than a behavior. None of it was visible from
 Linux.
 
+The lane's second find, months later, was the same shape and worth naming as a class:
+**a native Windows binary writes its stdout in text mode, so every line it prints ends CRLF**
+(issue #53). `tests/backup.test.ts` split `tar -tzf` output on `"\n"`, which left a `\r` on
+each archive member, so no `toContain()` could match and the head of the list read as a
+phantom `'\r'` entry — the archive's own root directory, reduced to a lone carriage return
+that `filter(Boolean)` then kept because it is truthy. The lane was red for five pushes, and
+because `publish-image.yml`'s release gate reads a run's overall conclusion rather than
+filtering per job, no release could be cut while it was. Splitting on `/\r?\n/` is the fix,
+and it lives in `tests/platform.ts` as `outputLines` so the next test to shell out inherits
+it. The sweep that followed found the exposure is narrow: **only native binaries do this.**
+Git for Windows is an MSYS build that keeps its pipes in binary mode, so the suite's many
+`git log` / `git worktree list --porcelain` callers emit LF on every platform and were never
+affected — they route through `outputLines` now for one convention rather than to fix a bug.
+Everything else that splits on a newline in the suite reads an in-process string (Prometheus
+exposition text, SSE frames, a tag-context block), a NUL-delimited `git ls-files -z`, or a
+JSONL fixture whose `JSON.parse` treats a trailing `\r` as whitespace.
+
 The e2e lane found nothing on its first run: 92 specs, green, in 2.7 minutes. The portability
 work the unit lane forced had already reached every file the e2e suite leans on: `e2e/env.ts`
 resolves its temp root through `fs.realpathSync.native` and strips the `\\?\` prefix, the
@@ -151,6 +168,7 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
 | `du` doesn't exist | an `fs` walk on win32 (`lib/git.ts`) |
 | No deliverable `SIGTERM`, and `concurrently` kills its children with `taskkill /T /F` | `scripts/start.mjs`, a dependency-free launcher for `npm start` that ties the two entrypoints' lifetimes together without force-killing, so a console Ctrl+C reaches the shutdown drain |
 | POSIX spellings and semantics in the suite | `tests/platform.ts`: `IS_WIN`, `onPosix`, `NULL_DEVICE`, `TEST_SHELL`, `DETACHED`, `killChildTree`. A test that merely *uses* a POSIX construct gets a portable spelling; a test *about* POSIX semantics is skipped on win32 |
+| A native binary's stdout is CRLF-terminated | `outputLines` in the same file, splitting on `/\r?\n/`. Every test that reads a subprocess's output line by line goes through it, so the next one doesn't re-derive the split and get it wrong (issue #53) |
 | SQLite's single-process mutex | No change needed. `BEGIN IMMEDIATE`'s RESERVED lock is a `LockFileEx` byte-range lock on Windows, released by the OS on process death, including `TerminateProcess` (`lib/db-lock.mjs`) |
 
 ## Known limits

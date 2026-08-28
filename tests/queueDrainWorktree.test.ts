@@ -27,6 +27,7 @@ import { ensureWorktree, removeWorktree } from "@/lib/git";
 import { WORKTREES_DIR } from "@/lib/config";
 import { clearAgentAuthBroken } from "@/lib/agents/connections";
 import { makeRepo, git } from "./helpers";
+import { outputLines } from "./platform";
 import type { TaskStreamEvent } from "@/lib/types";
 
 const OAUTH_DEAD = "Failed to authenticate: OAuth session expired and could not be refreshed";
@@ -114,7 +115,7 @@ describe("queue drain isolation", () => {
     expect(real(followUp)).toBe(real(path.join(WORKTREES_DIR, task.id)));
     expect(fs.existsSync(followUp)).toBe(true);
     const listed = await git(repo, "worktree", "list", "--porcelain");
-    expect(listed.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => real(l.slice(9).trim())))
+    expect(outputLines(listed).filter((l) => l.startsWith("worktree ")).map((l) => real(l.slice(9).trim())))
       .toContain(real(followUp));
     // ensureWorktree reattached to the surviving branch, so the earlier work
     // came back rather than being restarted from base.

@@ -21,7 +21,7 @@ import {
 } from "../lib/worktreeFailure";
 import { WORKTREES_DIR } from "../lib/config";
 import { commitFile, git, makeRepo, makeRepoWithWorktree, tmpDir, uid, writeFile } from "./helpers";
-import { NULL_DEVICE } from "./platform";
+import { NULL_DEVICE, outputLines } from "./platform";
 
 describe("isGitRepo", () => {
   it("is true inside a repo and false for plain or missing dirs", async () => {
@@ -43,7 +43,9 @@ describe("recentCommits", () => {
     const repo = await makeRepo();
     await commitFile(repo, "a.txt", "a\n", "second commit");
     const log = await recentCommits(repo);
-    const lines = log.split("\n");
+    // `$`-anchored per line, so a trailing `\r` would fail this and nothing
+    // else — hence outputLines rather than split("\n") (issue #53).
+    const lines = outputLines(log);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/second commit$/);
     expect(lines[1]).toMatch(/initial commit$/);
@@ -53,7 +55,7 @@ describe("recentCommits", () => {
     const repo = await makeRepo();
     await commitFile(repo, "a.txt", "a\n", "second commit");
     await commitFile(repo, "b.txt", "b\n", "third commit");
-    expect((await recentCommits(repo, 2)).split("\n")).toHaveLength(2);
+    expect(outputLines(await recentCommits(repo, 2))).toHaveLength(2);
   });
 
   it("returns empty for non-repos and empty paths", async () => {

@@ -17,6 +17,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { outputLines } from "./platform";
 
 const SCRIPT = path.resolve(__dirname, "..", "scripts", "backup.mjs");
 
@@ -96,16 +97,22 @@ function run(f: Fixture, args: string[], extraEnv: Record<string, string> = {}) 
   return { ...res, outDir, produced: res.stdout.trim() };
 }
 
-/** The archive's member paths, relative to the backup directory inside it. */
+/** The archive's member paths, relative to the backup directory inside it.
+ *
+ *  Through `outputLines`, not `split("\n")`: `tar.exe` on Windows is a native
+ *  binary and ends every entry with CRLF, which left a `\r` on each member and
+ *  failed every assertion here (issue #53). The leading `filter(Boolean)` went
+ *  with it — it was dropping the blank the trailing newline produces, but also
+ *  KEEPING the archive's own root directory entry as a lone truthy `"\r"`. The
+ *  filter that remains is the one that means something: the root entry maps to
+ *  the empty string once its prefix is stripped. */
 function listArchive(archive: string): string[] {
   const res = spawnSync("tar", ["-tzf", path.basename(archive)], {
     cwd: path.dirname(archive),
     encoding: "utf8",
   });
   expect(res.status, res.stderr).toBe(0);
-  return res.stdout
-    .split("\n")
-    .filter(Boolean)
+  return outputLines(res.stdout)
     .map((line) => line.replace(/^calandria-backup-[^/]+\/?/, "").replace(/\/$/, ""))
     .filter(Boolean);
 }
