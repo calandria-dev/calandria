@@ -162,7 +162,21 @@ async function boot() {
       // executeJavaScript rather than IPC: the boot screen is the only consumer
       // and adding a preload for it would mean shipping a bridge into every
       // page the window later loads, including the app itself.
-      win?.webContents.executeJavaScript(`window.__log && window.__log(${JSON.stringify(line)})`).catch(() => {});
+      //
+      // The write is done HERE rather than by calling a helper the boot screen
+      // defines, because loading.html's CSP is `default-src 'none'` and that
+      // blocks its own inline <script> — so a `window.__log` defined in the page
+      // never exists, and the `&&` guard this used to have made that failure
+      // completely silent (the boot screen simply stayed blank for every launch
+      // there has ever been; found by desktop/e2e/01-shell.spec.ts). A
+      // main-process evaluation is not subject to the page's CSP, so pushing the
+      // DOM write across keeps the strict policy AND makes the log show up.
+      // Only while the boot screen is the page: once appUrl is set the window is
+      // on the app, which has no #log and no interest in being evaluated into on
+      // every line the sidecars print for the rest of the session.
+      if (appUrl) return;
+      const write = `(() => { const el = document.getElementById("log"); if (!el) return; el.textContent += ${JSON.stringify(line + "\n")}; el.scrollTop = el.scrollHeight; })()`;
+      win?.webContents.executeJavaScript(write).catch(() => {});
     },
     onExit: ({ name, code, dbLockHeld }) => {
       if (quitting) return;

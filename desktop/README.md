@@ -7,8 +7,11 @@ terminal, running `npm start`, and typing a URL.
 **This is spike code**, kept because it is the cheapest way to answer the
 questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) — which also carries
 the recommendation, the measurements, and the reasons the architecture is what it
-is. Nothing here is wired into `npm test`, CI, or the Docker image, and the repo
-root gains no dependency: Electron installs into this directory only.
+is. It is wired into no runtime and into `npm test` and the Docker image not at
+all; the one thing that does run it is the label-gated `desktop` job in
+`.github/workflows/test.yml` (see [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md)).
+The repo root gains no dependency either way: Electron installs into this
+directory only.
 
 ## Run it
 
@@ -44,23 +47,50 @@ inherited unchanged.
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 21 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
-| `test-window.js` | The window layer, driven by Playwright's Electron driver under a virtual display — boot, title, menu, renderer hardening, screenshot, single-instance, quit-drains. Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
+| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, quit-drains-in-flight-work, and one smoke path through the app inside the window. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). |
 
 ## Tests
 
+All three run from the **repo root**, and CI runs exactly these (the `desktop`
+job in `.github/workflows/test.yml`):
+
 ```bash
-node test-supervisor.js                                   # headless, ~8 s
-ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js   # same, in Electron's runtime
-node test-real-boot.js                                    # needs a repo-root build
-xvfb-run -a node test-window.js                           # needs a build + a virtual display
-CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
-  xvfb-run -a node test-window.js       # same assertions, once packaging exists
+npm run desktop:install         # Electron, once (see the NODE_ENV note below)
+npm run build                   # the shell serves a production build
+
+npm run test:desktop:supervisor # headless, ~8 s, no display
+npm run test:desktop:boot       # boots the real server.js/pty-server.js
+xvfb-run -a npm run test:desktop:window   # the window suite; needs a display
+xvfb-run -a npm run test:desktop          # all three, in that order
 ```
 
-`test-window.js` resolves `playwright` from the repo root's `node_modules` (it is
-already a dev dependency for the browser suite) and needs `xvfb` plus Chromium's
-usual library set on a headless box.
+In Electron's own runtime, from this directory:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js
+```
+
+Once packaging exists, the same window suite runs against the artifact:
+
+```bash
+CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
+  CALANDRIA_DESKTOP_SANDBOX=1 xvfb-run -a npm run test:desktop:window
+```
+
+The suite resolves `playwright` from the repo root's `node_modules` (already a
+dev dependency for the browser suite) and needs `xvfb` plus Chromium's usual
+library set on a headless box. It passes `--no-sandbox` because an unpacked
+Electron has no SUID `chrome-sandbox`; a packaged install does, which is what
+`CALANDRIA_DESKTOP_SANDBOX=1` is for.
+
+One environment gotcha it handles for you, worth knowing if you run the shell by
+hand on a headless box: `Notification.permission` is `granted` in Electron
+without anything asking, so the app posts real native notifications, and on
+Linux with a session bus but **no** notification daemon each one blocks the
+Electron main process for GDBus's 25-second timeout. The suite points
+`DBUS_SESSION_BUS_ADDRESS` at a socket that does not exist so libnotify fails
+immediately instead.
 
 Electron is a `devDependency`, so an `npm install` run with `NODE_ENV=production`
 in the environment reports "up to date" and installs nothing — including in an
