@@ -648,6 +648,20 @@ but both still report a failure.
 Notifications are composed on the server: the tab and the push service receive the same
 message from the same source.
 
+## On a narrow window
+
+The three columns beside the transcript are fixed — projects 236px, tasks 352px, the
+DIFF / PREVIEW / CONTEXT rail 430px — and only the transcript flexes, so on a narrow
+window every missing pixel used to come out of the one pane you are reading. Instead the
+shell now sheds a side column, cheapest loss first: **projects below 1400px, tasks below
+1200px, the rail below 880px**, each one replaced by the 30px spine that restores it in a
+click. A 1024x768 window ends up with a 534px transcript beside a full-width rail rather
+than 6px of transcript.
+
+It is a render-time policy, not a setting: your own column widths and collapsed state are
+untouched, so widening the window gives them straight back. Opening a column from its spine
+overrides the policy for as long as the window stays that size.
+
 ## On a phone
 
 Below 760px, the three columns collapse into one pane at a time with a bottom tab bar

@@ -5,7 +5,7 @@ import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
 import TaskChanges from "./TaskChanges";
-import { PROJ_W, TASK_W, DEFAULT_LAYOUT } from "./shell/types";
+import { PROJ_W, TASK_W, DEFAULT_LAYOUT, AUTO_COLLAPSE_BELOW } from "./shell/types";
 import { useShell } from "./shell/useShell";
 import { ProjectsColumn } from "./shell/ProjectsColumn";
 import { TasksColumn } from "./shell/TasksColumn";
@@ -43,6 +43,28 @@ function useIsMobile() {
     return () => mq.removeEventListener("change", sync);
   }, []);
   return mobile;
+}
+
+// Which side columns the window is too narrow to keep open, per
+// AUTO_COLLAPSE_BELOW. Same matchMedia contract as useIsMobile: SSR renders the
+// full-width layout (nothing shed) and the effect corrects on mount, so the
+// first paint never disagrees with the server. Below 760px it stops mattering —
+// the phone layout mounts one pane at a time and none of these coexist.
+type Col = "proj" | "task" | "rail";
+function useAutoCollapse(): Record<Col, boolean> {
+  const [shed, setShed] = useState({ proj: false, task: false, rail: false });
+  useEffect(() => {
+    const qs: Record<Col, MediaQueryList> = {
+      proj: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.proj - 1}px)`),
+      task: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.task - 1}px)`),
+      rail: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.rail - 1}px)`),
+    };
+    const sync = () => setShed({ proj: qs.proj.matches, task: qs.task.matches, rail: qs.rail.matches });
+    sync();
+    for (const mq of Object.values(qs)) mq.addEventListener("change", sync);
+    return () => { for (const mq of Object.values(qs)) mq.removeEventListener("change", sync); };
+  }, []);
+  return shed;
 }
 
 // Phone terminal: a full-screen sheet (vs. the cramped desktop bottom-drawer) so
@@ -103,6 +125,28 @@ export default function Shell() {
   // slide-over) need it.
   const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
+
+  // Auto-collapse: the shed set the window width implies, plus the columns the
+  // user has re-opened from their spine in spite of it. The override is what
+  // keeps the spine's button honest — without it, clicking "Show projects
+  // panel" at 1024px would flip `layout.projCollapsed` and change nothing
+  // visible — and it is deliberately session-only. Persisting it would carry a
+  // decision made at one size into every later window; instead it is cleared
+  // whenever the shed set changes, so widening and re-narrowing starts the
+  // policy over. `layout` itself is never written by the policy, only by the
+  // user's own collapse/expand clicks, which do persist.
+  const shed = useAutoCollapse();
+  const [reopened, setReopened] = useState<Partial<Record<Col, boolean>>>({});
+  const shedKey = `${shed.proj}${shed.task}${shed.rail}`;
+  useEffect(() => { setReopened((r) => (Object.keys(r).length ? {} : r)); }, [shedKey]);
+  const projCollapsed = layout.projCollapsed || (shed.proj && !reopened.proj);
+  const taskCollapsed = layout.taskCollapsed || (shed.task && !reopened.task);
+  const railCollapsed = layout.railCollapsed || (shed.rail && !reopened.rail);
+  const setCollapsed = (col: Col, v: boolean) => {
+    o.setLayout((l) => (col === "proj" ? { ...l, projCollapsed: v } : col === "task" ? { ...l, taskCollapsed: v } : { ...l, railCollapsed: v }));
+    setReopened((r) => ({ ...r, [col]: !v }));
+  };
+
   const features = clientFeatures();
   // Resolves "system" against the OS preference for this quick toggle's icon/
   // label; clicking always pins an explicit mode (bypassing "system"), same as
@@ -259,7 +303,7 @@ export default function Shell() {
   const projectsColumn = (
     <ProjectsColumn
       mobile={isMobile}
-      width={layout.projW} onCollapse={() => o.setLayout((l) => ({ ...l, projCollapsed: true }))}
+      width={layout.projW} onCollapse={() => setCollapsed("proj", true)}
       projects={o.activeProjects} deprecated={o.deprecatedProjects} agents={o.agents.agents} selId={selProj} running={o.running}
       onSelect={o.selectProject} onNew={() => o.setModal("project")} onOpenAppearance={() => o.setAppearanceOpen((t) => !t)}
       onReorder={o.reorderProjects} onRestore={(id) => o.setDeprecated(id, false)}
@@ -272,7 +316,7 @@ export default function Shell() {
       mobile={isMobile}
       onBack={isMobile ? () => window.history.back() : undefined}
       width={layout.taskW}
-      onCollapse={() => o.setLayout((l) => ({ ...l, taskCollapsed: true }))}
+      onCollapse={() => setCollapsed("task", true)}
       project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} tags={o.tags} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
       sparklines={o.sparklines}
       loading={o.tasksLoading}
@@ -318,9 +362,9 @@ export default function Shell() {
             railW={layout.railW}
             onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}
             onRailReset={() => o.setLayout((l) => ({ ...l, railW: DEFAULT_LAYOUT.railW }))}
-            railCollapsed={layout.railCollapsed}
-            onRailCollapse={() => o.setLayout((l) => ({ ...l, railCollapsed: true }))}
-            onRailExpand={() => o.setLayout((l) => ({ ...l, railCollapsed: false }))}
+            railCollapsed={railCollapsed}
+            onRailCollapse={() => setCollapsed("rail", true)}
+            onRailExpand={() => setCollapsed("rail", false)}
           />
         ) : project ? (
           <ProjectLanding
@@ -433,9 +477,9 @@ export default function Shell() {
                 railW={layout.railW}
                 onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}
                 onRailReset={() => o.setLayout((l) => ({ ...l, railW: DEFAULT_LAYOUT.railW }))}
-                railCollapsed={layout.railCollapsed}
-                onRailCollapse={() => o.setLayout((l) => ({ ...l, railCollapsed: true }))}
-                onRailExpand={() => o.setLayout((l) => ({ ...l, railCollapsed: false }))}
+                railCollapsed={railCollapsed}
+                onRailCollapse={() => setCollapsed("rail", true)}
+                onRailExpand={() => setCollapsed("rail", false)}
               />
             </div>
           </div>
@@ -672,8 +716,8 @@ export default function Shell() {
             : sessionColumn
         ) : (
           <>
-            {layout.projCollapsed ? (
-              <ColRail label="Projects" onExpand={() => o.setLayout((l) => ({ ...l, projCollapsed: false }))} />
+            {projCollapsed ? (
+              <ColRail label="Projects" onExpand={() => setCollapsed("proj", false)} />
             ) : (
               <>
                 {projectsColumn}
@@ -688,8 +732,8 @@ export default function Shell() {
             {o.view === "settings" ? settingsColumn : o.view === "insights" ? insightsColumn : boardMode ? boardWorkspace : (
               <>
                 {project ? (
-                  layout.taskCollapsed ? (
-                    <ColRail label="Tasks" task onExpand={() => o.setLayout((l) => ({ ...l, taskCollapsed: false }))} />
+                  taskCollapsed ? (
+                    <ColRail label="Tasks" task onExpand={() => setCollapsed("task", false)} />
                   ) : (
                     <>
                       {tasksColumn}
