@@ -390,15 +390,57 @@ class Supervisor {
   }
 
   /**
-   * SIGTERM, then wait. server.js's own handler POSTs /api/instance/drain and
-   * exits when in-flight turns have settled (CALANDRIA_SHUTDOWN_GRACE_MS), so the
-   * shell's job is only to not out-run it. SIGKILL is the backstop.
-   * On Windows there is no SIGTERM: the .kill() lands as TerminateProcess, so
-   * the drain is skipped — a known gap, listed in the spike doc.
+   * POST /api/instance/drain and wait for it, bounded.
+   *
+   * Best-effort by contract, like the boot pings on the other side of the
+   * lifecycle: a refused connection (the app died before we got here), a 404
+   * (an older build without the route) and a hang are all "stop anyway" — a
+   * quit that never completes is worse than one that skipped a settlement.
+   * The bound mirrors server.js's own: CALANDRIA_SHUTDOWN_GRACE_MS, which is
+   * what the route waits for server-side, plus headroom for the round trip, so
+   * we never abandon a drain we asked for a moment before it finishes.
+   *
+   * Reads SERVICE_TOKEN off the env the SIDECARS were given rather than this
+   * process's, since that is the one the server is checking against.
    */
-  async stop({ graceMs } = {}) {
+  async drainApp(drainMs) {
+    const app = this.children.find((c) => c.name === "app");
+    if (!this.port || !app || app.exited) return;
+    const env = this.effectiveEnv || this.env;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), drainMs ?? this.shutdownGraceMs + 3000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}/api/instance/drain`, {
+        method: "POST",
+        headers: env.SERVICE_TOKEN ? { "x-service-token": env.SERVICE_TOKEN } : {},
+        signal: controller.signal,
+      });
+      this.log(`[shell] drained in-flight turns (status ${res.status})`);
+    } catch (err) {
+      this.log(`[shell] drain request failed, stopping anyway: ${err?.message || err}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Drain, then SIGTERM, then wait, with SIGKILL as the backstop.
+   *
+   * The drain is an HTTP POST THIS process makes rather than a signal
+   * server.js catches, because Windows has no deliverable SIGTERM: there
+   * `child.kill("SIGTERM")` is a TerminateProcess, server.js's own handler
+   * never runs, and quitting mid-turn cut the turn off with nothing durable
+   * recorded. Asking over loopback works the same on every platform, and
+   * leaves the signal path as the backstop rather than the mechanism — on
+   * POSIX server.js still POSTs the same route on SIGTERM, which by then finds
+   * nothing in flight and returns immediately. The same order is what a
+   * systemd/service wrapper would want, which is why it lives here and not in
+   * main.js.
+   */
+  async stop({ graceMs, drainMs } = {}) {
     if (this.stopping) return;
     this.stopping = true;
+    await this.drainApp(drainMs);
     const wait = graceMs ?? this.shutdownGraceMs + 4000;
     const live = this.children.filter((c) => !c.exited);
     for (const { child } of live) {
