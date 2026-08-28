@@ -808,8 +808,12 @@ jobs:
       # CALANDRIA_TEST_BIN swaps every shared spec onto the artifact (with no
       # CALANDRIA_REPO_ROOT — see 06-packaged.spec.ts), and
       # CALANDRIA_TEST_APP_BUNDLE un-skips 08-macos-launchd.spec.ts, which
-      # `open`s the bundle through LaunchServices to get the one environment no
-      # child-process launch can produce: launchd's stub PATH.
+      # `open`s the bundle through LaunchServices to get the one launch no
+      # child-process spec can produce: one whose environment comes from
+      # launchd rather than from this job. The stub PATH itself is planted with
+      # `launchctl setenv` — this image's launchd domain carries a wider one —
+      # so what runs here is the repair, not the inheritance that triggers it.
+      # See the spec header and docs/DESKTOP_APP.md §5.
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window
 

@@ -257,9 +257,22 @@ evaluate into), and reads back whether `supervisor.js` reported the stub PATH an
 recovered a real one from the login shell. `launchctl setenv` is what keeps that
 instance hermetic, since `open` forwards no environment — the whole
 `instanceEnv()` shape goes into the user's launchd domain and comes back out in
-`afterAll`, with PATH pointedly not among the keys. It also checks that the
-runner's own login shell has directories beyond the stub, because otherwise
-there would be nothing to recover and a green run would prove nothing. The
+`afterAll`.
+
+**PATH is planted there too, and that is a deliberate retreat.** The spec
+originally left PATH out so the run would measure launchd's stub rather than
+assume it; run 33195354526 showed a hosted `macos-latest` handing the app a
+wider PATH than the stub, because the image provisions the runner's launchd
+domain. `needsPathRepair()` was not at fault — it is unchanged since the spike
+and unit-pinned on exactly that string — so the lane now asserts the repair
+(does a GUI-launched app reach the check with launchd's PATH, can a login-shell
+probe answer from a process with no controlling terminal, does the widened PATH
+reach the sidecars) and leaves the inheritance premise to the manual check in
+`docs/DESKTOP_APP.md` §5. The domain's pre-existing PATH is attached on every
+run, so a runner image that stops widening it shows up as evidence rather than
+as a lucky pass. The spec also records how far beyond the stub the runner's own
+login shell reaches — recorded, not asserted, since a bare image whose login
+shell has nothing past `/etc/paths` makes the repair a correct no-op. The
 packaged `.app` is ad-hoc signed (`codesign --sign -`) before either pass
 launches it: arm64 macOS refuses to exec a Mach-O with no signature at all, and
 electron-builder invalidates whatever Electron's prebuilt arrived with. That is
