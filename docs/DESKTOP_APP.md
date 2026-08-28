@@ -65,7 +65,7 @@ not inferred.
 | Finding | Measurement |
 |-|-|
 | Electron and Node are different V8 ABIs | Host `node` 22.18.0 → `process.versions.modules` **127**. Electron 44 → Node 24.18.1, modules **149**. |
-| `better-sqlite3` cannot be hosted in Electron unrebuilt | The npm prebuild loads under `node`; under `ELECTRON_RUN_AS_NODE=1 electron` it fails with the "was compiled against a different Node.js version" error. Hosting the server in-process therefore requires `@electron/rebuild` on every Electron bump, per platform. |
+| ~~`better-sqlite3` cannot be hosted in Electron unrebuilt~~ — **no longer true, re-measured** | Was: the npm prebuild loaded under `node` and failed under `ELECTRON_RUN_AS_NODE=1 electron` with "was compiled against a different Node.js version", so hosting in-process would have needed `@electron/rebuild` on every Electron bump, per platform. `better-sqlite3` **13** is N-API, and the *same unrebuilt binary* now loads and opens a database under both: host `node` 22.18.0 (modules **127**) and Electron 44.0.0 (Node 24.18.1, modules **149**). Only the ABI objection is gone — the Codex row below is independent and still stands. |
 | `node-pty` is fine either way | It is a `node-addon-api` (N-API) addon: it loaded **and spawned a working pty** under Electron's runtime. Only the SQLite half is ABI-bound. |
 | An Electron binary is not a Node binary | `electron ./script.js` boots a Chromium app (here: aborts on the SUID sandbox check). `ELECTRON_RUN_AS_NODE=1 electron ./script.js` prints the script's output. |
 | **Hosting the server in Electron would break Codex turns** | `lib/agents/codex/driver.ts:58,74` registers the MCP tool bridge as `command: process.execPath, args: [calandria-mcp.mjs]` with a **closed four-key env** (`CALANDRIA_TASK_ID`, `CALANDRIA_PROJECT_ID`, `CALANDRIA_BASE_URL`, `SERVICE_TOKEN`). Inside Electron that `execPath` is the Electron binary and the child inherits no `ELECTRON_RUN_AS_NODE`, so every Codex turn would silently launch a GUI process instead of the bridge. |
@@ -83,6 +83,14 @@ probe alone would pass and fail later as an ABI error), and it strips every
 `ELECTRON_*` variable from the sidecar environment so nothing downstream — agent
 CLIs, MCP bridges, the user's login shell in the terminal panel — inherits
 Electron's runtime flags.
+
+The rule stands on one support now instead of two. `better-sqlite3` 13 removed
+the ABI objection (row 2), but the Codex one did not move: the driver registers
+the MCP bridge as `command: process.execPath` with a closed env, so inside
+Electron every Codex turn launches a GUI process instead of the bridge. That is
+a code fact, not a dependency version, and it is the reason the enforcement in
+`supervisor.js` is worth keeping even though the error it was first written
+against no longer reproduces.
 
 ## 3. Shell options
 
