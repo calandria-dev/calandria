@@ -16,20 +16,24 @@
 # bundle win32-x64, and does it load) in a way that generalizes past its Node.
 #
 # That last paragraph is what `npm install` does, and building this lane
-# measured that `npm ci` does NOT do it. A lockfile entry carries only a subset
-# of a package's manifest fields, and `gypfile` is not among them, so under
-# `npm ci` arborist reads it as `undefined` rather than `false`, finds the
-# `binding.gyp` that is still in the tarball, and synthesizes the default
-# `node-gyp rebuild` (@npmcli/arborist/lib/arborist/rebuild.js, `#addToBuildSet`).
-# `npm install` has the real manifest and skips it. Reproduced on npm 10.9.3
-# against nothing but better-sqlite3 13.0.3: `npm i` leaves no build/, `npm ci`
-# compiles; npm 11.19.1 does not. So the four assertions below are live checks
-# against a defect that exists in this repo TODAY, not guards against a
-# hypothetical one — on Linux the compile half-finishes and `npm ci` still
-# exits 0 because the bundled prebuild loads anyway, and on Windows it is the
-# `gyp ERR! find VS` wall that has main red. Until that is fixed this lane is
-# red on arrival on both legs, by design and for the correct reason; a first
-# red here is the finding, not a bug in the lane.
+# measured that `npm ci` does NOT do it — the first red run here was that
+# finding, not a bug in the lane. A lockfile entry carries only a subset of a
+# package's manifest fields, and `gypfile` is not among them, so under `npm ci`
+# arborist read it as `undefined` rather than `false`, found the `binding.gyp`
+# that is still in the tarball, and synthesized the default `node-gyp rebuild`
+# (@npmcli/arborist/lib/arborist/rebuild.js, `#addToBuildSet`). `npm install`
+# has the real manifest and skips it. Reproduced on npm 10.9.3 against nothing
+# but better-sqlite3 13.0.3: `npm i` leaves no build/, `npm ci` compiles — and
+# the same on 11.19.1 and 12.0.2, so there was no npm to upgrade to.
+#
+# It is fixed by writing `"gypfile": false` into the lockfile entry by hand,
+# which npm deletes again on any lockfile regeneration; tests/lockfileGypfile.test.ts
+# is the guard, and docs/WINDOWS.md has the whole account. That is worth knowing
+# here because THIS lane is where a regression shows up quietly. On Windows a
+# recurrence is loud (`gyp ERR! find VS`, a failed install); on Linux the
+# compile half-finishes and `npm ci` still exits 0, because the bundled prebuild
+# loads anyway. The better-sqlite3 assertion below and the whole-tree sweep at
+# the end are what turn that silent case into a red run.
 #
 # Three things outlive that, and they are what this lane covers:
 #

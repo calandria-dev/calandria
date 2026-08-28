@@ -20,9 +20,9 @@ instance runs on. Neither is a fallback for the other.
 `.github/workflows/test.yml` has a `windows-latest` job running `npm run typecheck` and
 `npm test` on every push and pull request, alongside the Ubuntu lanes. It also asserts
 that `better-sqlite3` loaded the **prebuilt** win32 binary shipped in its npm package
-rather than compiling one with the runner's MSVC — a node-gyp fallback would pass green
-here while failing for every user who doesn't have Visual Studio build tools, so it fails
-the job instead.
+rather than compiling one with the runner's MSVC — a node-gyp path is a failure for every
+user who doesn't have Visual Studio build tools, so it fails the job rather than being
+treated as a neutral substitute.
 
 That assertion used to be bounded by the Node it ran on, and it is not any more — which is
 worth recording, because a real desktop found the limit first. Every lane takes its Node
@@ -43,17 +43,41 @@ as well as five. The floor is enforced from the other end: `engine-strict=true` 
 means a Node below the declared range is refused with one `EBADENGINE` line instead of a
 compiler wall.
 
-Two caveats on that paragraph, both measured while building the lane below. The first is that
-it describes `npm install`, and CI runs `npm ci` — which is not the same thing here. A lockfile
-entry carries only a subset of a package's manifest fields and `gypfile` is not among them, so
-`npm ci` reads it as unset rather than `false`, finds the `binding.gyp` still in the tarball,
-and synthesizes the default `node-gyp rebuild` anyway. `npm install` has the real manifest and
-skips it. The second is that the runner's own MSVC no longer rescues that: node-gyp 11.5.0 does
-not recognise the Visual Studio 18 the current `windows-latest` image ships, so the fallback
-dies at `gyp ERR! find VS` rather than quietly compiling. What a Windows *user* is told to run
-is `npm install` throughout ([installation](INSTALLATION.md#native-windows)), so this is a CI
-and Docker-builder problem rather than theirs — but it is why the assertion above can fail on a
-tree that is perfectly fine for the people it was written to protect.
+That paragraph describes `npm install`, and it did not hold for `npm ci` — which is what CI,
+the Docker builder and anyone cloning the repo actually run. The gap turned both Windows lanes
+red and is worth recording, because the fix lives in a file nobody reads and npm undoes it on
+its own.
+
+A lockfile entry carries only a subset of a package's manifest, and `gypfile` is not among the
+fields npm copies into it. `npm ci` builds its tree from the lockfile rather than from the real
+manifests, so it read `gypfile` as unset instead of `false`, found the `binding.gyp` that is
+still in the published tarball, and synthesized the default `node-gyp rebuild` for a package
+that ships prebuilt binaries and asks for no such thing (`#addToBuildSet` in
+`@npmcli/arborist/lib/arborist/rebuild.js`, which tests `gypfile !== false && !install &&
+!preinstall && isNodeGypPackage(path)`). `npm install` has the manifest and skips it. Measured
+on every npm from 10.9.3 through 12.0.2 — the current release — so there is no version to
+upgrade to; what a Windows *user* is told to run is `npm install` throughout
+([installation](INSTALLATION.md#native-windows)), which is why this never reached them.
+
+What it cost differed by platform, and the quiet half is the reason it survived so long.
+On Windows `node-gyp rebuild` died at `gyp ERR! find VS` and `npm ci` exited non-zero; the
+runner's own MSVC did not rescue it, because node-gyp 11.5.0 does not recognise the Visual
+Studio 18 the current `windows-latest` image ships. On Linux and macOS it was silent:
+better-sqlite3's `binding.gyp` compiles nothing without `force_build`, so the run left a
+half-finished `build/` (a `config.gypi`, an empty `obj.target`, no linked `.node`) and exited
+0, because require-time resolution falls back to the bundled prebuild regardless. Nothing was
+broken there — it was an undeclared toolchain requirement waiting for the first machine
+without a compiler.
+
+The fix is one hand-written `"gypfile": false` on the `node_modules/better-sqlite3` entry in
+`package-lock.json`, which repairs every `npm ci` at once rather than the eleven places one is
+invoked across the workflows, the Dockerfile and the container test harness. Its cost is that
+npm deletes the field again every time it rewrites the lockfile — an `npm install`, a
+dependency bump, a Dependabot PR — so `tests/lockfileGypfile.test.ts` asserts it is still
+there, and sweeps `node_modules` for any other installed package with the same shape (a
+`binding.gyp`, `gypfile: false` in its own manifest, no install script) whose lock entry does
+not repeat it. If that test goes red, re-add the field by hand and commit it with the lockfile
+change that dropped it.
 
 A second `windows-latest` job runs the **end-to-end suite** — the same Playwright specs the
 Ubuntu lane runs, gated by the same expression rather than a schedule of its own, so it
