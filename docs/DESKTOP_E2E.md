@@ -423,7 +423,7 @@ gl renderer    llvmpipe (LLVM 20.1.2, 256 bits)
 node           v22.23.2
 ```
 
-### Three gotchas for the spec work
+### Four gotchas for the spec work
 
 **The session bus is not the systemd user bus.** `dbus-run-session` mints its
 own, and over SSH `pam_systemd` has *already* exported
@@ -459,6 +459,23 @@ the notifications are unaffected — but the shell now NOTICES the missing host
 (`desktop/tray-residency.js`), so on a session in this state the X button quits
 rather than hiding, which is what `11-bench-window.spec.ts` and
 `03-quit-drain.spec.ts` branch on.
+
+**`require` is not in scope inside `app.evaluate()`.** Playwright serialises the
+callback and evaluates its body in the main process, where it gets no CommonJS
+module wrapper — and `require` is a per-module parameter Node injects, not a
+global, so it is simply undefined (measured). The main process entry IS
+CommonJS, so reach its module's own require instead:
+
+```js
+const fs = process.mainModule.require("node:fs");
+```
+
+Verified populated under Electron 44, in both the dev shell and the packaged
+app. The failure mode is what makes this worth writing down: Electron's async
+stack stitching attributes the `ReferenceError: require is not defined` to
+whatever main-process frame happened to be live, so the trace points at
+unrelated application code (`rebuildTrayMenu`, in the case that found it) and
+reads like a bug in `desktop/main.js`. It is always the spec.
 
 ### Egress — answered
 
