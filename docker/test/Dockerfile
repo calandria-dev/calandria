@@ -13,13 +13,20 @@
 #   e2e  — base + the chromium build matching @playwright/test in the lockfile.
 #
 # WHY NOT mcr.microsoft.com/playwright:v<x>-noble, the obvious choice:
-# that image ships Node 24 and no compiler. better-sqlite3 publishes no Node 24
-# prebuild, so `npm ci` falls through to node-gyp and dies on
-# "gyp ERR! not found: make"; add the toolchain and the app still fails to boot
+# that image ships Node 24 and no compiler. better-sqlite3 published no Node 24
+# prebuild, so `npm ci` fell through to node-gyp and died on
+# "gyp ERR! not found: make"; add the toolchain and the app still failed to boot
 # with ERR_DLOPEN_FAILED / "Module did not self-register", which reads like a
 # product bug and fails every e2e spec including 01-onboarding. Putting the
 # browsers on a Node 22 base instead keeps us on the prebuild path for both
 # native modules (better-sqlite3, node-pty) and needs no compiler at all.
+#
+# Half of that reason has since expired and the conclusion has not: better-sqlite3
+# 13 is N-API and bundles its Linux binaries, so it no longer cares which Node
+# this image ships. node-pty still fetches a per-ABI prebuild and compiles when
+# that misses, and Node 22 is what .nvmrc pins and every other lane runs — so a
+# base matching it is still the right one, now for the boring reason rather than
+# the ABI one. Re-test before assuming the Playwright image would work today.
 #
 # The base tag is deliberately NOT digest-pinned the way the shipping Dockerfile
 # is. This image is dev tooling that never leaves the machine, reproducibility

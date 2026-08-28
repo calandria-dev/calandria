@@ -2,7 +2,7 @@
 
 Calandria runs on Windows two ways, both supported:
 
-- **Natively** — Windows 10 1809+ / Server 2019+, Git for Windows on `PATH`, Node 20.9+.
+- **Natively** — Windows 10 1809+ / Server 2019+, Git for Windows on `PATH`, Node 22+.
 - **Under WSL2** — the ordinary Linux build, unchanged.
 
 Setup for both is in [Installation → Windows](INSTALLATION.md#windows). Failure modes
@@ -19,20 +19,29 @@ instance runs on. Neither is a fallback for the other.
 
 `.github/workflows/test.yml` has a `windows-latest` job running `npm run typecheck` and
 `npm test` on every push and pull request, alongside the Ubuntu lanes. It also asserts
-that `better-sqlite3` installed from its **prebuilt** win32 binary rather than compiling
-with the runner's MSVC — a node-gyp fallback would pass green here while failing for
-every user who doesn't have Visual Studio build tools, so it fails the job instead.
+that `better-sqlite3` loaded the **prebuilt** win32 binary shipped in its npm package
+rather than compiling one with the runner's MSVC — a node-gyp fallback would pass green
+here while failing for every user who doesn't have Visual Studio build tools, so it fails
+the job instead.
 
-That assertion is bounded by the Node it runs on, and every lane takes its version from
-`.nvmrc` (22). So CI proves a prebuild exists **for the Node this repo pins**, and cannot
-prove one exists for whatever a user installed — which is the failure a real desktop found
-first: Node 26 from `nodejs.org`, no `better-sqlite3` binary for its ABI, and the silent
-node-gyp fallback dying in MSVC. Widening the matrix to every live Node line is not free
-(each is a second full Windows install and suite run), so the answer is
-[the troubleshooting entry](TROUBLESHOOTING.md#native-windows) plus keeping `better-sqlite3`
-current enough that its own `engines` range covers the Node people actually have — under this
-repo's `engine-strict=true`, that range is what refuses an unsupported Node up front, with a
-one-line error instead of a compiler wall.
+That assertion used to be bounded by the Node it ran on, and it is not any more — which is
+worth recording, because a real desktop found the limit first. Every lane takes its Node
+from `.nvmrc` (22), so the old check could only prove a prebuild existed **for the Node this
+repo pins**, never for whatever a user installed. On Node 26 from `nodejs.org` there was no
+`better-sqlite3` binary for that ABI, npm fell silently through to node-gyp, and it died in
+MSVC (see [the troubleshooting entry](TROUBLESHOOTING.md#native-windows)). Widening the CI
+matrix to every live Node line would not have been cheap — each is another full Windows
+install and suite run — and it is no longer the answer.
+
+`better-sqlite3` 13 is N-API. It ships one binary per platform triple *inside the npm
+package*, resolved at require time with no ABI to match, no download, and `gypfile: false`
+plus no `install` script, so there is no fallback left to be silent about. What CI now
+proves therefore generalizes past its own Node: that the package still bundles a win32-x64
+binary and that it loads. The residual risk moved with it — not "does a prebuild exist for
+this ABI" but "did better-sqlite3 drop this platform triple", which one Node version tests
+as well as five. The floor is enforced from the other end: `engine-strict=true` in `.npmrc`
+means a Node below the declared range is refused with one `EBADENGINE` line instead of a
+compiler wall.
 
 A second `windows-latest` job runs the **end-to-end suite** — the same Playwright specs the
 Ubuntu lane runs, gated by the same expression rather than a schedule of its own, so it

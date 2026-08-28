@@ -212,40 +212,54 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      # --foreground-scripts so the install scripts' output reaches the log.
-      # This job's most fragile step is invisible otherwise: better-sqlite3's
-      # install is `prebuild-install || node-gyp rebuild`, i.e. it DOWNLOADS a
-      # win32 binary for this Node ABI and silently compiles one with the
-      # runner's MSVC if that fetch fails. Both outcomes exit 0. We want to read
-      # which one happened, and the next step turns it into a verdict.
+      # --foreground-scripts so any install script's output reaches the log. It
+      # should now be a quiet step: better-sqlite3 13 sets `gypfile: false` and
+      # has no `install` script at all, so nothing here compiles or downloads a
+      # binary. That is what the next step exists to keep true.
       - run: npm ci --foreground-scripts
 
-      # Fail loudly when the prebuild download did not happen.
+      # Fail loudly if the win32 binary did not come from the package itself.
       #
-      # A node-gyp fallback is not a neutral substitute here. It only works
-      # because a GitHub runner happens to ship the MSVC build tools — no
-      # ordinary Windows user has them — so letting it pass green would mean
-      # this lane certifies an install path our users cannot reproduce, and the
-      # real failure ("gyp ERR! find VS") would land on them instead. It is also
-      # how the lane would first learn that better-sqlite3 stopped publishing a
-      # prebuild for the Node version in .nvmrc.
+      # Rewritten for better-sqlite3 13, which changed what can go wrong. Up to
+      # 12 the install was `prebuild-install || node-gyp rebuild`: it FETCHED a
+      # binary matching the running Node's ABI and silently compiled one with
+      # the runner's MSVC when that fetch found nothing. Both exited 0, so this
+      # step read which had happened from the leftovers (build/config.gypi and
+      # an MSBuild obj/ tree meant node-gyp). 13 is N-API and ships prebuilt
+      # binaries for eight platform triples INSIDE the npm tarball, resolved at
+      # require time by lib/binding.js — there is no ABI to match, no download,
+      # and no install script to fall back from.
       #
-      # The signal is what each path leaves behind: prebuild-install unpacks
-      # only build/Release/better_sqlite3.node, while node-gyp writes
-      # build/config.gypi and an MSBuild obj/ tree beside it.
-      - name: Assert better-sqlite3 installed from its win32 prebuild
+      # So the failure this guards against is now a narrower one: better-sqlite3
+      # dropping win32-x64 from the set it bundles, or a future version going
+      # back to compiling. Either lands on users as "gyp ERR! find VS" — a
+      # GitHub runner passes it only because it happens to ship MSVC build
+      # tools, which no ordinary Windows user has — so a node-gyp path is still
+      # a failure here rather than a neutral substitute.
+      #
+      # `build/` is therefore the inverted signal: under 13 a prebuild leaves
+      # none at all, so its mere existence means something compiled.
+      - name: Assert better-sqlite3 loaded its bundled win32 prebuild
         shell: bash
         run: |
           pkg=node_modules/better-sqlite3
-          if [ -f "$pkg/build/config.gypi" ] || [ -d "$pkg/build/Release/obj" ]; then
-            echo "::error::better-sqlite3 fell back to node-gyp: prebuild-install could not fetch a win32 binary for the Node version in .nvmrc. Read the npm ci step's output for the reason (network, or no prebuild published for this ABI). Do not paper over this — a Windows user without MSVC gets a failed install."
+          if [ -d "$pkg/build" ]; then
+            echo "::error::better-sqlite3 compiled from source: a build/ directory exists, which the bundled-prebuild path never creates. Read the npm ci step's output. Do not paper over this — a Windows user without MSVC gets a failed install."
             exit 1
           fi
-          if [ ! -f "$pkg/build/Release/better_sqlite3.node" ]; then
-            echo "::error::better-sqlite3 has no native binary at all after npm ci."
+          if [ ! -f "$pkg/prebuilds/win32-x64.node" ]; then
+            echo "::error::better-sqlite3 ships no win32-x64 prebuild in its package. Check whether the version in package-lock.json dropped this platform triple."
             exit 1
           fi
-          node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('better-sqlite3 prebuild loads and opens a database')"
+          # A prebuild present on disk still has to LOAD. `better-sqlite3/win32-x64`
+          # is an exported subpath that requires prebuilds/win32-x64.node directly,
+          # with none of the main entry's fallback to node-gyp locations — so it
+          # fails here rather than quietly succeeding via some other binary.
+          # (lib/binding.js, which owns the resolution, is deliberately not used:
+          # the exports map does not expose it, so requiring it is
+          # ERR_PACKAGE_PATH_NOT_EXPORTED.)
+          node -e "const D=require('better-sqlite3/win32-x64');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('bundled win32-x64 prebuild loads and opens a database')"
+          node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('default entry point resolves the same way the app does')"
 
       # Same two scripts the Ubuntu lanes run, for the same reasons — see the
       # `typecheck` and `unit` jobs above. Run in that order so the cheap static

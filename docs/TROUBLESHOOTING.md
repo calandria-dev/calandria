@@ -159,20 +159,28 @@ that is the actual cause:
 prebuild-install warn install No prebuilt binaries found (target=26.7.0 runtime=node arch=x64 libc= platform=win32)
 ```
 
-`better-sqlite3`'s install is `prebuild-install || node-gyp rebuild` — it downloads a binary
-built for your Node's ABI, and *silently compiles one from source* when there isn't one. There
-is no prebuild for a Node release newer than the `better-sqlite3` version in your checkout knows
-about, so the fallback runs, and it fails twice over: the addon uses V8 APIs that newer Node
-removed, and the LTO flags baked into Node's own `common.gypi` are clang spellings that MSVC's
-linker rejects. Neither is fixable by installing Visual Studio build tools — the source build
-cannot succeed on that Node at all.
+**This should not happen on a current checkout, and the version you are on is the first thing to
+check.** Up to `better-sqlite3` 12 the install was `prebuild-install || node-gyp rebuild`: it
+downloaded a binary matching your Node's *ABI*, and silently compiled one from source when there
+wasn't one — which there is not, for any Node newer than that release knew about. The fallback
+then failed twice over: the addon used V8 APIs newer Node removed, and the LTO flags in Node's
+own `common.gypi` are clang spellings (`-flto=thin`, `/opt:lldltojobs=<n>`) that MSVC's linker
+rejects. That second half hits *any* addon compiled with plain MSVC on such a Node, so
+**installing Visual Studio build tools does not help** — the source build cannot succeed at all.
 
-This is not really a Windows bug (the same Node would fail on Linux), but Windows is where it
-bites: `nodejs.org` offers *Current* as prominently as LTS, and the fallback compiler produces a
-wall of output that reads like a toolchain problem. Fix it from either end — install the Node
-`.nvmrc` pins (22, which is what CI runs), or update Calandria to a version whose
-`better-sqlite3` covers your Node. `npm ci` is not the workaround; the lockfile pins the same
-version.
+Calandria now depends on `better-sqlite3` 13, which is N-API: one binary per platform,
+ABI-stable across Node versions, shipped inside the npm package. There is no download, no
+`install` script, and no node-gyp fallback to be silent about. So if you are seeing this:
+
+- **You are on an older checkout.** Update, and delete `node_modules` before retrying — a
+  half-rolled-back install leaves directories npm then fails to replace (`EPERM: rmdir`).
+- **Or you are on a platform it ships no binary for.** It bundles `linux`, `darwin` and `win32`
+  × `x64`/`arm64` (plus musl variants for linux). Anything else — 32-bit Windows, armv7 — still
+  compiles from source, and needs a real toolchain.
+
+A Node *below* the supported floor is a different and much quieter failure: `.npmrc` sets
+`engine-strict`, so `npm install` refuses it outright with one `EBADENGINE` line instead of
+installing something that breaks later.
 
 **`MAX_PATH` — "Filename too long" on a task launch or an agent's `npm install`.** Git for
 Windows refuses paths over 260 characters unless `core.longpaths` is on, and a task's checkout

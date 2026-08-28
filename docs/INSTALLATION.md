@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 20.9 or newer
+- Node.js 22 or newer
 - macOS, Linux, or [Windows](#windows) — natively, or under WSL2
 - Claude Code, OpenAI Codex, or both
 
@@ -53,11 +53,11 @@ Prerequisites:
 - **Git for Windows, on `PATH`.** Calandria shells out to `git` for every worktree, diff
   and merge. Claude Code needs it too — `claude.exe` runs its Bash tool through Git Bash
   even when you launch it from PowerShell.
-- **Node.js 20.9 or newer — an LTS line for preference.** `.nvmrc` pins 22, which is what
-  CI runs. A newer *Current* release usually works, but it is the one prerequisite that can
-  fail loudly and confusingly: `better-sqlite3` publishes prebuilt binaries per Node ABI, and
-  on a Node it has no binary for, npm silently falls back to compiling it with MSVC. See
-  [Native Windows](TROUBLESHOOTING.md#native-windows) for what that looks like.
+- **Node.js 22 or newer.** `.nvmrc` pins 22, which is what CI runs; newer lines, including
+  *Current*, are fine. Both native modules are N-API, and both carry their win32 binaries
+  inside the npm package, so nothing compiles at install time and Visual Studio build tools
+  are not a prerequisite. A Node below the floor is refused by `npm install` with one line
+  rather than half-installing (`engine-strict` is set in `.npmrc`).
 
 Set git's long-path support once for the machine before you start:
 
@@ -114,12 +114,12 @@ Install a distribution, then do everything else **inside** it:
 wsl --install -d Ubuntu
 ```
 
-From the Ubuntu shell, install Node.js 20.9+, git, and the agent CLI you use — the
+From the Ubuntu shell, install Node.js 22+, git, and the agent CLI you use — the
 Windows-side copies are not usable from WSL2:
 
 ```bash
 sudo apt update && sudo apt install -y git
-# Node 20.9+ — nvm, or your distribution's preferred method
+# Node 22+ — nvm, or your distribution's preferred method
 npm install -g @anthropic-ai/claude-code
 npm install -g @openai/codex
 ```
