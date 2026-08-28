@@ -12,10 +12,11 @@
 #
 # DELIBERATELY NOT COVERED:
 #
-# - npm. The lockfile pins ~1k transitive packages and a personal fork does not
-#   want that PR volume; `npm audit` covers the security case — and actually
-#   runs now (the `audit` job in test.yml, on every push/PR, plus a weekly
-#   unattended run in security-scan.yml), not just claimed here. See issue #17.
+# - npm, AT THE ROOT. The lockfile pins ~1k transitive packages and a personal
+#   fork does not want that PR volume; `npm audit` covers the security case —
+#   and actually runs now (the `audit` job in test.yml, on every push/PR, plus a
+#   weekly unattended run in security-scan.yml), not just claimed here. See
+#   issue #17. `/website` is the deliberate exception; its entry below says why.
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
 # - The build engine (buildx + BuildKit) in publish-image.yml. Dependabot's
@@ -90,6 +91,26 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "ci"
+    labels: [dependencies]
+
+  # The one npm ecosystem this file DOES cover, and the exception is narrow on
+  # purpose. The root exclusion above is about volume and about `npm audit`
+  # already covering the security case; neither applies here. website/ is the
+  # calandria.dev Astro site (docs/design/WEBSITE.md) with a single direct
+  # dependency and ~190 transitive ones, and NOTHING else watches it — the
+  # `audit` job in test.yml and the weekly one in security-scan.yml both run
+  # against the root lockfile only, and test.yml now ignores website/** outright.
+  # Grouped into one PR so the site can never contribute more than a single
+  # weekly item to the queue.
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    groups:
+      website:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"
     labels: [dependencies]
 
   - package-ecosystem: docker

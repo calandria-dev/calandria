@@ -1,0 +1,148 @@
+# Builds website/ (the calandria.dev placeholder, docs/design/WEBSITE.md) and
+# deploys it to Cloudflare Pages. Deliberately separate from test.yml: the site
+# is an Astro project with its own package.json and its own lockfile, shares no
+# code with the app, and must never be able to fail the product's gate — the
+# reverse holds too, which is why test.yml and publish-image.yml ignore
+# website/** on their push/PR triggers.
+#
+# TRIGGERS. Push to main under website/** or docs/** is the production deploy;
+# docs/** is in there for phase 2, where the Starlight docs site reads
+# ../docs/*.md in place, so a docs-only edit really does change the site.
+# A pull_request run builds and (when it can) deploys to a PREVIEW URL —
+# `--branch` is what makes Cloudflare mint one instead of overwriting
+# production, since anything other than the project's production branch is a
+# preview deployment on Direct Upload.
+#
+# FORKS. A fork's PR gets no secrets, so the deploy step is gated on the
+# credentials actually being present rather than on `github.repository` — same
+# outcome for a fork, and it also degrades correctly on a clone of this repo
+# that has no Cloudflare account behind it. The BUILD still runs there: it is
+# the part that catches a broken site, and phase 2 relies on it to fail a PR
+# whose Markdown the docs build rejects.
+#
+# CREDENTIALS. `CLOUDFLARE_API_TOKEN` must carry Account -> Cloudflare Pages ->
+# Edit. When it does not, the failure is NOT a 403 and does not name Pages
+# permissions — the first deploy on main failed with, verbatim:
+#
+#   A request to the Cloudflare API (/accounts/<id>/pages/projects/calandria-dev)
+#   failed.  Authentication error [code: 10000]
+#   ...
+#   Failed to automatically retrieve account IDs for the logged in user.
+#
+# That second line is a red herring: the account id WAS supplied (it is right
+# there in the failing URL), and wrangler only falls back to discovering one
+# after the first call fails. Read the pair as "the token cannot see the Pages
+# project", which is a scope problem, not a targeting one.
+#
+# The account id is read from a secret OR a repo variable — it is not sensitive,
+# so either is fine, and this accepts whichever exists rather than dictating one.
+#
+# The action is pinned to a full commit SHA like every other action in this
+# repo (see .github/dependabot.yml for why the pin needs a bot behind it).
+# NOTE: the plan named wrangler-action v3; v4.0.0 is used because its ONLY
+# change is defaulting the installed Wrangler to v4 (v3 is the previous major
+# and the Wrangler docs assume 4.x), so pinning v3 here would have meant
+# pinning `wranglerVersion` by hand instead — a second version to rot.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - docs/**
+      - .github/workflows/website.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - website/**
+      - docs/**
+      - .github/workflows/website.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref. A superseded PR push has nothing worth finishing; a
+# superseded push to main does — cancelling mid-upload would leave production
+# on the older deployment, which is safe but confusing, so main runs to the end.
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      # Secrets are not readable from a step-level `if`, so they are lifted into
+      # the job env and the presence check reads THAT. Empty on a fork.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # The same .nvmrc the app uses (22), resolved to the latest 22.x.
+          # Astro's dependency floor is above 22.18, and the repo's .npmrc sets
+          # engine-strict, so a pinned-older Node would fail `npm ci` outright.
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - run: npm ci
+        working-directory: website
+
+      - run: npm run build
+        working-directory: website
+
+      # A branch name reaches the deploy as part of a command string, and on a
+      # pull_request it is `github.head_ref` — attacker-controlled on a fork.
+      # A fork gets no secrets so the deploy step below never runs there, but
+      # the name is validated rather than trusted anyway: it arrives through
+      # the environment (never expression-interpolated into a shell) and
+      # anything outside a branch-shaped charset stops the run.
+      - name: Resolve the deploy branch
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          case "$BRANCH" in
+            "" | *[!A-Za-z0-9._/-]*)
+              echo "::error::Refusing to deploy: branch name is not deploy-safe."
+              exit 1
+              ;;
+          esac
+          echo "DEPLOY_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: No Cloudflare credentials — build only
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: |
+          echo "::notice::Built website/dist but skipped the Cloudflare Pages deploy: no CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID (expected on a fork PR)."
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          # Run from website/ so the action installs Wrangler against the site's
+          # small lockfile instead of the app's (which would drag in
+          # better-sqlite3, node-pty and Playwright to upload a static folder).
+          workingDirectory: website
+          # `main` = the project's production branch = the production deploy.
+          # Anything else — a PR's head branch — becomes a preview deployment
+          # with its own URL.
+          command: pages deploy dist --project-name=calandria-dev --branch=${{ env.DEPLOY_BRANCH }}
+
+      - name: Summary
+        if: steps.deploy.outcome == 'success'
+        run: |
+          {
+            echo "### calandria.dev deployed"
+            echo
+            echo "- Deployment: ${{ steps.deploy.outputs.deployment-url }}"
+            echo "- Branch alias: ${{ steps.deploy.outputs.pages-deployment-alias-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
