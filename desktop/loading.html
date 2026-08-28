@@ -27,16 +27,12 @@
     <div class="dot"></div>
     <h1>Starting Calandria</h1>
     <div class="sub">Booting the local server and terminal sidecar…</div>
+    <!-- main.js appends sidecar output to #log with executeJavaScript, which is
+         not subject to this page's CSP. A cold Next boot is a few seconds; a
+         first-ever launch can be longer, and a silent spinner in that window is
+         indistinguishable from a hang. There is deliberately no script in this
+         page to receive it: `default-src 'none'` above blocks inline script, so
+         a helper defined here would never run. -->
     <pre id="log"></pre>
-    <script>
-      // main.js pushes sidecar output here via executeJavaScript. A cold Next
-      // boot is a few seconds; a first-ever launch can be longer, and a silent
-      // spinner in that window is indistinguishable from a hang.
-      const el = document.getElementById("log");
-      window.__log = (line) => {
-        el.textContent += line + "\n";
-        el.scrollTop = el.scrollHeight;
-      };
-    </script>
   </body>
 </html>

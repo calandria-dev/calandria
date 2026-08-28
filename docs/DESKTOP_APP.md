@@ -106,11 +106,36 @@ Working and tested (`desktop/test-supervisor.js`, 21 assertions; `desktop/test-r
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported as "another Calandria is already running", not as a crash.
 - A boot screen that streams sidecar logs, because a cold first launch is otherwise indistinguishable from a hang.
 
-**Unverified:** everything that needs a display. This machine is headless (no X,
-no Wayland, no Xvfb), so `main.js` has never rendered a window — window
-lifecycle, the macOS `hiddenInset` title bar, menu roles, the notification
-permission handler and external-link handling are all written but untested. First
-run on a desktop machine is the next step, and is likely to find small things.
+Also working and tested, since 2026-08-27, by the Playwright `_electron` suite in
+`desktop/e2e/` under a virtual display — the `desktop` job in
+`.github/workflows/test.yml` runs it on every push to main and on any PR
+carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
+
+- The window appears on the boot screen, the boot screen streams the supervisor's
+  log, and the window swaps to the app's own origin. (It did not stream anything
+  before this suite existed: `loading.html`'s CSP blocked its own inline script,
+  silently. Fixed.)
+- The application menu and its roles, and the two items the View menu owns.
+- The renderer is still a hardened browser tab — `contextIsolation`, `sandbox`,
+  no `nodeIntegration`, no preload.
+- The permission handler: notifications granted, everything else refused.
+- External links leave through `shell.openExternal` on both paths
+  (`setWindowOpenHandler` and `will-navigate`) and the window stays on the app.
+- A second launch is refused by the single-instance lock rather than racing for
+  the database.
+- The db-lock exit reaches the user as "another Calandria is already running".
+- `app.quit()` drains a live turn — the row is settled in SQLite after the
+  process is gone — and the server exits.
+- One smoke path through the app inside the window, so SSE and the renderer are
+  known to work under Electron's own network stack.
+
+**Still unverified:** everything that needs a *real* session rather than a
+virtual display — the macOS `hiddenInset` title bar, a window manager that
+reparents, a tray with an AppIndicator host, and a notification that actually
+reaches a daemon. (The suite has to point libnotify at a dead bus to run at all:
+without a notification daemon each native notification blocks Electron's main
+process for 25 s. See `DESKTOP_E2E.md` §1.) First run on a desktop machine is
+still a step worth taking, and is likely to find small things.
 
 Also not attempted: packaging (`electron-builder`), tray/menubar, deep links
 (`calandria://`), dock badge for the "N need you" count, window-bounds
