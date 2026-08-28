@@ -6,7 +6,12 @@
  * plain `node <script>` spawn with the shell's env (no npm, no `NODE_ENV=x`
  * shell prefix — which is also how this works on Windows, where package.json's
  * inline env assignment does not), on ports the shell picked rather than the
- * defaults, and that SIGTERM drains them.
+ * defaults, and that stopping them reaps both without escalation. What that
+ * stop MEANS differs by platform and this file deliberately asserts only the
+ * part that does not: on POSIX it is a SIGTERM the server drains on, on Windows
+ * a TerminateProcess it cannot hear. The drain itself is asserted in
+ * test-supervisor.js, which branches, and in desktop/e2e/03-quit-drain.spec.ts,
+ * which marks the Windows case test.fail().
  *
  * Requires `npm ci` + `npm run build` in the repo root first. Uses a throwaway
  * CALANDRIA_DB_DIR so it can never contend for the lock on your real database.
@@ -64,8 +69,12 @@ const { Supervisor } = require("./supervisor");
     check("db lives in the throwaway dir", () => assert.ok(log.includes(dbDir), "server did not report our CALANDRIA_DB_DIR"));
 
     await sup.stop();
-    check("both sidecars exited on SIGTERM", () => assert.ok(sup.children.every((c) => c.exited)));
-    check("nothing needed SIGKILL", () => assert.ok(!sup.recentLog(400).includes("SIGKILL")));
+    check("both sidecars were reaped by stop()", () => assert.ok(sup.children.every((c) => c.exited)));
+    // True on both platforms, for different reasons: POSIX because the server
+    // drained and exited inside the grace window, Windows because the first
+    // kill was already terminal. An escalation line here means a real server
+    // outlived its stop.
+    check("nothing needed the SIGKILL backstop", () => assert.ok(!sup.recentLog(400).includes("SIGKILL")));
   } catch (err) {
     failures++;
     console.log(`FAIL boot\n     ${err?.message || err}\n${sup.recentLog(30)}`);

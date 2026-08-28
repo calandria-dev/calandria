@@ -29,6 +29,7 @@
  * `CALANDRIA_E2E_MOCK_AGENT=1` deterministic driver, no agent CLI or login.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { _electron as electron, type ElectronApplication, type Page, type TestInfo } from "@playwright/test";
@@ -45,14 +46,21 @@ const REPO_ROOT = path.resolve(DESKTOP_DIR, "..");
 const PACKAGED = process.env.CALANDRIA_TEST_BIN || null;
 
 /**
- * CI-only. Chromium's setuid sandbox helper needs the SUID bit, which an
- * unpacked Electron (`node_modules/electron/dist`, or `electron-builder --dir`)
- * does not have — so the suite drops the sandbox to run at all on a runner. A
- * packaged `.deb`/AppImage installed as a user would install it DOES have it,
- * and the lane that tests that must set `CALANDRIA_DESKTOP_SANDBOX=1` so this
- * flag is not what makes it pass.
+ * Linux-only, and CI-only there. Chromium's setuid sandbox helper needs the
+ * SUID bit, which an unpacked Electron (`node_modules/electron/dist`, or
+ * `electron-builder --dir`) does not have — so the suite drops the sandbox to
+ * run at all on a runner. A packaged `.deb`/AppImage installed as a user would
+ * install it DOES have it, and the lane that tests that must set
+ * `CALANDRIA_DESKTOP_SANDBOX=1` so this flag is not what makes it pass.
+ *
+ * Not passed on Windows or macOS: neither has a setuid helper to be missing —
+ * Chromium sandboxes with a restricted token and a job object there — so the
+ * flag would buy nothing and would quietly weaken what those lanes test.
+ * `01-shell.spec.ts` asserts `sandbox: true` on the renderer's webPreferences,
+ * which is a different (and unaffected) setting: that is the renderer opting
+ * out of Node, this is the OS-level process sandbox.
  */
-const NO_SANDBOX = process.env.CALANDRIA_DESKTOP_SANDBOX !== "1";
+const NO_SANDBOX = process.platform === "linux" && process.env.CALANDRIA_DESKTOP_SANDBOX !== "1";
 
 /**
  * Base for the per-instance port pair. Distinct from the browser suite's 4711
@@ -99,6 +107,33 @@ export function instanceRoot(name: string): string {
   return root;
 }
 
+/**
+ * Linux-only, and load-bearing rather than tidy-up. Electron's default
+ * permission CHECK grants notifications, so `Notification.permission` reads
+ * "granted" in the shell with nothing asked, and the app posts a real native
+ * notification on every turn event (app/shell/useNotifications.ts). On Linux
+ * that is libnotify on the main thread: with a session bus present but NO
+ * notification daemon owning org.freedesktop.Notifications — which is every
+ * headless box and every GitHub runner — each one blocks the entire Electron
+ * main process for GDBus's 25 s call timeout. Measured: the quit-drain spec's
+ * shutdown went from >90 s (main process wedged, not even answering
+ * `app.evaluate`) to 0.2 s with this set. Pointing libnotify at a socket that
+ * is not there makes it fail immediately instead.
+ *
+ * Windows and macOS post notifications through the OS API directly, with no bus
+ * to misconfigure and no measured stall, so the variable is simply absent there
+ * rather than set to something inert — a `DBUS_SESSION_BUS_ADDRESS` in a
+ * Windows process's environment is a lie the sidecars would inherit.
+ *
+ * The bench-VM specs that assert notifications actually reach the bus must
+ * override this and run under a real session with a daemon (dunst) —
+ * docs/DESKTOP_E2E.md §1.
+ */
+const NO_NOTIFICATION_BUS: Record<string, string> =
+  process.platform === "linux"
+    ? { DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent/calandria-desktop-e2e-no-bus" }
+    : {};
+
 /** `SERVER_ENV`'s shape, repointed at one instance's own directories and ports. */
 export function instanceEnv(root: string, port: number): Record<string, string> {
   return {
@@ -115,22 +150,7 @@ export function instanceEnv(root: string, port: number): Record<string, string> 
     // Nothing here tests the ticker, and an unattended sweep inside a suite
     // that kills servers mid-run is only a source of noise.
     CALANDRIA_SCHEDULER: "off",
-    // Linux only in effect, and load-bearing rather than tidy-up. Electron's
-    // default permission CHECK grants notifications, so `Notification.permission`
-    // reads "granted" in the shell with nothing asked, and the app posts a real
-    // native notification on every turn event (app/shell/useNotifications.ts).
-    // On Linux that is libnotify on the main thread: with a session bus present
-    // but NO notification daemon owning org.freedesktop.Notifications — which is
-    // every headless box and every GitHub runner — each one blocks the entire
-    // Electron main process for GDBus's 25 s call timeout. Measured: the
-    // quit-drain spec's shutdown went from >90 s (main process wedged, not even
-    // answering `app.evaluate`) to 0.2 s with this set. Pointing libnotify at a
-    // socket that is not there makes it fail immediately instead.
-    //
-    // The bench-VM specs that assert notifications actually reach the bus must
-    // override this and run under a real session with a daemon (dunst) —
-    // docs/DESKTOP_E2E.md §1.
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent/calandria-desktop-e2e-no-bus",
+    ...NO_NOTIFICATION_BUS,
   };
 }
 
@@ -228,8 +248,27 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   return { app, win, origin, root, dbDir: path.join(root, "db"), firstUrl, bootScreenLog, log, proc };
 }
 
+/**
+ * The unpacked Electron this suite launches, spelled for the platform.
+ *
+ * `electron`'s own `index.js` exports exactly this path, but requiring it would
+ * mean resolving a module out of `desktop/node_modules` from a file compiled
+ * against the repo root's — so the three spellings are written out instead.
+ * They are stable across Electron majors and each one is what
+ * `electron-builder` unpacks too:
+ *
+ *   linux   dist/electron
+ *   win32   dist/electron.exe
+ *   darwin  dist/Electron.app/Contents/MacOS/Electron  (a .app, not a bare file)
+ */
 function electronBinary(): string {
-  const bin = path.join(DESKTOP_DIR, "node_modules", "electron", "dist", "electron");
+  const dist = path.join(DESKTOP_DIR, "node_modules", "electron", "dist");
+  const bin =
+    process.platform === "win32"
+      ? path.join(dist, "electron.exe")
+      : process.platform === "darwin"
+        ? path.join(dist, "Electron.app", "Contents", "MacOS", "Electron")
+        : path.join(dist, "electron");
   if (!fs.existsSync(bin)) {
     throw new Error(
       `Electron is not installed at ${bin}. Run \`npm run desktop:install\` from the repo root ` +
@@ -279,12 +318,39 @@ export async function quitShell(shell: Shell | null | undefined): Promise<void> 
   await shell.app.waitForEvent("close", { timeout: 60_000 }).catch(() => {});
   // Backstop: a shell that ignored the quit would hold its ports into the next
   // spec, which reads as an unrelated failure there.
-  if (shell.proc.exitCode === null && shell.proc.signalCode === null) {
-    try {
-      shell.proc.kill("SIGKILL");
-    } catch {
-      /* already reaped */
+  if (shell.proc.exitCode === null && shell.proc.signalCode === null) killTree(shell.proc.pid);
+}
+
+/**
+ * Kill the shell and everything under it — the backstop only, never the path a
+ * spec asserts on.
+ *
+ * The two branches are not interchangeable, and the Windows one is why this
+ * exists at all. `child.kill("SIGKILL")` on win32 is a `TerminateProcess` of
+ * that pid ALONE: the supervisor deliberately spawns its sidecars without
+ * `detached` (there, that would mean a new console window) and Node puts them
+ * in no job object, so killing the Electron process leaves `server.js` and
+ * `pty-server.js` running — orphaned, still holding the instance's ports and
+ * its database lock, and inherited by the runner's session rather than reaped.
+ * The next spec then fails on a collision that has nothing to do with it.
+ * `taskkill /T` is the tree walk that closes that gap (the same call
+ * lib/processTree.ts makes for managed services).
+ *
+ * POSIX keeps the plain signal rather than borrowing `killTree()`: that
+ * function's POSIX branch is `process.kill(-pid)`, and Playwright does not
+ * spawn Electron `detached`, so the negative pid names the TEST RUNNER's own
+ * process group.
+ */
+function killTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(pid, "SIGKILL");
     }
+  } catch {
+    /* already reaped */
   }
 }
 

@@ -1,7 +1,7 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Seven jobs, deliberately on different schedules:
+# Eight jobs, deliberately on different schedules:
 #
 #   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
@@ -35,6 +35,14 @@
 #           POSIX-only path spelling, a `/bin/sh` assumption or a process-group
 #           kill sails through green. This lane is what makes the support claim
 #           in README/INSTALLATION a fact rather than an intention.
+#   windows-desktop — the `desktop` suite on windows-latest. The shell's own
+#           Windows half is where its behaviour actually diverges: there is no
+#           deliverable SIGTERM, so `supervisor.stop()`'s kill is a
+#           TerminateProcess and the quit-drain degrades to a hard stop; the
+#           sidecars are in no job object, so a `taskkill` without `/T` orphans
+#           them; and `sidecarEnv()` has to invent a `SHELL` the pty sidecar can
+#           spawn because $SHELL is a POSIX convention. The Ubuntu lane runs the
+#           same specs and can say nothing about any of it.
 #   windows-e2e — `npm run test:e2e` on windows-latest. Same suite as `e2e`,
 #           and gated by the SAME expression, on the same reasoning doubled:
 #           a full `next build` plus a browser download plus a browser-driven
@@ -448,6 +456,104 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-windows-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows-desktop:
+    name: Desktop shell (Electron, Windows)
+    # The same expression again — see `windows-e2e` below for why all four slow
+    # lanes share one gate rather than each having a schedule of its own.
+    if: >-
+      ${{ inputs.e2e == 'on'
+          || (inputs.e2e != 'off'
+              && (github.event_name == 'push'
+                  || github.event_name == 'workflow_dispatch'
+                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+    #
+    # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).
+    # docs/DESKTOP_E2E.md §4 left that open; this lane closes it, and the
+    # deciding question is what a real logged-in Windows session buys.
+    #
+    # For the LINUX desktop lane the answer was "quite a lot" — hence the bench
+    # VM — because a runner there has no display at all and `xvfb-run` hides a
+    # whole class of window-manager and compositor behaviour. Windows has no
+    # equivalent gap for what this suite asserts: a hosted runner has a real
+    # window station and desktop, Electron opens a genuine window on it, and
+    # `01-shell.spec.ts` screenshots it. Note the absence of any display setup
+    # in the steps below — that is the difference, not an omission.
+    #
+    # The two existing windows-latest jobs already prove the base this stands
+    # on: `windows` runs the unit suite, and `windows-e2e` boots the real
+    # server.js + pty sidecar through scripts/start.mjs and drives Chromium
+    # against them. All this lane adds on top is Electron.
+    #
+    # And the costs run the other way. Hosted minutes are free on a public repo;
+    # a self-hosted Windows runner would need a licence and an activation story,
+    # its own fork-PR gating (a fork PR executing arbitrary code on a VM sitting
+    # on VLAN 3), ephemeral registration with snapshot rollback, and patching —
+    # none of which this suite's assertions would be any better for. The
+    # native-integration specs that DO need a real session (tray icon with a
+    # live shell, notification centre, window manager) are their own lane on the
+    # bench, and remain so.
+    runs-on: windows-latest
+    # Twice the Ubuntu `desktop` job's 30, matching `windows-e2e`: same
+    # production build, plus Electron's ~100 MB download and a runner where
+    # every process spawn costs more.
+    timeout-minutes: 60
+    steps:
+      # Same pair, same reasons, as the `windows` job — see there. They govern
+      # the checkout, so they come before it.
+      - name: Pin git's Windows checkout semantics
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # No better-sqlite3 prebuild assertion here, unlike the `windows` job: it
+      # runs on the same commit under the same gate, so duplicating it would
+      # only mean two jobs reporting one fact. This lane still exercises the
+      # module — desktop/test-real-boot.js and every _electron spec boot the
+      # real server against a real database.
+      - run: npm ci
+
+      - name: Build the app the shell serves
+        run: npm run build
+
+      # See the Ubuntu `desktop` job: Electron lives in desktop/'s own private
+      # package, and the install script passes --include=dev then runs
+      # electron/install.js explicitly because a NODE_ENV=production environment
+      # makes npm report "up to date" and fetch nothing.
+      - name: Install Electron
+        run: npm run desktop:install
+
+      # No `xvfb-run` and no `--no-sandbox`. The Ubuntu lane needs both; this
+      # one needs neither, and desktop/e2e/fixtures.ts gates the sandbox flag on
+      # `process.platform === "linux"` precisely so the Windows lane is not
+      # quietly testing an unsandboxed Chromium.
+      #
+      # The Windows-only specs live in desktop/e2e/05-windows-quit.spec.ts and
+      # skip themselves everywhere else; 03-quit-drain's database assertion is
+      # marked `test.fail()` here, because the drain genuinely does not happen
+      # on Windows yet. That annotation is load-bearing: when the shell learns
+      # to POST /api/instance/drain before killing, this lane goes RED on the
+      # unexpected pass and the annotation has to come off with the fix.
+      - name: Run the desktop suite
+        run: npm run test:desktop
+
+      - name: Upload desktop artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-artifacts-windows-${{ github.run_attempt }}
           path: |
             test-results/
             playwright-report/

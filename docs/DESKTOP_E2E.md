@@ -42,14 +42,15 @@ today.
    half — notifications, tray, window manager behaviour, packaged `.deb`/
    AppImage install — and doubles as the machine where "first run on a machine
    with a display" actually happens.
-3. **Windows is unblocked** (revised — it said "defer" when this was written).
-   The server's Windows blockers were open then; they have since landed.
-   [`WINDOWS.md`](WINDOWS.md) exists and `.github/workflows/test.yml` carries
-   both a `windows` and a `windows-e2e` job, so a desktop lane on GitHub-hosted
-   `windows-latest` now tests a server that works — and should **copy those two
-   jobs' runner setup rather than re-derive it**. The Proxmox template
-   (`windows-11-template`, VMID 9911) stays the fallback for anything a hosted
-   runner cannot reach.
+3. **Windows landed on the hosted runner** (revised twice — it said "defer"
+   when this was written, then "unblocked"). The server's Windows blockers were
+   open then; they have since landed, and `.github/workflows/test.yml` now
+   carries a `windows-desktop` job alongside `windows` and `windows-e2e`, whose
+   runner setup it copies. The Proxmox template (`windows-11-template`, VMID
+   9911) was not needed and is not used: §4 has the reasoning, but the short
+   version is that a hosted Windows runner already has a real window station,
+   so the display argument that justifies the Linux bench has no counterpart
+   here.
 4. **macOS is not a homelab problem.** No Apple hardware, and Proxmox cannot
    legally run macOS. Use GitHub-hosted `macos-latest` (free for this public
    repo) when packaging work starts, and accept that until then macOS is
@@ -130,7 +131,7 @@ anything requiring a signed installer until installers exist.
 |-|-|-|-|
 | **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; `electron-builder --dir` + the same suite against the artifact once packaging exists | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
 | **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb`/AppImage install-and-run with the SUID sandbox intact, VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
-| **desktop-windows** | GitHub-hosted `windows-latest` (Proxmox template 9911 as the fallback) | The shell's Windows half: `TerminateProcess` vs graceful drain, `COMSPEC` shell, packaged NSIS run | Unblocked — the Windows-support group landed; reuse the existing `windows`/`windows-e2e` jobs' setup |
+| **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Packaged NSIS run when packaging reaches Windows | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
 | **desktop-macos** | GitHub-hosted `macos-latest` | launchd PATH repair against a real GUI PATH, `hiddenInset` title bar, notarization smoke | When packaging starts |
 
 Two facts that shape the later lanes. On Windows, `before-quit`/`will-quit` are
@@ -141,6 +142,40 @@ the real OS-shutdown path. And GitHub-hosted minutes are free for a public repo
 (2026 paid rates, for reference: Linux $0.006/min, Windows $0.010, macOS
 $0.062 on a 3-vCPU M1) — so the argument for a self-hosted runner here is
 capability and watchability, never cost.
+
+**Why the Windows lane is hosted rather than the homelab's VM 9911.** The
+deciding question is what a real logged-in session buys, and on Windows the
+answer is nothing this suite asserts. A hosted `windows-latest` runner has a
+real window station and desktop: Electron opens a genuine window on it and
+`01-shell.spec.ts` screenshots it, with no display server to install — the
+`windows-desktop` job has no display step at all, which is exactly the
+difference from the Ubuntu one. The base was already proven twice over in this
+repo's own CI before the lane existed (`windows` runs the unit suite; `windows-e2e`
+boots `server.js` + the pty sidecar through `scripts/start.mjs` and drives
+Chromium against them), so all the desktop lane adds is Electron. Against that,
+a self-hosted Windows runner costs a licence and an activation story, its own
+fork-PR gating, ephemeral registration with snapshot rollback, and patching. The
+Linux bench VM exists because a Linux runner has **no** display and `xvfb` hides
+a class of window-manager and compositor behaviour; that argument has no Windows
+counterpart, and the native-integration specs that genuinely need a live session
+stay on the bench where they belong.
+
+What the landed lane pins, beyond re-running the shared specs:
+`desktop/e2e/05-windows-quit.spec.ts` (win32-only) asserts that a plain
+`taskkill` runs `before-quit` and takes the sidecars with it, and that
+`taskkill /F` without `/T` orphans them — which is why the suite's own teardown
+backstop uses `/T`. `03-quit-drain.spec.ts`'s database assertion is marked
+`test.fail()` on Windows rather than skipped: the drain really does not happen
+there, and an expected failure that starts passing turns the lane red the day
+the shell learns to POST `/api/instance/drain` before killing, forcing the
+annotation off in the same change. `desktop/test-supervisor.js` branches rather
+than skips on the same three POSIX-semantics cases (`stop()`'s drain, the
+SIGKILL escalation, `needsPathRepair`), and adds the two Windows behaviours
+worth naming: `sidecarEnv()` filling in a `SHELL` from `COMSPEC` (falling back
+to `powershell.exe`, never overwriting an inherited one), and the sidecars being
+a bare `node <script>` spawn carrying `NODE_ENV` in the env object — no
+`NODE_ENV=x` prefix for `cmd.exe` to read as a program name, no shell in
+between.
 
 **Self-hosted runners on a public repo are a security decision, not a
 convenience.** A fork PR can execute arbitrary code on a self-hosted runner, and
@@ -182,7 +217,7 @@ would install it, SUID sandbox and all.
 | The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (11 specs over four files) with `desktop/test-window.js` retired into it |
 | Bench VM | 4 vCPU / 8 GiB / 60 GiB on orion3 + one Ansible inventory entry; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
-| Windows lane | Free minutes on GitHub-hosted `windows-latest`, and no longer blocked; the licensing/activation story only bites if it moves onto the Proxmox template |
+| Windows lane | Landed: free minutes on GitHub-hosted `windows-latest`, ~2x the Ubuntu lane's wall clock. Deliberately not the Proxmox template — see §4 |
 | macOS lane | Free minutes; the real cost is signing/notarization, already priced in `DESKTOP_APP.md` §6 |
 
 ## 7. Next steps
@@ -196,5 +231,7 @@ would install it, SUID sandbox and all.
    (4741, clear of the browser suite's 4711).
 3. Provision the bench VM and register the gated ephemeral runner.
 4. Add `electron-builder` packaging, then point the same suite at the artifact.
-5. Windows and macOS lanes. Windows is no longer waiting on anything; macOS
-   waits for packaging.
+5. ~~Windows lane.~~ **Done** — the `windows-desktop` job, GitHub-hosted, with
+   `05-windows-quit.spec.ts` for the `taskkill` paths. The drain gap it pins is
+   its own task ("Desktop shell: drain in-flight turns on quit under Windows").
+6. macOS lane. Waits for packaging.
