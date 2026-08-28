@@ -29,7 +29,8 @@ Env it understands:
 | `CALANDRIA_NODE` | Node binary the sidecars run under. Set this if `node` isn't on the GUI PATH. |
 | `CALANDRIA_REPO_ROOT` | Repo to launch (defaults to the parent of `desktop/`). |
 | `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). |
-| `PORT` / `PTY_PORT` | Preferred ports. Taken ones are stepped past, not fought over. |
+| `PORT` / `PTY_PORT` | Preferred ports for the two sidecars. Taken ones are stepped past, not fought over — a preference, not a demand, so a second Calandria on a dev box still launches. |
+| `CALANDRIA_DB_DIR` | Which database to open. The shell doesn't read it: it reaches the sidecars by ordinary env inheritance, like the rest of the app's config below. (Same for its legacy `ORCH_DB_DIR` alias.) |
 
 Everything else is the app's own config (`.env`, `lib/config.ts`) and is
 inherited unchanged.
@@ -41,7 +42,7 @@ inherited unchanged.
 | `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 18 assertions over `supervisor.js`, against stub sidecars. No deps, no display. |
+| `test-supervisor.js` | 21 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `test-window.js` | The window layer, driven by Playwright's Electron driver under a virtual display — boot, title, menu, renderer hardening, screenshot, single-instance, quit-drains. Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). |

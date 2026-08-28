@@ -14,7 +14,7 @@
 
 const { app, BrowserWindow, Menu, shell, dialog, session } = require("electron");
 const path = require("node:path");
-const { Supervisor } = require("./supervisor");
+const { Supervisor, preferredPorts } = require("./supervisor");
 
 const REPO_ROOT = process.env.CALANDRIA_REPO_ROOT || path.resolve(__dirname, "..");
 const LOADING_PAGE = `file://${path.join(__dirname, "loading.html")}`;
@@ -139,6 +139,10 @@ function hardenSession() {
 async function boot() {
   supervisor = new Supervisor({
     repoRoot: REPO_ROOT,
+    // PORT/PTY_PORT are documented as env the shell understands, so read them
+    // here — the Supervisor's own 3000/3001 are the fallback, not the policy.
+    // Still preferences: a busy one is stepped past (see pickPorts).
+    ...preferredPorts(process.env),
     resourcesPath: app.isPackaged ? process.resourcesPath : null,
     onLog: (line) => {
       // Two consumers: the terminal a developer launched us from, and the

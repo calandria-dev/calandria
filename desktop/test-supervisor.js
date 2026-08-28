@@ -13,7 +13,7 @@ const net = require("node:net");
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
-const { Supervisor, pickPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
+const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 
 const HERE = __dirname;
 const stubOpts = (extra = {}) => ({
@@ -231,6 +231,54 @@ function hold(port) {
 
   await test("waitForReady gives up rather than hanging", async () => {
     await assert.rejects(() => waitForReady(45199, { timeoutMs: 400, intervalMs: 50 }), /did not become ready/);
+  });
+
+  await test("preferredPorts reads PORT/PTY_PORT and ignores junk", async () => {
+    assert.deepEqual(preferredPorts({ PORT: "4830", PTY_PORT: "4831" }), { port: 4830, ptyPort: 4831 });
+    assert.deepEqual(preferredPorts({ PORT: " 4830 " }), { port: 4830 });
+    // Absent/unusable values must leave the option UNSET, not pass a 0 or NaN
+    // through — the Supervisor's `opts.port || 3000` fallback is the intended
+    // default, and sidecarEnv treats 0 as "don't set PORT at all".
+    assert.deepEqual(preferredPorts({}), {});
+    for (const bad of ["", "0", "-1", "70000", "http://x", "3000.5", "3000a"]) {
+      assert.deepEqual(preferredPorts({ PORT: bad, PTY_PORT: bad }), {}, `PORT=${bad} should be dropped`);
+    }
+  });
+
+  await test("a PORT/PTY_PORT preference is honoured, and still stepped past when busy", async () => {
+    const base = 45210;
+    const held = await hold(base);
+    const sup = new Supervisor(stubOpts(preferredPorts({ PORT: String(base), PTY_PORT: String(base + 10) })));
+    try {
+      assert.equal(sup.preferredPort, base);
+      assert.equal(sup.preferredPtyPort, base + 10);
+      const res = await sup.start();
+      // Preference, not demand: base is taken, so the app lands just past it —
+      // what makes a second Calandria on a dev box survivable. The free
+      // preference is honoured exactly.
+      assert.equal(res.port, base + 1);
+      assert.equal(res.ptyPort, base + 10);
+      assert.equal(res.url, `http://127.0.0.1:${base + 1}`);
+    } finally {
+      // In the finally, not after the asserts: a failed assertion here would
+      // otherwise leave both stubs holding the very ports the next run probes.
+      await sup.stop();
+      held.close();
+    }
+  });
+
+  await test("main.js actually passes the env ports to the Supervisor", async () => {
+    // The bug this pins was entirely in the WIRING: supervisor.js supported
+    // `port`/`ptyPort` all along and main.js never passed them, so a documented
+    // PORT=4830 launch bound 3002. Nothing here can be exercised without a
+    // display, so assert on the source — main.js is `require("electron")` at
+    // line 1 and cannot be loaded by this runner.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const ctor = src.indexOf("new Supervisor(");
+    const wiring = src.indexOf("...preferredPorts(process.env)");
+    assert.notEqual(ctor, -1, "main.js should construct a Supervisor");
+    assert.notEqual(wiring, -1, "main.js must pass PORT/PTY_PORT to the Supervisor");
+    assert.ok(wiring > ctor, "the ports must go INTO the Supervisor's options");
   });
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

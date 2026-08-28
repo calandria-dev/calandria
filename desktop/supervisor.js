@@ -41,6 +41,30 @@ function portFree(port) {
 }
 
 /**
+ * `PORT`/`PTY_PORT` off an environment, as the Supervisor's `port`/`ptyPort`
+ * options. A *preference*, not a demand — `pickPorts` still steps past a busy
+ * one, which is what makes a second Calandria on a dev box survivable.
+ *
+ * Lives here rather than in `main.js` so it can be tested without a display,
+ * and so the shell's one line of wiring stays a spread with nothing to get
+ * subtly wrong. Junk (non-numeric, 0, out of range) is dropped rather than
+ * passed on: `pickPorts` would probe from it and `sidecarEnv` treats 0 as
+ * "unset", so a typo'd PORT would silently land the app back on 3000.
+ */
+function preferredPorts(env = process.env) {
+  const out = {};
+  const num = (raw) => {
+    const n = Number(String(raw ?? "").trim());
+    return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+  };
+  const port = num(env.PORT);
+  const ptyPort = num(env.PTY_PORT);
+  if (port) out.port = port;
+  if (ptyPort) out.ptyPort = ptyPort;
+  return out;
+}
+
+/**
  * Prefer the documented defaults (3000/3001) so a user's bookmarks, their
  * `PUBLIC_BASE_URL`, and any project's managed services keep working — but
  * never fail to launch because something else holds them. A developer running
@@ -397,6 +421,7 @@ class Supervisor {
 module.exports = {
   Supervisor,
   pickPorts,
+  preferredPorts,
   portFree,
   resolveNode,
   sidecarEnv,
