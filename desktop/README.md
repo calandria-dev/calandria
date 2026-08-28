@@ -226,8 +226,10 @@ helper to be missing, so the flag would only weaken what those lanes test.
 
 `e2e/05-windows-quit.spec.ts` is win32-only and skips itself elsewhere. It
 covers what happens when something *outside* the app ends it — a plain
-`taskkill` runs `before-quit` and the sidecars go with the shell; `taskkill /F`
-without `/T` is a `TerminateProcess` that orphans them. `03-quit-drain.spec.ts`'s
+`taskkill` is a `WM_CLOSE`, which close-to-tray answers by hiding the window and
+leaving the sidecars running (a real `app.quit()` is what reaps them, and the
+same test goes on to show it); `taskkill /F` without `/T` is a
+`TerminateProcess` that orphans them. `03-quit-drain.spec.ts`'s
 database assertion no longer needs a Windows exception: `supervisor.stop()`
 POSTs `/api/instance/drain` itself and waits for it before it ever sends the
 kill, so the turn is settled whether or not the platform can deliver a signal,
