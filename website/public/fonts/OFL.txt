@@ -1,0 +1,18 @@
+Both faces in this directory are licensed under the SIL Open Font License 1.1.
+
+  spectral-500-latin.woff2
+    Spectral, Medium (500), latin subset.
+    Copyright 2017 The Spectral Project Authors
+    https://github.com/productiontype/Spectral
+
+  source-sans-3-variable-latin.woff2
+    Source Sans 3, variable weight axis (200-900), latin subset.
+    Copyright 2010-2023 Adobe (http://www.adobe.com/)
+    https://github.com/adobe-fonts/source-sans
+
+Full licence text: https://openfontlicense.org/open-font-license-official-text/
+
+The subsets were taken from the Fontsource distributions of the upstream
+releases (@fontsource/spectral, @fontsource-variable/source-sans-3, both
+5.3.0) and vendored rather than pulled as a dependency: the placeholder needs
+exactly two files, and vendoring keeps the site's only npm dependency Astro.

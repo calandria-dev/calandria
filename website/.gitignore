@@ -1,0 +1,5 @@
+# Astro build output and caches. The site is built in CI (website.yml) and by
+# `npm run build` here; nothing in dist/ is committed.
+dist/
+.astro/
+node_modules/
