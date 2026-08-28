@@ -16,6 +16,12 @@ because every agent verified locally and nobody watched Actions.
   old push-and-watch rule did not have to think about: `gh pr view --json mergeStateStatus` is
   where "red", "behind main" and "needs a review" are distinguishable, and only the last of those
   is the user's to clear.
+- **`--watch` exits 0 on "no checks reported".** Run straight after `gh pr create`, it sees an
+  empty check list — the runs take a few seconds to register against the head SHA — and returns
+  success having watched nothing, which reads exactly like a green PR. Observed on PR #55, whose
+  six jobs were queued the whole time. Confirm with `gh run list --branch <branch>` (or
+  `gh pr view --json statusCheckRollup`) that checks EXIST before believing an empty watch, and
+  re-watch if they do. An empty result is never terminal state.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
