@@ -114,6 +114,58 @@ change; preview deploy on PRs). Registrar transfer to Cloudflare is a later,
 optional step: check the registration date first (60-day ICANN lock), and wait
 45 days after any DreamHost renewal or the transfer year is forfeited.
 
+### Phase 1 outcome (2026-08-28)
+
+**Repo side: done.** `website/` (Astro 7, one page, one dependency),
+`.github/workflows/website.yml`, and the hygiene items below. `website/README.md`
+is the working doc for phases 2 and 3.
+
+**Cloudflare side: still steps 4–6 above, unchanged.** The phase-1 session had
+the `cloudflare-api` MCP server and could read the account freely, but every
+WRITE was refused by the Claude Code auto-mode classifier (creating a Pages
+project, attaching a domain, editing a ruleset are all outward-facing changes to
+a live account). Nothing was created. State read from the API at the time, so
+the console steps can be checked against it:
+
+| Fact | Value |
+|-|-|
+| Pages projects on the account | **none** — `calandria-dev` is still free |
+| `calandria.dev` zone | `active`, Free plan |
+| DNS records in the zone | **zero** — the apex still resolves to nothing |
+| SSL/TLS mode | **`full`, not `full` (strict)** — step 6 is a real change, not a confirmation |
+
+Because no Pages project exists yet, the **Pages vs Workers static assets**
+decision recorded above is still open — the "revisit it before phase 1 creates
+the project" window has not closed. Switching now costs a `wrangler.jsonc` and
+one line of `website.yml`; switching after costs a migration.
+
+What phase 1 learned, beyond the plan:
+
+- **Node floor.** Astro 7 needs Node ≥22.12 and its dependency tree (undici 8)
+  needs ≥22.19, so `website/package.json` declares `>=22.19` — above `.nvmrc`'s
+  `22`, which is fine in CI (`setup-node` resolves the latest 22.x) but means a
+  host on an older 22.x cannot `npm ci` the site. The repo's `.npmrc` sets
+  `engine-strict` and **applies to `website/` too**, so that is a hard failure
+  with a clear message rather than a warning.
+- **Fonts are vendored, not depended on.** `@fontsource/*` would have been two
+  npm dependencies and a Vite-emitted asset graph to get two woff2 files; the
+  latin subsets are copied into `website/public/fonts/` instead, with
+  provenance and the OFL notice in `public/fonts/OFL.txt`. Site dependency
+  count: one (Astro).
+- **`public/` cannot reach outside the project root**, so `favicon.svg` and
+  `og.png` are copies of the handoff originals, not links. Re-copy on change.
+- **`wrangler-action` is pinned to v4.0.0, not the v3 the plan named.** v4's
+  only change is defaulting the installed Wrangler to v4; staying on v3 would
+  have meant pinning `wranglerVersion` by hand — a second version to rot.
+- **`tsconfig.json` had to exclude `website`.** Its `include` is `**/*.ts`, and
+  its `exclude` is relative to the repo root, so `website/node_modules` would
+  otherwise have been dragged into `npm run typecheck`.
+- **`.dev` HSTS, restated as an ordering rule**: attach the custom domains
+  (step 4) and let Cloudflare issue the cert BEFORE anyone links to the site.
+  Pages serves a valid certificate from the moment the domain is attached, even
+  with no deployment behind it, so the order in this plan is safe — what is not
+  safe is any DNS record pointing anywhere else.
+
 ## Phase 2 — docs site
 
 - Starlight content collection with a custom `glob()` loader over `../docs/*.md`
@@ -153,15 +205,25 @@ OG image already exists (`docs/design/og.png`).
 
 ## Repo hygiene the site adds
 
+All of these landed in phase 1.
+
 - `release-please-config.json`: `"exclude-paths": ["website"]` on the root package
   so site-only commits don't land in the release PR. Known quirks
   (release-please #2301) — verify against the next real release PR rather than
   trusting the config.
-- `test.yml` and friends: `paths-ignore: [website/**]` so a site-only PR doesn't
-  spend the full e2e matrix; `website.yml` runs the site build instead.
-- Dependabot/Renovate: group the `website/` ecosystem so its `package.json`
-  doesn't double the PR queue.
-- `Dockerfile` / `.dockerignore`: exclude `website/` from the image context.
+- `test.yml` and `publish-image.yml`: `paths-ignore: [website/**]` on their
+  `push`/`pull_request` triggers, so a site-only PR spends neither the Windows
+  lanes nor a multi-arch container build; `website.yml` runs the site build
+  instead. Note the filter skips only when EVERY changed file is under
+  `website/`, so a mixed PR still runs the full gate. `test-shuffle.yml` and
+  `security-scan.yml` need nothing — both are `schedule`-only, and a path filter
+  has no meaning on a cron trigger.
+- Dependabot: `/website` is added as the file's one npm ecosystem, grouped into
+  a single weekly PR. This is a deliberate exception to that file's blanket npm
+  exclusion, because nothing else watches the site — both `npm audit` runs are
+  against the root lockfile, and `test.yml` now ignores `website/**` outright.
+- `.dockerignore`: `website` excluded from the image context.
+- `tsconfig.json`: `website` added to `exclude` (see the phase-1 outcome above).
 
 ## Sources
 

@@ -58,11 +58,24 @@
 # file is the same pair plus the typecheck, split so the fast parts report fast.
 name: Test
 
+# `paths-ignore: website/**` keeps the site out of this gate. website/ is the
+# calandria.dev Astro project (docs/design/WEBSITE.md) — its own package.json,
+# its own lockfile, no import into the app — so a site-only change cannot break
+# anything here, and running the Windows lanes plus a full production build for
+# a copy edit is the wrong bill. website.yml builds and deploys it instead.
+# Note this filter cannot hide a mixed change: a PR that touches website/ AND
+# app code still runs, because paths-ignore skips only when EVERY changed file
+# matches. docs/** is deliberately NOT ignored — docs live beside the code and
+# a docs change can accompany one.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - website/**
   pull_request:
     branches: [main]
+    paths-ignore:
+      - website/**
     # `labeled` is here so adding the `e2e` label to an open PR actually starts
     # an e2e run instead of waiting for the next push. The cost is that any
     # label change re-runs `unit`; the concurrency group below cancels the
