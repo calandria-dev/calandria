@@ -24,6 +24,14 @@ const {
   shouldNotify,
   trayTooltip,
 } = require("./notifier");
+const {
+  confirmTrayResidency,
+  parseDbusBoolean,
+  parseDbusPid,
+  parseDbusStrings,
+  probeTrayResidency,
+  splitTrayItem,
+} = require("./tray-residency");
 
 const HERE = __dirname;
 // Three cases below assert POSIX process semantics rather than merely using
@@ -644,6 +652,229 @@ function hold(port) {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Is the tray icon really there? (tray-residency.js). The probe talks to a
+  // session bus, so every case below injects the `exec` instead — what is being
+  // pinned is the VERDICT each reply implies, and in particular the difference
+  // between "the session said no" and "the session could not be asked", which
+  // is the distinction the close handler hangs on.
+  // ---------------------------------------------------------------------------
+
+  // Replies as the two CLIs really print them, captured on the bench.
+  const GDBUS_TRUE = "(<true>,)\n";
+  const GDBUS_FALSE = "(<false>,)\n";
+  const GDBUS_ITEMS = (...names) => `(<[${names.map((n) => `'${n}'`).join(", ")}]>,)\n`;
+  const GDBUS_PID = (pid) => `(uint32 ${pid},)\n`;
+  const DBUS_SEND_TRUE = "method return time=1 sender=:1.5 -> destination=:1.99\n   variant       boolean true\n";
+  const DBUS_SEND_ITEMS = (...names) =>
+    `method return time=1\n   variant       array [\n${names.map((n) => `      string "${n}"\n`).join("")}   ]\n`;
+  const busEnv = { DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" };
+
+  /**
+   * An `exec` over a table of `[file, argMatcher] -> reply`. A reply that is an
+   * Error is thrown, which is how a D-Bus error or a missing binary is spelled.
+   */
+  const fakeExec = (handler, seen = []) => {
+    const fn = async (file, args) => {
+      seen.push(`${file} ${args.join(" ")}`);
+      const reply = handler(file, args);
+      if (reply instanceof Error) throw reply;
+      if (reply === undefined) throw new Error(`unexpected call: ${file} ${args.join(" ")}`);
+      return reply;
+    };
+    fn.calls = seen;
+    return fn;
+  };
+
+  const serviceUnknown = () => {
+    const err = new Error(
+      "Error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.kde.StatusNotifierWatcher was not provided by any .service files",
+    );
+    return err;
+  };
+  const enoent = () => Object.assign(new Error("spawn gdbus ENOENT"), { code: "ENOENT" });
+
+  await test("D-Bus replies parse the same whichever CLI printed them", async () => {
+    // gdbus single-quotes and dbus-send double-quotes; the parsers tolerate
+    // both rather than branching, which is what lets either tool answer.
+    assert.deepEqual(parseDbusStrings(GDBUS_ITEMS(":1.25/StatusNotifierItem", ":1.9")), [
+      ":1.25/StatusNotifierItem",
+      ":1.9",
+    ]);
+    assert.deepEqual(parseDbusStrings(DBUS_SEND_ITEMS(":1.25/StatusNotifierItem")), [":1.25/StatusNotifierItem"]);
+    // An empty status area is the reply that matters most, and it carries no
+    // strings at all in either dialect.
+    assert.deepEqual(parseDbusStrings("(<@as []>,)"), []);
+    assert.deepEqual(parseDbusStrings("   variant       array [\n   ]\n"), []);
+
+    assert.equal(parseDbusBoolean(GDBUS_TRUE), true);
+    assert.equal(parseDbusBoolean(GDBUS_FALSE), false);
+    assert.equal(parseDbusBoolean(DBUS_SEND_TRUE), true);
+    assert.equal(parseDbusBoolean("()"), null, "a reply with no boolean must not read as false");
+
+    assert.equal(parseDbusPid(GDBUS_PID(4242)), 4242);
+    assert.equal(parseDbusPid("   uint32 4242\n"), 4242);
+    assert.equal(parseDbusPid("()"), null);
+
+    // The watcher glues the item's object path onto the bus name; an entry
+    // without one means the spec's default.
+    assert.deepEqual(splitTrayItem(":1.25/org/ayatana/NotificationItem/x"), {
+      service: ":1.25",
+      objectPath: "/org/ayatana/NotificationItem/x",
+    });
+    assert.deepEqual(splitTrayItem(":1.25"), { service: ":1.25", objectPath: "/StatusNotifierItem" });
+  });
+
+  await test("an icon owned by this process, in a hosted status area, is hosted", async () => {
+    const exec = fakeExec((file, args) => {
+      if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
+      if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9", ":1.25/StatusNotifierItem");
+      // Somebody else's icon first, ours second — the reason the match is on
+      // the connection's pid and not on the item's name.
+      if (args.includes(":1.9")) return GDBUS_PID(777);
+      if (args.includes(":1.25")) return GDBUS_PID(4242);
+      return undefined;
+    });
+    const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec });
+    assert.equal(v.hosted, true, v.reason);
+    assert.match(v.reason, /:1\.25\/StatusNotifierItem/);
+  });
+
+  await test("a session with no status-notifier host is a definite no", async () => {
+    // THE BENCH BUG, in the shape it reaches us: xfce4-panel's systray plugin
+    // crashes when Electron registers its item and takes the watcher name off
+    // the bus with it. `new Tray()` succeeded; there is no icon.
+    const exec = fakeExec(() => serviceUnknown());
+    const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec });
+    assert.equal(v.hosted, false, v.reason);
+    assert.match(v.reason, /no owner/);
+  });
+
+  await test("a watcher with no host, and a host that never took our icon, are both no", async () => {
+    // A watcher can exist with nothing drawing for it — that is what
+    // `IsStatusNotifierHostRegistered` is for.
+    const noHost = fakeExec((file, args) =>
+      args.includes("IsStatusNotifierHostRegistered") ? GDBUS_FALSE : undefined,
+    );
+    const a = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec: noHost });
+    assert.equal(a.hosted, false, a.reason);
+    assert.match(a.reason, /no host has registered/);
+
+    // And a host that is drawing somebody else's icons but not ours.
+    const notOurs = fakeExec((file, args) => {
+      if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
+      if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9");
+      if (args.includes(":1.9")) return GDBUS_PID(777);
+      return undefined;
+    });
+    const b = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec: notOurs });
+    assert.equal(b.hosted, false, b.reason);
+    assert.match(b.reason, /none of its 1 item\(s\)/);
+  });
+
+  await test("a session that cannot be ASKED answers null, never false", async () => {
+    // The distinction the close handler hangs on: `main.js` moves its flag only
+    // on an answer, so a machine with no D-Bus CLI keeps whatever boot found
+    // instead of turning every X into a quit.
+    const noTools = fakeExec(() => enoent());
+    const missing = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec: noTools });
+    assert.equal(missing.hosted, null, missing.reason);
+    assert.equal(missing.retryable, false, "an absent binary will not appear by waiting");
+    assert.deepEqual(
+      noTools.calls.map((c) => c.split(" ")[0]),
+      ["gdbus", "dbus-send"],
+      "both CLIs should be tried before giving up",
+    );
+
+    // A timeout is the same kind of non-answer.
+    const timedOut = fakeExec(() => Object.assign(new Error("Command failed: timeout"), { killed: true }));
+    const slow = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec: timedOut });
+    assert.equal(slow.hosted, null, slow.reason);
+  });
+
+  await test("dbus-send answers when gdbus is not installed", async () => {
+    const exec = fakeExec((file, args) => {
+      if (file === "gdbus") return enoent();
+      if (args.some((a) => a.includes("IsStatusNotifierHostRegistered"))) return DBUS_SEND_TRUE;
+      if (args.some((a) => a.includes("RegisteredStatusNotifierItems"))) return DBUS_SEND_ITEMS(":1.25");
+      if (args.includes("string::1.25")) return "   uint32 4242\n";
+      return undefined;
+    });
+    const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec });
+    assert.equal(v.hosted, true, v.reason);
+    // The working tool is remembered: gdbus is tried once, not once per call.
+    assert.equal(v.reason.includes(":1.25"), true);
+    assert.equal(exec.calls.filter((c) => c.startsWith("gdbus ")).length, 1);
+  });
+
+  await test("no session bus, and the platforms that own their own status area, skip the bus entirely", async () => {
+    const exec = fakeExec(() => new Error("should not have been called"));
+    // Nowhere for Electron to have registered the icon either — a definite no,
+    // and checked here rather than left to the CLI because gdbus would try to
+    // autolaunch a bus daemon of its own.
+    const linux = await probeTrayResidency({ platform: "linux", env: {}, pid: 1, exec });
+    assert.equal(linux.hosted, false, linux.reason);
+    assert.equal(exec.calls.length, 0);
+    // An address that is SET but dead is the same no, and it is the one every
+    // CI lane in this suite runs under: e2e/fixtures.ts points
+    // DBUS_SESSION_BUS_ADDRESS at a socket that does not exist so libnotify
+    // fails fast (docs/DESKTOP_E2E.md §1). Both CLIs' real wording, measured.
+    for (const stderr of [
+      "Error connecting: Could not connect: No such file or directory",
+      'Failed to open connection to "session" message bus: Failed to connect to socket /nope: No such file or directory',
+    ]) {
+      const dead = fakeExec(() => new Error(stderr));
+      const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec: dead });
+      assert.equal(v.hosted, false, v.reason);
+      assert.equal(v.retryable, false, "a bus that is not there will not turn up by waiting");
+    }
+    // Windows always has a notification area and macOS always has a menu bar;
+    // there is no question to ask and no bus to ask it on.
+    for (const platform of ["win32", "darwin"]) {
+      const v = await probeTrayResidency({ platform, env: {}, pid: 1, exec });
+      assert.equal(v.hosted, true, `${platform}: ${v.reason}`);
+    }
+    assert.equal(exec.calls.length, 0);
+  });
+
+  await test("confirmation waits for a panel that is still picking the icon up", async () => {
+    // Registration is a round trip after `new Tray()` returns, so a single read
+    // would report a healthy session as trayless. Two misses, then the item
+    // appears.
+    let round = 0;
+    const exec = fakeExec((file, args) => {
+      if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
+      if (args.includes("RegisteredStatusNotifierItems")) return round++ < 2 ? GDBUS_ITEMS() : GDBUS_ITEMS(":1.25");
+      if (args.includes(":1.25")) return GDBUS_PID(4242);
+      return undefined;
+    });
+    const slept = [];
+    const v = await confirmTrayResidency({
+      platform: "linux",
+      env: busEnv,
+      pid: 4242,
+      exec,
+      timeoutMs: 5000,
+      intervalMs: 400,
+      sleep: async (ms) => slept.push(ms),
+    });
+    assert.equal(v.hosted, true, v.reason);
+    assert.deepEqual(slept, [400, 400]);
+
+    // ...but it does not spend the budget on an answer waiting cannot change.
+    const never = [];
+    const flat = await confirmTrayResidency({
+      platform: "linux",
+      env: {},
+      pid: 4242,
+      exec,
+      timeoutMs: 5000,
+      sleep: async (ms) => never.push(ms),
+    });
+    assert.equal(flat.hosted, false);
+    assert.deepEqual(never, []);
+  });
+
   await test("main.js wires the shell half of all of that", async () => {
     // main.js is `require("electron")` at line 1 and cannot be loaded by this
     // runner, so the wiring — as opposed to the policy above — is asserted on
@@ -667,11 +898,30 @@ function hold(port) {
     const close = src.indexOf('win.on("close"');
     assert.notEqual(close, -1, "main.js should intercept the window close");
     const body = src.slice(close, close + 700);
-    assert.ok(/win\.hide\(\)/.test(body), "closing the window should hide it");
-    // ...but only where there is something to come back from. A session with no
-    // status area gets a Tray that never appears, and hiding into that is how a
-    // user loses the app.
-    assert.ok(/if \(!tray\)/.test(body), "hiding must be gated on the tray existing");
+    // The handler itself now only defers: the answer is a question for the
+    // session bus, so it prevents the close unconditionally and hands over.
+    assert.ok(/event\.preventDefault\(\)/.test(body), "the close must be prevented before it is decided");
+    assert.ok(/decideClose\(\)/.test(body), "the close decision should be made in decideClose()");
+    const decide = src.indexOf("async function decideClose()");
+    assert.notEqual(decide, -1, "main.js should have a decideClose()");
+    const decideBody = src.slice(decide, decide + 700);
+    assert.ok(/win\.hide\(\)/.test(decideBody), "closing the window should hide it");
+    // ...but only where there is something to come back from, and NOT merely
+    // where `new Tray()` returned an object: on Linux it does that on a session
+    // with no status area, and hiding into one of those is how a user loses the
+    // app. The answer comes from the session (tray-residency.js), which is also
+    // why this is re-read per close rather than trusted from boot.
+    assert.ok(/refreshTrayResidency\(/.test(decideBody), "hiding must be gated on a confirmed tray");
+    assert.ok(/app\.quit\(\)/.test(decideBody), "an unconfirmed tray must fall back to quitting");
+    // The one message that tells the user where the window went. Raised on a
+    // session with no icon, it sends them looking for something that is not
+    // there — worse than saying nothing.
+    const announce = src.indexOf("function announceTrayResidency()");
+    assert.notEqual(announce, -1, "main.js should announce the first hide");
+    assert.ok(
+      /!trayHosted/.test(src.slice(announce, announce + 500)),
+      "the tray-residency toast must be gated on a confirmed tray, not on `tray`",
+    );
   });
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

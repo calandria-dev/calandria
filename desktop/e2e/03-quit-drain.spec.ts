@@ -13,11 +13,17 @@
  * mid-write turn off, which leaves `running = 1` behind for `recoverFromCrash()`
  * to mop up on the next boot.
  *
- * A THIRD TEST covers the window's own close button, which no longer quits at
- * all: it hides the window and leaves the server running, and the drain then
- * happens on the explicit quit that follows — with the window brought back for
- * it. That is the tray's doing (docs/DESKTOP_APP.md §5.1) and it holds on all
- * three platforms, so unlike its predecessor it is skipped nowhere.
+ * A THIRD TEST covers the window's own close button, which on a desktop with a
+ * working tray no longer quits at all: it hides the window and leaves the
+ * server running, and the drain then happens on the explicit quit that follows
+ * — with the window brought back for it. That is the tray's doing
+ * (docs/DESKTOP_APP.md §5.1). It is skipped nowhere, but it BRANCHES: hiding
+ * requires a status area that is really drawing the icon, which is a fact about
+ * the session rather than about the platform, and where there is none the close
+ * quits and drains directly. The drain assertions are the same either way,
+ * which is the point — the Linux lane runs under `xvfb` with no
+ * status-notifier host, so it is also the only place the no-tray branch is
+ * covered at all.
  *
  * THE `app.quit()` PATH IS TWO TESTS, NOT ONE, AND BOTH HOLD ON EVERY
  * PLATFORM. They used to be split by platform: the drain rode on the SIGTERM that `supervisor.stop()` sent,
@@ -47,6 +53,7 @@ import {
   quitShell,
   sendMessage,
   serverIsUp,
+  trayIsHosted,
   type Shell,
 } from "./fixtures";
 
@@ -131,7 +138,7 @@ test("the in-flight turn was settled rather than cut off mid-write", async () =>
   }
 });
 
-test("closing the window hides it, and the later quit brings it back to drain", async () => {
+test("closing the window hides it where there is a tray, quits where there is not — and drains either way", async () => {
   // TWO CLAIMS, ONE INSTANCE, because the second only means anything after the
   // first: closing the window no longer quits (the server keeps running with
   // the turn in flight), and quitting afterwards puts the window back on screen
@@ -153,12 +160,23 @@ test("closing the window hides it, and the later quit brings it back to drain", 
   // rule on all three platforms (it also keeps the SPA's state, which a real
   // close throws away), so there is nothing platform-specific left to skip.
   //
-  // It IS conditional on one thing, though, and this spec is where that would
-  // show up: hiding is gated on `Tray` having been constructed, since hiding
-  // into a session with no status area is how a user loses the app. A runner
-  // where the tray fails to appear would fail the first claim below with the
-  // shell having quit instead — check the attached log for
-  // "[shell] no tray available" before reading that as a regression.
+  // IT IS CONDITIONAL ON ONE THING, AND THAT IS WHY THIS TEST BRANCHES rather
+  // than asserting the hide outright: hiding happens only where a status area
+  // is really drawing the tray icon, since hiding into a session with no status
+  // area is how a user loses the app. That is not a property of the platform,
+  // so it cannot be a `test.skip` — it is a property of the desktop the shell
+  // launched on, and both answers are correct behaviour. The runners split
+  // cleanly: `windows-desktop` and `macos-desktop` have a status area by
+  // construction, while the Linux lane runs under `xvfb` with no
+  // status-notifier host at all and therefore takes the QUIT branch — which is
+  // the only coverage the no-tray branch has anywhere in this suite.
+  //
+  // The shell used to gate this on `new Tray()` not throwing, which on Linux
+  // succeeds whether or not an icon ever appears; `desktop/tray-residency.js`
+  // now asks the session, and `trayIsHosted()` reads the verdict the shell
+  // logged. The two branches meet again immediately: whichever one runs, the
+  // drain assertions below are the same, because a close that quits still
+  // quits through `before-quit`.
   //
   // Its own instance: the shell above is gone, and this one ends too.
   shell = await launchShell("close-drain", { env: { CALANDRIA_SHUTDOWN_GRACE_MS: "15000" } });
@@ -220,28 +238,46 @@ test("closing the window hides it, and the later quit brings it back to drain", 
   }, statePath);
 
   const origin = shell.origin;
+  // Asked BEFORE the close, so the expectation is set by the session rather
+  // than fitted to whatever happened.
+  const hosted = await trayIsHosted(shell);
   await shell.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
 
-  // CLAIM ONE. The window goes away, the window OBJECT does not, and neither
-  // does the server: a hidden Calandria is a running Calandria. Polled rather
-  // than read once — `hide()` is an async trip to the window manager, and on
-  // Linux a compositor can take a frame or two to unmap.
-  await expect
-    .poll(
-      async () =>
-        shell.app.evaluate(({ BrowserWindow }) => {
-          const w = BrowserWindow.getAllWindows()[0];
-          return { windows: BrowserWindow.getAllWindows().length, visible: w?.isVisible() ?? false };
-        }),
-      { timeout: 15_000, message: "the window never hid" }
-    )
-    .toEqual({ windows: 1, visible: false });
-  expect(await serverIsUp(origin), "closing the window took the server down with it").toBe(true);
-  expect((await getTask(origin, task.id)).running, "closing the window settled the in-flight turn").toBe(1);
-  expect(exited, "closing the window quit the app").toBe(false);
+  if (hosted) {
+    // CLAIM ONE. The window goes away, the window OBJECT does not, and neither
+    // does the server: a hidden Calandria is a running Calandria. Polled rather
+    // than read once — `hide()` is an async trip to the window manager, and on
+    // Linux a compositor can take a frame or two to unmap.
+    await expect
+      .poll(
+        async () =>
+          shell.app.evaluate(({ BrowserWindow }) => {
+            const w = BrowserWindow.getAllWindows()[0];
+            return { windows: BrowserWindow.getAllWindows().length, visible: w?.isVisible() ?? false };
+          }),
+        { timeout: 15_000, message: "the window never hid" }
+      )
+      .toEqual({ windows: 1, visible: false });
+    expect(await serverIsUp(origin), "closing the window took the server down with it").toBe(true);
+    expect((await getTask(origin, task.id)).running, "closing the window settled the in-flight turn").toBe(1);
+    expect(exited, "closing the window quit the app").toBe(false);
 
-  // CLAIM TWO. Now quit for real, from where the tray's Quit item goes.
-  await shell.app.evaluate(({ app }) => app.quit());
+    // CLAIM TWO. Now quit for real, from where the tray's Quit item goes.
+    await shell.app.evaluate(({ app }) => app.quit());
+  } else {
+    // CLAIM ONE, the other way round: with no tray to hide into, the close IS
+    // the quit — and it goes through `app.quit()` rather than letting the
+    // window be destroyed, which is what keeps the drain below in the chain at
+    // all. A close that merely fell through to `window-all-closed` would take
+    // the same route; one that let the window close and the app exit would not,
+    // and the drain assertions after this branch are what tell them apart.
+    //
+    // Nothing else is asserted here, deliberately: everything worth saying
+    // about this branch is that the drain still ran, which is the shared tail.
+    expect(shell.log.join("\n"), "the shell hid into a status area it never confirmed").toContain(
+      "closing the window will quit"
+    );
+  }
 
   await expect
     .poll(() => fs.existsSync(statePath), { timeout: 90_000, message: "before-quit never ran" })
