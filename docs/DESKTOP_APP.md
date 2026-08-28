@@ -572,13 +572,17 @@ into an unresolved import.
 already preferred `<resourcesPath>/node/bin/node` (the "bundled" source); that
 branch was dead until this build made it live. Two reasons it exists at all: a
 double-clicked app must not depend on the PATH it launched with, which on macOS
-is launchd's stub (§2) and on a fresh box may have no Node at all; and it pins
-the ABI — `better-sqlite3` ships per-`NODE_MODULE_VERSION` prebuilds, so a
-payload installed under one Node major and then run under whatever `node` the
-user happens to have is a coin flip that lands as "compiled against a different
-Node.js version" at the first query. The vendored version defaults to the
-**host's own** Node version — the same one that ran `npm ci` for the payload —
-so the pair matches by construction; `CALANDRIA_DESKTOP_NODE_VERSION` overrides
+is launchd's stub (§2) and on a fresh box may have no Node at all; and it fixes
+the runtime version, so the payload runs under the Node it was installed for
+rather than under whatever the user happens to have — which may be older than
+the repo's floor, or new enough that a dependency has not been tested there.
+That second reason used to be an ABI argument as well: under `better-sqlite3`
+12 the prebuilds were per-`NODE_MODULE_VERSION`, so a mismatched Node landed as
+"compiled against a different Node.js version" at the first query. Version 13
+is N-API (§2) and that failure mode is gone; the version pin is now about
+having one known runtime rather than about loading the addon at all. The
+vendored version defaults to the **host's own** Node version — the same one
+that ran `npm ci` for the payload — so the pair matches by construction; `CALANDRIA_DESKTOP_NODE_VERSION` overrides
 it for a reproducible, pinned CI build. The download (`scripts/fetch-node.js`)
 is sha256-verified against the official `SHASUMS256.txt` before it is unpacked;
 only the `node` binary is taken, not `npm` or the headers.
@@ -627,7 +631,7 @@ gitignored.
 |-|-|
 | Apple Developer Program + notarization | $99/yr, plus a signing lane in CI |
 | Windows code signing (OV/EV) | ~$200-400/yr; unsigned means a SmartScreen warning on every install |
-| Three-OS build matrix | New CI lane; native modules must be built per platform (the payload's `better-sqlite3` follows the *bundled* Node, not Electron, under this architecture) |
+| Three-OS build matrix | New CI lane; the payload's native addons are installed per platform (they follow the *bundled* Node, not Electron, under this architecture) |
 | Auto-update | `electron-updater` + a release channel; interacts with release-please and the existing edge/latest image publishing |
 | Security cadence | Chromium CVEs become our shipping obligation once binaries carry our name |
 | Support surface | "It won't start" reports from machines whose PATH, Node, or antivirus we cannot see |
