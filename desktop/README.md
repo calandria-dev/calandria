@@ -5,7 +5,7 @@ a window, so the app starts by double-clicking an icon instead of by opening a
 terminal, running `npm start`, and typing a URL.
 
 **This is spike code**, kept because it is the cheapest way to answer the
-questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) — which also carries
+questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md), which also carries
 the recommendation, the measurements, and the reasons the architecture is what it
 is. Nothing here is wired into `npm test`, CI, or the Docker image, and the repo
 root gains no dependency: Electron installs into this directory only.
@@ -13,7 +13,7 @@ root gains no dependency: Electron installs into this directory only.
 ## Run it
 
 ```bash
-npm ci && npm run build          # in the repo root — the shell serves a prod build
+npm ci && npm run build          # in the repo root; the shell serves a prod build
 cd desktop && npm install        # Electron only, ~280 MB, ignored by git
 npm start
 ```
@@ -38,7 +38,7 @@ inherited unchanged.
 
 | File | What it is |
 |-|-|
-| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
+| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`**, so this is the part that survives a change of shell and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 18 assertions over `supervisor.js`, against stub sidecars. No deps, no display. |
@@ -58,9 +58,9 @@ node test-real-boot.js                                    # needs a repo-root bu
 **The server runs under a real `node`, never inside Electron.** Two reasons, both
 measured in `docs/DESKTOP_APP.md`: `better-sqlite3`'s prebuild will not load into
 Electron's V8 ABI, and `lib/agents/codex/driver.ts` spawns the MCP tool bridge as
-`process.execPath scripts/calandria-mcp.mjs` with a closed env — under an
-Electron-hosted server that would launch a GUI process on every Codex turn
-instead of the bridge.
+`process.execPath scripts/calandria-mcp.mjs` with a closed env. Hosting the
+server inside Electron would turn that spawn into a GUI process on every Codex
+turn instead of the bridge.
 
 `supervisor.js` enforces this: it refuses an Electron binary as the runtime and
 strips every `ELECTRON_*` variable out of the sidecar environment, so nothing the
