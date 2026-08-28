@@ -288,7 +288,7 @@ the `task · project` body, the failure's first line under it) precisely so that
 a shell which ever starts composing its own text goes red.
 `11-bench-window.spec.ts` pairs every window assertion with the WM's account of
 it: `_NET_WM_STATE_HIDDEN` for a minimise (an atom the window manager sets and
-the app cannot), the window leaving `_NET_CLIENT_LIST` for a close-to-hide, and
+the app cannot), the window leaving `_NET_CLIENT_LIST` for a close, and
 `_NET_ACTIVE_WINDOW` naming the *same* window id after a second launch. Its
 last test pins the tray-residency toast at once per launch rather than once per
 close. `10-bench-tray.spec.ts` reads the tray from
@@ -309,11 +309,30 @@ committed tray assets (so it is not the 32×32 PNG) and with a nine-line Electro
 app that does nothing but `new Tray(...)` (so it is not this shell), while
 `nm_applet`'s icon on the same session is unaffected. The spec recognises the
 unowned name and says all of that in its failure message rather than reading as
-a missing tray. Two consequences, and they belong to different owners: the bench
+a missing tray. Two consequences, and they belong to different owners. The bench
 needs a status-notifier host that survives a Chromium-shaped item before this
-lane can be green, and — a product question rather than a bench one — the
-shell's close-to-hide is gated on `new Tray()` not THROWING, which stays true on
-a session where the icon never actually appears.
+lane can be green — filed in the infra-claude project. **The product half is
+fixed**: the shell's close-to-hide used to be gated on `new Tray()` not
+THROWING, which stays true on a session where the icon never appears, so a close
+hid the window into nowhere and the "open it again from the tray icon" toast
+named an icon that did not exist. `desktop/tray-residency.js` now asks the
+session the same two questions this spec asks it, on every close as well as at
+boot, and an unconfirmed tray means the X button quits (with the drain) instead
+of hiding — see `DESKTOP_APP.md` §5.1.
+
+That changed what two spec files can assume, and both now **branch on the
+session's answer rather than requiring one**. `11-bench-window.spec.ts` reads
+the shell's verdict before it closes the window and asserts the matching
+behaviour: a hide plus the residency toast where the icon is drawn, and a quit
+plus *no* toast where it is not — the second being the assertion this bug most
+needs, since that toast is the one message telling the user where the window
+went. `03-quit-drain.spec.ts` does the same, which also gives the no-tray branch
+its only coverage anywhere: the Linux CI lane runs under `xvfb` with no
+status-notifier host, so it takes the quit branch while `windows-desktop` and
+`macos-desktop` take the hide one, and the drain assertions after the branch are
+identical either way. `10-bench-tray.spec.ts` keeps the one assertion only a
+hosted session can make — that the shell's verdict agrees with the watcher's
+own list.
 
 ## 5. The bench VM, concretely
 
@@ -407,8 +426,11 @@ pkill -9 -x xfce4-panel; pkill -9 -x wrapper-2.0
 sleep 2; (setsid nohup xfce4-panel >/dev/null 2>&1 &)
 ```
 
-The other two spec files are unaffected: `Tray` construction still succeeds
-inside Electron, so nothing else in the shell changes behaviour.
+`Tray` construction still succeeds inside Electron, so the window, the badge and
+the notifications are unaffected — but the shell now NOTICES the missing host
+(`desktop/tray-residency.js`), so on a session in this state the X button quits
+rather than hiding, which is what `11-bench-window.spec.ts` and
+`03-quit-drain.spec.ts` branch on.
 
 ### Egress — answered
 

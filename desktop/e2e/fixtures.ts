@@ -455,6 +455,46 @@ export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | u
   await testInfo.attach("shell.log", { path: file, contentType: "text/plain" });
 }
 
+/**
+ * Whether this session is actually DRAWING the shell's tray icon — which is
+ * what decides the close button's behaviour, and is not a property of the
+ * platform or of the runner but of the desktop the shell happened to launch on.
+ *
+ * Read from the shell's own log rather than from D-Bus, for two reasons. It is
+ * the only form of the answer available on every lane (the CI runners have no
+ * session bus to ask, and `bench.ts`'s reads are bench-only), and what the
+ * close specs need to know is which branch the shell WILL take — the session
+ * and the shell agreeing about that is `10-bench-tray.spec.ts`'s assertion, on
+ * the one lane that can make it.
+ *
+ * Polled because `createTray()` confirms asynchronously: registering an item
+ * and a panel picking it up are round trips on the session bus after the
+ * constructor returns.
+ */
+export async function trayIsHosted(shell: Shell, timeoutMs = 30_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    // The LATEST verdict, not the first: `main.js` logs again whenever the
+    // answer changes, and a session whose panel came back mid-run has said both
+    // things. Read backwards so the newest one wins, the way the shell's own
+    // flag does.
+    for (let i = shell.log.length - 1; i >= 0; i--) {
+      const line = shell.log[i];
+      if (line.includes("[shell] tray icon confirmed in the status area")) return true;
+      if (line.includes("[shell] tray icon is not in any status area")) return false;
+      // Two ways to have no answer at all, and both are a no for the same
+      // reason they are one in the shell: nothing has ever confirmed an icon,
+      // so nothing may hide into one.
+      if (line.includes("[shell] no tray available")) return false;
+      if (line.includes("[shell] could not confirm the tray icon")) return false;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`the shell never reported whether its tray icon is hosted within ${timeoutMs} ms`);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 /** Is the origin still answering? The post-quit half of "the server exited". */
 export async function serverIsUp(origin: string): Promise<boolean> {
   if (!origin) return false;

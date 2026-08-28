@@ -27,6 +27,7 @@
       "main.js",
       "supervisor.js",
       "notifier.js",
+      "tray-residency.js",
       "loading.html",
       "assets/**",
       "package.json"
