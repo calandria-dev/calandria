@@ -195,6 +195,10 @@ describe("recurring cron (/loop shape)", () => {
     expect(ctx).toContain("keep running after your turn ends");
     expect(ctx).toContain("Scheduled wakeups (ScheduleWakeup, CronCreate) are honored the same way");
     expect(ctx).toContain("a recurring one keeps it open until you delete it or the user stops the session");
+    // The self-matching watcher loop belongs to the unbounded branch: nothing
+    // cuts it, so it holds the session open indefinitely.
+    expect(ctx).toContain(`while pgrep -f "vitest"; do sleep 20; done`);
+    expect(ctx).toContain("matches ITSELF and never exits");
   });
 });
 
