@@ -43,6 +43,18 @@ as well as five. The floor is enforced from the other end: `engine-strict=true` 
 means a Node below the declared range is refused with one `EBADENGINE` line instead of a
 compiler wall.
 
+Two caveats on that paragraph, both measured while building the lane below. The first is that
+it describes `npm install`, and CI runs `npm ci` — which is not the same thing here. A lockfile
+entry carries only a subset of a package's manifest fields and `gypfile` is not among them, so
+`npm ci` reads it as unset rather than `false`, finds the `binding.gyp` still in the tarball,
+and synthesizes the default `node-gyp rebuild` anyway. `npm install` has the real manifest and
+skips it. The second is that the runner's own MSVC no longer rescues that: node-gyp 11.5.0 does
+not recognise the Visual Studio 18 the current `windows-latest` image ships, so the fallback
+dies at `gyp ERR! find VS` rather than quietly compiling. What a Windows *user* is told to run
+is `npm install` throughout ([installation](INSTALLATION.md#native-windows)), so this is a CI
+and Docker-builder problem rather than theirs — but it is why the assertion above can fail on a
+tree that is perfectly fine for the people it was written to protect.
+
 A second `windows-latest` job runs the **end-to-end suite** — the same Playwright specs the
 Ubuntu lane runs, gated by the same expression rather than a schedule of its own, so it
 fires on main, on manual dispatch, and on a pull request carrying the `e2e` label. Its own
@@ -51,6 +63,20 @@ download would serialize the two fast checks behind it on every push. This is th
 that *boots* Calandria on Windows — `npm start` there is `scripts/start.mjs`, which ties
 `server.js` and the pty sidecar together where there is no process group to kill — so the
 shipped launcher is now executed in CI rather than only read.
+
+A separate workflow, `.github/workflows/node-current.yml`, installs on the latest Node **Current**
+rather than `.nvmrc`'s 22, on `ubuntu-24.04` and `windows-latest`, and does nothing else:
+`npm ci`, then load `better-sqlite3` and open a database, then open a real pty with `node-pty`,
+then assert that nothing in the tree compiled a native addon that shouldn't have. The failure
+mode it watches for is the install itself, so there is no suite to run. Ubuntu is the leg that
+matters most, which inverts the framing the rest of this page has: Windows is where
+`better-sqlite3` blew up, but it is also where both native dependencies ship bundled binaries
+and neither compiles — `node-pty` bundles no linux prebuild at all, so on Linux it builds from
+source against the running Node's headers on every install, and that compile succeeding on a
+Node released last week is the thing nothing else here would notice breaking. It runs weekly
+and on manual dispatch, never on push, because `current` moves with no commit in this repo and
+a Node release must not turn unrelated pull requests red; for the same reason it is
+deliberately not a required check.
 
 The unit lane earned its place on its first run. Everything below had been written,
 reviewed and merged as portable, with the Ubuntu suite green throughout; 83 of 135 test

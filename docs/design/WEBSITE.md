@@ -46,12 +46,12 @@ resolved against the live Cloudflare API.
 | Fact | Value |
 |-|-|
 | Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
-| Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). This is the `CLOUDFLARE_ACCOUNT_ID` repo secret in Phase 1 step 7. |
+| Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). Set as the `CLOUDFLARE_ACCOUNT_ID` repo **variable** (see GitHub row). |
 | `calandria.dev` zone | **`active`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, activated 2026-08-28T01:54:45Z on `clyde.ns.cloudflare.com` / `mona.ns.cloudflare.com`. Phase 1 console steps 1–3 are **done**; start at step 4. |
 | DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
 | Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
-| MCP servers authorized | `cloudflare-docs` (public, no OAuth) and `cloudflare-api` (OAuth, 2026-08-27). `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` are still unauthorized; none of them is needed for a static Pages deploy, so Phase 1 is not blocked on them. |
-| GitHub secrets | `CLOUDFLARE_API_TOKEN` is set on `calandria-dev/calandria` (2026-08-28T02:04Z); its scopes are unverifiable from outside, so a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. **`CLOUDFLARE_ACCOUNT_ID` is not set yet** — it is not a secret, so a repo variable is fine, but the workflow must reference whichever one is used. |
+| MCP servers authorized | **All five** as of 2026-08-28: `cloudflare-docs` (public) plus OAuth grants for `cloudflare-api`, `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` — each verified with a live call from a task session. Only `cloudflare-api` (+ docs) is needed for a static Pages deploy. |
+| GitHub credentials | Secret `CLOUDFLARE_API_TOKEN` (2026-08-28T02:04Z) and repo **variable** `CLOUDFLARE_ACCOUNT_ID` (2026-08-28T02:28Z) are both set on `calandria-dev/calandria`; the workflow references `${{ secrets.CLOUDFLARE_API_TOKEN }}` and `${{ vars.CLOUDFLARE_ACCOUNT_ID }}`. The account id is targeting, not auth — wrangler can infer it from a token that sees one account, but a Pages-scoped token often can't list memberships, and in CI that fails as "mandatory to specify an account ID", so it is set explicitly. Token scopes are unverifiable from outside: a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. |
 | Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses the repo credentials above as planned. |
 
 Authorizing an OAuth MCP server from an agent session on this headless host: run
@@ -103,9 +103,9 @@ active; start at step 4.** They are kept for the record.
 5. Cloudflare → Rules → Redirect Rules: `www.calandria.dev/*` → `https://calandria.dev/$1`, 301.
 6. Cloudflare → SSL/TLS: Full (strict) and HSTS on (`.dev` is preloaded anyway,
    the header just makes the intent explicit).
-7. GitHub repo secrets: `CLOUDFLARE_API_TOKEN` (Account → Cloudflare Pages →
-   Edit) and `CLOUDFLARE_ACCOUNT_ID`.
-8. GitHub → repo → About → Website: `https://calandria.dev`.
+7. **Done 2026-08-28.** GitHub secret `CLOUDFLARE_API_TOKEN` (Account →
+   Cloudflare Pages → Edit) and repo variable `CLOUDFLARE_ACCOUNT_ID`.
+8. **Done 2026-08-28.** GitHub → repo → About → Website: `https://calandria.dev`.
 
 Repo side (task): `website/` Astro project whose only page is the brand lockup,
 one-line pitch, and links to GitHub and the README, plus

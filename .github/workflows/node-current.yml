@@ -1,0 +1,305 @@
+# Install the dependency tree on the latest Node **Current**, not the .nvmrc 22
+# every other lane pins, and prove the native modules still load. Install-and-
+# smoke only — no typecheck, no vitest, no build. The failure this exists to
+# catch is the install itself.
+#
+# Why a lane at all, now that better-sqlite3 is N-API. It used to be the whole
+# story: up to 12 its install was `prebuild-install || node-gyp rebuild`, so it
+# downloaded a binary matching the running Node's ABI and silently compiled one
+# when that fetch missed. Every new Node release was a live install failure that
+# CI structurally could not see, and a Windows desktop on Node 26 hit it (see
+# docs/TROUBLESHOOTING.md#native-windows). 13 removed that: it is N-API, ships
+# one binary per platform triple inside the npm tarball, sets `gypfile: false`
+# and has no `install` script — no ABI to match, no download, no node-gyp
+# fallback. For THAT dependency a new Node is no longer a risk, and the windows
+# job in test.yml already asserts the surviving one (does the package still
+# bundle win32-x64, and does it load) in a way that generalizes past its Node.
+#
+# That last paragraph is what `npm install` does, and building this lane
+# measured that `npm ci` does NOT do it. A lockfile entry carries only a subset
+# of a package's manifest fields, and `gypfile` is not among them, so under
+# `npm ci` arborist reads it as `undefined` rather than `false`, finds the
+# `binding.gyp` that is still in the tarball, and synthesizes the default
+# `node-gyp rebuild` (@npmcli/arborist/lib/arborist/rebuild.js, `#addToBuildSet`).
+# `npm install` has the real manifest and skips it. Reproduced on npm 10.9.3
+# against nothing but better-sqlite3 13.0.3: `npm i` leaves no build/, `npm ci`
+# compiles; npm 11.19.1 does not. So the four assertions below are live checks
+# against a defect that exists in this repo TODAY, not guards against a
+# hypothetical one — on Linux the compile half-finishes and `npm ci` still
+# exits 0 because the bundled prebuild loads anyway, and on Windows it is the
+# `gyp ERR! find VS` wall that has main red. Until that is fixed this lane is
+# red on arrival on both legs, by design and for the correct reason; a first
+# red here is the finding, not a bug in the lane.
+#
+# Three things outlive that, and they are what this lane covers:
+#
+#   1. node-pty is still compiled, and only on Linux. It bundles prebuilds for
+#      darwin-x64/arm64 and win32-x64/arm64 and for NO linux triple, so its
+#      `node scripts/prebuild.js || node-gyp rebuild` always takes the second
+#      branch here. (The first branch is not a download — prebuild.js only
+#      checks whether the bundled directory for this platform exists — so on
+#      Windows and macOS it never compiles, on any Node.) That means Linux, the
+#      platform the Docker image and every other lane run on, builds node-pty
+#      from source against the running Node's own headers on every install.
+#      A Node release whose headers, V8 API removals or common.gypi flags break
+#      that compile reproduces the original failure exactly, and the one place
+#      it would show up first is here.
+#   2. The engines floor is open-ended upward. package.json says `>=22` and
+#      better-sqlite3 13 says `>=22`; nothing declares a ceiling, so with
+#      `engine-strict=true` in .npmrc a Node that is simply too new installs
+#      happily and either fails later or doesn't, unobserved. This lane IS the
+#      observation — a red install here is that answer arriving before a user's.
+#   3. A future native dependency could arrive with per-ABI prebuilds and a
+#      node-gyp fallback, and nobody would notice until a user did. The
+#      "nothing else compiled" sweep below is deliberately a whole-tree scan
+#      rather than a check of the two packages we know about, so a new one
+#      announces itself the first Monday after it lands.
+#
+# Ubuntu matters more than Windows here, which inverts the framing this started
+# with. Windows is where better-sqlite3 blew up, but it is also where BOTH
+# native deps ship bundled binaries and neither compiles; Linux is the leg with
+# no node-pty prebuild at all. Both run — an install-only job is cheap even at
+# the Windows runner's 2x — but if one ever has to go, it is not the Ubuntu one.
+#
+# Schedule + manual dispatch, never on push or pull_request. This tracks an
+# external moving target: `current` changes under us with no commit here, so a
+# Node release breaking a compile would otherwise turn every unrelated PR red
+# for a reason nobody in that PR can fix. That also settles the required-check
+# question — it must NOT be one. A check that never runs on a pull request
+# cannot be required without blocking every pull request forever, and making it
+# required would mean pinning it to push, which is the thing this whole design
+# rejects. It reports on its own schedule and is read, not gated on.
+name: Node Current (install smoke)
+
+on:
+  schedule:
+    # Monday 12:13 UTC — after security-scan.yml (06:00) and test-shuffle.yml
+    # (10:47), and clear of publish-image.yml's nightly 09:23, so the weekly
+    # jobs don't contend for runners.
+    - cron: "13 12 * * 1"
+  workflow_dispatch:
+    inputs:
+      node_version:
+        # Anything actions/setup-node accepts. The point of the default is that
+        # nothing in this repo names the version — it resolves to whatever the
+        # latest Current release is on the morning it runs. Override it to
+        # reproduce a specific report ("26.7.0") or to check a line before it
+        # ships ("nightly", "rc/latest").
+        description: "Node version to install (default: latest Current)"
+        type: string
+        default: current
+
+concurrency:
+  group: node-current-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke:
+    name: Install smoke (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    # Generous: the Linux leg compiles node-pty with node-gyp (after fetching
+    # the headers for a Node release that may be hours old, so uncached), and
+    # the Windows leg pays for a native-module install on a slow filesystem.
+    timeout-minutes: 25
+    strategy:
+      # Each leg is a different question — "does the source build still work"
+      # vs "does the bundled binary still cover this platform". One answer must
+      # not suppress the other.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: Linux
+          - os: windows-latest
+            label: Windows
+
+    steps:
+      # Same reasoning as the `windows` job in test.yml, in the same position
+      # and for the same reason: `node_modules` under D:\a\calandria\calandria\
+      # gets close enough to MAX_PATH that a deep transitive dependency can
+      # fail the checkout outright. autocrlf is not set here — this lane runs
+      # no tests, so no fixture bytes or diff assertions depend on it.
+      - name: Pin git's Windows path length
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # Deliberately NOT node-version-file: .nvmrc. That pin is what every
+          # other lane uses and what this one exists to look past.
+          node-version: ${{ inputs.node_version || 'current' }}
+          cache: npm
+
+      # Before the install, so a red run says which Node it was red on even
+      # when `npm ci` is what died. A lane that silently tested one version
+      # reads like it tested them all — this is the line that stops that.
+      - name: Report the Node this run actually covered
+        shell: bash
+        # The dispatch input reaches the script as an environment variable, not
+        # as a `${{ }}` splice into the command line — a workflow_dispatch
+        # string is caller-controlled text and splicing it would be a shell
+        # injection, however trusted the caller.
+        env:
+          REQUESTED: ${{ inputs.node_version || 'current' }}
+        run: |
+          node -p "[
+            '| | |',
+            '|-|-|',
+            '| Requested | \`' + process.env.REQUESTED + '\` |',
+            '| Node | ' + process.version + ' |',
+            '| npm | ' + require('child_process').execSync('npm --version').toString().trim() + ' |',
+            '| ABI (modules) | ' + process.versions.modules + ' |',
+            '| Platform | ' + process.platform + '-' + process.arch + ' |',
+            '| .nvmrc (what every other lane runs) | ' + require('fs').readFileSync('.nvmrc','utf8').trim() + ' |',
+            '| package.json engines.node | ' + require('./package.json').engines.node + ' |',
+            '',
+          ].join('\n')" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # --foreground-scripts so every install script's output reaches the log:
+      # on Linux that is the node-gyp compile, and when this lane goes red it
+      # is almost certainly the thing to read. `npm ci` in full, devDependencies
+      # included — a native dependency can arrive on either side of that line,
+      # and item 3 in the header only holds if the whole tree is installed.
+      #
+      # engine-strict=true (.npmrc) means a Node outside the declared range
+      # fails here with one EBADENGINE line rather than installing something
+      # that breaks later. Nothing declares an upper bound today, so that is a
+      # floor only — the point of item 2 above.
+      - run: npm ci --foreground-scripts
+
+      # better-sqlite3: the same assertion test.yml's `windows` job makes, run
+      # on this platform and this Node instead. `build/` is the inverted signal
+      # — the bundled-prebuild path creates none at all, so its existence means
+      # something compiled, which on a user's machine is the MSVC/gyp wall.
+      - name: Assert better-sqlite3 loaded its bundled prebuild
+        shell: bash
+        run: |
+          pkg=node_modules/better-sqlite3
+          # Runner images are glibc; the musl triples in the package are for
+          # Alpine, which nothing here runs on.
+          triple=$(node -p "process.platform + '-' + process.arch")
+          if [ -d "$pkg/build" ]; then
+            echo "::error::better-sqlite3 compiled from source on $(node -v): a build/ directory exists, which the bundled-prebuild path never creates. Read the npm ci step's output. A user without a toolchain gets a failed install."
+            exit 1
+          fi
+          if [ ! -f "$pkg/prebuilds/$triple.node" ]; then
+            echo "::error::better-sqlite3 ships no $triple prebuild in its package. Check whether the version in package-lock.json dropped this platform triple."
+            exit 1
+          fi
+          # The exported subpath requires prebuilds/<triple>.node directly, with
+          # none of the main entry's fallback to node-gyp locations, so it fails
+          # here rather than quietly succeeding via some other binary.
+          node -e "const D=require('better-sqlite3/$triple');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('bundled $triple prebuild loads and opens a database')"
+          node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('create table t(x)');d.close();console.log('default entry point resolves the same way the app does')"
+          echo "- better-sqlite3: bundled \`$triple\` prebuild, nothing compiled" >> "$GITHUB_STEP_SUMMARY"
+
+      # node-pty: the opposite expectation per platform, which is the whole
+      # reason this lane is not Windows-only.
+      #
+      #   Windows/macOS — prebuilds/<platform>-<arch>/ ships in the package and
+      #     scripts/prebuild.js exits 0 on merely finding it, so node-gyp is
+      #     never reached and a build/ tree means something changed upstream.
+      #   Linux — no prebuild is bundled for any linux triple, so the install
+      #     ALWAYS falls through to `node-gyp rebuild` against the running
+      #     Node's headers. Nothing to assert about a prebuild; the compile
+      #     succeeding on a brand-new Node is the assertion.
+      #
+      # The linux branch is written so that upstream starting to ship a linux
+      # prebuild passes and says so, rather than failing a check that was
+      # phrased as "it must have compiled".
+      - name: Assert node-pty resolved a binary the right way for this platform
+        shell: bash
+        run: |
+          pkg=node_modules/node-pty
+          triple=$(node -p "process.platform + '-' + process.arch")
+          if [ -d "$pkg/prebuilds/$triple" ]; then
+            if [ -d "$pkg/build" ]; then
+              echo "::error::node-pty compiled from source on $(node -v) despite bundling a $triple prebuild. Something made npm_config_build_from_source true, or prebuild.js rejected the bundled directory. Read the npm ci step's output."
+              exit 1
+            fi
+            echo "- node-pty: bundled \`$triple\` prebuild, nothing compiled" >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ ! -f "$pkg/build/Release/pty.node" ]; then
+              echo "::error::node-pty neither bundles a $triple prebuild nor produced build/Release/pty.node — the node-gyp rebuild did not run or did not succeed on $(node -v). This is the failure mode this lane exists for: read the npm ci step's output for the compiler error."
+              exit 1
+            fi
+            echo "- node-pty: no bundled \`$triple\` prebuild, **compiled from source** with node-gyp on $(node -v)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # A loadable binary is not the same as a working one: node-pty's
+          # loader falls back across build/Release, build/Debug and prebuilds/,
+          # and on macOS the spawn-helper's exec bit (scripts/fix-pty.js) only
+          # bites at spawn time. So open a real pty and read from it.
+          cat > pty-smoke.cjs <<'EOF'
+          const pty = require("node-pty");
+          const isWin = process.platform === "win32";
+          const file = isWin ? "cmd.exe" : "/bin/sh";
+          const args = isWin ? ["/c", "echo calandria-pty-ok"] : ["-c", "echo calandria-pty-ok"];
+          const term = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
+          let out = "";
+          term.onData((d) => { out += d; });
+          const timer = setTimeout(() => {
+            console.error("timed out waiting for pty output; got " + JSON.stringify(out));
+            process.exit(1);
+          }, 30000);
+          term.onExit(() => {
+            clearTimeout(timer);
+            if (!out.includes("calandria-pty-ok")) {
+              console.error("pty exited without producing the sentinel; got " + JSON.stringify(out));
+              process.exit(1);
+            }
+            console.log("node-pty opened a real pty and read its output");
+          });
+          EOF
+          node pty-smoke.cjs
+          rm -f pty-smoke.cjs
+
+      # Item 3 in the header: catch the native dependency nobody has noticed
+      # yet. A whole-tree scan rather than a list of the two packages we know
+      # about — the point is the one that arrives next.
+      #
+      # node-pty on Linux is the single expected hit, for the reason above.
+      # Anything else means a package compiled an addon during `npm ci`, which
+      # is a toolchain requirement this repo does not document and that a user
+      # on Windows or a slim image does not have.
+      - name: Assert nothing else in the tree compiled a native addon
+        shell: bash
+        run: |
+          # `build/config.gypi` rather than a built `.node`: node-gyp writes it
+          # before it compiles anything, so it is present for a HALF-finished
+          # build too. That is not hypothetical — better-sqlite3 under npm's
+          # lockfile bug (see the header) leaves a build/ with a config.gypi and
+          # no linked binary, and `npm ci` still exits 0 because the bundled
+          # prebuild loads anyway. Keying on the output would call that clean.
+          compiled=$(find node_modules -type f -name config.gypi -path '*/build/*' -print | sed 's#^node_modules/##; s#/build/config.gypi$##' | sort -u || true)
+          unexpected=$(printf '%s\n' "$compiled" | grep -v '^node-pty$' | grep -v '^$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Packages compiled a native addon from source during npm ci on $(node -v): $(printf '%s ' $unexpected). Either it ships no prebuild for this platform, or it fell back from a per-ABI one this Node has no binary for — the failure mode this lane watches for. Decide whether it needs a prebuild, a platform note, or a place on this allowlist."
+            exit 1
+          fi
+          {
+            echo ""
+            echo "Compiled from source during \`npm ci\`: ${compiled:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Runs even when something above failed, so the summary always names what
+      # was and was not covered — a green tick here means "one Node, this one",
+      # never "Node is fine".
+      - name: Record the lane's scope
+        if: always()
+        shell: bash
+        # Via env, not a `${{ }}` splice, for the same reason as the reporting
+        # step above — and because it lets the block run verbatim outside CI.
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+        run: |
+          {
+            echo ""
+            echo "Scope: install + native-module load only on **$(node -v)** / $RUNNER_LABEL."
+            echo "No typecheck, no unit suite, no build, no e2e — those run on the .nvmrc pin in \`test.yml\`."
+            echo "Other Node versions, other platforms and musl are not covered by this run."
+          } >> "$GITHUB_STEP_SUMMARY"
