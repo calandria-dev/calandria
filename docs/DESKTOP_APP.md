@@ -14,9 +14,12 @@ all of them were measured rather than reasoned about (§2).
 1. **Adopt the prototype as a developer launcher** — `cd desktop && npm start`
    against a checkout the user already has. It needs no code signing, no CI lane,
    no auto-updater and no product decision. It is the whole "double-click instead
-   of a terminal" win, for the people who have the repo.
+   of a terminal" win, for the people who have the repo. A packaged,
+   self-contained build now also exists (`npm run dist:linux`, §6) — it carries
+   its own server payload and Node runtime instead of pointing at a checkout, but
+   it still needs none of the signing, CI or updater work below.
 2. **Defer signed installers** until someone asks. That is where the entire cost
-   lives (§6): ~$300/yr in certificates, a three-OS release lane, an update
+   lives (§7): ~$300/yr in certificates, a three-OS release lane, an update
    channel, and a standing obligation to ship Chromium security bumps. It does
    **not** buy a zero-prerequisite install — Calandria drives `git`, `claude` /
    `codex` and a real shell on the host, so its user has a developer machine
@@ -73,6 +76,10 @@ not inferred.
 | macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin` — not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are all invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. |
 | The real server boots under the shell's supervisor | `node desktop/test-real-boot.js`: **919 ms** to `/api/version`, on ports 3002/3003 (stepped past the live instance), app HTML served, `/pty` proxied to the sidecar we chose, `CALANDRIA_DB_DIR` honoured, both sidecars drained on SIGTERM with no SIGKILL. |
 | Electron's size is not the dominant term | Electron 44 linux-x64 unpacks to **282 MB**. The payload it would wrap — `.next` (127 MB) plus a pruned `node_modules` — is larger; the container carrying the same payload with Debian, git, gh and both agent CLIs is **3.99 GB**. |
+| **…and the packaged app confirms it** | `npm run dist:linux` (2026-08-27, this machine): `dist/linux-unpacked` **2.1 GB**, AppImage **653 MB**, deb **485 MB**. Electron is ~13% of it. The payload's `node_modules` is **1.6 GB** on its own. |
+| What is actually big is the agent CLIs | Inside that 1.6 GB: `@openai/codex-linux-x64` **350 MB**, `@anthropic-ai/claude-agent-sdk-linux-x64` **230 MB** + its `-musl` twin **225 MB**, `@next/swc-linux-x64-gnu` **137 MB** + its `-musl` twin **137 MB**. npm already scoped these to linux-x64; the ~380 MB of glibc/musl duplication is what a desktop build could still drop. |
+| `.next` and the bundled Node are minor terms | `.next` **55 MB** (`next build --turbopack` leaves `.next/cache` empty, so the drop in `build-payload.js` reclaims nothing here — it is insurance against a non-turbopack build). The vendored `node` binary is **116 MB**. |
+| The packaged app boots on its own payload | `dist/linux-unpacked/calandria-desktop` under `xvfb-run`, with `CALANDRIA_REPO_ROOT` unset: `[shell] node: …/resources/node/bin/node v22.18.0 (bundled)` then `[shell] ready on http://127.0.0.1:4751 (version 0.3.0)`. The dead "bundled" branch of `resolveNode` is the one that fires. |
 
 ### The rule those findings add up to
 
@@ -137,9 +144,9 @@ without a notification daemon each native notification blocks Electron's main
 process for 25 s. See `DESKTOP_E2E.md` §1.) First run on a desktop machine is
 still a step worth taking, and is likely to find small things.
 
-Also not attempted: packaging (`electron-builder`), tray/menubar, deep links
-(`calandria://`), dock badge for the "N need you" count, window-bounds
-persistence, auto-update.
+Packaging (`electron-builder`) is no longer on this list — see §6. Still not
+attempted: tray/menubar, deep links (`calandria://`), dock badge for the "N need
+you" count, window-bounds persistence, auto-update.
 
 ## 5. Per-platform gaps
 
@@ -165,7 +172,100 @@ regardless.)
 root-owned/4755 when running from a plain directory (packaged builds handle it);
 AppImage/deb/rpm are all electron-builder targets.
 
-## 6. Cost of going further (phase 2)
+## 6. Packaging
+
+The prototype now produces a real artifact, not just a `desktop/` checkout:
+
+```bash
+cd desktop && npm install
+npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
+npm run dist:linux    # dist:dir, plus deb and AppImage targets
+```
+
+Signing, notarization and auto-update are deliberately **not** wired into this —
+that is still phase 2 (§7).
+
+**Layout of the packaged app:**
+
+| Path | What it is |
+|-|-|
+| `resources/app.asar` | The Electron shell (`main.js`, `supervisor.js`, `loading.html`). |
+| `resources/app-payload/` | The server payload — everything `node server.js` needs. |
+| `resources/node/bin/node` | The Node runtime the sidecars are spawned under. |
+
+The payload is `extraResources` and deliberately **not inside the asar**: it
+holds native addons (`better-sqlite3`, `node-pty`) that `dlopen` from a real
+path on disk, and it is spawned as a child process — neither can reach into an
+archive.
+
+**What the payload is built from** (`desktop/scripts/build-payload.js`): `.next`
+(minus `.next/cache`, which is `next build`'s own scratch and is dropped, with
+the dropped size logged rather than silently shipped or silently omitted from
+the report), a pruned production `node_modules` **installed** with `npm ci
+--omit=dev` into the staging dir — not copied from this dev checkout, whose
+`node_modules` carries the whole dev toolchain — plus `server.js`,
+`pty-server.js`, `next.config.mjs`, `package.json`, and every plain-Node `.mjs`
+the two entrypoints dynamic-import. That last file list is the **same
+inventory** the Dockerfile's runtime stage `COPY`s, and it is kept from drifting
+by `desktop/payload-manifest.js` plus `tests/desktopPayload.test.ts`, which
+fails the suite when the Dockerfile's COPY list and the manifest disagree — a
+new `.mjs` import has to be added to both or the build ships an app that boots
+into an unresolved import.
+
+**A Node binary is bundled, not borrowed.** `supervisor.js`'s `resolveNode`
+already preferred `<resourcesPath>/node/bin/node` (the "bundled" source); that
+branch was dead until this build made it live. Two reasons it exists at all: a
+double-clicked app must not depend on the PATH it launched with, which on macOS
+is launchd's stub (§2) and on a fresh box may have no Node at all; and it pins
+the ABI — `better-sqlite3` ships per-`NODE_MODULE_VERSION` prebuilds, so a
+payload installed under one Node major and then run under whatever `node` the
+user happens to have is a coin flip that lands as "compiled against a different
+Node.js version" at the first query. The vendored version defaults to the
+**host's own** Node version — the same one that ran `npm ci` for the payload —
+so the pair matches by construction; `CALANDRIA_DESKTOP_NODE_VERSION` overrides
+it for a reproducible, pinned CI build. The download (`scripts/fetch-node.js`)
+is sha256-verified against the official `SHASUMS256.txt` before it is unpacked;
+only the `node` binary is taken, not `npm` or the headers.
+
+**Native modules follow the bundled Node, not Electron.** `npmRebuild: false`
+and `nodeGypRebuild: false` stay set in the `electron-builder` config
+(`desktop/package.json`) so nothing rebuilds the addons against Electron's
+ABI — the addons are never loaded by Electron, only by the vendored Node the
+sidecars run under. `build-payload.js` ends with a real check rather than an
+assumption: it runs the vendored `node` with `require('better-sqlite3');
+require('node-pty')` against the staged tree, so an ABI mismatch fails the build
+instead of the app's first query.
+
+One `electron-builder` trap is recorded here because it fails silently and
+looks like a payload bug: a single `{from: "payload", to: "app-payload"}` entry
+copies everything **except** `node_modules`. electron-builder manages app
+dependencies itself and filters that name out of `extraResources`, so the
+packaged app looks complete on disk and dies at first boot on an unresolved
+`next`. The second, explicit `payload/node_modules` entry in
+`desktop/package.json` is what actually carries it.
+
+**`CALANDRIA_REPO_ROOT` still wins** over both the packaged payload and an
+unpackaged checkout — that is how a packaged binary gets pointed at a working
+tree instead of its own bundled payload, which is exactly what the window test
+harness does with `CALANDRIA_TEST_BIN` ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)).
+
+A second trap costs nothing but time: electron-builder 26.15.3 warns on every
+Linux build that `desktopName` is not set — and then **rejects** `desktopName`
+as an unknown key if you set it, in `linux` or anywhere else its schema reaches.
+The option the warning names does not exist in this version. `syncDesktopName`
+does and is set; the warning is noise.
+
+Sizes are in §2's table rather than here, because they are measurements. The
+short version: the artifact is large and Electron is not why.
+
+**Isolation is unchanged by any of this.** Electron and `electron-builder` live
+only in `desktop/package.json`'s `devDependencies` — not in the root
+`package.json`, not in the Docker image, not in the app's CI. `desktop/payload/`
+(the staging dir above), `desktop/vendor/` (the vendored Node) and
+`desktop/dist/` (electron-builder's output) are build intermediates and stay
+gitignored.
+
+## 7. Cost of going further (phase 2)
 
 | Item | Cost |
 |-|-|
@@ -181,9 +281,9 @@ adds reliable OS notifications. That is a real improvement for a daily driver an
 a thin one for an occasional user — which is why the recommendation is to ship
 the free half now and let demand pay for the rest.
 
-## 7. Next steps
+## 8. Next steps
 
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
 2. Decide between window-first and tray-first for phase 1 (both are the same supervisor).
 3. Native notifications + dock/taskbar badge wired to the existing "needs you" count — the highest-value thing the shell can add that a browser tab cannot.
-4. Only then: packaging, signing, updates.
+4. Only then: signing, auto-update (packaging itself is done — §6).

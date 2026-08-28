@@ -1,14 +1,65 @@
 {
   "name": "calandria-desktop",
-  "version": "0.0.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Spike: Electron shell around the local Calandria server. Deliberately its own package so Electron (~280 MB unpacked) never lands in the app's node_modules, the Docker build, or CI.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test-supervisor.js"
+    "test": "node test-supervisor.js",
+    "payload": "node scripts/build-payload.js",
+    "dist:dir": "npm run payload && electron-builder --linux dir",
+    "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage"
   },
   "devDependencies": {
-    "electron": "^44.0.0"
-  }
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "dev.calandria.desktop",
+    "productName": "Calandria",
+    "copyright": "Copyright \u00a9 Calandria contributors",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "supervisor.js",
+      "loading.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "payload",
+        "to": "app-payload"
+      },
+      {
+        "from": "payload/node_modules",
+        "to": "app-payload/node_modules"
+      },
+      {
+        "from": "vendor/node",
+        "to": "node"
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "linux": {
+      "target": [
+        "dir",
+        "deb",
+        "AppImage"
+      ],
+      "executableName": "calandria-desktop",
+      "category": "Development",
+      "synopsis": "Run many Claude Code and Codex sessions in parallel, locally",
+      "maintainer": "Calandria contributors <calandria@example.invalid>",
+      "icon": "../public/icons/icon-512.png",
+      "syncDesktopName": true
+    }
+  },
+  "author": "Calandria contributors",
+  "homepage": "https://github.com/calandria-dev/calandria",
+  "license": "Apache-2.0"
 }
