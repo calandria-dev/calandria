@@ -103,7 +103,23 @@ CALANDRIA_TEST_BIN=/tmp/calandria-app/calandria-desktop \
 sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
 CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 \
   DISPLAY=:1 npm run test:desktop:window
+
+# macOS: what the macos-desktop CI job does (--mac dir is the only target
+# wired up — see "Building a package" below — and unsigned in the Developer
+# ID sense, so an ad-hoc signature is what lets arm64 exec it at all)
+cd desktop && npm run dist:mac
+cd .. && mv desktop/dist/mac*/Calandria.app /tmp/calandria-app.app   # mac-arm64 or mac, by host arch
+codesign --force --deep --sign - /tmp/calandria-app.app
+CALANDRIA_TEST_BIN=/tmp/calandria-app.app/Contents/MacOS/Calandria \
+  CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-app.app \
+  npm run test:desktop:window
 ```
+
+`CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
+`CALANDRIA_TEST_BIN` and `CALANDRIA_DESKTOP_SANDBOX` above: it points at the
+`.app` itself rather than the binary inside it, which is what
+`08-macos-launchd.spec.ts` below needs to `open` the bundle through
+LaunchServices instead of spawning the executable directly.
 
 `CALANDRIA_DESKTOP_SANDBOX=1` is what stops the suite disabling the sandbox, so
 the flag cannot be what makes an installed app pass. It sets two things, and the
@@ -155,6 +171,30 @@ and the assertion holds everywhere. What no test here covers is a real Windows
 shutdown or logout, where `before-quit`/`will-quit` are not emitted at all — a
 `session-end` listener does not exist yet, and nothing drains until it does.
 
+`e2e/07-macos.spec.ts` is darwin-only and skips itself elsewhere.
+`titleBarStyle: "hiddenInset"` is the whole point of it — plain `"default"`
+reserves a strip the renderer never draws into, and `getContentBounds()` only
+comes back equal to `getBounds()` under `hiddenInset` — so the spec pins that
+equality, that the traffic lights stay closable/minimizable/maximizable, that
+the app paints into the rows the native title bar used to own, and that the
+menubar's submenus still carry the roles macOS reads its keyboard shortcuts
+off (Edit: undo/redo/cut/copy/paste/select; the app menu: about/hide/quit;
+File: close, Cmd+W; Window: minimize) — a hand-rolled menu can drop a role
+while still looking right. It attaches a screenshot (`hiddenInset.png`) and a
+JSON probe of what sits under the traffic lights anyway, since that is
+exactly what an assertion can't answer and a human should look once on a
+green run. `e2e/08-macos-launchd.spec.ts` is darwin **and** packaged only,
+gated on `CALANDRIA_TEST_APP_BUNDLE`: a binary spawned directly, the way
+every other packaged spec launches it, inherits the spawning shell's PATH,
+but a `.app` opened by LaunchServices gets launchd's stub instead,
+`/usr/bin:/bin:/usr/sbin:/sbin`, with none of the user's own tooling on it — the reason
+`supervisor.js` repairs PATH from the login shell in the first place
+(`docs/DESKTOP_APP.md` §2). So the spec `open`s the bundle instead of
+spawning it, captures its stdout with `open --stdout`, and asserts the repair
+ran. It stays hermetic the way the other packaged specs do, `launchctl
+setenv`-ing `instanceEnv()`'s keys — PATH pointedly left out, since that's
+the variable under test — and unsets them in `afterAll`.
+
 One environment gotcha it handles for you, worth knowing if you run the shell by
 hand on a headless box: `Notification.permission` is `granted` in Electron
 without anything asking, so the app posts real native notifications, and on
@@ -176,7 +216,21 @@ cd desktop
 npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
+npm run dist:mac      # → dist/mac(-arm64)/Calandria.app
 ```
+
+`dist:mac` is `--dir` only — no `dmg`/`zip` target is wired up yet, since
+there's nowhere to publish one to without Developer ID signing and
+notarization, which stay a separate later decision (see the closing note
+below). `mac.identity: null` tells electron-builder not to sign at all
+rather than search the keychain for an identity that isn't there, so the
+`.app` it produces is unsigned in the Developer ID sense — which is fine for a
+bundle you built yourself, since Gatekeeper's assessment is triggered by the
+quarantine attribute a *download* carries, and matters the moment anyone
+distributes one. Unlike Linux, though, that's not optional to work around:
+arm64 macOS refuses to `exec` a Mach-O carrying no signature whatsoever, so
+the `.app` needs at least an ad-hoc signature (`codesign --force --deep
+--sign -`) before anything, including the test suite below, can launch it.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

@@ -53,8 +53,9 @@ today.
    here.
 4. **macOS is not a homelab problem.** No Apple hardware, and Proxmox cannot
    legally run macOS. Use GitHub-hosted `macos-latest` (free for this public
-   repo) when packaging work starts, and accept that until then macOS is
-   covered by a human running the shell once.
+   repo) when packaging work starts. That lane has since landed — weekly rather
+   than per-push, because free-to-us is not the same as cheap and a macOS runner
+   bills at ten times a Linux one (§4).
 
 ---
 
@@ -133,7 +134,7 @@ anything requiring a signed installer until installers exist.
 | **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
 | **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb` install-and-run with the sandbox intact (recipe below), VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
 | **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Packaged NSIS run when packaging reaches Windows | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
-| **desktop-macos** | GitHub-hosted `macos-latest` | launchd PATH repair against a real GUI PATH, `hiddenInset` title bar, notarization smoke | When packaging starts |
+| **desktop-macos** (landed) | GitHub-hosted `macos-latest` | The whole suite twice (dev shell, then a packaged `.app`), plus the three things only macOS has: the launchd PATH repair under a real `open` launch, the `hiddenInset` title bar, and the menu roles under a real menubar | **Weekly cron**, dispatch, or a PR carrying the `macos` label — not the shared `e2e` one |
 
 Two facts that shape the later lanes. On Windows, `before-quit`/`will-quit` are
 **not emitted at all** on system shutdown or logout — a `taskkill` on the app
@@ -179,6 +180,56 @@ object — no `NODE_ENV=x` prefix for `cmd.exe` to read as a program name, no
 shell in between. Neither spec can cover the one case that matters most on
 Windows: a real shutdown or logout emits neither `before-quit` nor `will-quit`
 at all, so nothing drains, and no `session-end` listener exists yet to catch it.
+
+**Why the macOS lane is hosted, and why it is the one lane on a clock.** The
+first half needed no deliberation: there is no Apple hardware in the homelab and
+macOS has no legal path onto Proxmox/KVM, so unlike the Linux bench and the
+Windows lane above there was no alternative to weigh. The second half is a cost
+decision made in the open. A `macos-latest` runner is the priciest GitHub rents
+— at 2026 rates $0.062/min on a 3-vCPU M1, roughly ten times Linux — and while a
+public repo pays nothing for any of it, a lane that costs ten times its
+neighbours is the wrong one to attach to every push. So `macos-desktop` is the
+only job in `test.yml` with its own trigger: a Monday-morning cron, a manual
+dispatch, or a PR that asks for it by name with the `macos` label. It
+deliberately does **not** ride the `e2e` label the other three slow lanes share,
+which would have made every PR wanting a browser run buy a Mac run with it. The
+cron is also why the four always-on jobs now carry `github.event_name !=
+'schedule'`: without that a weekly macOS run would drag a second full CI pass
+along behind it.
+
+What the lane pins beyond re-running the shared specs, both of them things
+`docs/DESKTOP_APP.md` §5 had carried as assumptions since the spike.
+`desktop/e2e/07-macos.spec.ts` asserts `titleBarStyle: "hiddenInset"` from the
+outside: under `default` macOS draws a strip above the page and the window's
+content box is shorter than its frame by exactly that, while under `hiddenInset`
+the two rectangles are identical because the page now owns those rows. It also
+goes a level deeper into the menubar than `01-shell.spec.ts` does — into the
+submenus, where `undo`/`cut`/`copy`/`paste`/`selectAll` and the app menu's
+`quit`/`hide` actually live, because on macOS those roles *are* Cmd+C/V/A rather
+than a cosmetic duplicate of Chromium's own handling. And it attaches a
+screenshot plus the element stack sitting under the traffic lights, uploaded on
+a **green** run (`if: always()`, the only lane here that does), since "the
+traffic lights overlap the app's own titlebar row — needs a look on a real
+screen" is a question no assertion can answer.
+
+`desktop/e2e/08-macos-launchd.spec.ts` is the one spec in this suite that does
+not use `_electron`, and could not. Every other spec starts the binary as a
+child of the test process, so the app inherits the runner's PATH — which is
+precisely the environment in which the launchd repair is a no-op. This one
+`open`s the packaged bundle through LaunchServices exactly as a double-click
+does, captures its stdout with `open --stdout` (there is no CDP connection to
+evaluate into), and reads back whether `supervisor.js` reported the stub PATH and
+recovered a real one from the login shell. `launchctl setenv` is what keeps that
+instance hermetic, since `open` forwards no environment — the whole
+`instanceEnv()` shape goes into the user's launchd domain and comes back out in
+`afterAll`, with PATH pointedly not among the keys. It also checks that the
+runner's own login shell has directories beyond the stub, because otherwise
+there would be nothing to recover and a green run would prove nothing. The
+packaged `.app` is ad-hoc signed (`codesign --sign -`) before either pass
+launches it: arm64 macOS refuses to exec a Mach-O with no signature at all, and
+electron-builder invalidates whatever Electron's prebuilt arrived with. That is
+not Developer ID signing and it notarizes nothing — Gatekeeper and installers
+remain `docs/DESKTOP_APP.md` §6's separate decision.
 
 **The packaged-install run, concretely.** CI can package but cannot install, so
 the un-flagged sandbox run is the bench's. Verified there on 2026-08-27
@@ -264,4 +315,12 @@ would install it, SUID sandbox and all.
    covers, and has no task yet, is the OS session-end path
    (`WM_QUERYENDSESSION`/`WM_ENDSESSION`), where Electron emits no quit event at
    all.
-6. macOS lane. Waits for packaging.
+6. ~~macOS lane. Waits for packaging.~~ **Done** — the `macos-desktop` job,
+   GitHub-hosted because there is no other option, and weekly rather than
+   per-push because it is the one runner that costs ten times its neighbours
+   (§4). `07-macos.spec.ts` settles the `hiddenInset` title bar and the menubar
+   roles; `08-macos-launchd.spec.ts` settles the launchd PATH repair against a
+   real `open` launch, which no `_electron` spec could ever observe. Both of
+   those were open questions in `docs/DESKTOP_APP.md` §5. Signing, notarization
+   and installers deliberately stay out: the lane ad-hoc signs only because
+   arm64 will not exec an unsigned binary at all.

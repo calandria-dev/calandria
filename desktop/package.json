@@ -9,7 +9,8 @@
     "test": "node test-supervisor.js",
     "payload": "node scripts/build-payload.js",
     "dist:dir": "npm run payload && electron-builder --linux dir",
-    "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage"
+    "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage",
+    "dist:mac": "npm run payload && electron-builder --mac dir"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -45,6 +46,16 @@
     "asar": true,
     "npmRebuild": false,
     "nodeGypRebuild": false,
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "../public/icons/icon-512.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
     "linux": {
       "target": [
         "dir",
