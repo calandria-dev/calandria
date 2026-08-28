@@ -257,19 +257,22 @@ off to `electron-builder`. That build script:
 2. Installs a **fresh, production-only** `node_modules` with `npm ci --omit=dev`
    into a staging dir (`desktop/payload`) — not copied from this checkout, whose
    `node_modules` carries the whole dev toolchain.
-3. Copies `.next` (minus `.next/cache`, which is `next build` scratch nothing
+3. Deletes the files that existed only to make step 2 work (`package-lock.json`,
+   `.npmrc`, `scripts/fix-pty.js`). The lockfile is not inert: Next walks up
+   looking for one to infer a workspace root and warns on every boot when it
+   finds more than one.
+4. Sweeps two things out of that fresh tree — see "What the payload does not
+   carry" below. Every package either sweep deletes is named, with its size, in
+   the build log.
+5. Copies `.next` (minus `.next/cache`, which is `next build` scratch nothing
    reads at runtime — its dropped size is logged, not silently absorbed into the
    artifact), plus `server.js`, `pty-server.js`, and every plain-Node `.mjs` the
    two entrypoints dynamic-import. That file list lives in
    [`payload-manifest.js`](payload-manifest.js) and is the SAME inventory the
    Dockerfile's runtime stage COPYs — `tests/desktopPayload.test.ts` fails the
    suite if the two drift, so a new `.mjs` import goes into both places.
-4. Deletes the files that existed only to make step 2 work (`package-lock.json`,
-   `.npmrc`, `scripts/fix-pty.js`). The lockfile is not inert: Next walks up
-   looking for one to infer a workspace root and warns on every boot when it
-   finds more than one.
-5. Downloads and vendors a Node runtime (`scripts/fetch-node.js`) — see below.
-6. Runs the vendored Node against the staged tree with `require('better-sqlite3');
+6. Downloads and vendors a Node runtime (`scripts/fetch-node.js`) — see below.
+7. Runs the vendored Node against the staged tree with `require('better-sqlite3');
    require('node-pty')`, so an ABI mismatch fails the build instead of the app's
    first query.
 
@@ -287,6 +290,58 @@ single `{from: "payload", to: "app-payload"}` entry copies everything **except**
 filters that name out of `extraResources`. The packaged app looks complete and
 dies at first boot on an unresolved `next`. The second, explicit
 `payload/node_modules` entry is what actually carries it.
+
+### What the payload does not carry
+
+Step 4 above drops two things `npm ci --omit=dev` leaves behind. Together they
+are **515 MB** of the staged tree — a third of it. Both print every package they
+delete, with its size, for the same reason the `.next/cache` drop does: a build
+that quietly shrinks its own artifact is a build nobody can audit, and these
+delete whole dependencies rather than a scratch directory. Measured on linux-x64
+(2026-08-27): staged payload 1564 MB → **1049 MB**, `dist/linux-unpacked`
+2.1 GB → **1.4 GB**, AppImage 653 MB → **489 MB**, deb 485 MB → **364 MB**. The
+per-package numbers are in `docs/DESKTOP_APP.md` §2.
+
+**Packages built for another libc.** npm scoped the platform-specific optional
+dependencies to the target os/cpu, but not to a libc, and the reason is
+mechanical: `package-lock.json` records `os` and `cpu` for each of them and
+records `libc` for none, while `npm ci` filters on what the lockfile says rather
+than re-reading the registry. So a glibc host installs
+`@anthropic-ai/claude-agent-sdk-linux-x64-musl` and two musl `sharp` packages
+beside their glibc twins — 242 MB that cannot execute on the system a `.deb` or
+an AppImage targets. The sweep reads each staged package's own `libc`
+declaration (npm's matching rules, `!` negation included) rather than looking for
+a `-musl` name, so a newly added dependency is covered without anyone
+remembering to list it — that is how the two `sharp` packages, which nobody had
+counted, turned up.
+
+It keys off the **target**, not the build host: `--libc=musl` is there for an
+Alpine-targeted build, and on macOS and Windows there is no libc axis, so the
+sweep says it found nothing rather than saying nothing at all.
+
+Three ways to do this at the `npm ci` layer were rejected. `--omit=optional`
+drops the variant we need along with the one we don't. `--libc=glibc` looks
+right and does nothing — measured: a full `npm ci --omit=dev --libc=glibc`
+installs all four musl packages anyway, because the lockfile it reads has no
+`libc` to compare against. And regenerating the app's root lockfile so it
+carries `libc` would change what every install produces — Docker, CI,
+contributors — to shrink one desktop artifact, invisibly.
+
+**`@next/swc`**, 273 MB across its two libc variants, is a compiler, and the
+payload is a finished `next build` served by `next start`. Outside
+`next/dist/build`, `next/dist/cli` and the dev bundler, the only thing that
+reaches for the native bindings is `next/dist/server/config.js`, behind
+`experimental.useLightningcss`. That was proved by deletion rather than by
+reading: with the package gone from a staged payload, `node server.js` came up
+on the vendored Node and served `/`, `/api/projects` and a `_next/static` chunk,
+all 200, with a log identical to the run that had it. The build script checks
+`next.config.mjs` for `useLightningcss` first and keeps the compiler if it finds
+it — an app that wants lightningcss should keep its 137 MB, and the alternative
+is an artifact that dies at first boot.
+
+What is *not* prunable is the biggest single item: `@openai/codex-linux-x64` is
+350 MB, but it declares no `libc` and has no twin — it ships one statically
+linked `x86_64-unknown-linux-musl` binary that runs on glibc systems fine.
 
 ### The bundled Node
 
