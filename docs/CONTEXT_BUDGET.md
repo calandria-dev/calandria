@@ -47,6 +47,12 @@ A session that never opens `lib/agents/` starts 5,159 tokens lighter. One that d
 about 5% more than the single file cost, which is the price of the pointer paragraphs and of
 saying things in sentences instead of dash-chains.
 
+Re-measured 2026-08-28 against the same 44,507-token baseline: root `CLAUDE.md` had drifted up to
+19,617 tokens, and the `Collecting context` section written for `docs/DELEGATION.md` took it to
+**21,348** (+1,731). That section is the kind of material this file's keep-list calls for in root —
+it governs how a session behaves from its first tool call, before it knows which directory it is
+heading for.
+
 The rewrite kept every fact, so it is not where the saving came from: the driver material
 compressed by 26% on the way into `lib/agents/CLAUDE.md`, while "Key modules" stayed within 2% of
 its old size no matter how hard it was squeezed. That section is invariants and identifiers with

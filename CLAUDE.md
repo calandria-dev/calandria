@@ -36,6 +36,81 @@ Claude or Codex login rather than an API key.
 - No lint script. TypeScript is strict, path alias `@/*` → repo root (mirrored in
   `vitest.config.ts`).
 
+## Collecting context
+
+Measured across 198 task sessions in this repo (`docs/DELEGATION.md` has the method and the full
+table): 79% of the tool calls a first turn makes are Bash, and only ~12% of those are decisions the
+model has to see raw output for. Half of all first-turn Bash calls sit inside unbroken runs of
+three or more read-only commands — the longest measured is 43 — and collection steps put **59% of
+the context a first turn accumulates** into the window, where every later step re-reads it. Across
+the 25 most expensive first turns, `Agent` was called zero times.
+
+**In this repo, dispatching a collection subagent is requested work.** Auto mode — the mode
+Calandria launches every task in — tells you to prefer Bash over the file tools and not to call
+`Agent` unless the user asked. Read this section as the asking. It does not extend to decisions;
+those are the last list here.
+
+**The trigger is mechanical, not a judgement call.** When you are about to run a third read-only
+command in a row against the same question, dispatch it instead:
+
+- `Agent(subagent_type: "Explore", model: "haiku", run_in_background: false)` when the answer is a
+  list — call sites, `file:line`, what exists, what a config says. Explore can't write, so it's the
+  safe default.
+- `Agent(subagent_type: "general-purpose", model: "sonnet", run_in_background: false)` when the
+  answer needs judgement about what it found: does this library handle our case, which of these
+  call sites actually needs changing.
+
+**`run_in_background: false` is not optional here, and it is not the default.** A collection
+dispatch is by definition the thing you are waiting for, and a backgrounded agent reports back by
+notification — which, measured, did not arrive inside the turn that launched it. Left on the
+default the call returns an agent id, you carry on without the answer, and the sweep you delegated
+is silently lost. It still looks like a saving, because the tokens really were never spent.
+
+**Send independent sweeps in one message.** Three facets dispatched together cost one agent's
+latency; dispatched one at a time they cost three, and serial dispatch is the one way this rule
+ends up slower than doing the reading yourself.
+
+A task that is entirely research isn't exempt from this — it just splits differently. Cut the
+question into facets that don't depend on each other (client side / server side / the tests) and
+dispatch those together. Handing the whole question to one agent only moves the turn somewhere
+else.
+
+Ask for the conclusion and the `file:line`s. Never ask for file contents — pulling the bulk back
+into your own window is the cost you were avoiding.
+
+Four dispatches this repo has already needed, each replacing a measured sweep:
+
+- *"Grep `project.branch` and `proj.branch` across `lib/` and `app/`. Report every call site as
+  `file:line` with its enclosing signature and one line on what it assumes about the base branch."*
+  — the 34-call sweep that opened the per-task-base-branch work.
+- *"Trace `withdraw_suggestion` through all five wiring points — `lib/agentToolDefs.mjs`,
+  `lib/agentTools.ts`, `app/api/internal/agent-tools/`, the Claude driver's registration,
+  `scripts/calandria-mcp.mjs`. Report `file:line` for each and the exact shape a new tool copies."*
+  — a 33-call sweep, and the template for adding any agent tool.
+- *"Find every place `running` or `awaiting_input` renders a status dot, spinner or label across
+  `app/shell/` and `lib/`. Report `file:line` plus the condition each tests."* — the 43-call sweep,
+  the longest measured.
+- *"Read `docs/DESKTOP_APP.md` and `docs/DESKTOP_E2E.md` in full and report which of openbox,
+  dbus-x11, xdotool and dunst are installed on this host."* — a reading errand costs the
+  coordinator two sentences instead of two files.
+
+**Keep in the main loop, always:** the edit itself; `npm test`, `npm run typecheck`,
+`npm run preflight` and anything else whose failure text drives your next change; `git diff` of
+your own work; and any call whose output you need in full to decide. Delegating those trades tokens
+for a game of telephone.
+
+**And none of this licenses a cheaper proxy for actually running something.** If the answer is a
+measurement — how many cases a file declares, which test is slowest, whether a build passes — run
+it and read the number. Measured: a session asked to inventory the suite counted `it(` with grep
+instead of running vitest, reported `tests/importGraph.test.ts` as 4 cases when it declares 57
+(they're generated in a loop), and left the slowest file out of its "five slowest" list. Static
+counting is not a cheap version of measuring, it is a different and wrong answer. A worktree has no
+`node_modules`; installing them is part of the job, not a reason to estimate.
+
+One shape that isn't delegation: waiting. Polling a backgrounded run with repeated `tail` and
+`grep -c` was 105 of one session's 194 Bash calls. Use `Bash(run_in_background)` and wait for the
+notification, or `Monitor` for a stream.
+
 ## Architecture
 
 Three processes and entrypoints, one origin:
@@ -644,7 +719,7 @@ Unmerged worktree changes aren't in it; verify locations against your working tr
 self-hosting, architecture) · `.env.example` (every env var, documented) ·
 `lib/agents/CLAUDE.md` (per-driver detail, loaded when you open that directory).
 
-**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 18,524 measured
+**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 21,348 measured
 tokens, loaded into every session in this repo before any code is read, so new material belongs in
 the nearest directory-scoped `CLAUDE.md` unless you need it before you'd open that directory. Don't restate `docs/` prose here; that duplication has already
 drifted.
