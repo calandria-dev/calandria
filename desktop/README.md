@@ -43,6 +43,7 @@ inherited unchanged.
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 18 assertions over `supervisor.js`, against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
+| `test-window.js` | The window layer, driven by Playwright's Electron driver under a virtual display — boot, title, menu, renderer hardening, screenshot, single-instance, quit-drains. Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). |
 
 ## Tests
@@ -51,7 +52,14 @@ inherited unchanged.
 node test-supervisor.js                                   # headless, ~8 s
 ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js   # same, in Electron's runtime
 node test-real-boot.js                                    # needs a repo-root build
+xvfb-run -a node test-window.js                           # needs a build + a virtual display
+CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
+  xvfb-run -a node test-window.js                         # same assertions, packaged build
 ```
+
+`test-window.js` resolves `playwright` from the repo root's `node_modules` (it is
+already a dev dependency for the browser suite) and needs `xvfb` plus Chromium's
+usual library set on a headless box.
 
 ## The one rule
 

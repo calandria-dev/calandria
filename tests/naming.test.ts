@@ -105,7 +105,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (c) storage: the old locations are read where they already hold data and
   // are never moved, so the names survive in the resolver, its callers and docs.
   "lib/storage.mjs": [LEGACY_STORAGE, LEGACY_ENV, SYSADMIN, /"orchestrator" : "calandria"/],
-  "lib/db.ts": [LEGACY_STORAGE],
+  "lib/db.ts": [LEGACY_STORAGE, SYSADMIN],
   "lib/db-lock.mjs": [LEGACY_STORAGE],
   "lib/config.ts": [LEGACY_STORAGE],
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE, SYSADMIN],
@@ -146,6 +146,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   "lib/auth/local-origin.mjs": [SYSADMIN],
   "tests/localOrigin.test.ts": [SYSADMIN],
   "tests/turnLogging.test.ts": [SYSADMIN], // the turn lifecycle lines exist for that person
+  // The schema-version gate and its test: a downgrade refusal is addressed to
+  // whoever rolled the image tag back, so its prose names that person.
+  "lib/schema-version.mjs": [SYSADMIN],
+  "tests/schemaVersion.test.ts": [SYSADMIN],
   "server.js": [SYSADMIN, LEGACY_ENV, LEGACY_STORAGE],
 
   // This guard, which has to spell out everything it forbids…
