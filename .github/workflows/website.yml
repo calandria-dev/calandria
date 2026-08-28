@@ -21,9 +21,21 @@
 # whose Markdown the docs build rejects.
 #
 # CREDENTIALS. `CLOUDFLARE_API_TOKEN` must carry Account -> Cloudflare Pages ->
-# Edit; a 403 on the deploy means it does not. The account id is read from a
-# secret OR a repo variable — it is not sensitive, so either is fine, and this
-# accepts whichever exists rather than dictating one.
+# Edit. When it does not, the failure is NOT a 403 and does not name Pages
+# permissions — the first deploy on main failed with, verbatim:
+#
+#   A request to the Cloudflare API (/accounts/<id>/pages/projects/calandria-dev)
+#   failed.  Authentication error [code: 10000]
+#   ...
+#   Failed to automatically retrieve account IDs for the logged in user.
+#
+# That second line is a red herring: the account id WAS supplied (it is right
+# there in the failing URL), and wrangler only falls back to discovering one
+# after the first call fails. Read the pair as "the token cannot see the Pages
+# project", which is a scope problem, not a targeting one.
+#
+# The account id is read from a secret OR a repo variable — it is not sensitive,
+# so either is fine, and this accepts whichever exists rather than dictating one.
 #
 # The action is pinned to a full commit SHA like every other action in this
 # repo (see .github/dependabot.yml for why the pin needs a bot behind it).
