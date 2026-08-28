@@ -69,13 +69,14 @@ The harness was `desktop/test-window.js`; it is now the suite in
 |-|-|
 | **Playwright drives Electron 44 headlessly** | `_electron.launch()` against a minimal app: first window in **435 ms**, `evaluate()` in the main process returned Electron 44.0.0 / Chrome 152.0.7977.54 / Node 24.18.1, screenshot written. |
 | **The real shell boots the real app under Xvfb** | `xvfb-run node desktop/test-window.js`: first window **272 ms**, app URL loaded at **2316 ms**, the onboarding wizard rendered at 1440×900, 157 KB PNG. The window layer that had never rendered now renders in CI-shaped conditions. *(Re-run 2026-08-27 against the current tree: 531 ms / 1873 ms, 143 KB PNG, all seven assertions green. As the promoted suite: 356 ms first window, ~2.0 s to the app URL, 11 specs green in 1.2 min including three full boots.)* |
-| **A packaged build passes the same assertions** (not re-run on landing) | `electron-builder --linux dir` (282 MB out) → `CALANDRIA_TEST_BIN=…/calandria-desktop`: identical run, app URL at **1353 ms**. The harness takes the artifact or the dev shell through one switch. |
+| **A packaged build passes the same assertions** | `electron-builder --linux dir` → `CALANDRIA_TEST_BIN=…/calandria-desktop`: the harness takes the artifact or the dev shell through one switch. *(Re-verified 2026-08-27 on the bench VM, since the spike's numbers were never re-run: **15 passed, 2 skipped in 80 s**, the same figure for the relocated `--dir` output under Xvfb and for an installed `.deb` in the Xfce session. The artifact is much bigger than the spike's 282 MB — payload 1564 MB, `linux-unpacked` 2.1 GB, `.deb` 503 MB — which is the subject of its own task, "Trim the desktop payload's cross-libc duplicates".)* Two conditions make the run mean anything, both now enforced by `desktop/e2e/fixtures.ts`: **no `CALANDRIA_REPO_ROOT`** (the spike's packaged run was handed one, so it passed while still reading the repo — a real download would have died on the first boot) and the artifact **moved out of the checkout**, so nothing can resolve upward into a source tree that a user does not have. |
 | **Electron's own `--headless` is not a substitute for Xvfb** | Same app without a display and `--headless`: the process dies with **SIGTRAP** before the CDP socket settles. Xvfb (or a real session) is mandatory, not a preference. |
 | **Native notifications are assertable headlessly** (not re-run on landing) | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. |
 | **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** *(170 ms on the 2026-08-27 re-run)* and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → drain → SIGTERM, asserted end to end. |
 | **The single-instance lock is observable** | A second `electron.launch()` against the same app failed to launch in **64–73 ms** *(109 ms on the re-run)* rather than starting a second server — `requestSingleInstanceLock()` doing its job, visible to the harness as a rejected launch. |
 | **The hermetic instance transfers unchanged** | `supervisor.js`'s `sidecarEnv()` forwards its own environment to both sidecars, so `e2e/env.ts`'s `SERVER_ENV` shape (temp `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`, pinned gitconfig, `CALANDRIA_E2E_MOCK_AGENT=1`) works as-is through `electron.launch({ env })`. No agent CLI, login or network is involved, exactly as in the browser suite. |
-| **`chrome-sandbox` needs `--no-sandbox` from an unpacked dir** | As `DESKTOP_APP.md` §5 predicted. A packaged `.deb`/AppImage installs the SUID bit; the `--dir` output does not, so the harness passes `--no-sandbox` and a **packaged-install** test must not. |
+| **`chrome-sandbox` needs `--no-sandbox` from an unpacked dir** | As `DESKTOP_APP.md` §5 predicted, for the `--dir` output. The other half of that row was wrong and is corrected here: a packaged `.deb` does **not** install the SUID bit. electron-builder 26's `postinst` chmods the helper to **0755** wherever `unshare --user` works and ships `/etc/apparmor.d/calandria-desktop` instead, which is what keeps Chromium's namespace sandbox alive under Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1`. Measured on the bench with that sysctl at its stock `1`: the installed app's `--type=zygote` ran in `user:[4026532391]` against the main process's `user:[4026531837]`, renderers inheriting it; the same build under `--no-sandbox` had every process in the one namespace. So `06-packaged.spec.ts` asserts the **live** sandbox out of `/proc`, not a mode bit — a correctly installed app would fail the bit. |
+| **Playwright disables the Electron sandbox for you** | Not in the spike, and it silently defeated the packaged-install lane: on Linux `_electron.launch()` *unshifts* `--no-sandbox` onto the argument list unless `chromiumSandbox: true` is passed (playwright-core 1.61.1, `Electron.launch`; documented as "Enable Chromium sandboxing. Defaults to `false`"). Omitting the flag is not enough — `app.commandLine.hasSwitch("no-sandbox")` read **true** against a launch that passed none. `fixtures.ts` now sets the argument and the option from the one `CALANDRIA_DESKTOP_SANDBOX` switch. |
 | **Bug found by the harness: the shell ignores `PORT`/`PTY_PORT`** | `desktop/README.md` documents both. `main.js` constructed `new Supervisor({ repoRoot, resourcesPath, onLog, onExit })` and never passed `port`/`ptyPort`, so the class fell back to 3000/3001 and stepped from there: launching with `PORT=4830` bound **3002**. Documented behaviour that did not exist — found in the first hour of having a window test. **Fixed** (`preferredPorts()` in `supervisor.js`); the suite still reads the port back off the loaded window URL, because a busy preferred port is legitimately stepped past. |
 | **Bug found by the suite: the boot screen had never shown a single line** | `loading.html`'s `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; …">` has no `script-src`, so its own inline `<script>` — the one defining `window.__log` — was blocked in every launch there has ever been. `main.js` pushed each sidecar line with ``executeJavaScript(`window.__log && window.__log(…)`)``, and the `&&` guard made the failure completely silent: a cold boot showed a spinner and an empty `<pre>`, which is exactly the "indistinguishable from a hang" the boot screen exists to prevent. **Fixed** by doing the DOM write from the main process (an evaluation is not subject to the page's CSP), so the strict policy stays and no script ships in that page at all. |
 | **The app's own notifications freeze the main process on a headless box** | Electron's default permission CHECK grants notifications, so `Notification.permission` reads `granted` in the shell with nothing having asked, and `app/shell/useNotifications.ts` posts a real native one on every turn event. On Linux that is libnotify on the UI thread: with a session bus present but **no** daemon owning `org.freedesktop.Notifications` — every headless box, every GitHub runner — each call blocks the whole Electron main process for GDBus's 25 s timeout. Measured: the quit-drain spec's shutdown took **>90 s** (main process wedged, not even answering `app.evaluate`) and **0.2 s** with `DBUS_SESSION_BUS_ADDRESS` pointed at a socket that does not exist, so libnotify fails immediately. The suite sets that; the bench VM's notification specs must override it and run against a real daemon. |
@@ -120,7 +121,7 @@ for what only the shell can break:
 | Native notification actually reaches the OS bus | D-Bus assertion above; the browser suite can only see the web-facing half |
 | The db-lock collision reads as "another Calandria is running", not a crash | `onExit` + `dialog` path |
 | One smoke path through the app inside the window (onboarding → project → turn) | Proves SSE/WebSocket/xterm survive Electron's renderer, once |
-| The packaged artifact does all of the above | It is what a user would download |
+| The packaged artifact does all of the above, plus: it booted from `resources/app-payload` with no `CALANDRIA_REPO_ROOT`, spawned the Node it shipped, and (installed) is really sandboxed | It is what a user would download — and `desktop/e2e/06-packaged.spec.ts` is the only spec that cannot also run against the dev shell |
 
 Not covered, deliberately: everything the browser suite already asserts, and
 anything requiring a signed installer until installers exist.
@@ -129,8 +130,8 @@ anything requiring a signed installer until installers exist.
 
 | Lane | Runner | Scope | Trigger |
 |-|-|-|-|
-| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; `electron-builder --dir` + the same suite against the artifact once packaging exists | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
-| **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb`/AppImage install-and-run with the SUID sandbox intact, VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
+| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
+| **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb` install-and-run with the sandbox intact (recipe below), VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
 | **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Packaged NSIS run when packaging reaches Windows | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
 | **desktop-macos** | GitHub-hosted `macos-latest` | launchd PATH repair against a real GUI PATH, `hiddenInset` title bar, notarization smoke | When packaging starts |
 
@@ -179,6 +180,22 @@ shell in between. Neither spec can cover the one case that matters most on
 Windows: a real shutdown or logout emits neither `before-quit` nor `will-quit`
 at all, so nothing drains, and no `session-end` listener exists yet to catch it.
 
+**The packaged-install run, concretely.** CI can package but cannot install, so
+the un-flagged sandbox run is the bench's. Verified there on 2026-08-27
+(Ubuntu 24.04, Xfce session on `:1`, Electron 44, Playwright 1.61.1):
+
+```bash
+cd desktop && npm run payload -- --no-build && npx electron-builder --linux dir deb
+sudo dpkg -i dist/calandria-desktop_0.3.0_amd64.deb        # → /opt/Calandria
+cd .. && DISPLAY=:1 CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop \
+  CALANDRIA_DESKTOP_SANDBOX=1 npm run test:desktop:window   # no xvfb-run, no --no-sandbox
+```
+
+15 passed, 2 skipped, 80 s. Note what is *not* in there: no `xvfb-run` (this is a
+real session) and no `CALANDRIA_REPO_ROOT`. The bench's
+`desktop_bench_allow_unprivileged_userns` knob should be left at stock (`1`) for
+this run — the point is that the installed app sandboxes anyway.
+
 **Self-hosted runners on a public repo are a security decision, not a
 convenience.** A fork PR can execute arbitrary code on a self-hosted runner, and
 this one would sit on VLAN 3 next to everything else. Non-negotiables for the
@@ -215,7 +232,7 @@ would install it, SUID sandbox and all.
 
 | Item | Cost |
 |-|-|
-| The `desktop-linux` CI lane | ~2–4 min per run on top of an existing job matrix; free (public repo) |
+| The `desktop-linux` CI lane | ~2–4 min for the dev-shell half, plus the packaged half: **25 s** to stage the payload and **20 s** for `electron-builder --dir` (bench, warm — a cold runner also pays a production-only `npm ci` and one ~30 MB Node download), then the window suite again at ~80 s. Free (public repo); the job's ceiling is 45 min |
 | The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (11 specs over four files) with `desktop/test-window.js` retired into it |
 | Bench VM | 4 vCPU / 8 GiB / 60 GiB on orion3 + one Ansible inventory entry; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
@@ -232,7 +249,12 @@ would install it, SUID sandbox and all.
    `preferredPorts()`, and the suite's own `CALANDRIA_DESKTOP_E2E_PORT` base
    (4741, clear of the browser suite's 4711).
 3. Provision the bench VM and register the gated ephemeral runner.
-4. Add `electron-builder` packaging, then point the same suite at the artifact.
+4. ~~Add `electron-builder` packaging, then point the same suite at the
+   artifact.~~ **Done** — the `desktop` job packages, relocates and re-runs the
+   window suite against the artifact, and `06-packaged.spec.ts` holds the
+   payload/bundled-Node/sandbox assertions the dev shell cannot make. The
+   `.deb`-install half was verified by hand on the bench (§4) and still wants a
+   lane of its own, which is the native-integration task's.
 5. ~~Windows lane.~~ **Done** — the `windows-desktop` job, GitHub-hosted, with
    `05-windows-quit.spec.ts` for the `taskkill` paths. ~~The drain gap it pins is
    its own task ("Desktop shell: drain in-flight turns on quit under Windows").~~

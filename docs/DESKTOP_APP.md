@@ -175,9 +175,14 @@ emits neither `before-quit` nor `will-quit` (the session ends through
 `session-end` listener does not exist yet. `desktop/e2e/05-windows-quit.spec.ts`'s
 header is the existing statement of that gap.
 
-**Linux** — works as-is under X11/Wayland. `chrome-sandbox` must be
-root-owned/4755 when running from a plain directory (packaged builds handle it);
-AppImage/deb/rpm are all electron-builder targets.
+**Linux** — works as-is under X11/Wayland. Running from a plain directory means
+no sandbox unless `chrome-sandbox` is root-owned/4755; packaged builds handle it,
+though not the way that sentence implies — electron-builder 26's deb `postinst`
+leaves the helper 0755 wherever user namespaces work and ships
+`/etc/apparmor.d/calandria-desktop` instead, which is what lets the namespace
+sandbox survive Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1`
+(measured on the bench, `docs/DESKTOP_E2E.md` §1). AppImage/deb/rpm are all
+electron-builder targets.
 
 ## 6. Packaging
 

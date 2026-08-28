@@ -71,18 +71,72 @@ In Electron's own runtime, from this directory:
 ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js
 ```
 
-Once packaging exists, the same window suite runs against the artifact:
+### Against the packaged artifact
+
+The same window suite takes a package instead of the dev shell — that is what
+`CALANDRIA_TEST_BIN` is for, and the CI lane runs both halves. Two rules make
+the second run mean something, and the suite enforces both:
+
+- **The artifact must sit outside this checkout.** `fixtures.ts` refuses to
+  launch a binary under the repo. An installed app never is, and one that is
+  can satisfy an upward path lookup — a module, a lockfile, a relative path —
+  from the tree it was built in.
+- **No `CALANDRIA_REPO_ROOT`.** The fixture drops it (and deletes an inherited
+  one) for a packaged run, so `main.js` has to resolve
+  `resources/app-payload`. During the research spike the packaged shell passed
+  every assertion while still reading the repo, because the harness handed it
+  that variable; a real download would have died on the first boot.
+
+`e2e/06-packaged.spec.ts` is the only packaged-only spec — it asserts the
+payload the app booted from, the bundled Node the sidecars ran under, and how
+`chrome-sandbox` is packaged. It skips itself when `CALANDRIA_TEST_BIN` is unset.
 
 ```bash
-CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
-  CALANDRIA_DESKTOP_SANDBOX=1 xvfb-run -a npm run test:desktop:window
+# unpacked: what CI does (electron-builder --dir has no SUID chrome-sandbox,
+# so --no-sandbox is still passed and the spec records that)
+cd desktop && npm run payload -- --no-build && npx electron-builder --linux dir
+cd .. && mv desktop/dist/linux-unpacked /tmp/calandria-app
+CALANDRIA_TEST_BIN=/tmp/calandria-app/calandria-desktop \
+  xvfb-run -a npm run test:desktop:window
+
+# installed: what the bench does — a real `.deb`, a real session, no --no-sandbox
+sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
+CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 \
+  DISPLAY=:1 npm run test:desktop:window
 ```
+
+`CALANDRIA_DESKTOP_SANDBOX=1` is what stops the suite disabling the sandbox, so
+the flag cannot be what makes an installed app pass. It sets two things, and the
+second is not obvious: the `--no-sandbox` argument, **and**
+`chromiumSandbox: true` on `electron.launch()` — on Linux Playwright unshifts
+`--no-sandbox` onto the argument list itself unless that option is given
+(playwright-core 1.61.1). Omitting the flag was not enough; the packaged-install
+run was unsandboxed anyway until the option went in.
+
+In that mode `06-packaged.spec.ts` asserts the sandbox is **running** rather
+than that a mode bit is set, because the bit no longer decides it:
+electron-builder 26's `postinst` chmods `chrome-sandbox` to 0755 when
+unprivileged user namespaces work and installs
+`/etc/apparmor.d/calandria-desktop` instead, which is what keeps the namespace
+sandbox alive under Ubuntu 24.04's
+`kernel.apparmor_restrict_unprivileged_userns=1`. The SUID bit only appears on a
+kernel without user namespaces. What both mechanisms produce — and
+`--no-sandbox` cannot — is a descendant process in its own user namespace, which
+is what the spec reads out of `/proc`. That difference only reproduces on a
+machine where the package was actually installed (docs/DESKTOP_E2E.md §4).
+
+Traces are off for this suite (`playwright.desktop.config.ts`): Playwright's
+trace/video capture against a packaged Electron app is unreliable
+([microsoft/playwright#13180](https://github.com/microsoft/playwright/issues/13180)),
+so both lanes keep screenshots-on-failure plus the shell log
+`attachShellLog()` writes beside each instance's database.
 
 The suite resolves `playwright` from the repo root's `node_modules` (already a
 dev dependency for the browser suite) and needs `xvfb` plus Chromium's usual
-library set on a headless box. It passes `--no-sandbox` because an unpacked
-Electron has no SUID `chrome-sandbox`; a packaged install does, which is what
-`CALANDRIA_DESKTOP_SANDBOX=1` is for.
+library set on a headless box. It disables the sandbox because an unpacked
+Electron has neither a SUID `chrome-sandbox` nor an AppArmor profile permitting
+its user namespace; an install has one of the two, which is what
+`CALANDRIA_DESKTOP_SANDBOX=1` is for (see "Against the packaged artifact").
 
 **On Windows and macOS drop the `xvfb-run` prefix** — both have a real window
 station and need no display to be installed, which is why the `windows-desktop`
