@@ -49,6 +49,13 @@ export function init(db: Database.Database) {
       -- opening a pull request). See LandingMode in lib/types.ts; the agent is
       -- told which one is true by buildProjectContext (lib/agents/shared.ts).
       landing_mode TEXT NOT NULL DEFAULT 'merge',
+      -- 1 = when a task's work LANDS (its PR reports merged, or it is merged
+      -- locally), reclaim its checkout without being asked: fast-forward the
+      -- local base branch, remove the worktree, delete the local task branch and
+      -- mark the task done. Off by default and per project, because "landed" is
+      -- only a disposal signal in a repo whose landing discipline the user has
+      -- actually set up. See lib/reclaim.ts.
+      auto_reclaim INTEGER NOT NULL DEFAULT 0,
       -- Per-project managed services: the dev server command (long-running) plus
       -- optional one-shot setup/test commands, supervised by lib/services.ts.
       -- port is the project's stable, deterministic port (see lib/config.ts),
@@ -735,6 +742,10 @@ export function migrate(db: Database.Database) {
   // and the ruleset probe (lib/github.ts detectLandingMode) only ever PRESELECTS
   // a different answer in the settings form for a human to save.
   add("landing_mode", "TEXT NOT NULL DEFAULT 'merge'");
+  // Reclaim the checkout automatically once work lands (lib/reclaim.ts). 0 for
+  // every pre-existing project: an unattended reclaim deletes a local branch,
+  // and no upgrade may start doing that on the strength of a default.
+  add("auto_reclaim", "INTEGER NOT NULL DEFAULT 0");
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");

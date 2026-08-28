@@ -369,8 +369,14 @@ function fetchState() {
  * `git fetch <remote> <branch>` to update `<remote>/<branch>`: bare-branch fetch
  * mainly writes FETCH_HEAD, and whether the tracking ref moves depends on the
  * repo's configured `remote.<name>.fetch` — which a single-branch clone narrows.
+ *
+ * `force` skips the COOLDOWN (never the in-flight coalescing, which is only ever
+ * a few hundred ms behind). The cooldown exists to stop a launch storm forking a
+ * fetch per task; a caller acting on a specific thing it has just been told
+ * happened — lib/reclaim.ts catching the base up after a PR merged — would
+ * otherwise read a tracking ref from before the merge and quietly do nothing.
  */
-export async function fetchBase(repoPath: string, baseBranch: string): Promise<FetchOutcome> {
+export async function fetchBase(repoPath: string, baseBranch: string, opts: { force?: boolean } = {}): Promise<FetchOutcome> {
   const st = fetchState();
   // Keyed on the repo's IDENTITY (its common git dir, the same resolution
   // lib/repoLock.ts uses) rather than the configured path, so a symlinked
@@ -382,7 +388,7 @@ export async function fetchBase(repoPath: string, baseBranch: string): Promise<F
   // Turned off is not the same as failed: the user may still fetch by hand, so
   // the remote-tracking ref can be perfectly current. Report nothing to report.
   if (!GIT_FETCH_ENABLED) return { attempted: false, ok: false, fetchedAt: last };
-  if (last && Date.now() - last < GIT_FETCH_COOLDOWN_MS) return { attempted: true, ok: true, fetchedAt: last };
+  if (!opts.force && last && Date.now() - last < GIT_FETCH_COOLDOWN_MS) return { attempted: true, ok: true, fetchedAt: last };
 
   const inflight = st.inflight.get(key);
   if (inflight) return inflight;
@@ -1134,6 +1140,40 @@ export async function worktreePruneSafety(input: {
           : undefined;
 
   return { safe: !isDirty && ahead === 0, isDirty, ahead, reason };
+}
+
+/**
+ * How many commits on `workBranch` its remote-tracking ref has never seen, or
+ * `null` when there is nothing to compare against.
+ *
+ * The question worktreePruneSafety's `ahead` count cannot answer once GitHub
+ * has merged a PR. A squash or rebase merge REWRITES the branch's commits, so a
+ * perfectly landed branch stays permanently "ahead" of the local base — and
+ * `ahead` therefore stops meaning "work that would be lost". What still means
+ * that is work the REMOTE never received: a commit made after the PR was
+ * opened and never pushed was not in the thing GitHub merged, whatever the
+ * merge strategy did to the rest. See lib/reclaim.ts, the only caller.
+ *
+ * `null` is deliberately distinct from 0. The upstream ref is routinely gone by
+ * the time this runs — GitHub's delete_branch_on_merge removes the remote
+ * branch, and a later `git fetch --prune` takes the local mirror of it with
+ * it — and "there is no longer anything to compare" must not read as "nothing
+ * is unpushed" to a caller that would treat 0 as permission.
+ */
+export async function unpushedCommits(repoPath: string, workBranch: string): Promise<number | null> {
+  if (!workBranch || !refNameSafe(workBranch)) return null;
+  const upstream = (
+    await git(repoPath, ["rev-parse", "--symbolic-full-name", `${workBranch}@{upstream}`]).catch(() => "")
+  ).trim();
+  if (!upstream) return null;
+  // The name resolving says only that the config exists; the ref itself may
+  // have been pruned out from under it.
+  if (!(await git(repoPath, ["rev-parse", "--verify", `${upstream}^{commit}`]).catch(() => ""))) return null;
+  const n = parseInt(
+    await git(repoPath, ["rev-list", "--count", `${upstream}..refs/heads/${workBranch}`]).catch(() => ""),
+    10
+  );
+  return Number.isFinite(n) ? n : null;
 }
 
 // ---------- diff ----------

@@ -392,7 +392,8 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   checkout "works" while silently discarding its state. Two rules stop that: terminal-only (that
   predicate) and never over work (`worktreePruneSafety()`, refused in `lib/taskMove.ts`'s words, so
   a log line and a refused move say the same thing). The branch is always kept — a checkout is
-  regenerable, a branch is the task's diff — and no knob deletes one unattended. The sweep is OFF
+  regenerable, a branch is the task's diff, and a fourteen-day silence is no evidence the diff is
+  anywhere else — `lib/reclaim.ts` is the case where it demonstrably is. The sweep is OFF
   by default, unlike the table prune, whose 180/400-day windows are longer than most instances have
   existed; a window in weeks would start deleting on the first tick after an upgrade nobody asked
   for. The clear goes through `clearTaskWorktreePath()` rather than `updateTask`, which stamps
@@ -401,6 +402,22 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   sweep, since the instance that didn't opt in is the one that needs telling: measured each pass,
   logged while over `CALANDRIA_WORKTREES_DISK_WARN_GB`, served on `schedulerHealth()`, shown above
   the reclaim list in Settings → Storage. The ticker starts for it too.
+- `lib/reclaim.ts` — LANDED → RECLAIMED, the definitive signal the sweep's clock stands in for.
+  A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
+  (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
+  (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
+  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
+  call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
+  unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ
+  PER LANDING: uncommitted edits block both; `ahead > 0` blocks a local merge (mergeTask makes
+  base a descendant, so those commits post-date it) and must NOT block a PR, since a squash
+  leaves every landed branch permanently ahead and gating on it means the feature never fires.
+  `unpushedCommits()` replaces it there — what the remote never received wasn't in what GitHub
+  merged. Only the STATUS write stamps `updated_at`, and only when the reclaim is what moved
+  the task to done; the columns go through `clearTaskWorktreePath()` for the sweep's reason.
+  In `DYNAMIC_ONLY` (it sweeps dependents), which is why `lib/prState.ts` moved there.
 - **Runbooks** (`lib/runbooks/store.ts`, `lib/dispatch.ts`, `app/shell/Runbooks.tsx`) are
   schedules with the clock taken off. A `runbooks` row is a saved prompt plus agent, permission
   mode, priority and send_context, and pressing Run MINTS A FRESH TASK (tagged `tasks.runbook_id`)

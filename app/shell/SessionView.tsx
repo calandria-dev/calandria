@@ -24,6 +24,7 @@ import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
 import { PrChip } from "./PrChip";
+import { ReclaimButton } from "./ReclaimButton";
 import { ColResize, ColRail } from "./Layout";
 import { jget, jsend } from "./api";
 
@@ -599,13 +600,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     </>
   );
 
-  // Read-only header chips — rendered at the head of the tools rail on
-  // desktop, demoted to its tail on mobile (see the rail's comment).
+  // Header chips — rendered at the head of the tools rail on desktop, demoted
+  // to its tail on mobile (see the rail's comment). Read-only but for Reclaim,
+  // which sits with the PR chip because that is where "this landed" is shown.
   const infoChips = (
     <>
       {/* Live PR state — number, state, check rollup, review decision — read off
           the task row and kept fresh by lib/prState.ts. */}
       <PrChip task={task} />
+      {/* The one exception to "read-only" here, and it belongs beside the chip
+          that reports the fact it acts on: once this task's work has LANDED, one
+          click frees the checkout, deletes the local branch and marks it done
+          (lib/reclaim.ts). Renders nothing until then. */}
+      <ReclaimButton task={task} />
       {/* Which feature(s) this session is a step of — a task can carry several.
           Clicking one lights that tag's chip in the list/board, the way the
           row badges do. */}

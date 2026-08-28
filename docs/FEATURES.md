@@ -60,8 +60,28 @@ re-read, and a sweep is skipped entirely when no tab is open, so the cost is bou
 work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
 turns the timer off and leaves the other three triggers.
 
-Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
-work requires an explicit permanent-discard confirmation.
+#### Reclaiming the worktree when the work lands
+
+A merged PR is a definitive signal that a task's checkout is disposable, so the session header
+grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
+or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
+base branch from origin, remove the worktree, delete the **local** branch (the remote one is
+GitHub's job, via the repository's `delete_branch_on_merge`) and mark the task done.
+
+Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
+server do it by itself. It is off by default and per project, because an unattended reclaim
+deletes a local branch.
+
+Nothing is ever discarded silently. Uncommitted edits in the checkout stop both paths, and so
+do commits the remote never received — those were not in what GitHub merged, whatever the
+merge strategy did to the rest. The automatic path reports and leaves the checkout alone
+(nobody is there to acknowledge anything); the button offers the same permanent-discard
+confirmation a task move does, naming exactly what would be destroyed. A branch that is merely
+"ahead" after a squash merge is not treated as unsaved work — every squash-merged branch looks
+that way, and refusing on it would mean the feature never fires.
+
+Worktrees for merged or finished tasks can also be reclaimed in bulk from Settings → Storage.
+Discarding unmerged work there requires the same explicit permanent-discard confirmation.
 
 ### Collaborating on a document
 

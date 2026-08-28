@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { maybeAutoReclaim } from "@/lib/reclaim";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -57,6 +58,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           project_id: project.id, task_id: id, agent: task.agent,
           additions: result.additions ?? 0, deletions: result.deletions ?? 0,
         });
+      // The mirror of a merged PR: this task's work is now in the base branch, so
+      // its checkout is disposable. A no-op unless the project opted in, and
+      // never awaited — the reclaim fetches origin (lib/reclaim.ts).
+      maybeAutoReclaim(id);
     }
     return NextResponse.json(result, { status: result.ok ? 200 : 409 });
   }));

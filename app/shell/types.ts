@@ -20,6 +20,7 @@ export interface ProjectRow {
   repo_path: string;
   branch: string;
   landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected — finish by opening a PR)
+  auto_reclaim: number; // 1 = once a task's work lands, reclaim its checkout and delete its local branch without being asked (lib/reclaim.ts)
   dev_command: string;
   setup_command: string;
   test_command: string;
@@ -49,6 +50,7 @@ export interface TaskRow {
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
   session_id: string | null;
   worktree_path: string; // isolated git worktree this task runs in ("" = not created yet — appears on the first turn)
+  merged_at: number; // when this task's branch was merged into the base branch LOCALLY (0 = never); pairs with pr_state for "has this landed?"
   pr_url: string; // GitHub PR opened from this task's branch ("" = none yet)
   // Live PR state, refreshed from GitHub in the background (lib/prState.ts) and
   // arriving here on task_edited. All five are "" / 0 until the first refresh

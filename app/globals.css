@@ -993,6 +993,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pr-refresh:disabled{opacity:.5;cursor:default;}
 .pr-refresh svg{width:12px;height:12px;}
 
+/* "Reclaim" — the landed-to-reclaimed action beside the PR chip (app/shell/ReclaimButton.tsx). */
+.reclaim-wrap{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;}
+.reclaim-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:99px;background:var(--surface-2);color:var(--ink-2);font-size:12px;cursor:pointer;flex:0 0 auto;}
+.reclaim-btn:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink);}
+.reclaim-btn:disabled{opacity:.5;cursor:default;}
+.reclaim-btn svg{width:12px;height:12px;}
+.reclaim-btn.danger{border-color:var(--red);color:var(--red);}
+.reclaim-warn,.reclaim-err{font-size:11px;color:var(--red);max-width:340px;}
+
 /* cumulative token/cost spend for the task */
 .usage-chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface-2);font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-3);white-space:nowrap;flex:0 0 auto;cursor:default;}
 .usage-chip .usage-dot{color:var(--ink-4,var(--ink-3));opacity:.6;}

@@ -268,10 +268,18 @@ checkpoints the WAL so the space is reclaimed. Live tasks are never touched.
 Per-task worktrees are the bigger disk cost (a full checkout each) and have
 their own switch. Calandria warns in the log and in Settings → Storage once
 the worktrees directory passes `CALANDRIA_WORKTREES_DISK_WARN_GB` (default
-20). Reclaiming them is manual unless you set
+20). Reclaiming them in bulk is manual unless you set
 `CALANDRIA_WORKTREE_RETENTION=on`, which removes the checkouts of finished
 tasks after 14 days. It never deletes the branch, and it skips (and names)
 any checkout holding uncommitted edits or unmerged commits.
+
+The prompt case is separate and doesn't wait on a clock. When a task's work
+**lands** — its pull request reports merged, or Calandria merged the branch
+locally — the session header offers **Reclaim**: fast-forward the local base
+branch from origin, remove the worktree, delete the local branch and mark the
+task done, in one click. Project settings can have the server do that by
+itself (off by default). Neither path discards uncommitted edits, or commits
+the remote never saw, without you saying so.
 
 ### Backups and upgrades
 

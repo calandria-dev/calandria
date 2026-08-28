@@ -245,11 +245,11 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
   return getProject(id);
 }
 
@@ -1031,11 +1031,25 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
  * each bucket is the most recently active task) AND retention's clock, so
  * stamping it here would float a six-month-old finished task to the top of
  * Done and push its transcript prune out by the width of the worktree window.
- * Used by the scheduled worktree sweep (lib/worktreeSweep.ts); the interactive
- * paths go through updateTask, where the stamp is the truth.
+ * Used by the scheduled worktree sweep (lib/worktreeSweep.ts) and by
+ * lib/reclaim.ts; the interactive paths go through updateTask, where the stamp
+ * is the truth.
+ *
+ * `branch: true` clears the branch columns in the same statement, for the
+ * caller that deleted the local branch as well as the checkout (a landed task,
+ * whose diff now lives in the base branch rather than on a branch of its own).
+ * Leaving `work_branch` pointing at a ref that no longer exists would make the
+ * DIFF tab, the reclaim list and worktreePruneSafety all reason about a branch
+ * git cannot resolve.
  */
-export function clearTaskWorktreePath(id: string): void {
-  getDb().prepare("UPDATE tasks SET worktree_path = '' WHERE id = ?").run(id);
+export function clearTaskWorktreePath(id: string, opts: { branch?: boolean } = {}): void {
+  getDb()
+    .prepare(
+      opts.branch
+        ? "UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '' WHERE id = ?"
+        : "UPDATE tasks SET worktree_path = '' WHERE id = ?"
+    )
+    .run(id);
 }
 
 /**

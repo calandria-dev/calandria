@@ -864,6 +864,15 @@ waits on that walk once, right after a restart.
   removing checkouts on the first tick after an upgrade nobody asked for.
   The manual path (Settings → Storage, which can also discard unmerged work
   after you acknowledge it) works either way.
+  **Landing is the other trigger, and it isn't on this clock at all.** When a
+  task's PR reports merged, or its branch is merged locally, the session
+  header's **Reclaim** button (or the project's `auto_reclaim` setting, off by
+  default) catches the local base branch up with origin, removes the checkout,
+  deletes the *local* branch and marks the task done. Unlike the sweep it does
+  delete a branch — the diff it carried is in the base branch by then — and
+  like the sweep it never discards uncommitted edits, or commits the remote
+  never received, without an explicit acknowledgement nobody can give
+  unattended. See [Features](FEATURES.md).
   **The disk warning** runs whether or not the sweep does: when the
   worktrees directory crosses `CALANDRIA_WORKTREES_DISK_WARN_GB` (default 20,
   `0` disables), a line goes to the server log each pass while it's over, the

@@ -1010,7 +1010,7 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1023,6 +1023,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // pointed at a staging branch that merges locally under a PR-required repo is
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
+  const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
@@ -1145,7 +1146,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1244,6 +1245,21 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       ) : probe && probeAsked ? (
         <div className="hlp" style={{ marginTop: 6 }}>{probe.reason}</div>
       ) : null}
+      {/* The tail of landing: what happens to the CHECKOUT once work lands. Off
+          by default, and per project, because it deletes a local branch without
+          being asked — see lib/reclaim.ts. The button in the session header
+          does the same thing on demand whether or not this is on. */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+        <input type="checkbox" checked={autoReclaim} onChange={(e) => setAutoReclaim(e.target.checked)} />
+        <span>
+          Reclaim a task&apos;s worktree when its work lands
+          <span className="hlp" style={{ display: "block", marginTop: 2 }}>
+            {landing === "pr"
+              ? "When its pull request reports merged, catch " + (branch || "the base branch") + " up with origin, remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."
+              : "When it merges into " + (branch || "the base branch") + ", remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."}
+          </span>
+        </span>
+      </label>
       <div style={{ marginTop: 14 }}>
         <AgentPicker
           agents={agents} value={project.default_agent} onChange={onSetDefaultAgent}

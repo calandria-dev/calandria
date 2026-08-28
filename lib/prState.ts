@@ -22,12 +22,16 @@
 //      forever — the create/open/click triggers still work with no tab, because
 //      each of them IS a client.
 //
-// SDK-free by construction (store + github + events + config only), so it is in
-// tests/importGraph.test.ts's PINNED set: the PR routes that call it are
-// ordinary sync-compiled route entries.
+// Statically SDK-free, which is what the PR routes that call it need — they are
+// ordinary sync-compiled route entries. It is in tests/importGraph.test.ts's
+// DYNAMIC_ONLY set rather than PINNED for one edge: a merged PR hands off to
+// lib/reclaim.ts, whose dependent auto-start sweep reaches the runner through
+// `await import()`. Same guarantee (no static path to an SDK), reached the way
+// lib/autoStart.ts's own importers reach it.
 
 import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount } from "./store";
 import { fetchPrState, type PrSnapshot } from "./github";
+import { maybeAutoReclaim } from "./reclaim";
 import { publishGlobal, watcherCount } from "./events";
 import { PR_POLL_BATCH, PR_POLL_MS, PR_STALE_MS } from "./config";
 import type { Task } from "./types";
@@ -144,6 +148,13 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
     // listeners are told to re-read rather than handed a field they'd have to
     // learn. Published only on a real change (see changed()).
     if (moved) publishGlobal(taskId, { type: "task_edited" });
+    // A PR reporting `merged` is the definitive signal that this task's checkout
+    // is disposable (lib/reclaim.ts). Fire-and-forget, and a no-op unless the
+    // project opted in — this must not turn a poll into a git teardown for
+    // everybody. Guarded on the SNAPSHOT rather than on `moved`, since a forced
+    // refresh of an already-merged PR should still finish an interrupted
+    // reclaim; rule 2 above means it can never become a loop.
+    if (snap.state === "merged") maybeAutoReclaim(taskId);
     return { ok: true, changed: moved, view: prView(row ?? task)! };
   } finally {
     inFlight.delete(taskId);

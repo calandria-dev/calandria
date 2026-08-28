@@ -39,7 +39,6 @@ const PINNED = [
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
-  "lib/prState.ts", //          keeps tasks.pr_* fresh from `gh pr view`; store + github + bus, no driving, and both PR routes sit on it
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here
@@ -112,6 +111,16 @@ const PINNED = [
 const DYNAMIC_ONLY = [
   "lib/autoStart.ts", // launches turns, but its importers are sync route entries
   "lib/deferredStart.ts", // imports lib/autoStart statically and reaches the runner the same way
+  // Reclaiming a landed task marks it done, and a non-terminal → terminal
+  // transition has to release whatever was blocked on it — the same sweep the
+  // user-facing PATCH and the agent tools run. That is the only edge out of
+  // either module; both are otherwise store + git + bus.
+  "lib/reclaim.ts",
+  // …and lib/prState.ts hands a merged PR to it. It was PINNED, which is the
+  // same requirement stated more strictly than the hazard needs: what the two
+  // sync-compiled PR routes depend on is that nothing here is STATICALLY async,
+  // which is exactly what this list pins.
+  "lib/prState.ts",
 ];
 
 // The other half of the same rule, in the other direction: nothing the driver
