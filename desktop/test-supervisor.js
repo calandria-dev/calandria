@@ -362,6 +362,43 @@ function hold(port) {
     assert.ok(sup.children.every((c) => c.exited), "failed start must not leak sidecars");
   });
 
+  await test("a sidecar that dies during boot fails start() at once, naming the real cause", async () => {
+    // The bug: waitForReady polls a port and knows nothing about the process it
+    // is waiting for, so an app that exited one second in still sat out the
+    // whole readiness timeout and then rejected with "server did not become
+    // ready … (fetch failed)". The db lock is just the cheapest way to make a
+    // sidecar die on purpose; the fix is about ANY boot-time exit.
+    //
+    // The timeout here is deliberately far larger than the assertion below: a
+    // start() that merely got faster would still pass a small one, whereas
+    // 30s-vs-5s can only be met by not waiting for the deadline at all.
+    const sup = new Supervisor(
+      stubOpts({
+        port: 45170,
+        ptyPort: 45171,
+        env: { ...process.env, STUB_MODE: "lock-held", CALANDRIA_READY_TIMEOUT_MS: "30000" },
+      })
+    );
+    const started = Date.now();
+    await assert.rejects(
+      () => sup.start(),
+      (err) => {
+        // Not the timeout's words: the child's own. Both halves matter — a
+        // message that merely said "the app sidecar exited" would be fast and
+        // still send the user looking in the wrong place.
+        assert.ok(!/did not become ready/.test(err.message), `still the timeout's error: ${err.message}`);
+        assert.match(err.message, /app sidecar exited with code 1/);
+        assert.match(err.message, /already holds this database/);
+        assert.equal(err.code, "ESIDECAREXIT");
+        assert.equal(err.child.dbLockHeld, true);
+        return true;
+      }
+    );
+    const took = Date.now() - started;
+    assert.ok(took < 5000, `start() took ${took}ms — it waited out the readiness timeout`);
+    assert.ok(sup.children.every((c) => c.exited), "a failed start must not leak the surviving sidecar");
+  });
+
   await test("a db-lock exit is reported as such, not as a crash", async () => {
     const exits = [];
     const sup = new Supervisor(

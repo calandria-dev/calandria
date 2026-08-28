@@ -23,7 +23,7 @@
  * and dies at first boot on an unresolved `next`. The second, explicit
  * `payload/node_modules` entry in package.json is what actually carries it.
  *
- * Usage: node scripts/build-payload.js [--no-build] [--platform=…] [--arch=…]
+ * Usage: node scripts/build-payload.js [--no-build] [--platform=…] [--arch=…] [--libc=…]
  */
 "use strict";
 
@@ -66,7 +66,137 @@ function bytes(target) {
 
 const mb = (n) => `${(n / 1024 / 1024).toFixed(0)} MB`;
 
+/**
+ * npm's own `libc` matching rules, applied to one package's declaration.
+ *
+ * Same shape as `os`/`cpu`: a list of allowed values, where a leading `!` is a
+ * negation. An empty or absent list means "any libc" — the overwhelmingly
+ * common case, and the reason this sweep is a no-op for almost every package.
+ */
+function libcAllows(list, target) {
+  if (!Array.isArray(list) || list.length === 0) return true;
+  if (list.some((v) => v === `!${target}`)) return false;
+  if (list.every((v) => v.startsWith("!"))) return true;
+  return list.includes(target);
+}
+
+/**
+ * Drop `@next/swc`, which is a compiler the payload never compiles anything with.
+ *
+ * The payload is a finished `next build` served by `next start`; the only place
+ * outside `next/dist/build`, `next/dist/cli` and the dev bundler that reaches
+ * for the native bindings at all is `next/dist/server/config.js`, and it does
+ * so behind `experimental.useLightningcss`. Measured rather than reasoned about:
+ * with `@next/swc-linux-x64-gnu` deleted from a staged payload, `node server.js`
+ * came up on the vendored Node and served `/` (23,454 bytes), `/api/projects`
+ * and a `_next/static` chunk, all 200, with a log identical to the run that had
+ * it — see `docs/DESKTOP_APP.md` §2.
+ *
+ * `npm ci --omit=optional` would drop this too, along with `better-sqlite3`'s
+ * and `sharp`'s platform binaries, so the sweep is here rather than there.
+ *
+ * The one config that would make this wrong names itself, so check for it
+ * instead of shipping an artifact that dies at first boot. Skipping is the
+ * right response, not failing: an app that wants lightningcss should keep its
+ * compiler and its 137 MB.
+ */
+function pruneBuildOnlySwc(stage) {
+  const scope = path.join(stage, "node_modules", "@next");
+  if (!fs.existsSync(scope)) return null;
+
+  // Read from the repo, not the stage: this sweep runs before step 4 copies
+  // the runtime files in, and the stage's copy is a verbatim copy of this one.
+  const config = path.join(REPO, "next.config.mjs");
+  if (fs.existsSync(config) && fs.readFileSync(config, "utf8").includes("useLightningcss")) {
+    return { skipped: "next.config.mjs sets experimental.useLightningcss, which loads the SWC bindings at boot" };
+  }
+
+  const dropped = [];
+  for (const entry of fs.readdirSync(scope)) {
+    if (!entry.startsWith("swc-")) continue;
+    const pkgDir = path.join(scope, entry);
+    const size = bytes(pkgDir);
+    fs.rmSync(pkgDir, { recursive: true, force: true });
+    dropped.push({ name: `@next/${entry}`, size });
+  }
+  return { dropped };
+}
+
+/**
+ * Drop the staged packages built for a libc the target system does not have.
+ *
+ * npm scoped the platform-specific optional dependencies to the target os/cpu
+ * for us, but NOT to a libc, and the reason is mechanical: `package-lock.json`
+ * records `os` and `cpu` for each of those packages and records `libc` for
+ * none of them, while `npm ci` filters on what the lockfile says rather than
+ * re-reading the registry. So a glibc host installs
+ * `@anthropic-ai/claude-agent-sdk-linux-x64-musl` and two musl `sharp`
+ * packages right beside their glibc twins — code that cannot execute on the
+ * system a `.deb` or an AppImage targets. (`@next/swc`'s pair would be here
+ * too; the sweep above has already taken both halves of it.)
+ *
+ * This is a sweep of the staged tree rather than a change to the `npm ci`
+ * invocation above, for three reasons. `--omit=optional` drops the variant we
+ * NEED along with the one we don't. `--libc=glibc` cannot help either, because
+ * the lockfile it reads has no libc to compare against. And the remaining
+ * option — regenerating the app's root lockfile so it carries `libc` — would
+ * change what every install produces (Docker, CI, contributors) in order to
+ * shrink one desktop artifact, and would do it invisibly.
+ *
+ * Keyed off each package's OWN declaration rather than a `-musl` name suffix,
+ * so a newly added dependency is covered without anyone remembering to list it.
+ */
+function pruneForeignLibc(root, targetLibc) {
+  const dropped = [];
+
+  const scan = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const pkgDir = path.join(dir, entry.name);
+      // A scope directory (@next, @anthropic-ai) holds packages, not a package.
+      if (entry.name.startsWith("@")) {
+        scan(pkgDir);
+        continue;
+      }
+      if (entry.name === ".bin") continue;
+
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+      } catch {
+        continue;
+      }
+      if (!libcAllows(manifest.libc, targetLibc)) {
+        const size = bytes(pkgDir);
+        fs.rmSync(pkgDir, { recursive: true, force: true });
+        dropped.push({ name: manifest.name || path.relative(root, pkgDir), libc: manifest.libc, size });
+        continue;
+      }
+      scan(path.join(pkgDir, "node_modules"));
+    }
+  };
+
+  scan(root);
+  return dropped;
+}
+
 async function main() {
+  // What the artifact will RUN on, which is not necessarily what is building
+  // it. Every platform-conditional decision below reads these, never
+  // `process.platform` directly.
+  const targetPlatform = opt("platform", process.platform);
+  const targetArch = opt("arch", process.arch);
+  // Both Linux targets electron-builder produces here — `.deb` and AppImage —
+  // are glibc artifacts. `--libc=musl` is for an Alpine-targeted build; on
+  // macOS and Windows there is no libc axis and nothing declares one.
+  const targetLibc = targetPlatform === "linux" ? opt("libc", "glibc") : null;
+
   // 1. The app's own production build. Reused when present: `next build` is the
   //    slowest step here by far and a packaging loop should not pay for it twice.
   const buildId = path.join(REPO, ".next", "BUILD_ID");
@@ -104,6 +234,30 @@ async function main() {
   // (loudly, on every boot) when it finds more than one.
   for (const rel of BUILD_ONLY) fs.rmSync(path.join(STAGE, rel), { force: true });
 
+  // 3b. Two sweeps of the tree `npm ci` just produced, both naming what they
+  //     delete for the same reason the `.next/cache` drop below does: a build
+  //     that silently shrinks its own artifact is a build nobody can audit,
+  //     and these delete whole dependencies.
+  const swc = pruneBuildOnlySwc(STAGE);
+  if (swc?.skipped) {
+    log(`[payload] keeping @next/swc — ${swc.skipped}`);
+  } else if (swc?.dropped?.length) {
+    const total = swc.dropped.reduce((sum, d) => sum + d.size, 0);
+    log(`[payload] dropped @next/swc (${mb(total)}) — a build-time compiler; \`next start\` never loads it`);
+    for (const d of swc.dropped) log(`[payload]   - ${d.name} (${mb(d.size)})`);
+  }
+
+  if (targetLibc) {
+    const dropped = pruneForeignLibc(path.join(STAGE, "node_modules"), targetLibc);
+    if (dropped.length === 0) {
+      log(`[payload] no foreign-libc packages staged (target libc: ${targetLibc})`);
+    } else {
+      const total = dropped.reduce((sum, d) => sum + d.size, 0);
+      log(`[payload] dropped ${dropped.length} package(s) built for another libc (target: ${targetLibc}), ${mb(total)}:`);
+      for (const d of dropped) log(`[payload]   - ${d.name} (${mb(d.size)}, libc: ${JSON.stringify(d.libc)})`);
+    }
+  }
+
   // 4. The runtime files. Same inventory as the Dockerfile's runtime stage —
   //    see payload-manifest.js.
   for (const rel of COPY_FILES) {
@@ -129,15 +283,15 @@ async function main() {
   // 5. The Node the sidecars run under.
   const node = await fetchNode({
     dest: VENDOR_NODE,
-    platform: opt("platform", process.platform),
-    arch: opt("arch", process.arch),
+    platform: targetPlatform,
+    arch: targetArch,
     log,
   });
 
   // 6. Prove the pair actually fits before an artifact is built around it. This
   //    is the failure the whole bundled-Node decision exists to prevent: an
   //    ABI-mismatched better-sqlite3 is invisible until the first query.
-  if (opt("platform", process.platform) === process.platform && opt("arch", process.arch) === process.arch) {
+  if (targetPlatform === process.platform && targetArch === process.arch) {
     log(`[payload] ABI check: ${node.version} vs the staged native addons`);
     execFileSync(node.path, ["-e", "require('better-sqlite3'); require('node-pty'); console.log('[payload] native addons load under ' + process.version + ' (modules ' + process.versions.modules + ')')"], {
       cwd: STAGE,

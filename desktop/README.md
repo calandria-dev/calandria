@@ -44,7 +44,7 @@ Env it understands:
 |-|-|
 | `CALANDRIA_NODE` | Node binary the sidecars run under. Set this if `node` isn't on the GUI PATH. |
 | `CALANDRIA_REPO_ROOT` | Repo to launch. Defaults to the parent of `desktop/` when run unpackaged, or to the bundled `app-payload` when packaged (see "Building a package" below) — this var wins over both, which is how a packaged binary gets pointed at a working checkout instead. |
-| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). |
+| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). Only ever paid by a sidecar that is *alive* and silent — one that exits during boot fails `start()` immediately instead. |
 | `PORT` / `PTY_PORT` | Preferred ports for the two sidecars. Taken ones are stepped past, not fought over — a preference, not a demand, so a second Calandria on a dev box still launches. |
 | `CALANDRIA_DB_DIR` | Which database to open. The shell doesn't read it: it reaches the sidecars by ordinary env inheritance, like the rest of the app's config below. (Same for its legacy `ORCH_DB_DIR` alias.) |
 
@@ -55,12 +55,12 @@ inherited unchanged.
 
 | File | What it is |
 |-|-|
-| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
+| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling (raced against the sidecars' own exits, so a boot that has already failed rejects in the first second with the child's reason rather than at the timeout with `fetch failed`), drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, a tray icon, external links to the real browser, and quit-drains-first (held open, with a title and an on-page overlay, until the drain finishes). Closing the window **hides** it — quitting is asked for by name; see "Close vs quit" in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §5.1. No preload, no IPC, no `nodeIntegration`. |
 | `notifier.js` | The notification/badge policy, Electron-free for the same reason `supervisor.js` is: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. It renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. |
 | `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (ImageMagick + a font — needed by nobody but whoever changes the mark). |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 33 assertions over `supervisor.js` and `notifier.js` (plus two source checks on `main.js`'s wiring), against stub sidecars and a stub event stream. No deps, no display. |
+| `test-supervisor.js` | 34 assertions over `supervisor.js` and `notifier.js` (plus two source checks on `main.js`'s wiring), against stub sidecars and a stub event stream. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
@@ -260,19 +260,22 @@ off to `electron-builder`. That build script:
 2. Installs a **fresh, production-only** `node_modules` with `npm ci --omit=dev`
    into a staging dir (`desktop/payload`) — not copied from this checkout, whose
    `node_modules` carries the whole dev toolchain.
-3. Copies `.next` (minus `.next/cache`, which is `next build` scratch nothing
+3. Deletes the files that existed only to make step 2 work (`package-lock.json`,
+   `.npmrc`, `scripts/fix-pty.js`). The lockfile is not inert: Next walks up
+   looking for one to infer a workspace root and warns on every boot when it
+   finds more than one.
+4. Sweeps two things out of that fresh tree — see "What the payload does not
+   carry" below. Every package either sweep deletes is named, with its size, in
+   the build log.
+5. Copies `.next` (minus `.next/cache`, which is `next build` scratch nothing
    reads at runtime — its dropped size is logged, not silently absorbed into the
    artifact), plus `server.js`, `pty-server.js`, and every plain-Node `.mjs` the
    two entrypoints dynamic-import. That file list lives in
    [`payload-manifest.js`](payload-manifest.js) and is the SAME inventory the
    Dockerfile's runtime stage COPYs — `tests/desktopPayload.test.ts` fails the
    suite if the two drift, so a new `.mjs` import goes into both places.
-4. Deletes the files that existed only to make step 2 work (`package-lock.json`,
-   `.npmrc`, `scripts/fix-pty.js`). The lockfile is not inert: Next walks up
-   looking for one to infer a workspace root and warns on every boot when it
-   finds more than one.
-5. Downloads and vendors a Node runtime (`scripts/fetch-node.js`) — see below.
-6. Runs the vendored Node against the staged tree with `require('better-sqlite3');
+6. Downloads and vendors a Node runtime (`scripts/fetch-node.js`) — see below.
+7. Runs the vendored Node against the staged tree with `require('better-sqlite3');
    require('node-pty')`, so an ABI mismatch fails the build instead of the app's
    first query.
 
@@ -290,6 +293,58 @@ single `{from: "payload", to: "app-payload"}` entry copies everything **except**
 filters that name out of `extraResources`. The packaged app looks complete and
 dies at first boot on an unresolved `next`. The second, explicit
 `payload/node_modules` entry is what actually carries it.
+
+### What the payload does not carry
+
+Step 4 above drops two things `npm ci --omit=dev` leaves behind. Together they
+are **515 MB** of the staged tree — a third of it. Both print every package they
+delete, with its size, for the same reason the `.next/cache` drop does: a build
+that quietly shrinks its own artifact is a build nobody can audit, and these
+delete whole dependencies rather than a scratch directory. Measured on linux-x64
+(2026-08-27): staged payload 1564 MB → **1049 MB**, `dist/linux-unpacked`
+2.1 GB → **1.4 GB**, AppImage 653 MB → **489 MB**, deb 485 MB → **364 MB**. The
+per-package numbers are in `docs/DESKTOP_APP.md` §2.
+
+**Packages built for another libc.** npm scoped the platform-specific optional
+dependencies to the target os/cpu, but not to a libc, and the reason is
+mechanical: `package-lock.json` records `os` and `cpu` for each of them and
+records `libc` for none, while `npm ci` filters on what the lockfile says rather
+than re-reading the registry. So a glibc host installs
+`@anthropic-ai/claude-agent-sdk-linux-x64-musl` and two musl `sharp` packages
+beside their glibc twins — 242 MB that cannot execute on the system a `.deb` or
+an AppImage targets. The sweep reads each staged package's own `libc`
+declaration (npm's matching rules, `!` negation included) rather than looking for
+a `-musl` name, so a newly added dependency is covered without anyone
+remembering to list it — that is how the two `sharp` packages, which nobody had
+counted, turned up.
+
+It keys off the **target**, not the build host: `--libc=musl` is there for an
+Alpine-targeted build, and on macOS and Windows there is no libc axis, so the
+sweep says it found nothing rather than saying nothing at all.
+
+Three ways to do this at the `npm ci` layer were rejected. `--omit=optional`
+drops the variant we need along with the one we don't. `--libc=glibc` looks
+right and does nothing — measured: a full `npm ci --omit=dev --libc=glibc`
+installs all four musl packages anyway, because the lockfile it reads has no
+`libc` to compare against. And regenerating the app's root lockfile so it
+carries `libc` would change what every install produces — Docker, CI,
+contributors — to shrink one desktop artifact, invisibly.
+
+**`@next/swc`**, 273 MB across its two libc variants, is a compiler, and the
+payload is a finished `next build` served by `next start`. Outside
+`next/dist/build`, `next/dist/cli` and the dev bundler, the only thing that
+reaches for the native bindings is `next/dist/server/config.js`, behind
+`experimental.useLightningcss`. That was proved by deletion rather than by
+reading: with the package gone from a staged payload, `node server.js` came up
+on the vendored Node and served `/`, `/api/projects` and a `_next/static` chunk,
+all 200, with a log identical to the run that had it. The build script checks
+`next.config.mjs` for `useLightningcss` first and keeps the compiler if it finds
+it — an app that wants lightningcss should keep its 137 MB, and the alternative
+is an artifact that dies at first boot.
+
+What is *not* prunable is the biggest single item: `@openai/codex-linux-x64` is
+350 MB, but it declares no `libc` and has no twin — it ships one statically
+linked `x86_64-unknown-linux-musl` binary that runs on glibc systems fine.
 
 ### The bundled Node
 

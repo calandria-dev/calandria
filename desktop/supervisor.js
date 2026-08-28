@@ -244,6 +244,10 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
         headers: process.env.SERVICE_TOKEN ? { "x-service-token": process.env.SERVICE_TOKEN } : {},
+        // Also on the fetch, not just the loop head: an abort arriving while a
+        // probe is in flight should end the wait now rather than after this
+        // request and the next sleep.
+        signal,
       });
       if (res.ok) {
         // Insist on the shape, not just a 200: pty-server.js answers every path
@@ -261,6 +265,37 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(`server did not become ready on port ${port} within ${timeoutMs}ms (${lastErr?.message || "no response"})`);
+}
+
+/**
+ * The rejection `start()` owes its caller when a sidecar dies before the app
+ * answers.
+ *
+ * `waitForReady` polls a port and knows nothing about the process it is waiting
+ * for, so on its own a sidecar that exited one second in still costs the whole
+ * CALANDRIA_READY_TIMEOUT_MS (90s) and then reports the timeout — "server did
+ * not become ready … (fetch failed)" — which names the symptom and hides the
+ * cause. The child already said why it left; this puts THAT on the error.
+ *
+ * The reason is lifted out of the tail rather than re-derived, because the log
+ * is where a sidecar's own words are: `[app] [server] another Calandria process
+ * already holds this database (pid 4242 on devBox)`. Only lines from the child
+ * that died are eligible — the other sidecar's boot chatter is the last thing
+ * printed about half the time and would read as the explanation.
+ */
+function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
+  const prefix = `[${name}] `;
+  const said = String(tail)
+    .split("\n")
+    .filter((l) => l.startsWith(prefix))
+    .map((l) => l.slice(prefix.length).trim())
+    .filter(Boolean)
+    .pop();
+  const how = signal ? `on ${signal}` : `with code ${code}`;
+  const err = new Error(`the ${name} sidecar exited ${how} before the server became ready${said ? `: ${said}` : ""}`);
+  err.code = "ESIDECAREXIT";
+  err.child = { name, exitCode: code ?? null, signal: signal ?? null, dbLockHeld: !!dbLockHeld };
+  return err;
 }
 
 /**
@@ -291,6 +326,8 @@ class Supervisor {
     this.ptyPort = null;
     this.stopping = false;
     this.tail = [];
+    // Set only while start() is waiting for readiness; see the race there.
+    this.notifyBootExit = null;
   }
 
   /** Last N log lines, for the "it failed to start" screen. */
@@ -350,18 +387,50 @@ class Supervisor {
     }
     const env = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
 
+    // The readiness wait races against this: it resolves the moment either
+    // sidecar exits, which is a boot that has already failed no matter how long
+    // the deadline still had to run. Live only for the duration of start() —
+    // afterwards an exit is the shell's business (`onExit`), not the launch's.
+    const bootExit = new Promise((resolve) => {
+      this.notifyBootExit = resolve;
+    });
+
     // pty first: server.js proxies /pty and logs its target at boot, so having
     // the sidecar already listening keeps the first terminal open from racing.
     this.spawnChild("pty", this.ptyScript, env);
     this.spawnChild("app", this.serverScript, env);
 
+    // The timeout stays the backstop for the OTHER failure — a sidecar that is
+    // alive and simply never answers (a wedged Next build, a half-migrated db).
+    // Nothing about that case can be learned from a process that is still
+    // running, so there the deadline is the only evidence there is.
+    const abort = new AbortController();
+    const ready = waitForReady(this.port, {
+      timeoutMs: Number(this.env.CALANDRIA_READY_TIMEOUT_MS || 90_000),
+      signal: abort.signal,
+    }).then(
+      (version) => ({ version }),
+      (error) => ({ error })
+    );
+    const died = bootExit.then((rec) => {
+      // Stop polling a port whose server is gone: without this the loser of the
+      // race keeps fetching for the rest of the 90s, and under a caller that
+      // retries the launch those probes outlive the Supervisor that made them.
+      abort.abort();
+      return { error: bootExitError(rec, this.recentLog(80)) };
+    });
+
     try {
-      const version = await waitForReady(this.port, { timeoutMs: Number(this.env.CALANDRIA_READY_TIMEOUT_MS || 90_000) });
+      const { version, error } = await Promise.race([ready, died]);
+      if (error) throw error;
       this.log(`[shell] ready on http://127.0.0.1:${this.port} (version ${version?.version ?? "?"})`);
       return { url: `http://127.0.0.1:${this.port}`, port: this.port, ptyPort: this.ptyPort, version };
     } catch (err) {
       await this.stop();
       throw err;
+    } finally {
+      this.notifyBootExit = null;
+      abort.abort();
     }
   }
 
@@ -385,7 +454,14 @@ class Supervisor {
         // DbLockHeldError, prints the holder, and exit(1)s. Surfacing the code
         // lets the shell say "another Calandria is already running" instead of
         // "the app crashed".
-        this.onExit({ name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) });
+        const rec = { name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) };
+        // Before `onExit`, which is somebody else's callback: main.js's ends in
+        // `app.exit(1)` and never returns. Resolving here only queues a
+        // microtask, so the shell's handler still runs first either way — this
+        // ordering just means a start() in flight can't be stranded on the 90s
+        // timeout by a host callback that throws or never comes back.
+        this.notifyBootExit?.(rec);
+        this.onExit(rec);
       }
     });
     this.children.push({ name, child, exited: null });
