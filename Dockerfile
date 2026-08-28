@@ -30,6 +30,15 @@ WORKDIR /app
 # (glibc and musl) binaries inside its own package, with `gypfile: false` and no
 # install script, so there is no node-gyp path left for it on any platform we
 # build for.
+#
+# That last sentence holds for `npm ci` (below) only because package-lock.json
+# repeats `"gypfile": false` on better-sqlite3's entry by hand — npm does not
+# copy that manifest field into a lockfile, and without it arborist synthesizes
+# `node-gyp rebuild` here from the tarball's `binding.gyp`. On this image that
+# was silent (the compile half-finishes, the bundled prebuild loads anyway, the
+# build stays green) while the same defect failed outright on Windows. npm
+# strips the field on any lockfile regeneration; tests/lockfileGypfile.test.ts
+# is the guard, docs/WINDOWS.md the account.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*

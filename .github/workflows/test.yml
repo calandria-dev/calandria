@@ -226,9 +226,23 @@ jobs:
           cache: npm
 
       # --foreground-scripts so any install script's output reaches the log. It
-      # should now be a quiet step: better-sqlite3 13 sets `gypfile: false` and
-      # has no `install` script at all, so nothing here compiles or downloads a
+      # should be a quiet step: better-sqlite3 13 sets `gypfile: false` and has
+      # no `install` script at all, so nothing here compiles or downloads a
       # binary. That is what the next step exists to keep true.
+      #
+      # "Sets `gypfile: false`" is true of its manifest and was NOT enough on
+      # its own, which is what had this job red. A lockfile entry carries only
+      # a subset of a manifest and `gypfile` is not among the fields npm copies
+      # into it, so `npm ci` — which builds its tree from the lockfile, never
+      # from the real manifests — read it as unset, found the `binding.gyp`
+      # still in the tarball, and synthesized `node-gyp rebuild` anyway
+      # (`#addToBuildSet` in @npmcli/arborist/lib/arborist/rebuild.js). Every
+      # npm from 10.9.3 to 12.0.2 does this; `npm install` does not, so the
+      # instructions a Windows user follows were never affected. The fix is one
+      # hand-written `"gypfile": false` in package-lock.json, which npm deletes
+      # again on any lockfile regeneration — tests/lockfileGypfile.test.ts is
+      # what makes that deletion loud, and reading it is the fastest way to
+      # understand a failure in the step below.
       - run: npm ci --foreground-scripts
 
       # Fail loudly if the win32 binary did not come from the package itself.
@@ -244,11 +258,17 @@ jobs:
       # and no install script to fall back from.
       #
       # So the failure this guards against is now a narrower one: better-sqlite3
-      # dropping win32-x64 from the set it bundles, or a future version going
-      # back to compiling. Either lands on users as "gyp ERR! find VS" — a
-      # GitHub runner passes it only because it happens to ship MSVC build
-      # tools, which no ordinary Windows user has — so a node-gyp path is still
-      # a failure here rather than a neutral substitute.
+      # dropping win32-x64 from the set it bundles, a future version going back
+      # to compiling, or the lockfile losing the `gypfile` field above. All
+      # three land on users as "gyp ERR! find VS", so a node-gyp path is a
+      # failure here rather than a neutral substitute.
+      #
+      # This step used to add that a runner passes only because it happens to
+      # ship MSVC build tools. That is no longer true and is worth knowing when
+      # reading a red run: node-gyp 11.5.0 does not recognise the Visual Studio
+      # 18 that `windows-latest` now ships ("unknown version undefined"), so a
+      # node-gyp fallback here does not quietly compile — it dies in the `npm ci`
+      # step above, before this one gets to report anything.
       #
       # `build/` is therefore the inverted signal: under 13 a prebuild leaves
       # none at all, so its mere existence means something compiled.

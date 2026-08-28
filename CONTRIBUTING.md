@@ -18,6 +18,12 @@ npm run test:e2e
 npm run preflight # unit + end-to-end suite; the pre-push gate
 ```
 
+One thing to know before you commit a `package-lock.json` change: the `better-sqlite3`
+entry carries a hand-written `"gypfile": false` that npm strips every time it rewrites the
+lockfile, and without it `npm ci` compiles the package from source and fails on Windows.
+`tests/lockfileGypfile.test.ts` fails if it goes missing. Re-add it by hand rather than
+regenerating the lockfile; [docs/WINDOWS.md](docs/WINDOWS.md#what-ci-proves) has the why.
+
 `CLAUDE.md` is the codebase map (architecture, conventions, gotchas). Read it before a
 nontrivial change. TypeScript is strict and there is no lint script, so `npm run typecheck`
 is the only static check. (`next typegen` writes the gitignored `next-env.d.ts`
