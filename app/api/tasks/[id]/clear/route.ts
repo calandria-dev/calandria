@@ -45,7 +45,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     )
   );
 
-  let summary = "(empty session — nothing to summarize)";
+  let summary = "(empty session, nothing to summarize)";
   if (transcript.trim()) {
     try {
       summary = await summarizeTranscript(task, transcript, project);

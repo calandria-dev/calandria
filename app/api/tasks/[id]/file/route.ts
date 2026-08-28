@@ -83,7 +83,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const hit = locate(id, body.path);
   if (hit instanceof NextResponse) return hit;
   if (hasTurn(id)) {
-    return NextResponse.json({ error: "a turn is running — the agent owns the worktree until it finishes; send your edits as a patch instead" }, { status: 409 });
+    return NextResponse.json({ error: "a turn is running. The agent owns the worktree until it finishes; send your edits as a patch instead" }, { status: 409 });
   }
   const current = fs.readFileSync(hit.abs, "utf8");
   if (current !== body.original) {

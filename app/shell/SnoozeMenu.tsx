@@ -98,7 +98,7 @@ export function SnoozeButton({ onSnooze, className = "btn btn-line btn-sm", labe
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
-      <button className={className} title="Snooze — hide this until later" onClick={() => setOpen((o) => !o)}>
+      <button className={className} title="Snooze: hide this until later" onClick={() => setOpen((o) => !o)}>
         {Icon.moon()}{label ? ` ${label}` : ""}
       </button>
       {open && <SnoozeMenu onClose={() => setOpen(false)} onPick={(until) => { setOpen(false); onSnooze(until); }} />}

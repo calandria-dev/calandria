@@ -101,7 +101,7 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
     `${n(split.fresh)} new tokens this task: ${n(split.inOut)} in/out · ${n(split.cacheWrite)} written to cache`,
   ];
   if (split.cacheRead > 0) {
-    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request — each tool call is one, by the main session and any subagents — billed at ~10% of the input rate)`);
+    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request: each tool call is one, by the main session and any subagents; billed at ~10% of the input rate)`);
     lines.push(`${n(split.total)} tokens total`);
   }
   if (cost.show && costUsd > 0) {
@@ -213,17 +213,17 @@ export interface SchedulerHealthLike {
 
 /** The banner the Schedules card should show, or null when all is well. */
 export function schedulerAlert(h: SchedulerHealthLike, now = Date.now()): string | null {
-  if (!h.started) return "The scheduler is not running on this instance — nothing will fire.";
+  if (!h.started) return "The scheduler is not running on this instance. Nothing will fire.";
   const staleAfter = Math.max(STALE_TICKS * (h.tickMs || 0), STALE_FLOOR_MS);
   // Before the first sweep returns there is no lastTickAt to age, so fall back
   // to when the ticker started — that covers the worst case of all, a very
   // first sweep that hung on boot.
   const since = h.lastTickAt || h.startedAt;
   if (since && now - since > staleAfter) {
-    return `The scheduler hasn't completed a check since ${relTime(since)} — it looks stuck, so nothing is firing. Restarting the app clears it.`;
+    return `The scheduler hasn't completed a check since ${relTime(since)}. It looks stuck, so nothing is firing. Restarting the app clears it.`;
   }
   if (h.lastError) {
-    return `A schedule failed on the last check — ${h.lastError}. The others still ran.`;
+    return `A schedule failed on the last check: ${h.lastError}. The others still ran.`;
   }
   return null;
 }

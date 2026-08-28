@@ -65,7 +65,7 @@ function PreviewPane({ project }: { project: ProjectRow }) {
         {url ? <a className="btn btn-line" href={url} target="_blank" rel="noopener noreferrer">{Icon.external()} Open live</a> : <button className="btn btn-line" disabled>{Icon.external()} Open live</button>}
         <button className="btn btn-line" onClick={copy} disabled={!url}>{copied ? Icon.check() : Icon.copy()} {copied ? "Copied" : "Copy link"}</button>
       </div>
-      <div className="prev-note">Every project gets a real URL the moment it runs — open it on your phone, send it to a teammate, no deploy step.</div>
+      <div className="prev-note">Every project gets a real URL the moment it runs. Open it on your phone, send it to a teammate, no deploy step.</div>
     </div>
   );
 }
@@ -80,7 +80,7 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   const estimated = task.context_estimated && task.context_tokens > 0;
   const note = estimated
     ? reportsContext
-      ? "Estimated from the last turn's usage report — measured occupancy arrives with the next turn."
+      ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
       : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
     : "Tokens in the window as of the latest model request, as reported by the agent.";
   return (
@@ -100,8 +100,8 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
               <div className="ctxw-name">Window {s.n} · {current ? "current" : "summarized"}</div>
               <div className="ctxw-desc">
                 {current
-                  ? "Carried the summary forward and resumed — the mission recorder hands off the thread."
-                  : "Condensed to a summary — task lineage preserved across the clear."}
+                  ? "Carried the summary forward and resumed. The mission recorder hands off the thread."
+                  : "Condensed to a summary. Task lineage is preserved across the clear."}
               </div>
             </div>
           );

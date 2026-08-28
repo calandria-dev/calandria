@@ -249,7 +249,7 @@ describe("session crons on a bounded instance (won't be honored)", () => {
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
     const content = notice && "content" in notice ? notice.content : "";
-    expect(content).toMatch(/^⏰ Scheduled wakeup cancelled — beyond this instance's 0-minute linger window: at \d\d:\d\d — "WAKE: check the build"\. It will not fire/);
+    expect(content).toMatch(/^⏰ Scheduled wakeup cancelled \(beyond this instance's 0-minute linger window\): at \d\d:\d\d, "WAKE: check the build"\. It will not fire/);
     expect(events[events.length - 1]?.type).toBe("done");
   });
 

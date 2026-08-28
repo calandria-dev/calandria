@@ -67,4 +67,4 @@ export function isUsageLimit(msg: string | null | undefined): boolean {
 export const USAGE_LIMIT_NOTICE =
   "This agent's usage limit has been reached, so no turn can run until the limit resets. " +
   "Nothing was lost: this session and its worktree are untouched, and any queued messages " +
-  "stay queued — they run once the limit resets.";
+  "stay queued: they run once the limit resets.";

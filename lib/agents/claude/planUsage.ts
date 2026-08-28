@@ -279,7 +279,7 @@ export async function getClaudePlanUsage(): Promise<PlanUsageSnapshot | null> {
   const reason = !creds
     ? "No Claude subscription login"
     : !tokenLive
-      ? "Login token expired — it refreshes when the next turn runs"
+      ? "Login token expired. It refreshes when the next turn runs"
       : st.lastError;
 
   return {

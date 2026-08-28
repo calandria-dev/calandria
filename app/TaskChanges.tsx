@@ -397,13 +397,13 @@ const FileDiff = memo(function FileDiff({
         // A big file collapsed by default still needs to say why it's empty.
         big && (
           <button className="tc-bigdiff" onClick={() => onToggle(f.path)}>
-            Large diff ({lines.length.toLocaleString()} lines) — click to expand
+            Large diff ({lines.length.toLocaleString()} lines), click to expand
           </button>
         )
       ) : (
         <div className="tc-hunks">
           {f.binary ? (
-            <div className="tc-empty">Binary file — not shown</div>
+            <div className="tc-empty">Binary file, not shown</div>
           ) : lines.length === 0 ? (
             <div className="tc-empty">No textual changes (mode or rename).</div>
           ) : viewMode === "unified" ? (
@@ -946,7 +946,7 @@ export default function TaskChanges({
 
       {reviewing && (
         <div className="tc-mergebar review">
-          Conflicts resolved — review the merged result below, then <b>Accept &amp; merge</b> or <b>Discard</b>.
+          Conflicts resolved. Review the merged result below, then <b>Accept &amp; merge</b> or <b>Discard</b>.
           {data.unresolved && data.unresolved.length > 0 && (
             <div className="tc-conflicts">
               {`⚠ ${data.unresolved.length} file(s) still unresolved:\n${data.unresolved.join("\n")}`}
@@ -954,7 +954,7 @@ export default function TaskChanges({
           )}
           {binaryConflicts.length > 0 && (
             <div className="tc-conflicts">
-              {`Binary conflicts kept the task-branch version — review manually:\n${binaryConflicts.join("\n")}`}
+              {`Binary conflicts kept the task-branch version. Review manually:\n${binaryConflicts.join("\n")}`}
             </div>
           )}
         </div>
@@ -981,7 +981,7 @@ export default function TaskChanges({
           {!mergeRes.ok && mergeRes.dirty && mergeRes.dirty.length > 0 && (
             <>
               <div className="tc-manual">
-                These are uncommitted in the project&apos;s checkout — <b>not</b> in this task&apos;s worktree. The merge lands on{" "}
+                These are uncommitted in the project&apos;s checkout, <b>not</b> in this task&apos;s worktree. The merge lands on{" "}
                 <code>{mergeRes.targetBranch}</code>, which is the branch that checkout has open, so it has to be clean first.
               </div>
               <div className="tc-conflicts">
@@ -1014,7 +1014,7 @@ export default function TaskChanges({
                 <div className="tc-manual">
                   Open a terminal on <b>Project</b> scope and commit, revert or delete the files above, then click Merge again.
                   Stashing does the same thing without leaving Calandria: exactly these files are stashed, the merge runs, and the
-                  stash is applied back on top — if that apply hits a conflict the stash is kept and its id shown here.
+                  stash is applied back on top. If that apply hits a conflict, the stash is kept and its id shown here.
                 </div>
               )}
             </>
@@ -1025,7 +1025,7 @@ export default function TaskChanges({
                 ? "Your uncommitted changes were set aside for the merge and restored afterwards."
                 : `Your uncommitted changes are still stashed${
                     mergeRes.stashed.error ? ` (${mergeRes.stashed.error})` : ""
-                  } — recover them with: git stash apply ${mergeRes.stashed.sha.slice(0, 10)}`}
+                  }. Recover them with: git stash apply ${mergeRes.stashed.sha.slice(0, 10)}`}
             </div>
           )}
           {mergeRes.conflicts && mergeRes.conflicts.length > 0 && (

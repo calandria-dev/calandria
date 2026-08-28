@@ -73,7 +73,7 @@ export function OnboardingWizard({
       <div className="wiz">
         <div className="wiz-rail">
           <div className="wiz-brand"><Logo size={20} /> Calandria</div>
-          <div className="wiz-tagline">One vessel, many channels — your agent fleet, from any browser.</div>
+          <div className="wiz-tagline">One vessel, many channels: your agent fleet, from any browser.</div>
           <div className="wiz-rail-sub">Let&apos;s get you set up</div>
           <div className="wiz-steps">
             {STEPS.map((s, i) => (
@@ -84,7 +84,7 @@ export function OnboardingWizard({
             ))}
           </div>
           <span style={{ flex: 1 }} />
-          <button className="btn btn-ghost btn-sm wiz-skip" onClick={finish} title="Skip setup — you can re-run it from Settings">
+          <button className="btn btn-ghost btn-sm wiz-skip" onClick={finish} title="Skip setup: you can re-run it from Settings">
             Skip setup
           </button>
         </div>
@@ -147,7 +147,7 @@ function ConnectStep({
       <StepHead
         n={1}
         title="Connect a coding agent"
-        sub="Calandria runs coding agents as you. Sign in with the account you already have — connect one now, add others any time from Settings."
+        sub="Calandria runs coding agents as you. Sign in with the account you already have. Connect one now, add others any time from Settings."
       />
       <div className="wiz-body">
         <div className="hlp" style={{ margin: "0 0 18px", maxWidth: 620 }}>
@@ -222,7 +222,7 @@ function VerifyStep({
               <div className="wiz-ok-t">
                 Connected{result?.email ? <> as <strong>{result.email}</strong></> : ""}{result?.plan ? ` (${result.plan})` : ""}
               </div>
-              <div className="hlp" style={{ margin: "3px 0 0" }}>The test turn completed — your sessions are ready to run.</div>
+              <div className="hlp" style={{ margin: "3px 0 0" }}>The test turn completed. Your sessions are ready to run.</div>
             </div>
           </div>
         )}

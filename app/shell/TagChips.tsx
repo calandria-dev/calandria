@@ -151,7 +151,7 @@ export function TagChips({ tags, filter, onToggle, onSet }: {
     return (
       <button key={t.id} role="tab" aria-selected={on}
         className={`gchip ${on ? "on" : ""}`} style={tagTint(t.color)}
-        title={`${t.name} — ${p.detail}${t.description ? `\n${t.description}` : ""}`}
+        title={`${t.name}: ${p.detail}${t.description ? `\n${t.description}` : ""}`}
         onClick={() => onToggle(t.id)}>
         <span className="gc-dot" />
         <span className="gc-name">{t.name}</span>
@@ -178,8 +178,8 @@ export function TagChips({ tags, filter, onToggle, onSet }: {
       {filter.ids.length > 1 && (
         <button className={`gchip match ${filter.match === "all" ? "on" : ""}`} aria-pressed={filter.match === "all"}
           title={filter.match === "all"
-            ? "Showing tasks with EVERY lit tag — click for tasks with any of them"
-            : "Showing tasks with ANY lit tag — click for only those with all of them"}
+            ? "Showing tasks with EVERY lit tag. Click for tasks with any of them"
+            : "Showing tasks with ANY lit tag. Click for only those with all of them"}
           onClick={() => onSet({ ids: filter.ids, match: filter.match === "all" ? "any" : "all" })}>
           {filter.match === "all" ? "all" : "any"}
         </button>
@@ -200,7 +200,7 @@ export function TagBadge({ tag, onSelect, className }: {
   tag: Pick<TagRow, "name" | "color"> & Partial<Pick<TagRow, "counts">>;
   onSelect?: () => void; className?: string;
 }) {
-  const title = tag.counts ? `Tag: ${tag.name} — ${tagProgress({ counts: tag.counts }).detail}` : `Tag: ${tag.name}`;
+  const title = tag.counts ? `Tag: ${tag.name} (${tagProgress({ counts: tag.counts }).detail})` : `Tag: ${tag.name}`;
   const cls = `gbadge ${className ?? ""}`;
   if (!onSelect) return <span className={cls} style={tagTint(tag.color)} title={title}>{tag.name}</span>;
   return (

@@ -33,7 +33,7 @@ function stateOf(p: Project): RefreshState {
     !inFlight.has(p.id) &&
     Date.now() - p.refresh_started_at > STALE_MS
   ) {
-    return { status: "error", draft: "", error: "refresh timed out — try again", started_at: p.refresh_started_at };
+    return { status: "error", draft: "", error: "refresh timed out. Try again", started_at: p.refresh_started_at };
   }
   return {
     status: p.refresh_status,

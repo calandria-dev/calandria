@@ -547,18 +547,18 @@ async function advanceBaseBranchLocked(repoPath: string, baseBranch: string, toS
   const from = await git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => "");
   if (!from) return { ok: false, error: `base branch ${baseBranch} not found` };
   const to = await git(repoPath, ["rev-parse", "--verify", `${toSha}^{commit}`]).catch(() => "");
-  if (!to) return { ok: false, from, error: "that commit isn't in this repo — fetch again and retry" };
+  if (!to) return { ok: false, from, error: "that commit isn't in this repo. Fetch again and retry" };
   if (from === to) return { ok: true, from, to };
 
   const forward = await git(repoPath, ["merge-base", "--is-ancestor", from, to])
     .then(() => true)
     .catch(() => false);
   if (!forward)
-    return { ok: false, from, error: `${baseBranch} has commits of its own — merge or rebase it yourself, this only fast-forwards` };
+    return { ok: false, from, error: `${baseBranch} has commits of its own. Merge or rebase it yourself, this only fast-forwards` };
 
   const holder = await worktreeForBranch(repoPath, baseBranch);
   if (holder && !holder.isMain)
-    return { ok: false, from, error: `${baseBranch} is checked out in ${holder.path} — that worktree has to let go of it first` };
+    return { ok: false, from, error: `${baseBranch} is checked out in ${holder.path}: that worktree has to let go of it first` };
 
   try {
     if (holder) await git(holder.path, ["merge", "--ff-only", to]);
@@ -955,7 +955,7 @@ export async function repairWorktree(
         // failure is what gets reported (classified) to the user.
       }
       const wt = await ensureWorktreeLocked(repoPath, taskId, baseBranch);
-      actions.push(wt ? "Cut the task's worktree again" : "This project can't be isolated — the turn will run in its working directory");
+      actions.push(wt ? "Cut the task's worktree again" : "This project can't be isolated: the turn will run in its working directory");
       return wt;
     })
   );
@@ -1549,7 +1549,7 @@ function dirtyRefusal(target: string, committed: boolean, dirty: DirtyEntry[]): 
     committed,
     dirty: dirty.slice(0, DIRTY_CAP),
     ...(dirty.length > DIRTY_CAP ? { dirtyTruncated: true } : {}),
-    error: `the repo's working tree has uncommitted changes in ${dirty.length} file(s) — commit or stash them before merging`,
+    error: `the repo's working tree has uncommitted changes in ${dirty.length} file(s). Commit or stash them before merging`,
   };
 }
 
@@ -1790,7 +1790,7 @@ export async function mergeTask(input: {
         if (unacked.length)
           return {
             ...dirtyRefusal(target, committed, dirty),
-            error: `the working tree changed since you reviewed it — ${unacked.length} file(s) you didn't agree to stash are now uncommitted (${unacked
+            error: `the working tree changed since you reviewed it. ${unacked.length} file(s) you didn't agree to stash are now uncommitted (${unacked
               .slice(0, 3)
               .join(", ")}); review them and try again`,
           };
@@ -2228,7 +2228,7 @@ export async function completeWorktreeMerge(input: {
       ok: false,
       targetBranch: baseBranch,
       committed: false,
-      error: "conflict markers (<<<<<<< / =======) still remain — resolve them before merging",
+      error: "conflict markers (<<<<<<< / =======) still remain. Resolve them before merging",
     };
 
   if (mergeInProgress) {

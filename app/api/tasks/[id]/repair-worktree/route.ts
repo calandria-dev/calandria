@@ -35,7 +35,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // A live turn owns the worktree; pruning under it would be exactly the
     // crashed-git-mid-write situation this route exists to clean up after.
     if (task.running || hasTurn(id))
-      return NextResponse.json({ error: "task is running — wait for the session to finish before repairing" }, { status: 409 });
+      return NextResponse.json({ error: "task is running. Wait for the session to finish before repairing" }, { status: 409 });
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
     if (!project.repo_path.trim())
@@ -59,7 +59,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       // launch that failed left a durable ⚠ line there, and a repair that
       // leaves no trace beside it reads, on the next visit, like the failure
       // is still current.
-      const note = `✓ Repaired this task's worktree — ${actions.join("; ").toLowerCase()}.`;
+      const note = `✓ Repaired this task's worktree: ${actions.join("; ").toLowerCase()}.`;
       try {
         const m = addMessage(id, task.generation, "system", note);
         publish(id, { type: "notice", content: note, msgId: m.id, generation: task.generation, ts: m.created_at });

@@ -109,7 +109,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const tag = getTag(tagId);
       if (!tag) return NextResponse.json({ error: "no such tag" }, { status: 400 });
       if (tag.project_id !== current.project_id)
-        return NextResponse.json({ error: "tag belongs to another project — a tag can't span projects" }, { status: 400 });
+        return NextResponse.json({ error: "tag belongs to another project. A tag can't span projects" }, { status: 400 });
     }
     nextTagIds = ids;
   }

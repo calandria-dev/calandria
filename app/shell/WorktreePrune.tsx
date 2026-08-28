@@ -151,7 +151,7 @@ export function WorktreePrune() {
         {list == null && !error ? (
           <LoadNote style={{ padding: 0 }}>Scanning worktrees…</LoadNote>
         ) : list == null ? null : list.candidates.length === 0 ? (
-          <div className="hlp" style={{ marginTop: 0 }}>No merged or Done task worktrees to remove — nothing to reclaim. 🎉</div>
+          <div className="hlp" style={{ marginTop: 0 }}>No merged or Done task worktrees to remove. Nothing to reclaim. 🎉</div>
         ) : (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
@@ -196,7 +196,7 @@ export function WorktreePrune() {
                     )}
                     {!c.running && c.unsafe && !c.canDiscard && (
                       <span className="hlp" style={{ margin: 0, marginLeft: 8, color: "var(--red)" }}>
-                        · has active unmerged work — mark Done before discarding
+                        · has active unmerged work: mark Done before discarding
                       </span>
                     )}
                   </span>
@@ -219,7 +219,7 @@ export function WorktreePrune() {
               <input type="checkbox" checked={deleteBranch} onChange={(e) => { setDeleteBranch(e.target.checked); setConfirming(false); }} style={{ marginTop: 2 }} />
               <span>
                 <strong>Also delete the branch</strong> (off by default). Frees a little more, but you lose the ability to
-                view that task&apos;s diff against its original base. Reopening still works — it starts a fresh worktree.
+                view that task&apos;s diff against its original base. Reopening still works. It starts a fresh worktree.
                 {destructiveList.length > 0 && " Branches containing unmerged work are always deleted when permanently discarded."}
               </span>
             </label>
@@ -235,8 +235,8 @@ export function WorktreePrune() {
                   ? "Removing…"
                   : confirming
                     ? destructiveList.length > 0
-                      ? `Confirm — remove ${selectedList.length}, permanently discard ${destructiveList.length} · reclaim ${fmtBytes(selectedBytes)}`
-                      : `Confirm — remove ${selectedList.length} & reclaim ${fmtBytes(selectedBytes)}${deleteBranch ? " + delete branches" : ""}`
+                      ? `Confirm: remove ${selectedList.length}, permanently discard ${destructiveList.length} · reclaim ${fmtBytes(selectedBytes)}`
+                      : `Confirm: remove ${selectedList.length} & reclaim ${fmtBytes(selectedBytes)}${deleteBranch ? " + delete branches" : ""}`
                     : `Remove ${selectedList.length} selected · ${fmtBytes(selectedBytes)}`}
               </button>
               {confirming && !busy && (
@@ -253,7 +253,7 @@ export function WorktreePrune() {
         <div className="lab">{Icon.clock()} Auto-prune</div>
         <label className="hlp" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 0, opacity: 0.6 }}>
           <input type="checkbox" disabled />
-          Automatically remove worktrees merged more than 30 days ago <span className="opt">— coming soon</span>
+          Automatically remove worktrees merged more than 30 days ago <span className="opt">(coming soon)</span>
         </label>
       </div>
     </>

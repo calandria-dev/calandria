@@ -130,7 +130,7 @@ describe("one-shot wakeup (unbounded linger)", () => {
     expect(pendings(events)).toHaveLength(1);
     expect(events.some((e) => e.type === "error")).toBe(true);
     expect(notices(events)).toEqual([
-      `⏰ Scheduled wakeup cancelled — the session closed before it fired: at ${hhmm} — "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
+      `⏰ Scheduled wakeup cancelled (the session closed before it fired): at ${hhmm}, "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
     ]);
   });
 

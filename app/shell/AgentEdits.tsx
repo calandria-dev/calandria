@@ -40,7 +40,7 @@ export function AgentEditedChip({ task, variant }: { task: TaskRow; variant: "li
       {task.agent_edited_at !== 0 && <button
         type="button"
         className={variant === "list" ? "blocked-chip changed" : "bc-chip changed"}
-        title="An agent changed this task after you accepted it — click to see what."
+        title="An agent changed this task after you accepted it. Click to see what."
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
       >
         {Icon.edit()} Changed by agent <span className="ae-chip-time">{relTime(task.agent_edited_at)}</span>
@@ -113,7 +113,7 @@ export function AgentEditsModal({ task, onClose }: { task: TaskRow; onClose: () 
       {edits === null && !loadErr && <LoadNote>Loading changes…</LoadNote>}
       {loadErr && <ErrNote onRetry={load}>{loadErr}</ErrNote>}
       {edits && edits.length === 0 && (
-        <div className="ae-none">Nothing outstanding — every agent edit here has already been reviewed.</div>
+        <div className="ae-none">Nothing outstanding. Every agent edit here has already been reviewed.</div>
       )}
       {edits && edits.map((edit) => {
         const who = edit.actor_task_id ? (edit.actor_title || "An agent session") : "An agent session";

@@ -18,7 +18,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const task = getTask(id);
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
     if (task.running || hasTurn(id))
-      return NextResponse.json({ error: "task is running — wait for the session to finish" }, { status: 409 });
+      return NextResponse.json({ error: "task is running. Wait for the session to finish" }, { status: 409 });
     if (!task.worktree_path) return NextResponse.json({ error: "this task has no isolated worktree" }, { status: 400 });
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });

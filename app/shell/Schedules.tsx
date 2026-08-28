@@ -98,14 +98,14 @@ function scheduleModesFor(agents: AgentsBundle, agent: string): AgentPickerOptio
 // be true for Claude's acceptEdits but false for Codex's.
 function permissionConsequence(mode: string, modes: AgentPickerOption[], label: string): string {
   if (modes.length === 0) {
-    return `${label} doesn't expose a configurable permission mode for a scheduled run — it runs using whatever this agent falls back to with nobody watching.`;
+    return `${label} doesn't expose a configurable permission mode for a scheduled run. It runs using whatever this agent falls back to with nobody watching.`;
   }
   if (!modes.some((m) => m.value !== "bypassPermissions")) {
     // Name the mode the way this agent's descriptor does — labels are
     // provider-native now, so "the only choice" must match the word on the
     // select right above this line.
     const only = modes.find((m) => m.value === "bypassPermissions")?.label ?? "bypassPermissions";
-    return `${label} offers no mode that declines instead of running — ${only} is the only choice here, and it does whatever the prompt needs without asking.`;
+    return `${label} offers no mode that declines instead of running. ${only} is the only choice here, and it does whatever the prompt needs without asking.`;
   }
   return mode === "bypassPermissions"
     ? "This run does whatever the prompt needs without asking. Nobody is around when it fires to approve anything."
@@ -277,7 +277,7 @@ function ScheduleForm({
             Use a runbook
           </button>
         </div>
-        {!runbooks.length && <div className="hlp">This project has no runbooks yet — save one on the Runbooks card first.</div>}
+        {!runbooks.length && <div className="hlp">This project has no runbooks yet. Save one on the Runbooks card first.</div>}
       </div>
       {runbookId ? (
         <div className="field">
@@ -288,7 +288,7 @@ function ScheduleForm({
           <pre className="rb-preview" style={{ marginTop: 8 }}>{linked?.prompt ?? ""}</pre>
           <p className="sched-note">
             This schedule runs the <strong>{linked?.name}</strong> runbook, on {agentLabel(agents, linked?.agent ?? agent)}.
-            Editing that runbook changes what fires here — including on the mornings nobody is watching.
+            Editing that runbook changes what fires here, including on the mornings nobody is watching.
           </p>
         </div>
       ) : (
@@ -310,14 +310,14 @@ function ScheduleForm({
               </div>
             )}
             <div className="sched-note">
-              Save still works — the check reads one session&rsquo;s command list and can be wrong. If it
+              Save still works. The check reads one session&rsquo;s command list and can be wrong. If it
               isn&rsquo;t, the run will fail rather than report success having done nothing.
             </div>
           </div>
         )}
         {check?.ok && check.unchecked && (
           <div className="hlp">
-            {check.note ?? "Couldn’t reach this project’s command registry to check — saving without verifying."}
+            {check.note ?? "Couldn’t reach this project’s command registry to check. Saving without verifying."}
           </div>
         )}
         {check?.ok && !check.unchecked && !!prompt.trim().startsWith("/") && (
@@ -483,7 +483,7 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
         />
       )}
       {data.schedules.length === 0 && !creating ? (
-        <div className="sched-note">No schedules yet — run a saved prompt on a recurring time even when nobody is logged in.</div>
+        <div className="sched-note">No schedules yet. Run a saved prompt on a recurring time even when nobody is logged in.</div>
       ) : null}
       {data.schedules.map((s: ScheduleRow) => {
         if (editingId === s.id) {

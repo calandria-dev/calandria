@@ -153,7 +153,7 @@ export function writeSecretFile(filePath: string, contents: string, opts: Secret
     const detail = e instanceof Error ? e.message : String(e);
     const advice = opts.advice ? ` ${opts.advice}` : "";
     if (opts.fatal === false) {
-      console.warn(`[secret-file] ${detail} Keeping it anyway — the alternative is losing the feature it belongs to.${advice}`);
+      console.warn(`[secret-file] ${detail} Keeping it anyway. The alternative is losing the feature it belongs to.${advice}`);
       return;
     }
     try {

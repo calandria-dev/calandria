@@ -53,10 +53,10 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // accepts "max" and "ultra" above xhigh; the shared preset vocabulary tops
   // out at ultrathink, so those aren't reachable yet.
   reasoningOptions: [
-    { value: "off", label: "low", sub: "codex's minimum — reasoning can't be turned off" },
+    { value: "off", label: "low", sub: "codex's minimum, reasoning can't be turned off" },
     { value: "think", label: "medium", sub: "codex's default effort" },
     { value: "think_hard", label: "high", sub: "deeper reasoning" },
-    { value: "ultrathink", label: "xhigh", sub: "extra-high — the most this picker can send" },
+    { value: "ultrathink", label: "xhigh", sub: "extra-high, the most this picker can send" },
   ],
   // Only the modes with a real codex analog are declared. bypassPermissions maps
   // to workspace-write + approvals-never (auto-run); plan maps to a read-only
@@ -81,8 +81,8 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // ones per the note above). The values stay the cross-agent keys tasks and
   // schedules persist.
   permissionModes: [
-    { value: "bypassPermissions", label: "workspace-write", sub: "writable sandbox, approval policy never — runs without asking (default)" },
-    { value: "plan", label: "read-only", sub: "read-only sandbox — propose without editing" },
+    { value: "bypassPermissions", label: "workspace-write", sub: "writable sandbox, approval policy never: runs without asking (default)" },
+    { value: "plan", label: "read-only", sub: "read-only sandbox: propose without editing" },
   ],
   // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
   // /answer route are shared with Claude's AskUserQuestion flow).
@@ -105,7 +105,7 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // opposite of what their own turns do.
   inheritsUserMcpServers: CODEX_INHERIT_MCP,
   userMcpServersNote: CODEX_INHERIT_MCP
-    ? "Mounted because CODEX_INHERIT_MCP is set. Their tools only work on servers where you've set default_tools_approval_mode = \"approve\" — codex exec has nobody to ask."
+    ? "Mounted because CODEX_INHERIT_MCP is set. Their tools only work on servers where you've set default_tools_approval_mode = \"approve\". codex exec has nobody to ask."
     : "The MCP servers in your ~/.codex/config.toml are unmounted: codex exec can't approve their tool calls, so every one comes back cancelled. Set CODEX_INHERIT_MCP=1 to mount them anyway.",
   // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
   // cost the driver emits is an estimate (tokens × published API prices for

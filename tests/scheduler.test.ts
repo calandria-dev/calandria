@@ -190,7 +190,7 @@ describe("scheduler", () => {
     await fireSchedule(getSchedule(s.id)!, run);
 
     const task = listTasks(p.id).find((t) => t.schedule_id === s.id)!;
-    expect(task.title).toBe("Morning triage — 2026-08-14 08:30");
+    expect(task.title).toBe("Morning triage: 2026-08-14 08:30");
   });
 
   it("clears lastError on a clean sweep instead of crying wolf forever", async () => {

@@ -108,7 +108,7 @@ export function maybeAutoStartDependents(clearedTaskId: string): void {
   // "cancelled" reads very differently from "done" to an agent about to work
   // on top of it, so the cause travels rather than being flattened.
   const clearedWord = cleared?.status === "cancelled" ? "was cancelled" : "is done";
-  const note = cleared?.title ? `▶ Auto-started — "${cleared.title}" ${clearedWord}.` : `▶ Auto-started — last blocker ${clearedWord}.`;
+  const note = cleared?.title ? `▶ Auto-started: "${cleared.title}" ${clearedWord}.` : `▶ Auto-started: last blocker ${clearedWord}.`;
   for (const t of readyAutoStartDependents(clearedTaskId)) {
     // Re-checked under the lock: the toggle can be flipped off, or the task
     // parked on_hold, between the selection above and the launch.

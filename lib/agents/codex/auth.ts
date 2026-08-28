@@ -236,7 +236,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
   st.timer = setTimeout(() => {
     if (st.status !== "success") {
       st.status = "error";
-      st.error = "login timed out — start again to get a fresh code";
+      st.error = "login timed out. Start again to get a fresh code";
       try {
         st.proc?.kill();
       } catch {}
@@ -265,7 +265,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
       // Don't hard-fail on a stray "error"/"invalid" word mid-stream — only on
       // exit; but capture an explicit expiry/denial immediately.
       st.status = "error";
-      st.error = "the device code was denied or expired — start again";
+      st.error = "the device code was denied or expired. Start again";
     }
   };
   st.proc.stdout?.on("data", onData);
@@ -339,7 +339,7 @@ async function settleAfterExit(st: LoginState, exitCode: number | null) {
   st.status = "error";
   if (st.timer) clearTimeout(st.timer);
   if (expectSuccess) {
-    st.error = `codex login finished but \`codex login status\` reports: ${lastErr || "not logged in"} — try Verify connection, or start again`;
+    st.error = `codex login finished but \`codex login status\` reports: ${lastErr || "not logged in"}. Try Verify connection, or start again`;
     return;
   }
   const last = st.buf

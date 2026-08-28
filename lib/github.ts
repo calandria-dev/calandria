@@ -72,9 +72,9 @@ export function resolveGhBin(
  */
 export function ghMissingMessage(configured: string = GH_BIN): string {
   if (configured)
-    return `GitHub CLI not found: CALANDRIA_GH_BIN is set to "${configured}", which does not exist or is not executable — fix the path, or unset it to auto-detect`;
+    return `GitHub CLI not found: CALANDRIA_GH_BIN is set to "${configured}", which does not exist or is not executable. Fix the path, or unset it to auto-detect`;
   return (
-    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH — set CALANDRIA_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
+    "GitHub CLI (gh) was not found on the server's PATH. If gh IS installed (Homebrew, snap, ~/.local/bin), the server process doesn't read your shell profile's PATH. Set CALANDRIA_GH_BIN to the binary's full path and restart. Otherwise install it from https://cli.github.com"
   );
 }
 
@@ -233,7 +233,7 @@ export async function startLogin(): Promise<LoginSession> {
   st.timer = setTimeout(() => {
     if (st.status === "starting" || st.status === "awaiting") {
       st.status = "error";
-      st.error = "login expired — the one-time code is only valid for 15 minutes";
+      st.error = "login expired. The one-time code is only valid for 15 minutes";
       try {
         st.proc?.kill();
       } catch {}
@@ -428,7 +428,7 @@ export async function createTaskPr(input: {
   const st = await ghStatus();
   if (!st.installed) return { ok: false, error: ghMissingMessage() };
   if (!st.authenticated)
-    return { ok: false, error: "gh is not logged in to GitHub — connect GitHub in Settings (or run `gh auth login`), then try again" };
+    return { ok: false, error: "gh is not logged in to GitHub. Connect GitHub in Settings (or run `gh auth login`), then try again" };
 
   const opts = {
     cwd: worktreePath,
@@ -442,7 +442,7 @@ export async function createTaskPr(input: {
     .then((r) => r.stdout.trim())
     .catch(() => "");
   if (!remote)
-    return { ok: false, error: "this repo has no origin remote — push it to GitHub first (e.g. `gh repo create`), then try again" };
+    return { ok: false, error: "this repo has no origin remote. Push it to GitHub first (e.g. `gh repo create`), then try again" };
 
   try {
     await run("git", ["-C", worktreePath, "push", "-u", "origin", workBranch], opts);
@@ -468,7 +468,7 @@ export async function createTaskPr(input: {
       opts
     );
     const url = stdout.match(/https:\/\/\S+\/pull\/\d+/)?.[0];
-    if (!url) return { ok: false, error: "gh did not report a PR URL — check the repo on GitHub" };
+    if (!url) return { ok: false, error: "gh did not report a PR URL. Check the repo on GitHub" };
     return { ok: true, url };
   } catch (e) {
     return { ok: false, error: `could not create the PR: ${cliErrorMessage(e, "gh pr create errored")}` };
