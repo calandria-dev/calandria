@@ -118,7 +118,7 @@ export async function POST(req: Request) {
       });
       const destructive = !safety.safe;
       if (destructive && (task.status !== "done" || !discardChanges)) {
-        skipped.push({ taskId: id, reason: `has unmerged work — ${safety.reason}` });
+        skipped.push({ taskId: id, reason: `has unmerged work: ${safety.reason}` });
         return;
       }
       reclaimedBytes += await worktreeDiskUsage(task.worktree_path);

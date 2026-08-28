@@ -130,7 +130,7 @@ describe("one-shot wakeup (unbounded linger)", () => {
     expect(pendings(events)).toHaveLength(1);
     expect(events.some((e) => e.type === "error")).toBe(true);
     expect(notices(events)).toEqual([
-      `⏰ Scheduled wakeup cancelled — the session closed before it fired: at ${hhmm} — "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
+      `⏰ Scheduled wakeup cancelled (the session closed before it fired): at ${hhmm}, "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
     ]);
   });
 
@@ -195,6 +195,10 @@ describe("recurring cron (/loop shape)", () => {
     expect(ctx).toContain("keep running after your turn ends");
     expect(ctx).toContain("Scheduled wakeups (ScheduleWakeup, CronCreate) are honored the same way");
     expect(ctx).toContain("a recurring one keeps it open until you delete it or the user stops the session");
+    // The self-matching watcher loop belongs to the unbounded branch: nothing
+    // cuts it, so it holds the session open indefinitely.
+    expect(ctx).toContain(`while pgrep -f "vitest"; do sleep 20; done`);
+    expect(ctx).toContain("matches ITSELF and never exits");
   });
 });
 

@@ -1,0 +1,93 @@
+/* The brand, mapped onto Starlight's design tokens.
+
+   Starlight themes itself from a neutral gray ramp plus one accent, and derives
+   almost everything else from those, so this replaces the ramp with cherenkov
+   (docs/design/handoff/styles.css) rather than overriding component by
+   component. Dark is the default, as in the app; Starlight's picker writes
+   [data-theme] on <html>, which is why the light half is a [data-theme='light']
+   block and not a `prefers-color-scheme` query the way the landing page's
+   tokens.css is. */
+@import "./fonts.css";
+
+:root,
+::backdrop {
+  /* cherenkov-dark */
+  --sl-color-white: #eaf3f6;
+  --sl-color-gray-1: #d5e4ea; /* ink */
+  --sl-color-gray-2: #bcd2db; /* body text */
+  --sl-color-gray-3: #7e9aa6; /* dim */
+  --sl-color-gray-4: #4e6b78;
+  --sl-color-gray-5: #1a2f39; /* line */
+  --sl-color-gray-6: #0d1b22; /* panel */
+  --sl-color-black: #081217; /* bg */
+
+  --sl-color-accent-low: #10403c;
+  --sl-color-accent: #45cabb;
+  --sl-color-accent-high: #a5e7de;
+
+  --sl-color-text-invert: #081217;
+
+  --sl-font: "Source Sans 3 Variable", "Source Sans 3", var(--sl-font-system);
+  --sl-font-mono: "JetBrains Mono Variable", "JetBrains Mono", var(--sl-font-system-mono);
+  /* Not a Starlight token — the handoff's display face, used by the site title
+     and the content headings below. */
+  --sl-font-display: "Spectral", Georgia, serif;
+
+  /* Expressive Code (the code blocks) reads its own font variable. */
+  --ec-codeFontFml: var(--sl-font-mono);
+}
+
+:root[data-theme="light"],
+[data-theme="light"] ::backdrop {
+  /* cherenkov-light */
+  --sl-color-white: #0f2129;
+  --sl-color-gray-1: #1a3038; /* ink */
+  --sl-color-gray-2: #2c4b56; /* body text */
+  --sl-color-gray-3: #5d7d87; /* dim */
+  --sl-color-gray-4: #8aa6ae;
+  --sl-color-gray-5: #d7e4e4; /* line */
+  --sl-color-gray-6: #e4eeee;
+  --sl-color-gray-7: #eef4f4;
+  --sl-color-black: #f2f7f7; /* bg */
+
+  --sl-color-accent-low: #d6f0ec;
+  --sl-color-accent: #0e8a7d;
+  --sl-color-accent-high: #0a5f56;
+
+  --sl-color-text-invert: #ffffff;
+
+  /* The handoff's light theme puts panels ABOVE the page, not below it, so the
+     nav and sidebar are white on the tinted background rather than the shade
+     Starlight's ramp would give them. */
+  --sl-color-bg-nav: #ffffff;
+  --sl-color-bg-sidebar: #ffffff;
+}
+
+/* Headings in the display face, matching the landing page's wordmark. Body copy
+   and UI chrome stay in Source Sans. */
+.sl-markdown-content :is(h1, h2, h3),
+.content-panel h1 {
+  font-family: var(--sl-font-display);
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
+
+/* The handoff: focus is always visible, never `outline: none`. */
+:is(a, button, summary, input):focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* Mermaid diagrams are rendered at build time in the brand's LIGHT palette (see
+   astro.config.mjs for why there is only one render). The card keeps them
+   legible on the dark theme instead of leaving dark strokes on a dark page. */
+.sl-markdown-content svg[id^="mermaid-"] {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+  padding: 1rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.5rem;
+  background: #ffffff;
+}

@@ -86,3 +86,4 @@ orchestrator.db-wal
 !docs/design/og.png
 !public/icons/*.png
 !desktop/assets/*.png
+!website/public/*.png

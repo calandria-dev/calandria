@@ -122,7 +122,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     else if (ev.type === "model") setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, resolved_model: ev.model } : x)));
     else if (ev.type === "assistant") upsertMsg(taskId, { id: ev.msgId ?? `a-${Date.now()}-${Math.random()}`, role: "assistant", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "tool") {
-      const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff, file: ev.file };
+      const data: ToolData = { title: ev.title, name: ev.name, detail: ev.detail, peek: ev.peek, diff: ev.diff, file: ev.file };
       upsertMsg(taskId, { id: ev.msgId ?? `t-${Date.now()}-${Math.random()}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.id });
     } else if (ev.type === "tool_result") {
       // Match by DB message id (works on snapshot-loaded messages too), falling
@@ -223,7 +223,32 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "error") upsertMsg(taskId, { id: ev.msgId ?? `e-${Date.now()}`, role: "system", content: ev.content, generation: gen });
-    else if (ev.type === "suggested") { if (selProjRef.current) loadTasks(selProjRef.current, false); }
+    else if (ev.type === "suggested") {
+      // Two things move on one event. The tray gets its refresh, as it always
+      // has — and the transcript settles a suggestion card onto the
+      // suggest_task tool row the server matched this to (`msgId`), so the
+      // proposal is visible where it was made. Only the pair of ids travels:
+      // the card re-reads the task itself, which is what keeps a reloaded
+      // transcript honest about a suggestion that has since been started,
+      // accepted or dismissed. No msgId means there was no call to settle onto
+      // (a driver that reports no tool name, a suggestion filed out of band) —
+      // the tray refresh is then the whole of the behaviour, exactly as before.
+      if (selProjRef.current) loadTasks(selProjRef.current, false);
+      const msgId = ev.msgId;
+      if (msgId && ev.taskId) {
+        const ref = { taskId: ev.taskId, projectId: ev.projectId };
+        setMsgsByTask((prev) => {
+          const arr = prev[taskId] ?? [];
+          return {
+            ...prev,
+            [taskId]: arr.map((m) => {
+              if (m.role !== "tool" || m.id !== msgId) return m;
+              try { const d = JSON.parse(m.content) as ToolData; d.suggestion = ref; return { ...m, content: JSON.stringify(d) }; } catch { return m; }
+            }),
+          };
+        });
+      }
+    }
     else if (ev.type === "turn_end") {
       setTaskRunning(taskId, false);
       // Any still-parked asks died with the turn (Stop rejects them server-side);

@@ -24,8 +24,21 @@
 FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build
 WORKDIR /app
 
-# Toolchain only as a fallback — better-sqlite3 and node-pty ship Linux x64
-# prebuilds; node-gyp kicks in (and needs these) only when no prebuild matches.
+# Toolchain only as a fallback, and only node-pty can still reach for it: it
+# fetches a per-ABI Linux prebuild at install time and compiles when that finds
+# nothing. better-sqlite3 13 cannot — it is N-API and carries linux-x64/arm64
+# (glibc and musl) binaries inside its own package, with `gypfile: false` and no
+# install script, so there is no node-gyp path left for it on any platform we
+# build for.
+#
+# That last sentence holds for `npm ci` (below) only because package-lock.json
+# repeats `"gypfile": false` on better-sqlite3's entry by hand — npm does not
+# copy that manifest field into a lockfile, and without it arborist synthesizes
+# `node-gyp rebuild` here from the tarball's `binding.gyp`. On this image that
+# was silent (the compile half-finishes, the bundled prebuild loads anyway, the
+# build stays green) while the same defect failed outright on Windows. npm
+# strips the field on any lockfile regeneration; tests/lockfileGypfile.test.ts
+# is the guard, docs/WINDOWS.md the account.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*

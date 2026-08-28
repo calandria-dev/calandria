@@ -135,7 +135,7 @@ export async function sweepWorktrees(
           baseBranch: resolveBaseBranch(task, project),
         });
         if (!safety.safe) {
-          result.skipped.push({ taskId: id, reason: `${UNSAFE_DISCARD_REASON} — ${safety.reason}` });
+          result.skipped.push({ taskId: id, reason: `${UNSAFE_DISCARD_REASON}: ${safety.reason}` });
           return;
         }
         const bytes = await worktreeDiskUsage(task.worktree_path);

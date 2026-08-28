@@ -178,6 +178,34 @@ export const BACKGROUND_LINGER_ENABLED = !["0", "off", "false", "no"].includes(
 export const BACKGROUND_LINGER_MS = ms(readEnv("CALANDRIA_BACKGROUND_LINGER_MS"), 0);
 
 /**
+ * How long a LIVE turn may go without producing anything — no assistant text,
+ * no tool call, no event — before the UI marks it as idle. Not a deadline:
+ * nothing is stopped, nothing is killed, and the turn keeps its slot. The mark
+ * exists because a wedged wait and a working turn are drawn identically today,
+ * and with no linger deadline (BACKGROUND_LINGER_MS = 0, the default) a wait on
+ * something that already finished holds the session open forever with nothing
+ * to show for it.
+ *
+ * 20 minutes is above every ordinary gap — the longest single tool call in this
+ * repo's own suite is well under it — and below the half hour it took to notice
+ * the wedge this was written for. A long build tripping it is fine and expected:
+ * the card reports the age and the human judges it, exactly as the schedules
+ * card ages `lastTickAt` into "looks stuck". Set 0 to switch the mark off.
+ */
+export const TURN_IDLE_MS = ms(readEnv("CALANDRIA_TURN_IDLE_MS"), 20 * 60 * 1000);
+
+/**
+ * How often the idle sweep re-checks the live turns. Only runs while at least
+ * one turn is live, and only ever publishes on the transition into idle, so
+ * this is a cheap clock rather than a poll. Clamped below the idle window so a
+ * short CALANDRIA_TURN_IDLE_MS (the suite sets one) is still detected promptly.
+ */
+export const TURN_IDLE_SWEEP_MS = Math.max(
+  1000,
+  Math.min(ms(readEnv("CALANDRIA_TURN_IDLE_SWEEP_MS"), 60_000), Math.max(1000, TURN_IDLE_MS || 60_000)),
+);
+
+/**
  * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by
  * server.js's SIGTERM/SIGINT handler before it exits) waits for in-flight
  * turns to abort and unwind before giving up and letting the process exit
@@ -221,7 +249,7 @@ export const CODEX_APPROVAL_POLICY = (() => {
  * Whether Codex tasks inherit the MCP servers configured in the user's
  * ~/.codex/config.toml, alongside Calandria's own bridge. Off by default,
  * and deliberately asymmetric with the Claude driver (which inherits ~/.claude
- * MCP servers) — see "Agent MCP inheritance" in CLAUDE.md.
+ * MCP servers) — see "Agent MCP inheritance is asymmetric" in lib/agents/CLAUDE.md.
  *
  * The short version: `codex exec` has no approver, so an inherited server's
  * tools are visible to the model but every call comes straight back as

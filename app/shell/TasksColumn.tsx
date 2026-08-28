@@ -7,6 +7,7 @@ import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
+import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, RAN_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
@@ -32,7 +33,7 @@ import { DiffFooter } from "./DiffFooter";
 function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: boolean; onPick: (range: boolean) => void }) {
   return (
     <label className="pickbox" onClick={(e) => e.stopPropagation()}
-      title={pickable ? "Select — shift-click to extend the range" : "A task mid-turn can't be re-filed — nothing may move a worktree an agent is writing into"}>
+      title={pickable ? "Select: shift-click to extend the range" : "A task mid-turn can't be re-filed. Nothing may move a worktree an agent is writing into"}>
       <input type="checkbox" checked={picked} disabled={!pickable} onChange={() => {}}
         onClick={(e) => { e.stopPropagation(); onPick(e.shiftKey); }} />
     </label>
@@ -53,13 +54,20 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // The model's turn ended but the session is held open for run_in_background
   // work — live, but nothing to watch and nothing needed from the user.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
+  // Live, but nothing has come out of it for a long time (./idleTurn.ts). Said
+  // beside the running state rather than instead of it: the turn IS still going
+  // and may be doing real work, so this reports the gap and leaves the call to
+  // whoever reads it.
+  const idle = isIdleTurn(task, running) && !awaiting;
+  useIdleClock(idle);
+  const idleNote = idle ? ` · ${idleFor(task.idle_since ?? 0)}` : "";
   // Awaiting wins over running: a turn parked on a question is live but really
   // waiting on you, so it should read "waiting", not "working".
   const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
-    : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
-    : running ? "live · working"
+    : inBackground ? `live · ${task.background_note || "working in background"}${idleNote || ` · ${relTime(task.updated_at)}`}`
+    : running ? `live · working${idleNote}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
@@ -106,10 +114,10 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           the undifferentiated "In progress" pile. Sending it another message
           works too — the next turn clears the mark when its session opens. */}
       {ranClean && (
-        <div className="ran-chip" title={`Ran on its own ${relTime(task.unread_run_at)}, unattended, with nothing to answer — read it, then mark it done`}>
+        <div className="ran-chip" title={`Ran on its own ${relTime(task.unread_run_at)}, unattended, with nothing to answer. Read it, then mark it done`}>
           {Icon.check()} Ran clean · {relTime(task.unread_run_at)}
           <span className="spacer" />
-          <button className="ran-ack" title="Mark done — you've read this run" onClick={(e) => { e.stopPropagation(); onAckRun(task.id); }}>Mark done</button>
+          <button className="ran-ack" title="Mark done: you've read this run" onClick={(e) => { e.stopPropagation(); onAckRun(task.id); }}>Mark done</button>
         </div>
       )}
       {blocked && (task.auto_start ? (
@@ -126,14 +134,14 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
       {/* Queued for the usage-window reset (./queuedStart.ts) — blue like the
           auto-start chip, since both say "this launches itself". */}
       {isQueuedStart(task) && !running && (
-        <div className="blocked-chip auto" title={`Queued for the usage-window reset — ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
+        <div className="blocked-chip auto" title={`Queued for the usage-window reset: ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
           {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
         </div>
       )}
       {task.description && <div className="tdesc">{task.description}</div>}
       <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />
       <div className="task-foot">
-        <span className="activity">{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
+        <span className={`activity${idle ? " idle" : ""}`} title={idle ? IDLE_TITLE : undefined}>{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
         <span className="spacer" />
         {/* Lower right, not the title row: inline there, the badge + pill took
             half the width the title exists to use. */}
@@ -147,7 +155,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           menu doesn't select the task. */}
       <div className="task-snz">
         {snoozed ? (
-          <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)} — click to wake it now`}
+          <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now`}
             onClick={(e) => { e.stopPropagation(); onUnsnooze(task.id); }}>
             {Icon.sun()}
           </button>
@@ -415,7 +423,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
               decision in useRecaps.ts auto-picks a task whenever none is
               selected, which used to bounce this click straight back and made
               the button dead on any project that had a task. */}
-          <button className="pb-home" onClick={onShowRecap} aria-label="Project home" title="Project home — recap, schedules and overview">
+          <button className="pb-home" onClick={onShowRecap} aria-label="Project home" title="Project home: recap, schedules and overview">
             <span className="pb-pic" style={{ background: project.color }}>{project.name[0]}</span>
             <span className="pb-name">{project.name}</span>
           </button>
@@ -429,7 +437,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
         </div>
         <button className="pb-ctx" onClick={onEditContext} title="Edit project context">
           <div className={`ctx-txt ${project.context ? "" : "empty-ctx"}`}>
-            {project.context || "Add project context — description, stack & conventions, prepended to every task."}
+            {project.context || "Add project context: description, stack & conventions, prepended to every task."}
           </div>
           <div className="ctx-edit">{Icon.edit()} Context</div>
         </button>
@@ -538,7 +546,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
                   </div>
                   {gone ? (
                     <div className="sg-why gone" title={open ? undefined : s.withdrawn_reason || undefined}>
-                      Withdrawn{s.withdrawn_reason ? ` — ${s.withdrawn_reason}` : ""}
+                      Withdrawn{s.withdrawn_reason ? `: ${s.withdrawn_reason}` : ""}
                     </div>
                   ) : (
                     s.description && <div className="sg-why">{s.description}</div>
@@ -569,7 +577,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
                     column barely wide enough for one word. */}
                 <div className="sug-acts">
                   <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
-                  <button className="sug-add" title={gone ? "Disagree — restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
+                  <button className="sug-add" title={gone ? "Disagree: restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
                   <button className="sug-btn" onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
                   <button className="sug-dismiss" title="Dismiss" onClick={() => onDismissSuggestion(s.id)}>{Icon.x()}</button>
                 </div>
@@ -588,7 +596,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
         <div className="pick-bar">
           <span className="pb-count">{picked.size} selected</span>
           <span className="spacer" />
-          <button className="btn btn-line btn-sm" onClick={() => onBulkTag([...picked])} title="Add or remove tags across every selected task — the quick way to tag a plan an agent filed before the tag existed">
+          <button className="btn btn-line btn-sm" onClick={() => onBulkTag([...picked])} title="Add or remove tags across every selected task: the quick way to tag a plan an agent filed before the tag existed">
             {Icon.spark()} Tags…
           </button>
           <button className="btn btn-line btn-sm" onClick={() => onBulkMove([...picked])} title="Re-file every selected task under another project">

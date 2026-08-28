@@ -1,0 +1,151 @@
+---
+import Logomark from "../components/Logomark.astro";
+import "../styles/tokens.css";
+
+const repo = "https://github.com/calandria-dev/calandria";
+const title = "Calandria";
+const pitch =
+  "Run Claude Code and Codex in parallel across every project, from any browser.";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — {pitch}</title>
+    <meta name="description" content={pitch} />
+    <link rel="canonical" href={Astro.site} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Both themes are declared so the browser UI matches whichever the OS asks
+         for; the page itself flips on prefers-color-scheme in tokens.css. -->
+    <meta name="theme-color" content="#081217" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f2f7f7" media="(prefers-color-scheme: light)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={title} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={pitch} />
+    <meta property="og:url" content={Astro.site} />
+    <meta property="og:image" content={new URL("/og.png", Astro.site)} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+
+  <body>
+    <main>
+      <!-- Lockup per the handoff: glyph height = 1.7x the wordmark cap height
+           (cap height ~= 0.72em, so 1.224em), gap = 0.3em, optically centred on
+           the text midline. --lockup keeps the two in step as it scales. -->
+      <h1 class="lockup">
+        <Logomark size="calc(var(--lockup) * 1.224)" />
+        <span class="wordmark">{title}</span>
+      </h1>
+
+      <p class="pitch">{pitch}</p>
+
+      <nav class="links">
+        <a class="btn primary" href="/docs/">Read the docs</a>
+        <a class="btn" href={repo}>GitHub</a>
+      </nav>
+    </main>
+
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 26px;
+        text-align: center;
+        max-width: 620px;
+      }
+
+      .lockup {
+        --lockup: clamp(38px, 11vw, 56px);
+        display: flex;
+        align-items: center;
+        gap: calc(var(--lockup) * 0.3);
+        margin: 0;
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      .wordmark {
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: var(--lockup);
+        letter-spacing: 0.005em;
+        line-height: 1;
+        color: var(--ink);
+      }
+
+      .pitch {
+        margin: 0;
+        font-size: clamp(15px, 2.6vw, 18px);
+        line-height: 1.55;
+        color: var(--dim);
+        text-wrap: balance;
+      }
+
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px; /* the handoff's mobile hit-target floor */
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: border-color 0.12s, color 0.12s, background 0.12s;
+      }
+
+      .btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .btn.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--bg);
+      }
+
+      .btn.primary:hover {
+        color: var(--bg);
+        filter: brightness(1.08);
+      }
+
+      /* Handoff: focus is always visible, never `outline:none`. */
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+    </style>
+  </body>
+</html>

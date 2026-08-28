@@ -28,7 +28,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const MIN_NODE_MAJOR = 20; // package.json engines: >=20.9
+const MIN_NODE_MAJOR = 22; // package.json engines: >=22
 
 /** Is `port` free to bind on loopback right now? */
 function portFree(port) {

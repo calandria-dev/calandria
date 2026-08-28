@@ -1,0 +1,35 @@
+/* Brand tokens for the calandria.dev landing page, taken from
+   docs/design/handoff/styles.css. The app ships four themes switched with
+   [data-theme]; this page has nothing to switch with, so it carries only
+   cherenkov — dark as the default (as in the app) and light through the OS
+   preference. Only the tokens this page actually paints with are here; the full
+   set lives in the handoff. The docs at /docs map the same palette onto
+   Starlight's variables in starlight.css. */
+@import "./fonts.css";
+
+:root {
+  --font-display: "Spectral", Georgia, serif;
+  --font-body: "Source Sans 3 Variable", "Source Sans 3", system-ui, sans-serif;
+
+  /* cherenkov-dark */
+  --bg: #081217;
+  --panel: #0d1b22;
+  --line: #1a2f39;
+  --ink: #d5e4ea;
+  --dim: #7e9aa6;
+  --accent: #45cabb;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* cherenkov-light */
+    --bg: #f2f7f7;
+    --panel: #ffffff;
+    --line: #d7e4e4;
+    --ink: #1a3038;
+    --dim: #5d7d87;
+    --accent: #0e8a7d;
+    color-scheme: light;
+  }
+}

@@ -77,7 +77,7 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
     expect(notice && "content" in notice ? notice.content : "").toMatch(
-      /^⏰ Scheduled wakeup cancelled — lingering is off on this instance \(CALANDRIA_BACKGROUND_LINGER\), so the session closed at the end of the turn: at \d\d:\d\d — "WAKE: re-check"\. It will not fire/,
+      /^⏰ Scheduled wakeup cancelled \(lingering is off on this instance \(CALANDRIA_BACKGROUND_LINGER\), so the session closed at the end of the turn\): at \d\d:\d\d, "WAKE: re-check"\. It will not fire/,
     );
   });
 });

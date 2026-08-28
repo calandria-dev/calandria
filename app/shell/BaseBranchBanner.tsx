@@ -79,10 +79,10 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   // a fetch HAS succeeded, the counts below are still meaningful and nagging
   // about a later blip (offline for the afternoon) is noise, not information.
   if (st.fetchError && !st.fetchedAt)
-    return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t reach {label} — {base} may be out of date.</div>;
+    return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t reach {label}. {base} may be out of date.</div>;
 
   if (st.unknown)
-    return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t compare {base} with {label} — this looks like a shallow clone.</div>;
+    return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t compare {base} with {label}. This looks like a shallow clone.</div>;
 
   if (behind === 0 && ahead === 0) return null;
 
@@ -93,7 +93,7 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
       <div className={`bb-banner${diverged ? " warn" : ""}`}>
         <span className="bb-msg">
           {diverged
-            ? `${base} and ${label} have diverged — ${commits(ahead)} here, ${commits(behind)} there`
+            ? `${base} and ${label} have diverged: ${commits(ahead)} here, ${commits(behind)} there`
             : behind > 0
               ? `${base} is ${commits(behind)} behind ${label}`
               : `${base} is ${commits(ahead)} ahead of ${label}`}
@@ -112,7 +112,7 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
           </button>
         )}
         {diverged && (
-          <span className="bb-hint" title={`Merge or rebase ${base} yourself — the app only ever fast-forwards it.`}>
+          <span className="bb-hint" title={`Merge or rebase ${base} yourself. The app only ever fast-forwards it.`}>
             resolve this in your checkout
           </span>
         )}

@@ -227,7 +227,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }} />
           <textarea className="gs-desc-in" value={desc} rows={2} aria-label="Tag description"
-            placeholder="What this tag means — shown here and given to every session carrying it."
+            placeholder="What this tag means: shown here and given to every session carrying it."
             onChange={(e) => setDesc(e.target.value)} />
           {/* The plan's base branch, set once here instead of on every task.
               It is a DEFAULT: inheritance stops at the worktree cut, so the
@@ -236,7 +236,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
           <label className="gs-base">
             <span className="gs-base-lbl">Base branch</span>
             <input className="gs-base-in mono" value={base} aria-label="Tag base branch"
-              placeholder={`${projectBranch || "the project's default"} — inherited`}
+              placeholder={`${projectBranch || "the project's default"} (inherited)`}
               onChange={(e) => setBase(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }} />
           </label>
@@ -272,9 +272,9 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
               {Icon.edit()} Edit
             </button>
             <button className={`btn btn-sm ${confirmDel ? "btn-danger" : "btn-ghost"}`} disabled={busy} onClick={() => void del()}
-              title="Delete the tag — its tasks are kept, and keep their other tags">
+              title="Delete the tag. Its tasks are kept, and keep their other tags">
               {confirmDel
-                ? `Delete — ${members.length} task${members.length === 1 ? "" : "s"} stay${members.length === 1 ? "s" : ""}`
+                ? `Delete: ${members.length} task${members.length === 1 ? "" : "s"} stay${members.length === 1 ? "s" : ""}`
                 : "Delete tag"}
             </button>
             {confirmDel && <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDel(false)}>Cancel</button>}
@@ -288,7 +288,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
           {tag.description && <div className="gs-desc">{tag.description}</div>}
           {originTask && (
             <button className="gs-origin" onClick={() => onSelectTask(originTask.id)}
-              title="The session that planned this tag — its transcript is the brief">
+              title="The session that planned this tag. Its transcript is the brief">
               {Icon.spark()} Planned in <em>{originTask.title}</em>
             </button>
           )}
@@ -304,7 +304,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
                 </button>
               </li>
             ))}
-            {ordered.length === 0 && <li className="gs-none">No tasks yet — nothing carries this tag.</li>}
+            {ordered.length === 0 && <li className="gs-none">No tasks yet. Nothing carries this tag.</li>}
           </ol>
         </>
       )}

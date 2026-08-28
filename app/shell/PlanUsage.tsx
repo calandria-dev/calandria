@@ -135,7 +135,7 @@ export function PlanUsagePill() {
       <button
         className={`plan-pill${t ? ` ${t}` : ""}`}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title={`Claude ${planName ? `${planName} ` : ""}plan usage — click for the breakdown`}
+        title={`Claude ${planName ? `${planName} ` : ""}plan usage: click for the breakdown`}
       >
         {session && (
           <span className="pp-seg">
@@ -153,7 +153,7 @@ export function PlanUsagePill() {
             <div className="pop-sec">Claude {planName ? `${planName} ` : ""}plan usage</div>
             {rejected && (
               <div className="pu-note limit">
-                Usage limit reached — turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.
+                Usage limit reached. Turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.
               </div>
             )}
             {snap.windows.map((w) => (

@@ -334,6 +334,18 @@ export type PermissionDecision = "allow_once" | "allow_always" | "deny";
 // instead — see the note in lib/permissions.ts.
 export type PermissionMatchKind = "bash_prefix" | "bash_exact";
 
+// One watched setting file as this task last ran under it
+// (task_settings_snapshots — see lib/settingsDrift.ts). `file` is
+// worktree-relative; `hash` is over the whole file even when `content` is ''
+// because the file was too big to keep a copy of.
+export interface SettingsSnapshot {
+  task_id: string;
+  file: string;
+  hash: string;
+  content: string;
+  updated_at: number;
+}
+
 // A remembered "always allow" (permission_rules table), scoped to one project.
 export interface PermissionRule {
   id: string;
@@ -361,6 +373,20 @@ export interface PermissionScopeOffer {
 export interface PermissionRequest {
   id: string;
   tool: string;
+  /**
+   * What this card is asking about. Absent = the ordinary canUseTool gate on a
+   * tool call, which is every card that existed before this field.
+   *
+   * "settings" is the PRE-TURN gate (lib/settingsDrift.ts, issue #43): the
+   * agent hasn't started, and what needs approving isn't a call but the
+   * configuration the whole turn would run under. It rides the same
+   * request/outcome/answer machinery — one card shape, one answer route, one
+   * transcript row — and only the wording differs, so it is a field here rather
+   * than a second kind of card: declining ends the turn before it runs instead
+   * of refusing one call inside it, so the UI must not tell the user "the
+   * session keeps running either way".
+   */
+  kind?: "settings";
   /** Headline: the CLI's own prompt sentence when it supplies one, else a derived title. */
   title: string;
   /** The input worth judging — the full command for Bash, the path for a write. */
@@ -489,7 +515,13 @@ export type StreamEvent =
   // runner resolves it against the task's worktree before persisting, so the
   // transcript card can open the file in collaboration mode without asking git
   // whether it's tracked (an ignored scratch doc never reaches the diff).
-  | { type: "tool"; id: string; title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[]; file?: string }
+  // `name` is the agent's OWN name for the tool ("Bash", "mcp__calandria__suggest_task",
+  // "calandria__suggest_task" for the stdio bridge). The title is written for a
+  // human and is free to change wording; `name` is what code matches on, which
+  // is how the runner knows a call was a suggest_task and settles the created
+  // suggestion onto that row (see lib/suggestionCard.ts). Optional: older
+  // persisted rows and any driver that doesn't set it simply grow no card.
+  | { type: "tool"; id: string; name?: string; title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[]; file?: string }
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
@@ -506,7 +538,11 @@ export type StreamEvent =
   // A suggested task was filed. `projectId` is the project it landed IN, which
   // is not necessarily the one the turn is running in (suggest_task can target
   // any project) — the receiving tray is the one that has to refresh.
-  | { type: "suggested"; title: string; projectId: string }
+  // `taskId` is the row that was created, and it is what makes the suggestion
+  // reviewable where it was made: the runner settles it onto the suggest_task
+  // tool row so the transcript can render a live card that re-reads the task
+  // (started? accepted? deleted?) instead of freezing a snapshot.
+  | { type: "suggested"; title: string; projectId: string; taskId?: string }
   | { type: "usage"; usage: TurnUsage }
   // How full the context window is RIGHT NOW: the input-side token count
   // (input + cache_read + cache_creation) of the latest model request in the
@@ -585,7 +621,7 @@ export type AgentAuthEvent = {
 // and the "N need you" pill live for tasks whose transcript stream isn't open.
 export type GlobalTaskEvent = {
   type: "task";
-  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end" | "background";
+  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end" | "background" | "turn_idle";
   taskId: string;
   projectId: string;
   running: boolean;
@@ -602,6 +638,14 @@ export type GlobalTaskEvent = {
    * only learned running/awaiting_input would draw the row as still working.
    */
   unread_run_at: number;
+  /**
+   * When this task's live turn last produced anything, once it has been quiet
+   * long enough to be worth reporting (ms epoch; 0 = not idle, or not running).
+   * A mark, never a deadline — see lib/turnActivity.ts. It is an INSTANT rather
+   * than an age so the client can grow the label against its own clock without
+   * the server re-publishing every minute.
+   */
+  idle_since: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
   /**
@@ -621,6 +665,10 @@ export type GlobalEvent = GlobalTaskEvent | AgentAuthEvent;
 // How a tool call is stored (JSON) in a "tool" message's content.
 export interface ToolData {
   title: string;
+  // The agent's own tool name, persisted so a card can be matched to a call by
+  // what it WAS rather than by the wording of its title. Absent on rows written
+  // before this field existed, and on drivers that don't report it.
+  name?: string;
   detail?: string;
   result?: string;
   isError?: boolean;
@@ -646,6 +694,35 @@ export interface ToolData {
   // request is persisted so a reload re-renders an answerable card, and
   // `outcome` is absent while the turn is parked, set once it settles.
   permission?: { request: PermissionRequest; outcome?: PermissionOutcome };
+  // Present when this "tool" message is a suggest_task call that actually filed
+  // a task. Only the two ids are persisted, deliberately: the card re-reads the
+  // task row (GET /api/tasks/[id]/suggestion) every time it renders, so what it
+  // offers — Start, "added to the board", "withdrawn", "no longer exists" — is
+  // derived from the row's current state rather than frozen into the transcript
+  // at the moment the tool ran. `projectId` is where it was FILED, which
+  // suggest_task can point at any project, so it is not the session's own.
+  suggestion?: { taskId: string; projectId: string };
+}
+
+/**
+ * What GET /api/tasks/[id]/suggestion serves: the live state of a task a
+ * `suggest_task` call filed, read by the suggestion card the transcript settles
+ * onto that call. Deliberately re-read rather than persisted into the
+ * transcript — the card's whole job is to say what the row is NOW.
+ */
+export interface SuggestionCard {
+  id: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  status: Status;
+  suggested: number;
+  started: number;
+  withdrawn_reason: string;
+  /** The project the task was FILED INTO, which need not be the session's own. */
+  project_id: string;
+  project_name: string;
+  blocked_by: { id: string; title: string; status: Status }[];
 }
 
 /** A recurring prompt. See docs/superpowers/specs/2026-08-14-scheduled-tasks-design.md. */

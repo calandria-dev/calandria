@@ -8,12 +8,14 @@
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
 import fs from "node:fs";
-import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { isSuggestTaskTool } from "@/lib/suggestionCard";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
-import { SHUTDOWN_GRACE_MS } from "@/lib/config";
+import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
+import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
@@ -22,7 +24,15 @@ import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailur
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
-import { DENIED_INTERRUPTED } from "@/lib/permissions";
+import { DENIED_INTERRUPTED, DENIED_TIMED_OUT, parseDecision, waitForPermission } from "@/lib/permissions";
+import {
+  acceptSettingsChanges,
+  checkSettingsDrift,
+  settingsBlockedError,
+  settingsDriftNotice,
+  settingsDriftRequest,
+  SETTINGS_DENIED_UNATTENDED,
+} from "@/lib/settingsDrift";
 import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { sendTurnInput } from "@/lib/turnInput";
@@ -46,8 +56,8 @@ const log = createLogger("runner");
 // "bypassPermissions", Codex's "workspace-write"), so any one name would be
 // wrong for somebody's schedule.
 export const SCHEDULE_UNATTENDED_DETAIL =
-  "the agent needed approval and nobody was watching, so it was declined automatically — " +
-  "the run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
+  "the agent needed approval and nobody was watching, so it was declined automatically. " +
+  "The run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -469,6 +479,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   let opened = false;
   // tool_use_id -> { dbId, data } so a later tool_result can be merged in.
   const toolMsgs: Record<string, { dbId: string; data: ToolData }> = {};
+  // suggest_task tool_use ids whose `suggested` event hasn't arrived yet, oldest
+  // first. The tool row is created when the call streams; the id of the task it
+  // filed is only known when the tool reports back, so the two are matched in
+  // order — a planning turn issues its whole batch in one assistant message,
+  // and each call is entitled to exactly one card.
+  const pendingSuggestCalls: string[] = [];
   // Everything currently parked on the user — AskUserQuestion cards and
   // permission prompts alike. One assistant message can park several at once,
   // and awaiting_input must stay up until the last one is settled.
@@ -489,6 +505,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // that there was no one to approve it, and draining the queue now would run
   // every follow-up into the same wall.
   let unattendedDeny = false;
+  // Set when the pre-turn settings gate refused (issue #43): the task's own
+  // .claude/settings.json changed since it last ran and the change wasn't
+  // approved, so this turn never reached the agent. The queue is parked for the
+  // same reason as the two above — every follow-up would raise the identical
+  // card — and the task is left flagged, because the way out is a person
+  // reading a diff.
+  let settingsBlocked = false;
   const startedAt = Date.now();
   // What this turn spent, accumulated from the same `usage` events that write
   // task_usage, so the lifecycle line in the finally can report tokens without
@@ -496,6 +519,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // (each SDK result message carries its own), hence a running sum rather than
   // a last-wins snapshot.
   const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // Start the idle clock (lib/turnActivity.ts) at the launch rather than at the
+  // first event: a turn that hangs before the session ever opens is exactly the
+  // kind of silence worth reporting, and with no baseline it would never be.
+  markTurnActivity(id);
 
   // Turn lifecycle, line 1 of 2 (issue #16). The runner used to log failures
   // and nothing else, so a healthy instance said nothing at all about the work
@@ -548,6 +575,106 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       const m = addMessage(id, gen, "system", syncNote);
       publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen, ts: m.created_at });
     }
+
+    const driver = getDriver(task.agent);
+    // The pre-turn settings gate (issue #43). The agent has not started yet,
+    // and whatever `.claude/settings.json` says at this instant is what its
+    // hooks, permission-allow rules and env are for the whole turn — loaded
+    // from disk before canUseTool exists to have an opinion. That file lives in
+    // the worktree, so the previous turn could have written it, and the
+    // fast-forward a few lines above could have brought it in from base.
+    //
+    // So: hash what the driver says it will load, and if it moved since the
+    // version this task last ran under, park HERE. Deliberately the same
+    // machinery as a tool prompt — same PermissionRequest, same ask registry,
+    // same POST /answer route, same transcript row — because the answer means
+    // the same thing and a second answering path is a second thing to get
+    // wrong. The notice goes first so the transcript reads as a statement
+    // followed by a question, and so the fact survives even if the card is
+    // never answered.
+    const watched = driver.watchedSettingsFiles ?? [];
+    const settingsRoot = task.worktree_path || project.repo_path;
+    const changes = watched.length && settingsRoot ? checkSettingsDrift(id, settingsRoot, watched) : [];
+    if (changes.length) {
+      const notice = settingsDriftNotice(changes);
+      const nm = addMessage(id, gen, "system", notice);
+      publish(id, { type: "notice", content: notice, msgId: nm.id, generation: gen, ts: nm.created_at });
+
+      const request = settingsDriftRequest(
+        `settings:${gen}:${startedAt}`,
+        id,
+        changes,
+        PERMISSION_PROMPT_TIMEOUT_MS,
+        PERMISSION_UNATTENDED_MS
+      );
+      const data: ToolData = { title: request.title, permission: { request } };
+      const cm = addMessage(id, gen, "tool", JSON.stringify(data));
+      toolMsgs[request.id] = { dbId: cm.id, data };
+      openAsks.add(request.id);
+      updateTask(id, { awaiting_input: 1 });
+      publish(id, { type: "permission", request, msgId: cm.id, generation: gen, ts: cm.created_at });
+
+      // The same settle the driver's permission_decided branch performs, done
+      // here because this card was never on the driver's stream: nothing has
+      // asked the agent for anything yet.
+      const settle = (outcome: PermissionOutcome) => {
+        data.permission = { request, outcome };
+        updateMessage(cm.id, JSON.stringify(data));
+        openAsks.delete(request.id);
+        if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
+        publish(id, { type: "permission_decided", id: request.id, outcome, msgId: cm.id, generation: gen });
+      };
+
+      const waited = await waitForPermission({
+        taskId: id,
+        id: request.id,
+        signal: abortController.signal,
+        attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+        unattendedMs: PERMISSION_UNATTENDED_MS,
+      });
+      if ("aborted" in waited) {
+        // Stopped while the card was open. Not a failure and not a refusal —
+        // the finally below settles it as a stopped turn, and the baseline is
+        // left alone so the next turn asks again.
+        settle({ decision: "deny", auto: true, reason: "interrupted", note: DENIED_INTERRUPTED });
+        return;
+      }
+      if ("expired" in waited) {
+        // Nobody answered: a declared-unattended (scheduled) run settles
+        // instantly, an unwatched one after the short grace. Adopting new agent
+        // settings is not something an absent human can be taken to have
+        // agreed to, so both refuse — and the schedule run settles `failed` off
+        // the turnError below rather than reporting a quiet green "ran".
+        const unattended = waited.expired === "unattended";
+        settle({
+          decision: "deny",
+          auto: true,
+          reason: waited.expired,
+          note: unattended ? SETTINGS_DENIED_UNATTENDED : DENIED_TIMED_OUT,
+        });
+        settingsBlocked = true;
+        turnError = settingsBlockedError(changes, unattended ? "unattended" : "timeout");
+        publishTurnError(id, gen, turnError);
+        return;
+      }
+      const { decision, note } = parseDecision(waited.answers);
+      if (decision === "deny") {
+        settle({ decision, note: note || undefined });
+        settingsBlocked = true;
+        turnError = settingsBlockedError(changes, "declined");
+        publishTurnError(id, gen, turnError);
+        return;
+      }
+      // Approved. The new version becomes what this task runs under, so the
+      // next turn is silent until it changes again — an "always allow" would
+      // have been a standing grant to whatever the file says NEXT, which is
+      // the thing being gated, so there is no such offer on the card.
+      acceptSettingsChanges(id, changes);
+      // Recorded as allow_once whatever the client sent: with no scope offer on
+      // the card, an "allow_always" answer has nothing to remember, and the
+      // settled view would claim a rule that doesn't exist.
+      settle({ decision: "allow_once" });
+    }
     // Orphan-on-crash investigation (issue #14 item 2): both agent SDKs spawn
     // the claude/codex CLI as a plain (non-detached) child tied to THIS
     // abortController, not to server lifecycle. Verified against the
@@ -569,7 +696,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // neither agent SDK exposes the underlying child process (or its pid)
     // through any public/documented API, so persisting one would mean reading
     // private, minified SDK internals liable to break on every version bump.
-    for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController, hooks)) {
+    for await (const ev of driver.runTurn(task, project, userText, abortController, hooks)) {
+      // This turn is producing something, whatever it is. One Map write, before
+      // the branch ladder, so nothing added below can forget to do it — and it
+      // is what makes the gaps BETWEEN these events the signal the idle mark is
+      // derived from (lib/turnActivity.ts).
+      markTurnActivity(id);
       // Persist first, then publish enriched with the DB message id — so a
       // snapshot taken at any instant plus the live tail never loses an event,
       // and clients can upsert by id instead of appending duplicates.
@@ -599,13 +731,31 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // is inside the worktree: that's the form the file route takes, and a
         // path it would refuse must not grow a Collaborate button.
         const file = ev.file ? worktreeRelative(task.worktree_path, ev.file) ?? undefined : undefined;
-        const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff, file };
+        const data: ToolData = { title: ev.title, name: ev.name, detail: ev.detail, peek: ev.peek, diff: ev.diff, file };
         const m = addMessage(id, gen, "tool", JSON.stringify(data));
         toolMsgs[ev.id] = { dbId: m.id, data };
+        // A suggest_task call gets a card settled onto it the moment the tool
+        // reports what it filed (below) — queue the row so a parallel batch of
+        // suggestions lands one card each, in the order the calls were made.
+        if (isSuggestTaskTool(ev.name)) pendingSuggestCalls.push(ev.id);
         publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
         const t = toolMsgs[ev.id];
         if (t) {
+          // A suggest_task row can have been given its card OUT OF BAND while
+          // the call was in flight — the stdio bridge's endpoint writes
+          // straight to the message row, since a Codex session's MCP client
+          // never touches this event stream. Our in-memory copy predates that
+          // write, so re-read it before stamping the result over the top;
+          // otherwise the card the bridge just attached disappears one event
+          // later. Narrowed to suggest_task rows so an ordinary tool_result
+          // still costs no read.
+          if (isSuggestTaskTool(t.data.name) && !t.data.suggestion) {
+            try {
+              const fresh = JSON.parse(getMessage(t.dbId)?.content ?? "{}") as ToolData;
+              if (fresh.suggestion) t.data.suggestion = fresh.suggestion;
+            } catch { /* keep what we have */ }
+          }
           t.data.result = ev.content;
           t.data.isError = ev.isError;
           if (ev.peek) t.data.peek = ev.peek;
@@ -748,6 +898,32 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const note = `⏵ ${ev.summary || `Background task ${ev.status}`}`;
         const m = addMessage(id, gen, "system", note);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+      } else if (ev.type === "suggested") {
+        // The suggestion is already committed; what happens here is only about
+        // where the user SEES it. It settles onto the suggest_task tool row the
+        // call created — the same move an already-decided permission card makes
+        // above — so the proposal is reviewable in the session that made it
+        // instead of only in a tray the user has to go and find.
+        //
+        // Nothing but the two ids is persisted: the card re-reads the task on
+        // every render, so a transcript reloaded next week shows what the row
+        // is NOW (started, accepted, withdrawn, deleted) rather than the offer
+        // that was true the moment the tool ran. A driver that reports no task
+        // id, or a suggestion with no call to settle onto (the mock's directive
+        // path before it grew a tool row), falls through to a bare publish —
+        // the tray still refreshes, exactly as it did before.
+        // Only a report that names its task consumes a queued call: a driver
+        // that omits the id has no card to place, and popping the queue for it
+        // would offset every later suggestion onto the wrong row.
+        const callId = ev.taskId ? pendingSuggestCalls.shift() : undefined;
+        const t = callId ? toolMsgs[callId] : undefined;
+        if (ev.taskId && t) {
+          t.data.suggestion = { taskId: ev.taskId, projectId: ev.projectId };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        } else {
+          publish(id, ev);
+        }
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += ev.usage[k] || 0;
@@ -897,9 +1073,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // sat at running=0 / awaiting_input=0 / status=in_progress, which is
       // indistinguishable from live work and which nothing ever moved, so every
       // firing left one more permanent "In progress" row behind (issue #28).
+      // A turn the settings gate refused never opened a session, so the clause
+      // below would leave it flagged for nothing — and it is precisely the case
+      // that needs a person: the way out is reading a diff and deciding, which
+      // is what the "N need you" pill is for. Including the scheduled case,
+      // where the alternative is a run that refused itself at 08:30 and said so
+      // only in a ledger nobody opens.
       updateTask(id, {
         running: 0, background_pending: 0, background_note: "", session_id: sessionId,
-        awaiting_input: opened && !scheduledOk ? 1 : 0,
+        awaiting_input: (opened && !scheduledOk) || settingsBlocked ? 1 : 0,
         // Only a run that actually opened a session produced anything to read.
         ...(scheduledOk && opened ? { unread_run_at: Date.now() } : {}),
       });
@@ -954,19 +1136,26 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
-    } else if (authFailure || usageLimitFailure || unattendedDeny) {
-      // The login (or the quota, or the absent human) is what failed — not the
-      // work: draining now would run each follow-up straight into the same
-      // authentication error / spent limit / unanswerable permission prompt,
-      // emptying the queue and stacking identical walls of red for messages
-      // that never actually ran. Leave them parked (they're rows in
-      // pending_messages, so they survive a reload and still render as queued
-      // bubbles) and say so once. They drain normally at the end of the next
-      // turn, after a reconnect / once the limit resets / once you're back.
+    } else if (authFailure || usageLimitFailure || unattendedDeny || settingsBlocked) {
+      // The login (or the quota, or the absent human, or an unapproved settings
+      // change) is what failed — not the work: draining now would run each
+      // follow-up straight into the same authentication error / spent limit /
+      // unanswerable permission prompt / identical settings card, emptying the
+      // queue and stacking identical walls of red for messages that never
+      // actually ran. Leave them parked (they're rows in pending_messages, so
+      // they survive a reload and still render as queued bubbles) and say so
+      // once. They drain normally at the end of the next turn, after a
+      // reconnect / once the limit resets / once you're back.
       const parked = listPendingMessages(id).length;
       if (parked) {
-        const when = authFailure ? "once you reconnect" : usageLimitFailure ? "once the limit resets" : "when you send the next message";
-        const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue — ${parked === 1 ? "it runs" : "they run"} ${when}.`;
+        const when = authFailure
+          ? "once you reconnect"
+          : usageLimitFailure
+            ? "once the limit resets"
+            : settingsBlocked
+              ? "once you've approved the settings change"
+              : "when you send the next message";
+        const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue: ${parked === 1 ? "it runs" : "they run"} ${when}.`;
         // Best-effort: the task row can be gone by now (deleted mid-turn), and a
         // FOREIGN KEY throw here would escape the detached run()'s finally.
         try {
@@ -1071,6 +1260,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // Release occupancy only now, at the very end of this synchronous block —
       // a no-op if a Stop already deleted the entry or a handoff replaced it.
       unregisterTurn(id, abortController);
+      // The idle clock only describes a LIVE turn, so it retires with the slot.
+      // Deliberately not on the handoff/superseded paths: the successor turn is
+      // the same session continuing, and it re-stamps on entry anyway.
+      forgetTurnActivity(id);
       // Emitted after the task row settles, so a client refreshing on turn_end
       // reads the final running/awaiting_input state. Skipped when a queued
       // follow-up or a successor turn is taking over — that turn will emit its

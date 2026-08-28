@@ -43,8 +43,16 @@ import type { NotificationPayload } from "./notifications/types";
 // already final by the time it is published (lib/notifications/notify.ts), and
 // its taskId is empty on a test send. Like runbooks_changed it therefore
 // bypasses the relay's re-read-the-task enrichment entirely.
+// turn_idle is the odd sibling: not a mutation of the ROW at all, but a change
+// in how a live turn should be DRAWN — it went quiet, or it started talking
+// again (lib/turnActivity.ts). It carries nothing, because the relay's
+// re-read-the-task enrichment is where the age comes from, and it goes to
+// global listeners only for the usual reason plus one of its own: a turn that
+// has stopped producing transcript detail is by definition publishing nothing
+// on its own stream, so this is the only channel that can say so.
 export type TaskMutationEvent =
   | { type: "task_updated" }
+  | { type: "turn_idle" }
   | { type: "task_edited" }
   | { type: "task_deleted"; projectId: string; awaiting_count: number }
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
@@ -60,7 +68,7 @@ export type BusEvent = TaskStreamEvent | TaskMutationEvent;
 // deletion event. Defined here — beside the bus events that produce them —
 // rather than in lib/types.ts.
 export type GlobalTaskWireEvent = Omit<GlobalTaskEvent, "event"> & {
-  event: GlobalTaskEvent["event"] | "task_updated" | "task_edited";
+  event: GlobalTaskEvent["event"] | "task_updated" | "task_edited" | "turn_idle";
 };
 export type TaskDeletedWireEvent = {
   type: "task_deleted";

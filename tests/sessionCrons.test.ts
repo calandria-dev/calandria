@@ -101,9 +101,9 @@ describe("labels", () => {
   });
   it("writes the honesty notice with each cancelled wake's time and prompt", () => {
     const n = cancelledCronsNotice([planned[0]], "the session closed before it fired", NOW);
-    expect(n).toBe('⏰ Scheduled wakeup cancelled — the session closed before it fired: at 11:58 — "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.');
+    expect(n).toBe('⏰ Scheduled wakeup cancelled (the session closed before it fired): at 11:58, "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.');
     const two = cancelledCronsNotice([planned[0], planned[2]], "lingering is off", NOW);
-    expect(two).toMatch(/^⏰ Scheduled wakeups cancelled — lingering is off: at 11:58 — "WAKE: check the build"; on `\* \* \* \* \*` \(next 11:57\) — "TICK"\. They will not fire/);
+    expect(two).toMatch(/^⏰ Scheduled wakeups cancelled \(lingering is off\): at 11:58, "WAKE: check the build"; on `\* \* \* \* \*` \(next 11:57\), "TICK"\. They will not fire/);
     expect(describeCron({ ...planned[0], prompt: "x".repeat(200) }, NOW)).toMatch(/x{160}…"$/);
   });
 });

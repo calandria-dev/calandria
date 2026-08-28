@@ -94,10 +94,10 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // when nobody is watching. dontAsk would offer strictly less control while
   // reading like more, which is the worst thing a permission mode can do.
   permissionModes: [
-    { value: "bypassPermissions", label: "bypassPermissions", sub: "never asks — bypasses every permission check" },
+    { value: "bypassPermissions", label: "bypassPermissions", sub: "never asks, bypasses every permission check" },
     { value: "auto", label: "auto", sub: "a model screens each call; risky ones ask you (the app's default)" },
     { value: "acceptEdits", label: "acceptEdits", sub: "auto-accept file edits, ask before commands" },
-    { value: "default", label: "default", sub: "Claude Code's standard prompting — ask before anything not already approved" },
+    { value: "default", label: "default", sub: "Claude Code's standard prompting: ask before anything not already approved" },
     { value: "plan", label: "plan", sub: "propose a plan, don't edit" },
   ],
   supportsAsks: true,
@@ -111,7 +111,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // bypassPermissions, classifier-screened under the "auto" default, a
   // permission card otherwise —
   // reachable in every mode, which is what makes this differ from Codex, where
-  // an inherited tool call can never succeed. CLAUDE.md has the comparison.
+  // an inherited tool call can never succeed. lib/agents/CLAUDE.md compares them.
   inheritsUserMcpServers: true,
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   // The driver holds the session open past the result while run_in_background
@@ -213,7 +213,7 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     return {
       ...m,
       label: alias[m.value] ?? m.label,
-      sub: duplicate ? `${resolved} — same as ${m.value.replace(/\[1m\]$/i, "")}` : resolved,
+      sub: duplicate ? `${resolved}, same as ${m.value.replace(/\[1m\]$/i, "")}` : resolved,
       contextWindow: wants1m ? M1 : windowFor(resolved),
     };
   });

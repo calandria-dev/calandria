@@ -201,7 +201,7 @@ async function discardCheckout(
     // demanded from the state at teardown time, not from the state the user was
     // shown — which is the whole guarantee: nothing uncommitted is ever
     // discarded without having been named first.
-    if (!safety.safe && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON} — ${safety.reason}` };
+    if (!safety.safe && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${safety.reason}` };
 
     await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     // removeWorktree is best-effort and never throws, and a surviving directory

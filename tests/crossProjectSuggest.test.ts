@@ -276,7 +276,11 @@ describe("cross-project suggestion fan-out", () => {
     } finally {
       unsub();
     }
-    expect(seen).toContainEqual({ type: "suggested", title: "Filed elsewhere", projectId: there.id });
+    // `taskId` rides along with the target project id: it's what lets a
+    // transcript settle a suggestion card onto the call that filed the task.
+    expect(seen).toContainEqual(
+      expect.objectContaining({ type: "suggested", title: "Filed elsewhere", projectId: there.id, taskId: expect.any(String) })
+    );
   });
 
   it("GET /api/events carries the TARGET project id so the receiving tray refreshes", async () => {

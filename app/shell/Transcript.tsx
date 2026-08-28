@@ -1,9 +1,11 @@
 "use client";
 
-import { memo, useState } from "react";
-import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
+import { memo, useCallback, useEffect, useState } from "react";
+import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
+import { jget } from "./api";
+import { PriPill } from "./shared";
 import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
@@ -194,7 +196,7 @@ const BLOCKED_BY: Record<string, string> = {
   mode: "Blocked by this task's permission mode",
   rule: "Blocked by a deny rule in your Claude Code settings",
   asyncAgent: "Blocked by Claude Code's background-agent policy",
-  subcommandResults: "Blocked by Claude Code — one of the command's subcommands isn't allowed",
+  subcommandResults: "Blocked by Claude Code: one of the command's subcommands isn't allowed",
 };
 const blockedHead = (by?: string): string =>
   (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
@@ -216,29 +218,44 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   const [sent, setSent] = useState(false);
   if (!req) return null;
 
+  // The pre-turn settings gate (lib/settingsDrift.ts, issue #43): the same card
+  // asking about a different thing — not one tool call, but the configuration
+  // the whole turn would load. Declining doesn't refuse a call and let the
+  // session carry on; it means the turn never runs, so every sentence below
+  // that promises otherwise has to change. There is also nobody to write a note
+  // TO — the agent hasn't started — so the note field goes away with it.
+  const settings = req.kind === "settings";
+
   if (outcome) {
     const allowed = outcome.decision !== "deny";
     const blocked = outcome.reason === "blocked";
     const what = blocked
       ? blockedHead(outcome.blockedBy)
-      : outcome.decision === "allow_always"
-        ? `Allowed — ${outcome.remembered ?? "remembered for this project"}`
-        : outcome.decision === "allow_once"
-          ? "You allowed this once"
-          : outcome.auto ? "Declined automatically" : "You declined this";
+      : settings
+        ? allowed
+          ? "You approved this settings change"
+          : outcome.auto ? "Declined automatically — the turn did not run" : "You declined this settings change"
+        : outcome.decision === "allow_always"
+          ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
+          : outcome.decision === "allow_once"
+            ? "You allowed this once"
+            : outcome.auto ? "Declined automatically" : "You declined this";
     return (
       <div className={`perm settled ${allowed ? "ok" : "no"}`}>
         <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
         <div className="perm-what">{req.title}</div>
-        {/* Only on a block: this card was never open, so it's the one place the
-            user gets to see what the agent was actually about to run. Every
-            other outcome had the input on screen before it settled. */}
-        {blocked && req.detail && <pre className="perm-pre">{req.detail}</pre>}
-        {blocked && !!req.diff?.length && (
+        {/* On a block: this card was never open, so it's the one place the user
+            gets to see what the agent was actually about to run. On a settings
+            change: what changed is the whole point of the record, and unlike a
+            tool call it stays true afterwards — the file is still sitting in
+            the worktree. Every other outcome had its input on screen before it
+            settled. */}
+        {(blocked || settings) && req.detail && <pre className="perm-pre">{req.detail}</pre>}
+        {(blocked || settings) && !!req.diff?.length && (
           <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
         )}
         {outcome.note && <div className="perm-note">{outcome.note}</div>}
-        {blocked && <div className="perm-hint">You weren&apos;t asked — change this task&apos;s permission mode if it should have been allowed.</div>}
+        {blocked && <div className="perm-hint">You weren&apos;t asked. Change this task&apos;s permission mode if it should have been allowed.</div>}
       </div>
     );
   }
@@ -246,22 +263,164 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   const decide = (d: PermissionDecision) => { if (!sent) { setSent(true); onDecide(d, note); } };
   return (
     <div className="perm">
-      <div className="perm-head">{Icon.lock()} {agentLabel} needs permission</div>
+      <div className="perm-head">{Icon.lock()} {settings ? "This task's settings changed" : `${agentLabel} needs permission`}</div>
       <div className="perm-what">{req.title}</div>
       {req.description && <div className="perm-sub">{req.description}</div>}
       {req.detail && <pre className="perm-pre">{req.detail}</pre>}
       {!!req.diff?.length && (
         <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
       )}
-      <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
+      {!settings && (
+        <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
+      )}
       <div className="perm-foot">
-        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>Allow once</button>
+        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>{settings ? "Run this turn" : "Allow once"}</button>
         {req.scope && (
           <button className="btn btn-sm" onClick={() => decide("allow_always")} disabled={sent} title={req.scope.label}>{req.scope.label}</button>
         )}
         <button className="btn btn-sm btn-danger" onClick={() => decide("deny")} disabled={sent}>Decline</button>
       </div>
-      <div className="perm-hint">Declines automatically if nobody responds — the session keeps running either way.</div>
+      <div className="perm-hint">
+        {settings
+          ? "Declining ends this turn before the agent starts — nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
+          : "Declines automatically if nobody responds. The session keeps running either way."}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The three handlers a suggestion card in the transcript needs, and the project
+ * it is being read FROM. All three are the tray's own — a suggestion started
+ * here has to be indistinguishable from one started there (same worktree cut,
+ * same agent resolution, same auto-start-dependents sweep), which is only true
+ * if it goes down the same code path rather than a second copy of it.
+ */
+export interface SuggestionActions {
+  /** The project whose session the transcript belongs to — see SuggestionView. */
+  projectId: string;
+  onStart: (taskId: string) => void | Promise<void>;
+  onAccept: (taskId: string) => void | Promise<void>;
+  onDismiss: (taskId: string) => void | Promise<void>;
+}
+
+// A suggestion filed by a `suggest_task` call, rendered on the call's own row.
+//
+// State is NEVER held here between renders: the transcript is persisted and a
+// reload must not resurrect a Start button for a task that has since been
+// started, accepted, withdrawn or hard-deleted. So the card holds two ids and
+// re-reads the task (GET /api/tasks/[id]/suggestion) on mount and after every
+// action; what it offers is a function of the row it gets back.
+//
+//   still in the tray   → Start · Add · Dismiss
+//   accepted (suggested=0, started=0) → "Added to the task list"
+//   started             → "Session started"
+//   withdrawn (still in the tray, cancelled, with a reason) → struck through,
+//                         Restore in place of Add, the rest unchanged
+//   404                 → "No longer exists" (Dismiss is a hard delete)
+//
+// START AND ANOTHER PROJECT. `suggest_task` can file into ANY project, and
+// starting a task mints its session and selects it — which, for a suggestion
+// filed elsewhere, means being pulled out of the session you are reading and
+// into a project you may not have had on screen. That is a bigger, less
+// recoverable interruption than walking to the other project's tray, and the
+// tray is right there. So Start is offered only for a suggestion filed into the
+// project this transcript belongs to; a cross-project card names where the task
+// went and offers Add and Dismiss, neither of which navigates anywhere.
+function SuggestionView({ data, actions }: { data: ToolData; actions?: SuggestionActions }) {
+  const ref = data.suggestion;
+  const taskId = ref?.taskId;
+  const [card, setCard] = useState<SuggestionCard | null>(null);
+  // Distinguished from "not loaded yet" so the first paint isn't an empty card
+  // and a deleted task isn't mistaken for a slow one.
+  const [state, setState] = useState<"loading" | "ready" | "gone" | "error">("loading");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!taskId) return;
+    try {
+      setCard(await jget<SuggestionCard>(`/api/tasks/${taskId}/suggestion`));
+      setState("ready");
+    } catch (e) {
+      // A hard delete is the expected failure, and it is a real answer; only an
+      // actual fetch failure is worth saying nothing useful about.
+      setState(e instanceof Error && /not found/i.test(e.message) ? "gone" : "error");
+    }
+  }, [taskId]);
+  useEffect(() => { void load(); }, [load]);
+
+  if (!ref || !taskId) return null;
+
+  const act = async (fn: (id: string) => void | Promise<void>) => {
+    setBusy(true);
+    try { await fn(taskId); } finally { setBusy(false); }
+    await load();
+  };
+
+  if (state === "loading") return <div className="sugcard loading">{Icon.spark()} Suggested a task…</div>;
+  if (state === "gone") {
+    return (
+      <div className="sugcard gone">
+        <div className="sugcard-head">{Icon.x()} Suggestion no longer exists</div>
+        <div className="sugcard-note">It was dismissed, or the task was deleted.</div>
+      </div>
+    );
+  }
+  if (state === "error" || !card) {
+    return <div className="sugcard gone"><div className="sugcard-head">{Icon.x()} Couldn&apos;t read this suggestion</div></div>;
+  }
+
+  const withdrawn = card.suggested === 1 && card.status === "cancelled";
+  // Still in the tray = still the user's to decide, withdrawn included: a
+  // retraction is the agent's recommendation to drop it, not a deletion, and
+  // the tray keeps Restore/Start/✕ on those rows. The card offers the same
+  // three so the two surfaces can't disagree about what is still actionable.
+  const actionable = card.suggested === 1;
+  const elsewhere = card.project_id !== actions?.projectId;
+  const what = card.started === 1
+    ? "Session started"
+    : card.suggested === 0
+      ? "Added to the task list"
+      : withdrawn
+        ? `Withdrawn${card.withdrawn_reason ? ` — ${card.withdrawn_reason}` : ""}`
+        : "Suggested a task";
+
+  return (
+    <div className={`sugcard ${actionable && !withdrawn ? "open" : "settled"} ${withdrawn ? "withdrawn" : ""}`}>
+      <div className="sugcard-head">{actionable && !withdrawn ? Icon.spark() : Icon.check()} {what}</div>
+      <div className="sugcard-title">
+        <span className={withdrawn ? "struck" : ""}>{card.title}</span>
+        <PriPill p={card.priority} />
+        {/* Always named, never assumed: a suggestion can be filed anywhere, and
+            "which project did that go into" is the first thing the card has to
+            answer for a cross-project one. */}
+        <span className="sugcard-proj" title={elsewhere ? "Filed into another project" : "Filed into this project"}>
+          {Icon.folder()} {card.project_name}
+        </span>
+      </div>
+      {card.description && <div className="sugcard-why">{card.description}</div>}
+      {!!card.blocked_by.length && (
+        <div className="sugcard-blocked">
+          {Icon.lock()} Blocked by {card.blocked_by.map((b) => b.title).join(", ")}
+        </div>
+      )}
+      {actionable && actions && (
+        <div className="sugcard-acts">
+          {elsewhere ? (
+            <span className="sugcard-note">Open {card.project_name} to start it — starting it here would leave this session.</span>
+          ) : (
+            <button className="btn btn-accent btn-sm" disabled={busy} onClick={() => act(actions.onStart)} title="Cut a worktree and start the session now">
+              {Icon.play()} Start
+            </button>
+          )}
+          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree — restore it to the task list" : "Add to the task list to start later"}>
+            {Icon.plus()} {withdrawn ? "Restore" : "Add"}
+          </button>
+          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss — deletes the task">
+            {Icon.x()} Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -336,7 +495,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -361,7 +520,15 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
-    return <div className="msg msg-tool"><ToolView data={data} onCollaborate={onCollaborate} /></div>;
+    // A suggest_task call that actually filed a task carries its card BELOW the
+    // ordinary tool row rather than replacing it: the call, its input and its
+    // result are still what happened, and the proposal is the artifact it left.
+    return (
+      <div className="msg msg-tool">
+        <ToolView data={data} onCollaborate={onCollaborate} />
+        {data.suggestion && <SuggestionView data={data} actions={suggestionActions} />}
+      </div>
+    );
   }
   if (m.role === "system") {
     // A context-overflow failure: render the warning line plus a one-click path
@@ -417,14 +584,14 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
             {m.content}
             {limitResume && limitResume.queuedAt > 0 && (
               <div className="overflow-actions queued">
-                <span className="queued-note">{Icon.clock()} Queued — resumes {wakeLabel(limitResume.queuedAt)}.</span>
+                <span className="queued-note">{Icon.clock()} Queued: resumes {wakeLabel(limitResume.queuedAt)}.</span>
                 <button className="btn btn-sm" onClick={limitResume.onCancel} title="Don't resume automatically">Cancel</button>
               </div>
             )}
             {limitResume && limitResume.queuedAt === 0 && limitResume.resetAt != null && (
               <div className="overflow-actions">
                 <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
-                  title="Resume this session on its own once the usage window resets — the queued follow-up if there is one, otherwise a continue prompt">
+                  title="Resume this session on its own once the usage window resets: the queued follow-up if there is one, otherwise a continue prompt">
                   {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
                 </button>
               </div>

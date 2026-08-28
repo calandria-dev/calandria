@@ -1,3 +1,7 @@
+---
+title: "Calandria community"
+---
+
 # Calandria community
 
 Calandria's community lives on GitHub so decisions remain searchable and connected to the
@@ -14,7 +18,7 @@ work; GitHub is the canonical record for bugs, proposals, and releases.
 | Fix or improve Calandria | [Contributing guide](../CONTRIBUTING.md) |
 | Report a vulnerability | [Security policy](../SECURITY.md) |
 
-Please search before opening a new thread. Add the problem you are solving, your current
+Search before opening a new thread. Add the problem you're solving, your current
 workaround, and why the outcome matters; that context is more useful than a proposed UI
 alone.
 

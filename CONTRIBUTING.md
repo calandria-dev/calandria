@@ -13,20 +13,26 @@ map, see the [community guide](docs/COMMUNITY.md).
 npm install
 npm run dev       # app on :3000, pty sidecar on 127.0.0.1:3001
 npm run typecheck # next typegen + tsc --noEmit; seconds, and CI runs exactly this
-npm test          # vitest — serial on purpose; tests spawn real git subprocesses
+npm test          # vitest, serial: tests spawn real git subprocesses
 npm run test:e2e
 npm run preflight # unit + end-to-end suite; the pre-push gate
 ```
 
-`CLAUDE.md` is the codebase map (architecture, conventions, gotchas) — read it before a
+One thing to know before you commit a `package-lock.json` change: the `better-sqlite3`
+entry carries a hand-written `"gypfile": false` that npm strips every time it rewrites the
+lockfile, and without it `npm ci` compiles the package from source and fails on Windows.
+`tests/lockfileGypfile.test.ts` fails if it goes missing. Re-add it by hand rather than
+regenerating the lockfile; [docs/WINDOWS.md](docs/WINDOWS.md#what-ci-proves) has the why.
+
+`CLAUDE.md` is the codebase map (architecture, conventions, gotchas). Read it before a
 nontrivial change. TypeScript is strict and there is no lint script, so `npm run typecheck`
-is the only static check there is. (`next typegen` writes the gitignored `next-env.d.ts`
+is the only static check. (`next typegen` writes the gitignored `next-env.d.ts`
 and `.next/types` that `tsconfig.json` includes, so a fresh clone checks the same files
 `next build` does.)
 
-Every one of those has a `:docker` twin (`npm run test:docker`, `typecheck:docker`,
+Each of those commands has a `:docker` twin (`npm run test:docker`, `typecheck:docker`,
 `test:e2e:docker`, `preflight:docker`) that runs it in a throwaway Linux container with
-its own `node_modules` volume and matching Playwright browsers — the way to get a green
+its own `node_modules` volume and matching Playwright browsers, for getting a green
 run out of a checkout whose dependencies were installed on another platform. If you work
 with an agent that reads Claude Code skills, `.claude/skills/running-tests/` encodes the
 same workflow.
@@ -34,16 +40,16 @@ same workflow.
 The end-to-end suite builds the production app and drives onboarding, project/task
 creation, turns, diff, merge, and workspace views against a disposable instance. It uses
 the deterministic mock agent, so no agent CLI or login is required. See
-[`e2e/README.md`](e2e/README.md) — which also documents the container harness.
+[`e2e/README.md`](e2e/README.md), which also documents the container harness.
 
 ## Continuous integration
 
 `.github/workflows/test.yml` runs `npm run typecheck` and `npm test` on every pull request
-and every push to `main`, as two independent jobs, and the image publish gates on both — a
+and every push to `main`, as two independent jobs, and the image publish gates on both: a
 red suite never reaches the registry.
 
-The e2e suite is much slower, so it does **not** run on every push. It runs on `main`, and
-on a pull request labelled `e2e` — add that label when a change touches the core flow
+The e2e suite is much slower, so it doesn't run on every push. It runs on `main`, and
+on a pull request labelled `e2e`. Add that label when a change touches the core flow
 (onboarding, turns, diff, merge) and you want the browser-level proof before merge.
 
 ## Before starting
@@ -56,18 +62,20 @@ on a pull request labelled `e2e` — add that label when a change touches the co
 
 ## Ground rules
 
-- **One change per PR**, with a commit message that explains the *why*, not just the what.
+- **One change per PR**, with a commit message that explains why, not just what.
 - **Tests:** bug fixes come with a regression test; behavior changes update the affected
   tests. `npm test` must be green.
 - **Documentation stays current:** if you change user-visible behavior, update `README.md`
   or the relevant file under `docs/` in the same PR.
 - **Env-driven config:** a new per-instance knob is an env var with a documented default,
-  added to `lib/config.ts` (or `lib/features.ts` for flags) **and** `.env.example`.
-- **Naming:** the app is Calandria — `tests/naming.test.ts` fails any new `orch`,
-  `orchestrator`, `operator` or `ORCH_` reference by file and line. If yours is genuinely
-  attribution, the deprecated `ORCH_*` alias table, a pre-rename on-disk/localStorage name,
-  or the ordinary noun for whoever runs an instance, add the file to that test's `ALLOWED`
-  map with the narrowest pattern covering the line, and a comment saying which of those.
+  added to `lib/config.ts` (or `lib/features.ts` for flags) and `.env.example`.
+- **Naming:** the app is Calandria. `tests/naming.test.ts` fails any new `orch`,
+  `orchestrator`, `operator`, or `ORCH_` reference by file and line. Lowercase `operator`
+  meaning whoever runs an instance is recognized as the ordinary noun and needs nothing
+  from you (if such a line is still reported, something else on it is guarded too). If
+  yours is genuinely attribution, the deprecated `ORCH_*` alias table, or a pre-rename
+  on-disk/localStorage name, add the file to that test's `ALLOWED` map with the narrowest
+  pattern covering the line, and a comment saying which of those.
 
 ## AI-assisted contributions
 
@@ -81,7 +89,7 @@ contributor's own words, without AI generating or rewriting it. It must explain:
 - the proposed fix at a high level, including why that approach was chosen.
 
 Clearly label any AI-generated text elsewhere in the pull request description or review
-discussion as **AI-generated details**. You do not need to label individual lines of
+discussion as **AI-generated details**. You don't need to label individual lines of
 AI-written code. The goal is to give reviewers an authentic explanation from the person
 submitting and standing behind the change, while keeping AI-assisted implementation fully
 welcome.

@@ -33,7 +33,7 @@ const base = {
   permission_mode: "bypassPermissions" as string | null,
   send_context: true,
   priority: "hi" as const,
-  note: "▶ Runbook — Push & babysit CI.",
+  note: "▶ Runbook: Push & babysit CI.",
 };
 
 describe("dispatchPromptTask", () => {

@@ -14,11 +14,12 @@ import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { isQueuedStart, resetClock } from "./queuedStart";
+import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
-import { MessageView, SessionBreak, type LimitResume } from "./Transcript";
+import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
@@ -152,16 +153,16 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // side moved is the difference between "something is wrong with my task" and
   // "main moved on", so the message names it.
   const why = resolved
-    ? `The resolution turn edited the conflicted files but did not commit — the merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
-    : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task — it just needs the newer commits before its own work can land.`;
+    ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
+    : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task. It just needs the newer commits before its own work can land.`;
 
   const msg = resolved
-    ? `Conflicts with ${st.baseBranch} resolved — review the result, then Accept & merge or Discard`
+    ? `Conflicts with ${st.baseBranch} resolved: review the result, then Accept & merge or Discard`
     : paused
-      ? `${st.baseBranch} moved on — ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
+      ? `${st.baseBranch} moved on: ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
       : conflicts > 0
-        ? `${st.baseBranch} moved on — ${st.behind} ahead of this task, conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
-        : `${st.baseBranch} moved on — ${st.behind} commit${st.behind === 1 ? "" : "s"} to pick up`;
+        ? `${st.baseBranch} moved on: ${st.behind} ahead of this task, conflicts in ${conflicts} file${conflicts === 1 ? "" : "s"}`
+        : `${st.baseBranch} moved on: ${st.behind} commit${st.behind === 1 ? "" : "s"} to pick up`;
 
   return (
     <div className={`sync-banner${conflicts ? " conflict" : ""}${resolved ? " resolved" : ""}`} title={why} data-sync-state={resolved ? "resolved" : conflicts ? "conflict" : "behind"}>
@@ -236,7 +237,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
           reason. */}
       {blocked && (task.auto_start ? (
         <div className="hero-blocked auto" title={`Starts automatically once done: ${blockedBy!.join(", ")}`}>
-          {Icon.bolt()} <span>Queued — starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done.</span>
+          {Icon.bolt()} <span>Queued: starts automatically once {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done.</span>
           <button className="btn btn-line btn-sm" onClick={() => onSetAutoStart(false)} disabled={running} title="Leave it for you to start by hand once the blockers are done">Cancel</button>
         </div>
       ) : (
@@ -249,8 +250,8 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         </div>
       ))}
       {queued && !blocked && (
-        <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)} — a minute after the usage window resets`}>
-          {Icon.clock()} <span>Queued — starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
+        <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)}, a minute after the usage window resets`}>
+          {Icon.clock()} <span>Queued: starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
           <button className="btn btn-line btn-sm" onClick={onCancelQueuedStart} title="Leave it for you to start by hand">Cancel</button>
         </div>
       )}
@@ -265,7 +266,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
             blocked (a dependency decides when it may start, not the clock). */}
         {!queued && !blocked && resetAt != null && (
           <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={() => onQueueStart(deferredStartFor(resetAt))} disabled={running}
-            title="Queue this task to start on its own a minute after the usage window resets — no need to come back for it">
+            title="Queue this task to start on its own a minute after the usage window resets, no need to come back for it">
             {Icon.clock()} Start at reset ({resetClock(resetAt)})
           </button>
         )}
@@ -296,7 +297,7 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -316,6 +317,13 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   onAnswer: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void;
   onDecidePermission: (permId: string, decision: PermissionDecision, note: string) => void;
   onCancelQueued: (pendingId: string) => void;
+  // The Suggested tray's own three actions, reached from a suggestion card the
+  // transcript settles onto the suggest_task call that filed the task. Passed
+  // through rather than reimplemented: a suggestion started from the transcript
+  // must behave exactly like one started from the tray.
+  onStartSuggestion?: (taskId: string) => void | Promise<void>;
+  onAcceptSuggestion?: (taskId: string) => void | Promise<void>;
+  onDismissSuggestion?: (taskId: string) => void | Promise<void>;
   onBack?: () => void; mobile?: boolean;
   railW: number; onRailWidth: (w: number) => void; onRailReset: () => void;
   railCollapsed: boolean; onRailCollapse: () => void; onRailExpand: () => void;
@@ -350,6 +358,12 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
+  // Live but silent for a long stretch (./idleTurn.ts). The transcript is the
+  // one surface that can say WHY nobody should be surprised — the turn is open,
+  // the model just isn't producing — so the age goes beside the typing dots and
+  // the held-open notice rather than into a banner of its own.
+  const idleTurn = isIdleTurn(task, running) && !awaiting;
+  useIdleClock(idleTurn);
   const stableAnswer = useStableHandler(onAnswer);
   const stableDecidePermission = useStableHandler(onDecidePermission);
   const stableCancelQueued = useStableHandler(onCancelQueued);
@@ -397,6 +411,22 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     onStart();
     return null;
   });
+  // The suggestion card's three actions, identity-stable for MessageView's memo
+  // and bundled into one object so the memo isn't defeated by a fresh literal
+  // each render. `project.id` rides along because the card has to know whether
+  // the suggestion was filed HERE — Start navigates, and a cross-project card
+  // deliberately doesn't offer it (see SuggestionView).
+  //
+  // useStableAsync rather than useStableHandler: the card re-reads the task as
+  // soon as the action resolves, so a wrapper that dropped the promise would
+  // have it refetching the state the action hasn't finished changing.
+  const stableStartSuggestion = useStableAsync(async (id: string) => { await onStartSuggestion?.(id); });
+  const stableAcceptSuggestion = useStableAsync(async (id: string) => { await onAcceptSuggestion?.(id); });
+  const stableDismissSuggestion = useStableAsync(async (id: string) => { await onDismissSuggestion?.(id); });
+  const suggestionActions = useMemo<SuggestionActions>(
+    () => ({ projectId: project.id, onStart: stableStartSuggestion, onAccept: stableAcceptSuggestion, onDismiss: stableDismissSuggestion }),
+    [project.id, stableStartSuggestion, stableAcceptSuggestion, stableDismissSuggestion],
+  );
   // Worktree-relative path open in collaboration mode from a tool card, or
   // null. Dropped on task switch: the path was resolved against THAT task's
   // worktree, and the setter is passed to MessageView as-is (a stable identity,
@@ -525,7 +555,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // Only the newest message may offer to resume at the reset —
                 // an older usage-limit notice describes a limit that has healed.
                 const last = si === sessions.length - 1 && mi === s.messages.length - 1;
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} limitResume={last ? limitResume : undefined} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
@@ -534,15 +564,21 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             // the session is held open for run_in_background work — say so, or
             // the dots promise imminent output that may be minutes away.
             task.background_pending ? (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open — ${task.background_note}. It continues on its own when that settles.` : "Working in background — the session stays open and continues when the task finishes."}</span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It continues on its own when that settles.` : "Working in background: the session stays open and continues when the task finishes."}</span>{idleTurn && <span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span>}</div></div>
             ) : (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body">{idleTurn
+                // The dots keep promising output. After this long they are the
+                // wrong promise on their own, so the gap goes next to them —
+                // without removing them, because the turn genuinely is still
+                // live and may simply be inside a long tool call.
+                ? <><span className="typing"><i /><i /><i /></span><span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span></>
+                : <span className="typing"><i /><i /><i /></span>}</div></div>
             )
           )}
           {/* Follow-ups queued mid-turn, pinned below the live turn — they
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
           ))}
         </div>
       </div>
@@ -569,7 +605,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const infoChips = (
     <>
       {task.pr_url && (
-        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request — ${task.pr_url}`}>
+        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request: ${task.pr_url}`}>
           {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
         </a>
       )}
@@ -728,7 +764,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 deadline passes. While parked, the control becomes the wake
                 button and says when it would have come back on its own. */}
             {isSnoozed(task) ? (
-              <button className="status-ctl snz-on" title={`Snoozed — wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
+              <button className="status-ctl snz-on" title={`Snoozed: wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
                 onClick={onUnsnooze}>
                 {Icon.moon()} <span className="cv">Wakes {wakeLabel(task.snoozed_until)}</span>
               </button>
@@ -760,7 +796,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 reason shown inline, and Delete aborts the turn under the task
                 lock before it tears the worktree down. */}
             {hasSession && (
-              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies — or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
+              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies; or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
             )}
             {hasSession && task.started === 1 && (
               <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>

@@ -6,7 +6,7 @@ terminal, running `npm start`, and typing a URL — and then tells you when a ta
 needs you, from the dock and the tray, whether or not the window is open.
 
 **This is spike code**, kept because it is the cheapest way to answer the
-questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) — which also carries
+questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md), which also carries
 the recommendation, the measurements, and the reasons the architecture is what it
 is. It is wired into no runtime and into `npm test` and the Docker image not at
 all; the one thing that does run it is the label-gated `desktop` job in
@@ -17,7 +17,7 @@ directory only.
 ## Run it
 
 ```bash
-npm ci && npm run build          # in the repo root — the shell serves a prod build
+npm ci && npm run build          # in the repo root; the shell serves a prod build
 cd desktop && npm install        # Electron only, ~280 MB, ignored by git
 npm start
 ```
@@ -449,9 +449,9 @@ work, and its cost, is still future (`docs/DESKTOP_APP.md` §7).
 **The server runs under a real `node`, never inside Electron.** Two reasons, both
 measured in `docs/DESKTOP_APP.md`: `better-sqlite3`'s prebuild will not load into
 Electron's V8 ABI, and `lib/agents/codex/driver.ts` spawns the MCP tool bridge as
-`process.execPath scripts/calandria-mcp.mjs` with a closed env — under an
-Electron-hosted server that would launch a GUI process on every Codex turn
-instead of the bridge.
+`process.execPath scripts/calandria-mcp.mjs` with a closed env. Hosting the
+server inside Electron would turn that spawn into a GUI process on every Codex
+turn instead of the bridge.
 
 `supervisor.js` enforces this: it refuses an Electron binary as the runtime and
 strips every `ELECTRON_*` variable out of the sidecar environment, so nothing the

@@ -20,10 +20,15 @@
 //   (d) frozen history — docs/superpowers/ specs+plans, docs/design/ handoff,
 //       and the release-please CHANGELOG, all of which record what was true
 //       when written;
-//   (e) "operator" the ordinary noun — the person running this instance. The
-//       brand is always capitalized, so the patterns below are case-SENSITIVE
-//       where that distinction carries weight: /\boperators?\b/ allows the
-//       sysadmin sense and still fails a stray "Operator".
+//   (e) "operator" the ordinary noun — the person running this instance. This
+//       one is NOT a per-file entry: it is decided from the spelling, because
+//       the brand is always capitalized and the noun is the word every doc,
+//       refusal message and comment addressed to a self-hoster reaches for. A
+//       list that grows an entry per commit does not scale — five strays
+//       arrived in one commit (5c4ce62) writing ordinary prose about the person
+//       running the instance — and each entry then blesses the whole FILE for
+//       the rest of its life. See SYSADMIN_NOUN below for the rule and the one
+//       lowercase spelling that is the product after all.
 //
 // The concept words "orchestration" / "orchestrates" are not matched at all
 // (\borchestrator\b doesn't fire inside "orchestration"), so ordinary prose
@@ -45,9 +50,26 @@ const TERMS = /\b(orch|orchestrators?|operators?)\b|ORCH_/i;
 
 // Shared patterns, so the reasoning lives in one place:
 
-/** (e) "the operator" = whoever runs this instance. Lowercase only — a
- *  capitalized "Operator" is the upstream product and stays guarded. */
-const SYSADMIN = /\boperators?\b/;
+/**
+ * (e) "the operator" = whoever runs this instance. Applied to every file, by
+ * DELETING the noun from the line and re-running TERMS over what is left, so a
+ * line that also says "orchestrator" still fails — which a per-file allowlist
+ * entry could never do, since an entry blesses the whole line.
+ *
+ * Lowercase only: a capitalized "Operator" is the upstream product and stays
+ * guarded, which is the distinction that makes the rule safe at all. The one
+ * lowercase spelling that IS the product is the upstream repo slug, so it is
+ * excluded and stays on NOTICE's and README's attribution entries.
+ *
+ * Deliberately kept as a strip rather than tightened further (no lookaround on
+ * the trailing side): "an operator-supplied SERVICE_TOKEN" is the noun too, and
+ * a rule that failed hyphenated compounds would just re-grow the allowlist it
+ * replaces. Residual risk, stated rather than defended: a bare lowercase
+ * "operator" meaning the upstream product in running prose passes. In a
+ * document that names the fork's lineage the brand is capitalized, and that
+ * document is NOTICE or README, where the entry already exists.
+ */
+const SYSADMIN_NOUN = /\boperators?\b(?!-oss)/g;
 
 /** (b) the deprecated env prefix and any prose about it. */
 const LEGACY_ENV = /ORCH_/;
@@ -83,7 +105,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   // spelling to honor, and routing it through the table would mint a deprecated
   // `ORCH_LOG_FORMAT` alias for a variable that never existed.
   "lib/log.mjs": [LEGACY_ENV],
-  "tests/log.test.ts": [LEGACY_ENV, SYSADMIN],
+  "tests/log.test.ts": [LEGACY_ENV],
   "tests/setup.ts": [LEGACY_ENV], //        clears stale ORCH_* out of a developer's shell
   "tests/importGraph.test.ts": [LEGACY_ENV], // one comment naming lib/env.mjs's job
   "lib/resolveHostname.js": [LEGACY_ENV], // hand-rolls the alias (plain-Node, can't import .mjs freely)
@@ -99,17 +121,17 @@ const ALLOWED: Record<string, RegExp[]> = {
   // and the volume/network/home names deliberately did NOT change (renaming a
   // named volume orphans its data; /home/orch is baked into DB rows).
   "docker-compose.yml": [LEGACY_ENV, /orch-u-/, /\/home\/orch\b/],
-  Dockerfile: [LEGACY_ENV, /\/home\/orch\b/, SYSADMIN],
-  "docker/entrypoint.sh": [LEGACY_ENV, LEGACY_STORAGE, SYSADMIN],
+  Dockerfile: [LEGACY_ENV, /\/home\/orch\b/],
+  "docker/entrypoint.sh": [LEGACY_ENV, LEGACY_STORAGE],
   "examples/overlay/compose.yaml": [/orch-u-/],
 
   // (c) storage: the old locations are read where they already hold data and
   // are never moved, so the names survive in the resolver, its callers and docs.
-  "lib/storage.mjs": [LEGACY_STORAGE, LEGACY_ENV, SYSADMIN, /"orchestrator" : "calandria"/],
-  "lib/db.ts": [LEGACY_STORAGE, SYSADMIN],
+  "lib/storage.mjs": [LEGACY_STORAGE, LEGACY_ENV, /"orchestrator" : "calandria"/],
+  "lib/db.ts": [LEGACY_STORAGE],
   "lib/db-lock.mjs": [LEGACY_STORAGE],
   "lib/config.ts": [LEGACY_STORAGE],
-  "tests/storageDefaults.test.ts": [LEGACY_STORAGE, SYSADMIN],
+  "tests/storageDefaults.test.ts": [LEGACY_STORAGE],
   // (c) too: the desktop suite reads the database file straight off disk after
   // the shell has exited, so it has to resolve the name the way the app does
   // rather than hardcode the current one.
@@ -117,7 +139,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   // The backup script follows lib/storage.mjs rather than assuming a filename,
   // so both it and its test name the pre-rename database they have to archive.
   "scripts/backup.mjs": [LEGACY_STORAGE],
-  "tests/backup.test.ts": [LEGACY_STORAGE, SYSADMIN],
+  "tests/backup.test.ts": [LEGACY_STORAGE],
   ".gitignore": [/orchestrator\.db/], //   a pre-rename db sitting in the repo root
   ".env.example": [LEGACY_ENV, LEGACY_STORAGE],
   "docs/ARCHITECTURE.md": [LEGACY_STORAGE],
@@ -144,18 +166,11 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (d) generated release notes: the subjects are quoted from commits that
   // really did say "orchestrator task", and release-please rewrites this file.
 
-  // (e) the ordinary noun.
-  "app/api/instance/usage/route.ts": [SYSADMIN],
-  "lib/agents/claude/capabilities.ts": [SYSADMIN],
-  "lib/agents/claude/driver.ts": [SYSADMIN],
-  "lib/auth/local-origin.mjs": [SYSADMIN],
-  "tests/localOrigin.test.ts": [SYSADMIN],
-  "tests/turnLogging.test.ts": [SYSADMIN], // the turn lifecycle lines exist for that person
-  // The schema-version gate and its test: a downgrade refusal is addressed to
-  // whoever rolled the image tag back, so its prose names that person.
-  "lib/schema-version.mjs": [SYSADMIN],
-  "tests/schemaVersion.test.ts": [SYSADMIN],
-  "server.js": [SYSADMIN, LEGACY_ENV, LEGACY_STORAGE],
+  // (e) has no entries: SYSADMIN_NOUN decides it from the spelling, for every
+  // file. What used to be listed here (the usage route, the Claude driver and
+  // its capabilities, lib/auth/local-origin.mjs and its test, turnLogging) is
+  // prose about the person running the instance and needs no permission.
+  "server.js": [LEGACY_ENV, LEGACY_STORAGE],
 
   // This guard, which has to spell out everything it forbids…
   "tests/naming.test.ts": [/./],
@@ -204,6 +219,11 @@ describe("naming guard (Operator -> Calandria)", () => {
       const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
       lines.forEach((line, i) => {
         if (!TERMS.test(line)) return;
+        // (e), file-independent: take the ordinary noun OUT and see whether the
+        // line still says anything guarded. A line that was only about the
+        // person running the instance is clean; one that also says
+        // "orchestrator" is not, and no entry can hide that.
+        if (!TERMS.test(line.replace(SYSADMIN_NOUN, ""))) return;
         if (allowed.some((p) => p.test(line))) return;
         strays.push(`${file}:${i + 1}: ${line.trim().slice(0, 160)}`);
       });
@@ -213,9 +233,10 @@ describe("naming guard (Operator -> Calandria)", () => {
       strays.length
         ? `Unallowed orch/operator reference(s):\n\n  ${strays.join("\n  ")}\n\n` +
             `Calandria is not called Operator and has no "orch" anything. Rename it — or, if ` +
-            `it is attribution, the ORCH_* alias table, a pre-rename on-disk/localStorage name, ` +
-            `or "operator" the ordinary noun, add it to ALLOWED in tests/naming.test.ts with a ` +
-            `comment saying which.`
+            `it is attribution, the ORCH_* alias table, or a pre-rename on-disk/localStorage ` +
+            `name, add it to ALLOWED in tests/naming.test.ts with a comment saying which. ` +
+            `("operator" the ordinary noun needs no entry — but a line reported here says ` +
+            `something else guarded as well, so read the whole line.)`
         : undefined
     ).toEqual([]);
   });
@@ -227,7 +248,9 @@ describe("naming guard (Operator -> Calandria)", () => {
       if (file === "tests/naming.test.ts") return false;
       const abs = path.join(ROOT, file);
       if (!fs.existsSync(abs)) return true;
-      return !fs.readFileSync(abs, "utf8").split("\n").some((l) => TERMS.test(l));
+      // Same strip as the guard: a file left with nothing but the ordinary noun
+      // needs no entry, so its entry is dead even though TERMS still fires.
+      return !fs.readFileSync(abs, "utf8").split("\n").some((l) => TERMS.test(l.replace(SYSADMIN_NOUN, "")));
     });
     expect(dead, `ALLOWED entries that no longer match anything: ${dead.join(", ")}`).toEqual([]);
   });
@@ -239,5 +262,20 @@ describe("naming guard (Operator -> Calandria)", () => {
     expect((ALLOWED["lib/runner.ts"] ?? []).some((p) => p.test(line))).toBe(false);
     // …and does not fire on the concept word.
     expect(TERMS.test("// the runner orchestrates every turn")).toBe(false);
+  });
+
+  it("passes the ordinary noun anywhere, and only the ordinary noun", () => {
+    const clean = (l: string) => TERMS.test(l) && !TERMS.test(l.replace(SYSADMIN_NOUN, ""));
+    // (e) in any file, no entry: the sense every self-hosting doc is written in.
+    expect(clean(" * The refusal an operator sees. It has to answer \"what do I do now?\"")).toBe(true);
+    expect(clean("# An operator-supplied SERVICE_TOKEN always wins.")).toBe(true);
+    expect(clean("// two operators, one database")).toBe(true);
+    // The brand, which is what the guard is for — capitalized in prose…
+    expect(clean("// inherited from Operator, the upstream project")).toBe(false);
+    // …lowercase only as the upstream repo slug…
+    expect(clean("https://github.com/iishyfishyy/operator-oss")).toBe(false);
+    // …and the noun never launders a second term sharing its line.
+    expect(clean("// the operator hands it to the orchestrator")).toBe(false);
+    expect(clean("// the operator sets ORCH_PORT")).toBe(false);
   });
 });

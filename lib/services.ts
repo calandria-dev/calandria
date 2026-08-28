@@ -722,7 +722,7 @@ export async function restoreServices(): Promise<void> {
     r.services.set(k, m);
     if (!row.managed) {
       setDesired(row.project_id, row.name, "stopped");
-      addLog(m, "system", "Server restarted — stale until re-registered by a session.");
+      addLog(m, "system", "Server restarted: stale until re-registered by a session.");
     }
   }
   const started = [...r.services.values()].filter((m) => m.status === "running").length;

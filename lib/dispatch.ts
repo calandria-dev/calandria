@@ -90,7 +90,7 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
   // Checked for THIS agent — never allowed to fall back to another, which would
   // silently run the work on the wrong login.
   if (!isAgentConnected(input.agent)) {
-    return { ok: false, error: `${input.agent} is not connected — reconnect it and this will work` };
+    return { ok: false, error: `${input.agent} is not connected. Reconnect it and this will work` };
   }
   // An unknown slash command does not fail at run time — it returns "Unknown
   // command: /x" as a SUCCESS — so a dispatch would report green having done

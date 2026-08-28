@@ -3,6 +3,7 @@ import { getProject, updateProject, deleteProject, listTasks, listTags, type Tas
 import { removeWorktree, taskDiffStat } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
+import { turnIdleSince } from "@/lib/turnActivity";
 import { removeProjectServices } from "@/lib/services";
 import type { Project } from "@/lib/types";
 
@@ -55,7 +56,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // Tags ride the same read as the tasks that carry them: their counts are
   // derived from these very rows, so one fetch can't show a chip and a list
   // that disagree.
-  return NextResponse.json({ ...project, tasks: await withDiffStats(project, listTasks(id)), tags: listTags(id) });
+  // idle_since rides this read rather than listTasks, which is DB-only: the
+  // mark is in-memory turn state (lib/turnActivity.ts), and this is the one
+  // endpoint the shell builds its task rows from. Without it a reload during a
+  // wedge would show a plain spinner until the turn did something, which by
+  // definition it is not going to.
+  const tasks = (await withDiffStats(project, listTasks(id))).map((t) => ({ ...t, idle_since: turnIdleSince(t.id) }));
+  return NextResponse.json({ ...project, tasks, tags: listTags(id) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

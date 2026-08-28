@@ -1,110 +1,650 @@
 # CLAUDE.md
 
-Calandria — a local-first web app that runs many Claude Code sessions in parallel across multiple projects from one screen. Each **project** carries reusable context + a working directory; each **task** is its own Claude Code session in its own git worktree, driven by `@anthropic-ai/claude-agent-sdk` against the user's local Claude login (no API key).
+Calandria is a local-first web app that runs many coding-agent sessions in parallel across
+several projects from one screen. A **project** carries reusable context and a working
+directory. A **task** is one agent session in its own git worktree, run against the user's local
+Claude or Codex login rather than an API key.
 
 ## Commands
 
-- `npm run dev` — app (:3000, `server.js`) + pty sidecar (:3001, `pty-server.js`) via concurrently. `npm run dev:next` / `npm run pty` run them separately.
-- `npm run build` (turbopack) then `npm start` for production.
-- `npm test` — vitest, serial on purpose (tests spawn many real git subprocesses). Single file: `npx vitest run tests/merge.test.ts`.
-- `npm run test:e2e` — Playwright end-to-end suite: builds, then boots the real prod server against a hermetic temp instance with the deterministic mock agent (`lib/agents/mock/`, registered only when `CALANDRIA_E2E_MOCK_AGENT=1`) and drives onboarding → project → task → turn → diff → merge through the UI. `npm run preflight` = unit + e2e, the pre-push gate. See `e2e/README.md` (mock-turn directives, selector conventions, staleness gotcha: the server runs the **built** bundle).
-- `npm run typecheck` — `next typegen && tsc --noEmit`, a few seconds. CI runs this as its own job (`.github/workflows/test.yml`); the `next typegen` half writes the gitignored `next-env.d.ts` + `.next/types` that `tsconfig.json` includes, so a clean tree checks the same files `next build` does — including the generated validator that pins every App Router handler to its route.
-- **Run tests in a container** — `npm run test:docker` / `typecheck:docker` / `test:e2e:docker` / `preflight:docker` run those same scripts inside a Linux Node 22 image (`docker/test/Dockerfile`, driven by `scripts/docker-test.sh`; a file path passes through, e.g. `npm run test:docker -- tests/merge.test.ts`, but a vitest **flag** needs a second `--` or npm eats it — `-- -- tests/merge.test.ts -t "conflicts"`). A task worktree has no `node_modules` and the main checkout's is macOS-built, so the container installs its own into a shared named volume — one cold install, reused by every later run. The recipe, the two dead ends it encodes (don't borrow node_modules, don't build on the Playwright image — it's Node 24 with no `better-sqlite3` prebuild), and the `fatal: not a git repository` red herring are all in `e2e/README.md`. `.claude/skills/running-tests/SKILL.md` is the operating summary an agent session loads on demand — which command, the volume model, and the failures that read as environmental but aren't.
-- No lint script; TypeScript is strict, path alias `@/*` → repo root (mirrored in `vitest.config.ts`).
+- `npm run dev` — app (:3000, `server.js`) plus the pty sidecar (:3001, `pty-server.js`) via
+  concurrently. `npm run dev:next` and `npm run pty` run them separately.
+- `npm run build` (turbopack), then `npm start` for production.
+- `npm test` — vitest, serial on purpose: tests spawn many real git subprocesses. Single file:
+  `npx vitest run tests/merge.test.ts`.
+- `npm run test:e2e` — Playwright. Builds, then boots the real prod server against a hermetic
+  temp instance with the deterministic mock agent (`lib/agents/mock/`, registered only when
+  `CALANDRIA_E2E_MOCK_AGENT=1`), and drives onboarding → project → task → turn → diff → merge
+  through the UI. `npm run preflight` = unit + e2e, the pre-push gate. `e2e/README.md` has the
+  mock-turn directives, selector conventions, and the staleness gotcha: the server runs the
+  **built** bundle.
+- `npm run typecheck` — `next typegen && tsc --noEmit`, a few seconds. CI runs it as its own job
+  (`.github/workflows/test.yml`). The `next typegen` half writes the gitignored `next-env.d.ts`
+  and `.next/types` that `tsconfig.json` includes, so a clean tree checks the same files
+  `next build` does, including the generated validator that pins every App Router handler to its
+  route.
+- **Tests in a container** — `npm run test:docker`, `typecheck:docker`, `test:e2e:docker` and
+  `preflight:docker` run those scripts inside a Linux Node 22 image (`docker/test/Dockerfile`,
+  driven by `scripts/docker-test.sh`). A file path passes through
+  (`npm run test:docker -- tests/merge.test.ts`), but a vitest **flag** needs a second `--` or npm
+  eats it: `-- -- tests/merge.test.ts -t "conflicts"`. A task worktree has no `node_modules` and
+  the main checkout's is macOS-built, so the container installs its own into a shared named
+  volume: one cold install, reused by every later run. `e2e/README.md` has the recipe, the two
+  dead ends it encodes (don't borrow node_modules; don't build on the Playwright image, which is
+  Node 24 with no `better-sqlite3` prebuild) and the `fatal: not a git repository` red herring.
+  `.claude/skills/running-tests/SKILL.md` is the operating summary a session loads on demand.
+- No lint script. TypeScript is strict, path alias `@/*` → repo root (mirrored in
+  `vitest.config.ts`).
 
 ## Architecture
 
-Three processes/entrypoints, one origin:
+Three processes and entrypoints, one origin:
 
-- **`server.js`** — custom Next.js server (plain Node, CommonJS). Fronts Next on one port, proxies `/pty` WebSocket upgrades to the sidecar, forwards dev HMR upgrades to Next, enforces origin auth on WebSocket upgrades (middleware never sees upgrades — this file is the auth boundary for the terminal), and dispatches public service hostnames (`<slug>--<appHost>`) through `lib/service-router.mjs`.
-- **`pty-server.js`** — node-pty sidecar, bound to `127.0.0.1` only; never exposed directly.
+- **`server.js`** — custom Next.js server, plain Node and CommonJS. Fronts Next on one port,
+  proxies `/pty` WebSocket upgrades to the sidecar, forwards dev HMR upgrades to Next, enforces
+  origin auth on WebSocket upgrades, and dispatches public service hostnames
+  (`<slug>--<appHost>`) through `lib/service-router.mjs`. Middleware never sees upgrades, so this
+  file is the auth boundary for the terminal.
+- **`pty-server.js`** — node-pty sidecar, bound to `127.0.0.1` only, never exposed directly.
 - **Next app** — UI in `app/`, REST under `app/api/`, server logic in `lib/`.
 
 ### The turn lifecycle (core flow)
 
-`POST /api/tasks/[id]/messages` doesn't run the turn — it calls `startTurn()` in **`lib/runner.ts`** and returns. The turn runs detached, owned by the server process: every event is persisted to SQLite and fanned out via **`lib/events.ts`** (in-process pub/sub keyed by task id, plus a wildcard channel — `subscribeGlobal()` — that sees every task's events). `GET` on the same route is the SSE watch stream: a `snapshot` of the persisted transcript, then a live tail — reconnect-safe, any number of viewers, zero viewers fine. Stopping is only explicit (`lib/abort.ts`). If a turn is already running, POST parks the message in `pending_messages` to run next — **unless that turn is LINGERING** (model done, session held open for background work or a wakeup), where there is nothing to wait for and the wait is unbounded by default: `sendToLingeringTurn()` hands it to the driver's still-open prompt iterable via `lib/turnInput.ts` (registered per turn, SDK-free, `send` returning false = "queue it instead"), and it lands as an ordinary user message starting the next turn. Order is kept at both ends — a linger ENTRY drains the oldest parked follow-up into the same session ("sent when this turn ends" is exactly what a linger is), and a send is refused while anything is still queued. The driver drops `lingering` in the same tick it accepts, so the injected turn's bare `init` — identical to a cron wake's, measured — is never announced as a wakeup firing, and the (optional) linger deadline re-anchors, since a human typing is not the session extending itself. Worktree isolation is guaranteed by the runner, not by its callers: `startResumeTurn()` runs the same `ensureWorktree` self-heal the two first-turn launch paths do (POST /messages, `lib/autoStart.ts`), because a turn can also reach the runner through the queue drain in `run()`'s finally — which only pops a message — and an empty `worktree_path` there would fall the driver back to `project.repo_path` and edit the user's real checkout (`tests/queueDrainWorktree.test.ts`).
+`POST /api/tasks/[id]/messages` doesn't run the turn. It calls `startTurn()` in **`lib/runner.ts`**
+and returns. The turn runs detached, owned by the server process: every event is persisted to
+SQLite and fanned out through **`lib/events.ts`**, an in-process pub/sub keyed by task id with a
+wildcard channel (`subscribeGlobal()`) that sees every task's events. `GET` on the same route is
+the SSE watch stream: a `snapshot` of the persisted transcript, then a live tail. It is
+reconnect-safe, takes any number of viewers, and is fine with zero. Stopping is only ever explicit
+(`lib/abort.ts`).
 
-Only the SELECTED task has a transcript stream open. Everything else stays live through `GET /api/events` — one always-open EventSource per tab (`app/shell/useGlobalEvents.ts`) broadcasting coarse lifecycle events for every task across every project (turn started / awaiting input / answered / suggestion created / turn ended / a task's fields edited, by the user in another tab or by `update_task`). Each payload re-reads the task row at publish time — the runner persists BEFORE it publishes, so the snapshot is authoritative (pinned by `tests/agentDriver.test.ts`); it also carries the project's fresh awaiting count, plus (on a `suggested` event) the project the task was filed INTO, which `suggest_task` can point anywhere. That's what updates spinners, project badges, and the "N need you" pill for unselected tasks — there is no task-list polling. Project-wide facts can't use that re-read (there's no one row to read): `task_deleted`, `tasks_moved`, `runbooks_changed` and `tags_changed` carry their own project id and short-circuit before it. **Task ORDER is deliberately not among them, because it isn't stored**: `listTasks` sorts `updated_at DESC` (then `created_at`, then `rowid` — a planning turn files its whole batch inside one millisecond), so the top card in every bucket, Suggested tray included, is the most recently active task and gets there on the lifecycle events that already flow. That replaced the manual board order: `tasks.position` still counts up per project and the move paths still renumber it, but nothing renders it, so `reorderTasks`, `POST /api/tasks/reorder` and the `tasks_reordered` event are gone with it and a board drag now writes only the status its column implies (a drop inside one column is a no-op). `position` IS on the client's `TaskRow`, for one reason: it's the filing sequence `topoMembers` tie-breaks a tag's steps by, so "step 3 of 7" doesn't renumber itself every time a member runs.
+If a turn is already running, POST parks the message in `pending_messages` to run next. The
+exception is a **LINGERING** turn (model done, session held open for background work or a wakeup),
+where there is nothing to wait for and the wait is unbounded by default. There,
+`sendToLingeringTurn()` hands the message to the driver's still-open prompt iterable via
+`lib/turnInput.ts` (registered per turn, SDK-free; `send` returning false means "queue it
+instead"), and it lands as an ordinary user message starting the next turn. Order is kept at both
+ends: entering a linger drains the oldest parked follow-up into the same session, and a send is
+refused while anything is still queued. The driver drops `lingering` in the same tick it accepts,
+so the injected turn's bare `init` (identical to a cron wake's, measured) is never announced as a
+wakeup firing, and the optional linger deadline re-anchors.
 
-**`lib/agents/`** is the agent-driver seam: the app talks to coding agents only through the `AgentDriver` interface (`types.ts` — normalized `StreamEvent` turn contract, one-shot summarize/draft/recap helpers, capability descriptor, login/verify auth surface), resolved via `getDriver(task.agent)` in `registry.ts` (`tasks.agent`, defaulted from `projects.default_agent`; unknown ids fall back to Claude). `shared.ts` holds the agent-agnostic normalizers (project-context/conflict prompts, tool-call → title/peek/diff, the event queue). `GET /api/agents` exposes each driver's capabilities to the client. Session/thread ids are opaque per driver (`sessions.claude_session_id` stores any driver's id).
+Worktree isolation is guaranteed by the runner, not by its callers. `startResumeTurn()` runs the
+same `ensureWorktree` self-heal as the two first-turn launch paths (POST /messages and
+`lib/autoStart.ts`), because a turn can also reach the runner through the queue drain in `run()`'s
+finally, which only pops a message. An empty `worktree_path` there falls the driver back to
+`project.repo_path` and edits the user's real checkout (`tests/queueDrainWorktree.test.ts`).
 
-**`lib/agents/claude/driver.ts`** is the Claude Code driver: `runTurn()` via the Agent SDK (resume or fresh session; project context is appended to the Claude Code system prompt via `buildProjectContext()`), the Calandria MCP tools (`suggest_task`/`list_tasks`/`get_task`/`update_task`/`withdraw_suggestion`/`list_projects`/`expose_service`), `summarizeTranscript()` for `/clear`, `draftProjectContext()` (read-only repo-exploring agent); auth delegates to `lib/claude-auth.ts`. Sessions default to `permissionMode: "auto"` (the CLI's classifier screens each call and escalates what it won't vouch for); the picker also offers `bypassPermissions`, `acceptEdits`, `default` and `plan`, with `lib/agents/claude/capabilities.ts` the single source of truth for what the driver honors — pinned against `permissionModeFor()` by `tests/claudePermissionMode.test.ts` so a picker entry can never quietly resolve to something else, and `dontAsk` deliberately left off — re-decided against the live CLI, not inertia: **`dontAsk` never invokes `canUseTool`** (verified on claude-cli 2.1.x — `echo hello` ran, `rm -f …` was refused with `decision_reason_type: "mode"`, the callback fired for neither), so the whole gate below is inert under it and "pre-approved" would mean allow rules in the user's own `~/.claude` settings, which we don't write. `default` + remembered rules already IS deny-unless-allowed, with a prompt and a revocable record. Under every mode but `bypassPermissions` the SDK's `canUseTool` is a **real gate** (`lib/permissions.ts`) — read-only allowlist → the project's remembered Bash rules (`permission_rules`) → a permission card that parks the turn on the user through the same `lib/asks.ts` + `/answer` machinery an AskUserQuestion uses. Every non-answer path denies (Stop, expiry, unwatched turn, unparseable answer), and an unattended auto-deny parks the pending queue the way a dead login does. Rules are minted from the card AND, since the card is unreachable on a turn nobody is watching, typed straight into Settings → Run defaults (`POST /api/settings/permissions`). The typed path is not a second policy: `ruleFromTypedCommand()` in `lib/permissions.ts` runs the same `prefixVerdict()` the card's offer does and stores what IT returns, never the typed line — otherwise Settings would be the way to mint `bash_prefix: "sudo"`. Two asymmetries with the card, both deliberate: a refused prefix is a **400, not a downgrade to `bash_exact`** (the card can fall back because it shows the user the exact rule it's about to create; a form doing it silently stores a grant nobody asked for and that the user then over-trusts), and the refusal carries the REASON, since there's no proposed command on screen to explain itself. Bash-only is enforced rather than assumed — `ruleMatches()` goes through `bashCommandOf()`, so a row naming any other tool can never match a call and would just read like a grant. A refusal the CLI makes WITHOUT the callback (the `auto` classifier, a deny rule) arrives as a `system`/`permission_denied` message with no card to answer — but it carries the `tool_use_id`, so the driver yields a `permission_denied` StreamEvent and the runner settles an **already-decided** permission card onto the transcript row that call already created: the same component read-only, showing the tool, its input, who refused and why, sitting with the call instead of a notice floating beside it (three denials = three cards). `awaiting_input` is untouched — there's nothing to answer — and our own `canUseTool` denials don't emit this message, so the paths can't double-render. `blockedReason()` picks what a human sees: `decision_reason` is the field the SDK documents as human-readable but the live CLI leaves unset, filling only `message`, which is written FOR THE MODEL (~700 chars of "IMPORTANT: You *may* attempt to accomplish this action using other tools…"), so it's cut at that tail; `decision_reason_type` is persisted raw and phrased in `Transcript.tsx` because the CLI mints values the SDK's docs don't list (`subcommandResults`). Both real messages are captured verbatim in `tests/claudePermissionMode.test.ts`. **The model half of that descriptor is computed per read, not constant**, because which models exist and what an alias resolves to is instance config: `lib/agents/claude/provider.ts` (SDK-free — fs + env only) reads the same surfaces Claude Code reads, and `claudeCapabilities()` corrects the catalog when `configuredProvider()` says Vertex. Both the driver's `capabilities` getter and the thunks in `lib/agents/capabilities.ts` go through it, so `GET /api/agents` and `modelContextWindow()` agree with the CLI and pick up a settings edit without a restart. The Vertex list is a set of MEASURED corrections, not a second catalog — every entry was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran (`tests/claudeVertexModels.test.ts` records the table). Two findings drive it, and the first is a negative one: **bare Anthropic ids DO resolve on Vertex**, so the "Pinned versions" group is untouched — `@version` (`claude-haiku-4-5@20251001`) is an optional pin there, not the required spelling, which is why this is not upstream's Bedrock picker (`b5d995f`) renamed; that list drops the `[1m]` variants, and those work here. What was actually wrong is `contextWindow` on the family aliases: they resolve through `ANTHROPIC_DEFAULT_*_MODEL`, and a mapping carrying `[1m]` makes plain `opus` a 1M session the catalog called 200k — a fifth of the real window on the context gauge. So the aliases take their window and subtitle from the id they resolve to and drop the version claim from their label (`f82f66d`'s relabel, applied only under Vertex — a pinned row still names its version, correctly). `settings.json`'s `env` block beats the process env, measured rather than assumed: exporting a different `ANTHROPIC_DEFAULT_OPUS_MODEL` while settings.json said otherwise still ran settings.json's choice. `fable` is the one entry that fails (403 — the GCP project has no `anthropic` publisher data sharing) and is dropped from the Vertex list: on this fork Fable arrives with the direct-platform arrangement with Anthropic rather than by flipping a GCP setting, so until then it would 403 every turn it was picked for. It stays on the default catalog, where it works. Bedrock deliberately stays on the default catalog — there's no Bedrock instance here to measure. **`lib/agents/codex/driver.ts`** is the OpenAI Codex driver (`@openai/codex-sdk` spawns the `codex` CLI, JSONL over stdio; `codex/events.ts` normalizes its `ThreadEvent` stream); its one-shot helpers are `codex exec` runs in a read-only sandbox. **Its usage reporting is cumulative-per-thread and the `StreamEvent` contract is per-turn**, so `turn.completed` is a DELTA against a baseline the previous turn stored (`sessions.usage_cum`, in the DB because it has to survive a restart; written the moment the usage maps, not at run end, so a crash or Stop can't make the next turn re-bill the thread). Counters going backwards mean the report isn't cumulative after all, so it's taken at face value rather than clamped to zero. The three token buckets are also netted into the DISJOINT shape the contract expects — codex folds cache reads and cache writes into `input_tokens`, which otherwise double-counts them in the task total and the context gauge. Non-Claude drivers get the same Calandria tools (plus `ask_user`) via the stdio MCP bridge `scripts/calandria-mcp.mjs` → `/api/internal/agent-tools/*`; `ask_user` restores interactive asks (card persisted + published by `lib/agentTools.startAskUser`, bridge polls the `wait` endpoint for the answer). `suggest_task` takes an optional `project` (id or exact name, from `list_projects`) and can file into ANY project: `resolveTargetProject()` in `lib/agentTools.ts` is strict — no fallback to the calling project on an unrecognized value — and resolves BEFORE the insert, so the new task's agent, `send_context` and position all come from the target. `blocked_by` follows the target too (`setTaskDeps` is project-scoped; unusable refs are now reported back instead of silently dropped), and the `suggested` event carries the target's project id (`suggestedProjectId` on the wire) so the receiving tray refreshes even when it isn't the project on screen. Existing tasks split by blast radius: reads range as widely as filing does (`list_tasks` takes the same optional `project`, flags the caller `current: true`; `get_task` reads any id, defaulting to the session's own), and `update_task` writes **any task in any project** — the caller's own row by default, or any other id, including ones the user accepted or started; the only refusal is `running=1`. A write the OLD `suggested=1 && started=0 && running=0` gate would have refused now lands but is recorded (`task_agent_edits`, per-field before/after) and stamps `agent_edited_at`, surfacing a "Changed by agent" chip with per-edit Revert and a Keep-changes ack (`GET`/`POST /api/tasks/[id]/agent-edits`) — visibility and undo replacing the narrower gate. It covers title/description/priority/status minus `cancelled` (on the own row that would `abortTurn()` the very turn calling it; on anyone else's it's a decision that needs a stated reason, which is `withdraw_suggestion` below) **plus `blocked_by`, which is the only way an agent can order a plan at all** — `suggest_task` takes blockers in the call that INVENTS the task, i.e. before any of them has an id, so a planning turn (one parallel batch of `suggest_task` calls, the sequence worked out afterwards) could never use it, and never did: on a real board every dependency edge was drawn by the edit dialog, and no transcript contains the "Blocked by N task(s)" line `depNote()` returns. The recipe is two-phase and `buildProjectContext()` now spells it out instead of mentioning dependencies once as a constraint: file every task, WAIT for the ids, then `update_task` per dependent. Two rules differ from `suggest_task`'s version of the param, both because this one REPLACES a set rather than filling a blank one — refused on the CALLER'S OWN ROW (blockers gate whether a task may START and a session calling this already has, so the edge is inert on the scheduler and a lie on the board; the refusal names `on_hold`), and an unusable ref FAILS THE WHOLE CALL, named one at a time with its reason (not an id / another project / the task itself), where `suggest_task` partitions and reports. Wiring what we recognized and dropping the rest would delete edges the agent never mentioned and still report success. A cycle refuses everything too: `setTaskDeps` runs before the row patch, since its guard throws before it writes, so a rename in the same call can't land under a refusal that says nothing changed. `updateTaskForAgent()` owns the whole policy so the two paths can't drift — the caller is always trusted (the Claude driver closes over it, the bridge's endpoint reads `CALANDRIA_TASK_ID`) and the target is always the model's word for it. It re-reads both rows first (a detached turn's snapshot outlives deletions, and a target can be started between read and write; the check and the write share one synchronous block, atomic under better-sqlite3 in a single process), publishes `task_edited` against the TARGET so clients refetch fields the coarse wire payload can't carry, and returns an `autoStartDependents` flag rather than calling `maybeAutoStartDependents()` itself — `lib/autoStart.ts` reaches the runner and `lib/agentTools.ts` is pinned SDK-free. `tests/codexUpdateTaskPolicy.test.ts` runs the real stdio bridge against the real endpoint and asserts on the DB, because Codex is the path where the MODEL names the target. **`withdraw_suggestion(task, reason)`** is the retraction verb, on the SAME `isInertSuggestion()` screen (shared, so the two policies can't drift): an agent reaching for `status: "done"` to mean "this is redundant" both lies and fires the auto-start sweep. `reason` is required and non-empty. Not a delete — the tray's Dismiss already hard-deletes with no undo — so the row goes `cancelled` with `suggested` left at 1: it stays in the tray, struck through with `tasks.withdrawn_reason` shown and sorted below live ones (`isWithdrawn`/`withdrawnLast` in `app/shell/format.ts`, honored by both the list tray and the board), publishing `task_edited`. `PATCH /api/tasks/[id]` owns reviving — it clears the reason AND the cancelled status together, because all three ways back (tray Add/Start patch only `suggested: 0`, board drag adds a status, edit dialog re-statuses) would otherwise each need to remember both halves. That forced a shared-path fix: `blocks()` always counted **cancelled** as terminal but `maybeAutoStartDependents()` only fired on the transition into `done`, so cancelling the last blocker left an `auto_start` dependent unblocked-but-never-launched forever. It now fires on any non-terminal → terminal transition, from the tool AND from the user-facing PATCH (so cancelling in the UI can start work — which is what "Start when unblocked" promised), with the note distinguishing `is done` from `was cancelled`.
+### Live updates without polling
 
-**Internal jobs run through `lib/agents/oneshots.ts`** — the turns that run *outside* the main chat. Two policies: **task-scoped** (`/clear` transcript summarization) follows the **task's own agent** (so a Codex task's handoff note bills the Codex login); **project-scoped** (recap, "Refresh with AI" context draft) runs the **utility agent**, resolved **connected-first** (`utility_agent` setting if connected → app default → built-in default → any connected agent; nothing connected → actionable error, never a dead CLI). Unattended work is gated server-side by `background_jobs` (default `on`); recap scheduling is additionally controlled by `recap_mode` (`automatic` default / `on_open` / `off`). Explicit `/clear`, Refresh with AI, and manual recap refreshes still run. A driver that doesn't implement a helper is backstopped by the utility agent, so the one-shot helpers on `AgentDriver` are optional — only `runTurn()` is required. Every one-shot funnels through one `run()` wrapper that records the agent that **actually** ran it plus `fallback` via `addInternalUsage()` — both fallback paths are invisible otherwise. `resolveUtilityAgent()` reports the same resolution without throwing, so `GET /api/agents` can hand Settings the effective utility agent and its `(fallback)` hint. The first-run wizard requires **an** agent, not Claude: finishing with only Codex connected adopts it as the app default and retargets the seeded tutorial (`completeOnboarding` in `lib/onboarding.ts`). New tasks pick their agent connected-first too — the New-task dialog via `defaultAgentFor()` (`app/shell/agents.ts`), and `suggest_task` via `resolveConnectedAgent()` in `lib/agentTools.ts`, and idle, unstarted tasks can still switch agents before their first session fixes the driver lineage. AI conflict-resolution turns need no special routing: the client sends `buildConflictPrompt()` output as an ordinary message through `startTurn()` → the task's driver.
+Only the SELECTED task has a transcript stream open. Everything else stays live through
+`GET /api/events`: one always-open EventSource per tab (`app/shell/useGlobalEvents.ts`)
+broadcasting coarse lifecycle events for every task across every project — turn started, awaiting
+input, answered, suggestion created, turn ended, and a task's fields edited by the user in another
+tab or by `update_task`. That drives spinners, project badges and the "N need you" pill for
+unselected tasks. There is no task-list polling.
 
-**Agent MCP inheritance is asymmetric, deliberately.** A **Claude** task session is meant to feel like the user's own `claude` terminal, so the driver pins `settingSources: ["user", "project", "local"]` (`SETTING_SOURCES` in `claude/driver.ts`) and gets their `~/.claude` settings, MCP servers, plugins, skills and the repo's CLAUDE.md. Inheritance grants nothing on its own: those servers' tools go through `canUseTool` like any other — auto-approved under `bypassPermissions`, classifier-screened under the `auto` default, a permission card otherwise — so they're reachable in every mode, which is the substantive difference from Codex below. That source set is the SDK's own default when the option is OMITTED; it's written out because relying on the default made a product decision invisible, and an SDK bump flipping it to isolation-by-default would strip MCP + CLAUDE.md from every session with no symptom but the agent getting worse (`tests/claudeSettingSources.test.ts`). A **Codex** task gets the Calandria bridge and nothing else. Not an oversight and not free to change: the SDK flattens our `config` into leaf-level `--config mcp_servers.calandria.…` overrides, which the CLI *merges* into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not — but `codex exec` has no approver, so their tools are offered to the model and every call returns `user cancelled MCP tool call` (verified live on codex-cli 0.146.0). Dangling uncallable tools costs context and turns, so `codex/mcp.ts` enumerates them (`codex mcp list --json`, ~30ms, best-effort) and unmounts each with `enabled = false`; `default_tools_approval_mode: "approve"` stays scoped to our own first-party bridge rather than becoming a global. `CODEX_INHERIT_MCP=1` opts back in. Both halves are declared as data on the capability descriptor (`inheritsUserMcpServers`, plus the driver's one-line `userMcpServersNote`), so `GET /api/agents` carries the difference instead of the UI hardcoding it — and **Settings → Agents states it on each agent's card** (`McpInheritance` in `SettingsView.tsx`), because "can this task call my MCP tools" is a reason to pick one agent over the other and was previously visible only in the API response. Codex's flag is `CODEX_INHERIT_MCP` rather than a literal `false` for the same reason: the card renders the descriptor verbatim, so a hardcoded no would tell anyone who set the escape hatch the opposite of what their turns do.
+Each payload re-reads the task row at publish time. The runner persists before it publishes, so
+the snapshot is authoritative (`tests/agentDriver.test.ts`). It also carries the project's fresh
+awaiting count, plus, on a `suggested` event, the project the task was filed INTO, which
+`suggest_task` can point anywhere. Project-wide facts have no one row to re-read, so
+`task_deleted`, `tasks_moved`, `runbooks_changed` and `tags_changed` carry their own project id
+and short-circuit before it.
 
-**Claude's one-shots get the opposite policy from a Claude turn: isolate capability, inherit config.** A handoff note or a four-bullet recap is an internal transformation with no Calandria bridge and no UI to answer a prompt, so inheriting the session config just spawned the user's whole MCP fleet to offer tools the job can never call (measured on one machine: 10 servers, 146 tools, ~8s of a ~5s job). Four levers, none of which was set before. **`tools`** is the real restriction — `allowedTools` is *not*, it only pre-approves, and `bypassPermissions` pre-approves everything anyway; all three helpers passed `allowedTools` and got the full toolset (verified on CLI 2.1.228: `allowedTools: []` ran Read, and the "read-only" draft agent ran Write). **`strictMcpConfig: true`** drops MCP from settings, `.mcp.json` and plugins; `tools` alone governs built-ins only, so the fleet survives it. **`settings: { disableAllHooks: true, autoMemoryEnabled: false }`** closes the surface tools don't cover — hooks fire whether or not a tool exists to hook, and a SessionStart hook injects context into a four-bullet recap. Inline `settings` is the lever that works; `managedSettings` does not (the SDK filters that tier restrictive-only and the key doesn't survive) and shouldn't be reached for anyway, since it impersonates the IT policy tier. **`settingSources` stays `["user"]`, not `[]`** — `~/.claude/settings.json` is *also* where a user's `env` block, `apiKeyHelper` and model aliases live, so it's load-bearing for auth and provider routing: on a Vertex-configured machine with those vars absent from the server's own environment, `[]` fails the run with "Not logged in" while `["user"]` succeeds with 0 tools and 0 MCP servers. Isolating there would break recap and `/clear` for every Bedrock/Vertex/proxy user while their ordinary turns kept working. Same split Codex's `oneShot()` already makes (read-only sandbox, no network, MCP unmounted, `~/.codex/config.toml` still read). So: `summarizeTranscript`/`summarizeProjectRecap` get `TEXT_ONE_SHOT` — no tools, one turn, `["user"]` only, since `project`'s only remaining contribution is the repo's CLAUDE.md and a text transform can only be skewed by it. `draftProjectContext` keeps `project` (describing this repo is its whole job and that's what loads CLAUDE.md) but not `local` (gitignored personal overrides in a document written for everyone), and trades Bash — unreviewed arbitrary execution in the user's checkout to produce a paragraph of prose, whose git half already arrives in `digest` — for `tools: ["Read", "Grep", "Glob"]`. All three also set `persistSession: false`: nothing records a one-shot's session id, so they were only filling the user's own `~/.claude/projects` with unresumable recap turns. Both policies are pinned by `tests/claudeSettingSources.test.ts`.
+Task ORDER is not among them, because it isn't stored. `listTasks` sorts `updated_at DESC`, then
+`created_at`, then `rowid` (a planning turn files its whole batch inside one millisecond), so the
+top card in every bucket, Suggested tray included, is the most recently active task and gets there
+on the lifecycle events that already flow. That replaced the manual board order: `tasks.position`
+still counts up per project and the move paths still renumber it, but nothing renders it, so
+`reorderTasks`, `POST /api/tasks/reorder` and the `tasks_reordered` event are gone with it, and a
+board drag writes only the status its column implies (a drop inside one column is a no-op).
+`position` stays on the client's `TaskRow` for one reason: it's the filing sequence `topoMembers`
+tie-breaks a tag's steps by, so "step 3 of 7" doesn't renumber every time a member runs.
 
-**The composer's `/` menu is discovered, not hardcoded.** It used to be a one-element array holding `/clear`, so the other ~58 commands a Claude session really expands (skills, plugin commands, the worktree's `.claude/commands`) were invisible — they worked if you typed one in full, which is what made it read as "slash commands are only partially working". `AgentDriver.listCommands?(task, project)` is the seam (optional, like the one-shots; Codex omits it and the menu falls back to Calandria's own). `lib/agents/claude/commands.ts` implements it via the SDK's control channel: a `query()` whose prompt generator never yields, `supportedCommands()`, then `abort()` + `close()`. No model request is sent — but initialization is still a real session startup, so it takes the **one-shot** policy (`strictMcpConfig`, `mcpServers: {}`, `disableAllHooks`, `persistSession: false`) and inherits only `settingSources`, which is the input that decides the answer; a SessionStart hook would otherwise fire on every keystroke. Measured at ~290ms against CLI 2.1.228, and the isolation costs the answer nothing except the MCP prompt rows below — re-measured on 2.1.240, the same list comes back with and without `strictMcpConfig` apart from those, so plugin *commands* still don't travel with plugin MCP config. Cached per-cwd-and-sources (60s TTL, in-flight deduped, 64-entry cap) because those are what change the answer — the cwd (a task's worktree decides which project-level `.claude/commands` are in scope) and whether the sources load project settings at all. **This is the app's only command enumeration**: `lib/schedule/commands.ts` had a second one (send `"noop"`, read `slash_commands` off the `init` message) which answered the same question with none of the isolation above — running the user's SessionStart hooks unattended inside the ticker's sweep on every save and every fire, leaving an unresumable session behind each time, and re-spawning per keystroke because it had no cache. It now calls `listClaudeCommands()`, so the menu and the schedule validator cannot disagree about what a session expands. Two contract details that consolidation forced, both load-bearing for the validator and invisible to the menu: the probe returns **`null`, not `[]`, when it could not find out** (the driver coerces `?? []`; a dead login read as an empty registry would settle a scheduled run `failed` for a command that exists), and `refresh` bypasses both the TTL and the stale-entry fallback, because "absent from a list from a minute ago" is not grounds to refuse a command installed thirty seconds ago. **MCP prompt commands** (`/mcp__<server>__<prompt>`) are what the probe structurally can't see, and loosening it is not the fix: a probe that inherits the fleet does report them, but under a display label (`stash:analyze-performer (MCP)`) that no session expands — `/stash:discover-performers` answers "Unknown command" — while spawning the user's whole fleet on a keystroke and still answering with a race, since the command list is **frozen at initialization** and only servers connected inside the ~700ms startup window contribute prompts (three of fifteen here; still 82 commands at 4s/9s/20s while eleven more connected). The names come from the sessions that already paid for that fleet instead: the driver hands every turn's `init.slash_commands` to `recordMcpPrompts()` under the same cache key, and `listClaudeCommands()` merges the `mcp__` entries in at read time — no TTL (nothing but another turn can refresh them) and newest-wins, so a removed server stops being offered. So a task offers no MCP prompts until its first turn has run, and a `(MCP)`-labelled row is dropped rather than inserted. The validator probes the project's repo, where no turn runs, so it still treats an absent `mcp__` command as **unchecked rather than unknown**. `lib/agentCommands.ts` holds the visibility policy, SDK-free and pinned by `tests/importGraph.test.ts`: default is SHOW (re-growing a denylist is how this bug comes back), minus the CLI's internal sentinels, its own `clear` (Calandria's is a different behavior behind the same name), and `model`/`effort`/`fast` (the task's own pickers own those). Aliases are carried so `/writing-plans` finds `superpowers:writing-plans`. Related fix in the same path: a `/clear` typed in full **mid-turn** used to be queued as an ordinary follow-up and reach the CLI's own `/clear`, wiping the session's context behind Calandria's back with no handoff note and no new generation; the composer now refuses it outright.
+### The agent seam
 
-**Adding a third agent**: implement `AgentDriver` in `lib/agents/<id>/driver.ts` (only `runTurn()` is required), register it in `registry.ts`, ship its CLI in the `Dockerfile`. Nothing else changes — the runner, routes, recap/refresh jobs, and UI data flow are all seam-generic. Pin it with the driver-contract test (`tests/agentDriver.test.ts`, which mocks a driver's CLI at the SDK boundary and runs it through the real runner).
+**`lib/agents/`** is where the app talks to coding agents, and only through the `AgentDriver`
+interface in `types.ts`: a normalized `StreamEvent` turn contract, one-shot summarize / draft /
+recap helpers, a capability descriptor, and a login/verify auth surface. Only `runTurn()` is
+required; the rest are optional. `getDriver(task.agent)` in `registry.ts` resolves a driver
+(`tasks.agent`, defaulted from `projects.default_agent`; unknown ids fall back to Claude), and
+`shared.ts` holds the agent-agnostic normalizers (project-context and conflict prompts, tool-call
+to title/peek/diff, the event queue). `GET /api/agents` exposes each driver's capabilities to the
+client. Session and thread ids are opaque per driver: `sessions.claude_session_id` stores any
+driver's id.
 
-**A task is a lineage of sessions**: `/clear` ends generation N, condenses its transcript to a summary, and generation N+1 starts fresh seeded with all prior summaries.
+Two drivers ship: `lib/agents/claude/` (Claude Code, via `@anthropic-ai/claude-agent-sdk`) and
+`lib/agents/codex/` (OpenAI Codex, via `@openai/codex-sdk` spawning the `codex` CLI). Non-Claude drivers get the same
+Calandria tools, plus `ask_user`, through the stdio MCP bridge `scripts/calandria-mcp.mjs` →
+`/api/internal/agent-tools/*`. `ask_user` restores interactive asks: the card is persisted and
+published by `lib/agentTools.startAskUser`, and the bridge polls the `wait` endpoint for the
+answer.
+
+**`lib/agents/CLAUDE.md` holds the per-driver detail** — permission modes, model catalog and
+Vertex corrections, MCP inheritance, one-shot isolation, slash-command discovery, and how to add a
+third agent.
+
+**A task is a lineage of sessions.** `/clear` ends generation N, condenses its transcript to a
+summary, and generation N+1 starts fresh seeded with all prior summaries.
+
+**Internal jobs run through `lib/agents/oneshots.ts`** — the turns that run *outside* the main
+chat, under two routing policies. **Task-scoped** work (`/clear` transcript summarization) follows
+the **task's own agent**, so a Codex task's handoff note bills the Codex login. **Project-scoped**
+work (recap, the "Refresh with AI" context draft) runs the **utility agent**, resolved
+connected-first: the `utility_agent` setting if it's connected, else the app default, else the
+built-in default, else any connected agent. With nothing connected it raises an actionable error
+rather than reaching a dead CLI. Unattended work is gated server-side by `background_jobs`
+(default `on`), and recap scheduling additionally by `recap_mode` (`automatic` default, `on_open`,
+`off`); explicit `/clear`, Refresh with AI and manual recap refreshes still run. A driver that
+doesn't implement a helper is backstopped by the utility agent. Every one-shot funnels through one
+`run()` wrapper that records the agent that **actually** ran it plus `fallback` via
+`addInternalUsage()`, since both fallback paths are invisible otherwise. `resolveUtilityAgent()`
+reports the same resolution without throwing, so `GET /api/agents` can hand Settings the effective
+utility agent and its `(fallback)` hint.
+
+Agent choice is connected-first everywhere else too. The first-run wizard requires **an** agent,
+not Claude: finishing with only Codex connected adopts it as the app default and retargets the
+seeded tutorial (`completeOnboarding` in `lib/onboarding.ts`). New tasks pick their agent through
+`defaultAgentFor()` (`app/shell/agents.ts`) in the New-task dialog and `resolveConnectedAgent()`
+(`lib/agentTools.ts`) in `suggest_task`; idle, unstarted tasks can still switch before their first
+session fixes the driver lineage. AI conflict-resolution turns need no special routing: the client
+sends `buildConflictPrompt()` output as an ordinary message through `startTurn()`.
+
+### The permission gate
+
+Under every mode but `bypassPermissions`, the SDK's `canUseTool` is a real gate
+(**`lib/permissions.ts`**): a read-only allowlist, then the project's remembered Bash rules
+(`permission_rules`), then a permission card that parks the turn on the user through the same
+`lib/asks.ts` and `/answer` machinery an AskUserQuestion uses. Every non-answer path denies (Stop,
+expiry, unwatched turn, unparseable answer), and an unattended auto-deny parks the pending queue
+the way a dead login does.
+
+Rules are minted from the card and, since the card is unreachable on a turn nobody is watching, by
+typing one into Settings → Run defaults (`POST /api/settings/permissions`). The typed path is not
+a second policy: `ruleFromTypedCommand()` runs the same `prefixVerdict()` the card's offer does
+and stores what IT returns, never the typed line, or Settings would be the way to mint
+`bash_prefix: "sudo"`. Two things differ from the card. A refused prefix is a **400 rather than a
+downgrade to `bash_exact`**, because the card can fall back while showing the user the exact rule
+it will create and a form can't. And the refusal carries the REASON, since no proposed command is
+on screen to explain itself. Bash-only is enforced rather than assumed: `ruleMatches()` goes
+through `bashCommandOf()`, so a row naming any other tool never matches a call and would just read
+like a grant.
+
+Refusals the CLI makes without ever calling `canUseTool` are handled by the Claude driver and land
+as an already-decided card on the transcript row (see `lib/agents/CLAUDE.md`).
+
+**The gate also runs BEFORE the turn does** (`lib/settingsDrift.ts`, issue #43). The files a
+driver names in `watchedSettingsFiles` — `<worktree>/.claude/settings.json` for Claude — are
+re-read from disk every turn and are executable config (`hooks` run shell commands outside
+`canUseTool` entirely; `permissions.allow` approves calls with no gate call at all), while living
+where the agent's own writes land. So turn N could write what turn N+1 obeys, and so could the
+base-branch catch-up. The runner hashes each one before calling `runTurn`, and a hash that moved
+since this task last ran parks it on an ordinary `PermissionRequest` (`kind: "settings"`) — same
+registry, same `/answer` route, same transcript row, because a second answering path is a second
+thing to get wrong. Approving adopts the new version as the baseline (`task_settings_snapshots`),
+so a repo that legitimately changes its settings asks once; declining ends the turn before the
+agent starts, parks the queue and leaves the task flagged. A first sighting is recorded silently —
+a task inherits its repo's settings the way it inherits its repo's code — and an unattended or
+scheduled run refuses outright, because nobody objecting is not the same as somebody agreeing.
+
+### Agent tools (`lib/agentTools.ts`)
+
+`suggest_task` takes an optional `project` (id or exact name, from `list_projects`) and can file
+into ANY project. `resolveTargetProject()` is strict: an unrecognized value is refused outright,
+never falling back to the calling project. It resolves BEFORE the insert, so the new task's agent,
+`send_context` and position come from the target. `blocked_by` follows the target too
+(`setTaskDeps` is project-scoped; unusable refs are reported back rather than dropped), and the
+`suggested` event carries the target's project id (`suggestedProjectId` on the wire) so the
+receiving tray refreshes even when it isn't the project on screen. It also carries the id of the
+task it CREATED, which is what makes a suggestion reviewable where it was made: the runner settles
+it onto the `suggest_task` tool row the call produced — the same move a CLI-side refusal makes with
+its already-decided card (the permission gate above) — and `Transcript.tsx` renders a **suggestion
+card** there with the tray's own Start / Add / Dismiss, wired to `useShell`'s handlers so a session
+started from the transcript is indistinguishable from one started from the tray.
+
+Only the two ids are persisted (`ToolData.suggestion`); everything the card shows is re-read per
+render through `GET /api/tasks/[id]/suggestion`, so a reloaded transcript says *Session started* /
+*Added* / *Withdrawn* / *no longer exists* instead of offering Start twice or 404ing on a row that
+Dismiss hard-deleted. **Start is deliberately withheld for a suggestion filed into a DIFFERENT
+project**: starting it mints and selects that task, dragging the user out of the session they are
+reading into a project they may not have on screen, which is worse than the tray round trip it
+saves. Such a card names the target project and offers only the two actions that don't navigate.
+
+Correlation is by the tool's own `name` — now on the `tool` StreamEvent and on `ToolData`, because
+a title is human prose and free to be re-worded — matched as a SUBSTRING in `lib/suggestionCard.ts`
+since the prefix belongs to the driver rather than the tool (`mcp__calandria__suggest_task`
+in-process, `calandria__suggest_task` over the bridge). A turn on the runner's stream settles in
+memory, queueing each call so a parallel batch lands one card apiece; the stdio bridge's endpoint
+is reached out of band with no tool_use id, so it patches the newest unclaimed `suggest_task` row
+instead — which is why the runner re-reads that one field before writing a `tool_result` over the
+top.
+
+Reads range as widely as filing does: `list_tasks` takes the same optional `project` and flags the
+caller `current: true`, and `get_task` reads any id, defaulting to the session's own.
+
+`update_task` writes **any task in any project**: the caller's own row by default, or any other
+id, including ones the user accepted or started. The only refusal is `running=1`. A write the old
+`suggested=1 && started=0 && running=0` gate would have refused now lands, but is recorded in
+`task_agent_edits` (per-field before/after) and stamps `agent_edited_at`, surfacing a "Changed by
+agent" chip with per-edit Revert and a Keep-changes ack (`GET`/`POST /api/tasks/[id]/agent-edits`).
+Visibility and undo replaced the narrower gate. It covers title, description, priority and status
+minus `cancelled`: on the own row that would `abortTurn()` the very turn calling it, and on
+anyone else's it needs a stated reason, which is `withdraw_suggestion` below.
+
+It also covers **`blocked_by`, the only way an agent can order a plan at all.** `suggest_task`
+takes blockers in the call that INVENTS the task, before any of them has an id, so a planning turn
+(one parallel batch of `suggest_task` calls, the sequence worked out afterwards) could never use
+it, and never did: every dependency edge on a real board was drawn by the edit dialog, and no
+transcript contains the "Blocked by N task(s)" line `depNote()` returns. The recipe is two-phase
+and `buildProjectContext()` spells it out: file every task, WAIT for the ids, then `update_task`
+per dependent. Two rules differ from `suggest_task`'s version of the param, both because this one
+REPLACES a set rather than filling a blank one:
+
+- Refused on the CALLER'S OWN ROW. Blockers gate whether a task may START and a session calling
+  this already has, so the edge would be inert on the scheduler and a lie on the board; the
+  refusal names `on_hold`.
+- An unusable ref FAILS THE WHOLE CALL, named one at a time with its reason (not an id, another
+  project, the task itself), where `suggest_task` partitions and reports. Wiring what we
+  recognized and dropping the rest would delete edges the agent never mentioned and still report
+  success. A cycle refuses everything too, and `setTaskDeps` runs before the row patch (its guard
+  throws before it writes), so a rename in the same call can't land under a refusal that says
+  nothing changed.
+
+`updateTaskForAgent()` owns the whole policy so the two callers can't drift. The caller is always
+trusted (the Claude driver closes over it; the bridge's endpoint reads `CALANDRIA_TASK_ID`) and
+the target is always the model's word for it. It re-reads both rows first, because a detached
+turn's snapshot outlives deletions and a target can be started between read and write; the check
+and the write share one synchronous block, atomic under better-sqlite3 in a single process. It
+publishes `task_edited` against the TARGET so clients refetch fields the coarse wire payload can't
+carry, and returns an `autoStartDependents` flag instead of calling `maybeAutoStartDependents()`
+itself, because `lib/autoStart.ts` reaches the runner while `lib/agentTools.ts` is pinned SDK-free.
+`tests/codexUpdateTaskPolicy.test.ts` runs the real stdio bridge against the real endpoint and
+asserts on the DB, because Codex is the path where the MODEL names the target.
+
+**`withdraw_suggestion(task, reason)`** is the retraction verb, on the SAME `isInertSuggestion()`
+screen (shared, so the two policies can't drift): an agent reaching for `status: "done"` to mean
+"this is redundant" both lies and fires the auto-start sweep. `reason` is required and non-empty.
+It is not a delete, since the tray's Dismiss already hard-deletes with no undo. The row goes
+`cancelled` with `suggested` left at 1, so it stays in the tray, struck through with
+`tasks.withdrawn_reason` shown and sorted below live ones (`isWithdrawn` / `withdrawnLast` in
+`app/shell/format.ts`, honored by both the list tray and the board), publishing `task_edited`.
+`PATCH /api/tasks/[id]` owns reviving and clears the reason AND the cancelled status together,
+because the three ways back (tray Add/Start patches only `suggested: 0`, board drag adds a status,
+edit dialog re-statuses) would otherwise each need to remember both halves.
+
+That forced a shared-path fix. `blocks()` always counted **cancelled** as terminal, but
+`maybeAutoStartDependents()` only fired on the transition into `done`, so cancelling the last
+blocker left an `auto_start` dependent unblocked and never launched. It now fires on any
+non-terminal → terminal transition, from the tool and from the user-facing PATCH, so cancelling in
+the UI can start work, which is what "Start when unblocked" promised. The note distinguishes
+`is done` from `was cancelled`.
 
 ### Key modules (by responsibility)
 
-- `lib/db.ts` — SQLite schema + migrations (single shared connection, WAL); `lib/store.ts` — typed queries; `lib/types.ts` — shared types.
-- `lib/db-lock.mjs` — **one app process per database**, claimed by `server.js` before `app.prepare()` (never by `getDb()`, so `next build` and the suite don't contend for a lock they shouldn't hold). Single-process is the design, not an accident — turns run detached and owned by the server, the bus/abort/ask registries are in-memory, and `recoverFromCrash()` opens every boot by clearing what a dead predecessor left: running flags, `pending_messages`, unanswered permission cards, `claimed`/`running` schedule runs. Against a LIVE second instance that pass wipes work in progress, so it now sits behind `consumeDbRecoveryAuthorization()` — true at most once, and only for a database this process actually claimed (under vitest and `next build` it's never authorized, which is the point) — and runs as one transaction, since the four facts describe a single moment. The mutex is a **kernel file lock**: a `BEGIN IMMEDIATE` opened on a dedicated `calandria.lock.db` and never committed, holding RESERVED for the connection's life — the lock file is named after the database it guards, so a pre-rename `orchestrator.db` is still guarded by `orchestrator.lock.db` and an older build still running can't be missed. Deliberately not a pid+heartbeat lease — no heartbeat to miss, no staleness window, and no pid-liveness heuristic to get wrong (pids are small and reused in a container, and `docker restart` keeps the hostname, so "pid 7 on host abc is alive" proves nothing), plus the OS releases it on SIGKILL so a crashed instance is reclaimed instantly rather than after an expiry. `CALANDRIA_DB_LOCK_WAIT_MS` (10s) covers only a predecessor still shutting down. `locking_mode = EXCLUSIVE` is pointedly NOT layered on: it also retains SHARED after a FAILED write, so two racing processes could deadlock each other out of the upgrade — held-RESERVED already excludes every other writer. A separate lock file (not `calandria.db` itself) keeps a concurrent read-only `sqlite3` inspection working and leaves WAL alone; the holder's pid/host is a best-effort JSON sidecar read only for the error message, never for deciding ownership. State lives on `globalThis` because `server.js` loads this through Node's ESM loader while `lib/db.ts` loads it through Turbopack's bundle — two module instances, one realm. `CALANDRIA_DB_LOCK=off` is the escape hatch (still authorizes recovery — `off` means "don't stop me", not "run crippled"), and only the acquire call reads it, so a stray env during a build can't authorize a wipe. Limit stated rather than defended: it coordinates processes sharing a kernel, so two containers on one volume may not see each other — a configuration that is already unsafe, since WAL needs shared memory between its users.
-- `lib/git.ts` — per-task worktrees/branches, diffs, merge (`mergeTask`, `prepareWorktreeMerge`/`completeWorktreeMerge`/`abortWorktreeMerge`), base-branch sync (`worktreeSyncStatus`/`fastForwardWorktree`), and the app's **only** network git (`fetchBase`/`remoteBaseStatus`/`advanceBaseBranch`/`pushBaseBranch`, plus `createTaskPr`'s push in `lib/github.ts`). Fetching is best-effort by contract — hard timeout, no interactive prompting, per-repo cooldown, outside the repo lock — because a task launch must survive no network, no remote, and a dead credential. New worktrees are cut from the fetched remote tip when local base is merely behind it, pinned to a SHA (a ref can move before `worktree add`, and a remote-tracking start point would give the task branch an upstream). The user's local base branch is only ever moved forward, never forced, and only on an explicit click — or as a pre-merge tidy-up so a task cut from the remote tip doesn't get credited with the commits it rode in on.
-- `lib/taskMove.ts` — re-parenting tasks as an operation, shared by the single (`POST /api/tasks/[id]/move`) and bulk (`POST /api/tasks/move`) routes, which differ only in manner: the single one refuses with 409, the bulk one reports a refusal per task and moves the rest. It owns the eligibility screen (`hasTurn`, which the row's own flags can't see), the sorted `withTaskLocks` acquisition that makes the screen atomic with the write, the worktree teardown that lets a STARTED task move, and the one `tasks_moved` event a whole selection publishes. `lib/store.ts moveTasks` is the DB half: one transaction, positions renumbered per destination, inherited settings re-derived, the project-keyed child rows (sessions, task_usage, task_merges) re-pointed so spend and insights follow the task, and a dependency edge kept only when BOTH its ends are moving (so a chain selected whole arrives intact). A started task's checkout was cut from the OLD repo, so it can only move by being destroyed: `discard_worktree` is that acknowledgement, `discard_unsafe` the second one demanded when `worktreePruneSafety` finds work in there — re-read at teardown, not from the `GET /api/tasks/[id]/move` preview the modal rendered, so nothing unsaved is discarded without having been named. Teardown runs BEFORE the write (a crash then leaves a row every launch path self-heals, rather than an orphaned worktree nothing points at), and `ensureWorktree` refuses to adopt a leftover checkout that isn't registered to the repo it's cutting from — worktree paths are keyed by task id, so the moved task's fresh worktree lands at the very path the old one occupied. **Bulk takes both acknowledgements as LISTS OF IDS, never a flag** — one checkbox over eleven irreversible answers isn't consent, eleven checkboxes over eleven worktrees is; a boolean is ignored, so a caller sending the single route's `true` gets the ordinary refusal rather than a shortcut past the question. That per-id shape goes all the way down: `moveTasks`' `resetCheckout` is a `Set` because the option both waives the started-task refusal and clears the columns, and as one flag over the batch an unanswered started task would move with its columns cleared and its worktree orphaned in the repo it left. `GET /api/tasks/move?ids=…` (`previewDiscards`) is the batch read that puts a cost beside each row before it's ticked — sequential, since it's a pair of git subprocesses per STARTED task and nothing without a checkout touches git at all. Refusals stay per task on the way out too: three dirty worktrees don't refuse the eight clean ones, and a row that picks up unsaved work after its preview is refused by the teardown's own re-read and reported in `skipped`. `canPick` in `TasksColumn.tsx` therefore gates only on `running` — a started row is selectable, a mid-turn one never is.
-- `lib/services.ts` — managed-services supervisor (shell-spawned child process trees owned by the server, log ring buffers, SSE status); `lib/processTree.ts` — kill/liveness/recycled-pid-guard for those trees, POSIX process groups vs win32 `taskkill`; `lib/service-router.mjs` + `lib/service-host.mjs` — public service-hostname reverse proxy + pure host/token helpers.
-- `lib/runbooks/store.ts` — runbook CRUD + the delete-detaches-linked-schedules transaction; `lib/runbookTools.ts` — the agent-tool policy behind `create_runbook`/`list_runbooks`/`update_runbook`. Both DB-only and in `tests/importGraph.test.ts`'s `PINNED` set. `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the scheduler; reaches the runner, so NOT pinned.
-- `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15). Rides `lib/scheduler.ts`'s ticker on its own much longer clock: this process owns the database, so a second daemon would need a second lock. `prunableTaskIds()` is the whole policy and is where a new "a done task can still be live" fact belongs — terminal, idle, unsnoozed, no parked follow-up, no in-flight schedule run, cold by `updated_at`. Two rows are deliberately never pruned, and both would be silent damage: the session `tasks.session_id` names (the resume key AND the Codex `usage_cum` baseline — drop it and the next turn re-bills the thread) and `summaries`. Reclaim is `wal_checkpoint(TRUNCATE)`, because the deletes land in the WAL first and an unchecked prune raises the footprint before lowering it. The windows, their defaults and the opt-in `VACUUM` are in `docs/SELF_HOSTING.md`. One knock-on in `lib/scheduler.ts`: the ticker starts when EITHER the scheduler or retention is on, since the instance that turned scheduled work off is the one that still wants its disk swept.
-- `lib/worktreeSweep.ts` — the same policy for the CHECKOUTS (issue #15 item 2), which are the disk story measured in gigabytes rather than rows. Rides the same ticker on the same clock and reuses `prunableTaskIds()` VERBATIM rather than owning a predicate; only the cutoff differs (`CALANDRIA_WORKTREE_RETENTION_DAYS`, 14). Two rules are load-bearing because reclaiming a worktree LOOKS harmless — `ensureWorktree` self-heals a missing checkout on the next turn, so sweeping a live task's "works" while silently discarding its state: terminal-only (that predicate) and never over work (`worktreePruneSafety()`, refused in `lib/taskMove.ts`'s words, so a log line and a refused move say the same thing). The branch is always kept — a checkout is regenerable, a branch is the task's diff — and there is no knob to delete one unattended. OFF by default, unlike the table prune, whose 180/400-day windows are longer than most instances have existed; a window in weeks would start deleting on the first tick after an upgrade nobody asked for. The clear goes through `clearTaskWorktreePath()` rather than `updateTask`, because the latter stamps `updated_at` — the board's sort key AND retention's clock — and a reclaim nobody asked for must not float a six-month-old task to the top of Done. The DISK WARNING is deliberately not gated on the sweep (the instance that didn't opt in is the one that needs telling): measured each pass, logged while over `CALANDRIA_WORKTREES_DISK_WARN_GB`, served on `schedulerHealth()` and shown above the reclaim list in Settings → Storage. The ticker therefore starts for it too.
-- `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job (poll via GET, never a long-held request); `lib/recap.ts` — staleness/activity sweep. Both are project-scoped one-shots that run on the utility agent via `lib/agents/oneshots.ts`. `lib/idle.ts` — busy-tracking so the idle daemon won't stop the container mid-work.
-- **Runbooks** (`lib/runbooks/store.ts`, `lib/dispatch.ts`, `app/shell/Runbooks.tsx`) are schedules with the clock taken off: a `runbooks` row is a saved prompt + agent + permission mode + priority + send_context, and pressing Run MINTS A FRESH TASK (tagged `tasks.runbook_id`) exactly as a firing does. That equivalence is the design — `fireSchedule`'s mint-and-launch tail was lifted into **`lib/dispatch.ts`** (`dispatchPromptTask`), so both paths share one preflight (project, `repo_path`, agent connected, `validatePrompt`), one worktree cut, one opening user message and one `startTurn`. What stays in `lib/scheduler.ts` is what makes a firing a firing: `claimRun`/`startRun`/`settleRun`, `next_fire_at`, the wall-clock stamp, and `SCHEDULED_RUN_CONTEXT`. Two seams the extraction needed. `onTaskCreated` fires between `createTask` and the launch, because the ledger link has to land while the launch can still fail — returning the task and linking after loses that window. And `DispatchResult` carries the task on FAILURE whenever the row was already minted: the launch fell over, not the creation, so it's retryable rather than a leak and the route passes it to the client instead of stranding it. `background_jobs` deliberately does NOT reach the dispatcher — it governs work nobody is watching, and a runbook is a button press; correspondingly a dispatch passes NO `RunContext`, so unlike a scheduled turn it may legitimately park on a permission card. **There is no run ledger and no counters**: a schedule needs `schedule_runs` because an occurrence that never fired leaves no other trace, whereas a dispatch produces a visible task immediately, so "last run" is `lastRunOf()` over `tasks.runbook_id` (tie-broken on `rowid` — two dispatches in one millisecond really do collide, and `created_at DESC` alone would show the older run as the latest). Counters were rejected for lying the first time a minted task is deleted. **A schedule may point at a runbook** (`schedules.runbook_id`, resolved by `resolveScheduleRecipe`) so one recipe serves both triggers; the schedule's own columns stay populated as the fallback, and the editor writes the runbook's recipe into them on save. The hazard — unattended automation reading a mutable row — is made visible rather than prevented (both editors state the coupling), except for deletion, where `deleteRunbook()` copies the recipe BACK into every linked schedule in one transaction before deleting. `ON DELETE SET NULL` alone would leave a schedule with no prompt firing nothing every morning, the exact silent failure the schedules design rules out. A cross-project link is refused at save time and again at fire time, since a runbook is written against one repo's command registry. Agents get `create_runbook`/`list_runbooks`/`update_runbook` (`lib/runbookTools.ts`, shared by the Claude driver and the stdio bridge so the two can't drift) and deliberately no delete — hard delete with no undo is the user's call — with `update_runbook` REFUSED for any runbook a schedule fires, naming them: that's the runbook analogue of `isInertSuggestion()`, touch what nothing has committed to. `created_by` is provenance shown on the card, and is NOT a tool parameter: both paths read the agent off the caller's own task row, so a model can't file under another agent's name. Live refresh rides `runbooks_changed`, a project-keyed global event alongside `task_deleted` — it bypasses `/api/events`'s re-read-the-task enrichment for a stronger reason than its siblings, since no task row is involved at all and its publishers key the bus with `""`.
-- **Scheduled tasks** (`lib/scheduler.ts`, `lib/schedule/`) are the app's only server-owned periodic *work* (the retention prune above shares the ticker but launches nothing) — the recap sweep that resembles one is a browser `setInterval`, so it does nothing with no tab open. A `schedules` row owns a prompt + project; each firing MINTS A FRESH TASK (tagged `tasks.schedule_id`) and launches its first turn the way `lib/autoStart.ts` does. `lib/schedule/time.ts` is `Intl`-only wall-clock math: an IANA zone, never an offset, with both DST edges decided (a nonexistent wall time fires when the gap closes; an ambiguous one fires once, on the earlier pass). `UNIQUE(schedule_id, scheduled_for)` on `schedule_runs` is the durable claim that makes a double fire impossible across overlapping ticks, a Run-now race, or a restart. One sweep consumes the whole backlog: older slots are recorded `missed`, the newest fires once as `catch_up` if it's inside the window — never silently skipped. Scheduled turns carry a `RunContext` (`lib/runContext.ts`) marking them `interactionPolicy: "deny"`, so the permission gate settles instead of parking on the watcher-count heuristic, and the runner settles the run from its own `finally` and leaves `awaiting_input` at 0 on success — otherwise every morning's run would file a permanent item in the "N need you" pill. Quiet is not invisible, though: a clean run rests on `tasks.unread_run_at` (issue #28), a mark OVER the status the way a snooze is, which the board draws as its own "Ran clean" group and which a status write — the card's Mark done — or the next turn's session opening clears. Without it a success landed on running=0/awaiting_input=0/`in_progress` and nothing ever moved it, so every firing left another permanent "In progress" row. The ticker starts from a boot self-ping to `/api/instance/scheduler` (its own route: `/api/instance/services-restore` is PINNED SDK-free and the scheduler reaches the runner). The editor (`app/shell/Schedules.tsx`) validates a slash prompt against the project's real command registry before saving via `POST /api/schedules/validate` (`lib/schedule/commands.ts`) — an unknown command is a SUCCESS at run time ("Unknown command: /x"), so this is the only cheap place to catch it — and `fireSchedule` re-checks at FIRE time, where an unknown command settles the run `failed` and mints nothing. The two must therefore agree: `slashCommandOf` returns null for a token followed by `/` (a path, not a command — `/etc/passwd, tell me…` is an ordinary prompt), and the probe imports the driver's own `SETTING_SOURCES` rather than copying it, since validating against a different registry than the turn gets would fail a real command every morning. Save still never blocks: the probe reads one session's list and is a typo catcher, not an authority. It is also BOUNDED (`CALANDRIA_SCHEDULE_PROBE_MS`) because it runs inside the ticker's single-flight sweep — an unbounded read on a stalled CLI would leave `ticking` true forever and stop every schedule on the instance with no error to show for it, which is why `schedulerHealth()` serves `lastTickAt`/`startedAt`/`tickMs` and the card ages them into a "looks stuck" banner. Two more places a schedule must not go quiet: a `claimed`/`running` run row orphaned by a crash is settled `interrupted` at DB init (`lib/db.ts`, beside the `tasks.running` reset) or it wedges overlap detection for ~50 occurrences, and `claimRun` treats ONLY a unique-constraint failure as "somebody else owns this slot" — anything else is logged and thrown rather than vanishing. `interactionPolicy: "deny"` covers asks as well as permissions: the Claude driver's AskUserQuestion hook and the bridge's `ask_user` both settle immediately as a decided permission card (the hook fires in EVERY permission mode, including `bypassPermissions`, so parking there was the one wedge even a bypassPermissions schedule couldn't dodge), and any such denial settles the run `failed` — a turn that stopped short of the job must never report a green "ran".
-- `lib/promptLimits.ts` / `lib/authFailure.ts` / `lib/approvalFailure.ts` — the *recoverable* turn failures, classified agent-agnostically from the error text. Each appends a durable notice to the persisted transcript line, which the UI matches verbatim to render one recovery button (`/clear` for context overflow, Reconnect for a dead login, Retry for an approval-policy block). A dead login additionally parks the pending queue (every follow-up would fail identically) and flags the agent instance-wide (`agent_auth_broken_<id>` in `lib/agents/connections.ts`, relayed on `/api/events` as an `agent_auth` event) so the titlebar banner shows in every tab; any successful turn clears it. An approval block is Codex-specific in practice: enterprise-managed requirements can disallow the driver's `approval_policy=never`, which the exec transport can't survive — the driver spots the CLI's downgrade warning and self-heals to `on-request` (`codex_approval_downgraded` setting, `lib/agents/codex/driver.ts`).
-- `lib/config.ts` — all per-instance config, env-driven with documented defaults; `lib/features.ts` — feature flags (env → `resolveFeatures()` server-side, `window.__FEATURES` client-side).
-- Auth: `middleware.ts` gates every HTTP route (no matcher on purpose); provider selected by `lib/auth/origin.mjs` (no-login local mode by default, Cloudflare Access when `CF_ACCESS_*` is set). **Both** modes have a browser-origin boundary, and they are different rules — `lib/auth/local-origin.mjs` holds both. Local mode pins the *target*: loopback + `PUBLIC_BASE_URL` are trusted, explicit LAN origins via `CALANDRIA_ALLOWED_ORIGINS`; that's the DNS-rebinding defense a mode with no login needs. Access mode can't use a target allowlist (the tunnel hostname is unknowable and `PUBLIC_BASE_URL` is optional) and doesn't need one (a rebound host produces no valid assertion), but the JWT proves identity, not *intent*: `CF_Authorization` is `SameSite=None`, so the edge stamps a valid assertion on whatever a hostile page made the victim's browser send. Hence `sameOriginWebSocketRequestAllowed` on upgrades (a JWT-only gate hands a shell to a cross-site WebSocket hijack) **and** `sameOriginHttpRequestAllowed` in `middleware.ts`. CORS does *not* already cover the HTTP half — that was audited and disproved: `Request.json()` ignores Content-Type while `text/plain` is CORS-safelisted (so a preflight-free `no-cors` POST reaches every JSON route, `/api/tasks/[id]/messages` included), and many mutating routes ignore the body entirely and act on the path alone (`/merge`, `/abort`, `/clear`, `/pr`, …), reachable by a bare cross-site form post. The HTTP rule is deliberately *narrower* than local mode's — reject only a present-and-mismatched Origin, never on `Sec-Fetch-Site: cross-site` — because cross-site navigations send no Origin and people really do link to a tunnel hostname; `tests/localOrigin.test.ts` pins that navigation case so it doesn't get "fixed" into the strict version. `pty-server.js` mirrors the same mode-aware pair on top of its unforgeable loopback-peer check — it must not assume it's behind `server.js`, and it must not enforce the other mode's policy (that combination is what killed the terminal on Access deployments with `PUBLIC_BASE_URL` empty). Threat model in `lib/cf-access.mjs`. Health/version/usage routes accept the shared `SERVICE_TOKEN` (or the read-only `CALANDRIA_FLEET_TOKEN`) instead; under Access that token is also what the in-container callers use, so `docker/entrypoint.sh` mints one when none is supplied.
-- UI: `app/Shell.tsx` is the three-column shell (projects · tasks · live session); the pieces live in `app/shell/` (`useTaskStream.ts` owns the one-EventSource-per-task logic, `SessionRail.tsx` the DIFF/PREVIEW/CONTEXT tabs). `app/Terminal.tsx` is xterm.js over the `/pty` proxy. `TerminalDrawer` (`Layout.tsx`) opens in the project's `repo_path` and carries a Project/Task segmented toggle that re-roots the shell in the selected task's `worktree_path` — a real shell in the checkout a task's changes actually live in, so tests can be run against them before the merge. The scope is a **pin**, not a derivation from the selected task: `TerminalView` tears down and respawns the shell whenever its `cwd` changes, so deriving it would kill a running `npm run dev` every time the user clicked a different task card. The Task button is disabled until the task HAS a worktree (it's cut on the first turn), which is why `worktree_path` is on the client's `TaskRow` — `listTasks` selects `t.*`, so it was already on the wire.
+- `lib/db.ts` — SQLite schema and migrations (single shared connection, WAL). `lib/store.ts` —
+  typed queries. `lib/types.ts` — shared types.
+- `lib/abort.ts` — the live-turn registry and the app's liveness signal. It outranks
+  `tasks.running`, which can be stale after a restart mid-turn, while this map dies with the
+  process. `activeTurnCount()` is what `lib/metrics.ts` exports as `calandria_turns_active` for an
+  external sleep daemon; `activeTurnIds()` is what the graceful-shutdown drain (`drainActiveTurns`
+  in `lib/runner.ts`) aborts before exit.
+- `lib/db-lock.mjs` — **one app process per database**, claimed by `server.js` before
+  `app.prepare()` and never by `getDb()`, so `next build` and the suite don't hold a lock they
+  shouldn't. Single-process is the design: turns run detached and owned by the server, and the bus,
+  abort and ask registries are in memory. `recoverFromCrash()` opens every boot by clearing what a
+  dead predecessor left (running flags, `pending_messages`, unanswered permission cards,
+  `claimed`/`running` schedule runs) in one transaction, since the four facts describe a single
+  moment. That pass would wipe a LIVE second instance's work in progress, so it sits behind
+  `consumeDbRecoveryAuthorization()`: true at most once, only for a database this process claimed,
+  never under vitest or `next build`.
+
+  The mutex is a **kernel file lock**: an uncommitted `BEGIN IMMEDIATE` on a dedicated
+  `calandria.lock.db`, holding RESERVED for the connection's life. The lock file is named after the
+  database it guards, so a pre-rename `orchestrator.db` is guarded by `orchestrator.lock.db` and an
+  older build still running can't be missed. It is not a pid+heartbeat lease: no heartbeat to miss,
+  no staleness window, no pid-liveness heuristic to get wrong (pids are small and reused in a
+  container, and `docker restart` keeps the hostname), and the OS releases it on SIGKILL, so a
+  crashed instance is reclaimed instantly. `CALANDRIA_DB_LOCK_WAIT_MS` (10s) covers only a
+  predecessor still shutting down. `locking_mode = EXCLUSIVE` is NOT layered on: it retains SHARED
+  after a FAILED write, so two racing processes could deadlock each other out of the upgrade, and
+  held RESERVED already excludes every other writer. A separate lock file, rather than
+  `calandria.db` itself, keeps a read-only `sqlite3` inspection working and leaves WAL alone; the
+  holder's pid and host are a best-effort JSON sidecar for the error message, never for deciding
+  ownership. State lives on `globalThis` because `server.js` loads this through Node's ESM loader
+  while `lib/db.ts` loads it through Turbopack's bundle: two module instances, one realm.
+  `CALANDRIA_DB_LOCK=off` is the escape hatch and still authorizes recovery ("don't stop me", not
+  "run crippled"); only the acquire call reads it, so a stray env during a build can't authorize a
+  wipe. Stated limit: it coordinates processes sharing a kernel, so two containers on one volume
+  may not see each other, a configuration already unsafe because WAL needs shared memory.
+- `lib/git.ts` — per-task worktrees and branches, diffs, merge (`mergeTask`,
+  `prepareWorktreeMerge` / `completeWorktreeMerge` / `abortWorktreeMerge`), base-branch sync
+  (`worktreeSyncStatus` / `fastForwardWorktree`), and the app's **only** network git (`fetchBase`,
+  `remoteBaseStatus`, `advanceBaseBranch`, `pushBaseBranch`, plus `createTaskPr`'s push in
+  `lib/github.ts`). Fetching is best-effort by contract — hard timeout, no interactive prompting,
+  per-repo cooldown, outside the repo lock — so a task launch survives no network, no remote and a
+  dead credential. New worktrees are cut from the fetched remote tip when local base is merely
+  behind it, pinned to a SHA: a ref can move before `worktree add`, and a remote-tracking start
+  point would give the task branch an upstream. The user's local base branch only ever moves
+  forward, never forced, and only on an explicit click or as a pre-merge tidy-up, so a task cut
+  from the remote tip isn't credited with the commits it rode in on.
+- `lib/taskMove.ts` — re-parenting tasks as an operation, shared by the single
+  (`POST /api/tasks/[id]/move`) and bulk (`POST /api/tasks/move`) routes, which differ only in
+  manner: the single one refuses with 409, the bulk one reports a refusal per task and moves the
+  rest. It owns the eligibility screen (`hasTurn`, which the row's own flags can't see), the sorted
+  `withTaskLocks` acquisition that makes that screen atomic with the write, the worktree teardown
+  that lets a STARTED task move, and the one `tasks_moved` event a whole selection publishes.
+  `lib/store.ts`'s `moveTasks` is the DB half: one transaction, positions renumbered per
+  destination, inherited settings re-derived, the project-keyed child rows (sessions, task_usage,
+  task_merges) re-pointed so spend and insights follow the task, and a dependency edge kept only
+  when BOTH ends are moving, so a chain selected whole arrives intact.
+
+  A started task's checkout was cut from the OLD repo, so it can only move by being destroyed.
+  `discard_worktree` is that acknowledgement, `discard_unsafe` the second one demanded when
+  `worktreePruneSafety` finds work in there. Both are re-read at teardown rather than taken from
+  the `GET /api/tasks/[id]/move` preview the modal rendered, so nothing unsaved is discarded
+  without having been named. Teardown runs BEFORE the write, leaving a row every launch path
+  self-heals rather than an orphaned worktree nothing points at, and `ensureWorktree` refuses to
+  adopt a leftover checkout not registered to the repo it's cutting from, since worktree paths are
+  keyed by task id and the fresh worktree lands at the very path the old one occupied.
+
+  **Bulk takes both acknowledgements as LISTS OF IDS, never a flag**, since one checkbox over
+  eleven irreversible answers isn't consent. A boolean is ignored, so a caller sending the single
+  route's `true` gets the ordinary refusal. `moveTasks`' `resetCheckout` is a `Set` for the same
+  reason: it both waives the started-task refusal and clears the columns, so as one flag over the
+  batch an unanswered started task would move with its columns cleared and its worktree orphaned in
+  the repo it left. `GET /api/tasks/move?ids=…` (`previewDiscards`) puts a cost beside each row
+  before it's ticked; it is sequential, being a pair of git subprocesses per STARTED task while
+  nothing without a checkout touches git. Refusals stay per task on the way out too: three dirty
+  worktrees don't refuse the eight clean ones, and a row that picks up unsaved work after its
+  preview is refused by the teardown's re-read and reported in `skipped`. `canPick` in
+  `TasksColumn.tsx` therefore gates only on `running`: a started row is selectable, a mid-turn one
+  never is.
+- `lib/services.ts` — managed-services supervisor: shell-spawned child process trees owned by the
+  server, log ring buffers, SSE status. `lib/processTree.ts` — kill, liveness and recycled-pid
+  guard for those trees, POSIX process groups versus win32 `taskkill`. `lib/service-router.mjs`
+  and `lib/service-host.mjs` — the public service-hostname reverse proxy and pure host/token
+  helpers.
+- `lib/runbooks/store.ts` — runbook CRUD and the delete-detaches-linked-schedules transaction.
+  `lib/runbookTools.ts` — the agent-tool policy behind `create_runbook`, `list_runbooks` and
+  `update_runbook`. Both are DB-only and in `tests/importGraph.test.ts`'s `PINNED` set.
+  `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the
+  scheduler; it reaches the runner, so it is not pinned.
+- `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job, polled via GET rather
+  than held open. `lib/recap.ts` — the staleness and activity sweep. Both are project-scoped
+  one-shots that run on the utility agent via `lib/agents/oneshots.ts`.
+- `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15),
+  riding `lib/scheduler.ts`'s ticker on its own much longer clock, because this process owns the
+  database and a second daemon would need a second lock. `prunableTaskIds()` is the whole policy,
+  and is where a new "a done task can still be live" fact belongs: terminal, idle, unsnoozed, no
+  parked follow-up, no in-flight schedule run, cold by `updated_at`. Two rows are never pruned,
+  since dropping either is silent damage: the session `tasks.session_id` names (the resume key AND
+  the Codex `usage_cum` baseline, whose loss makes the next turn re-bill the thread) and
+  `summaries`. Reclaim is `wal_checkpoint(TRUNCATE)`, because the deletes land in the WAL first and
+  an unchecked prune raises the footprint before lowering it. Windows, defaults and the opt-in
+  `VACUUM` are in `docs/SELF_HOSTING.md`. Knock-on in `lib/scheduler.ts`: the ticker starts when
+  EITHER the scheduler or retention is on, since the instance that turned scheduled work off still
+  wants its disk swept.
+- `lib/worktreeSweep.ts` — the same policy for the CHECKOUTS (issue #15 item 2), the disk story
+  measured in gigabytes rather than rows. Same ticker, same clock, and `prunableTaskIds()` reused
+  verbatim rather than a second predicate; only the cutoff differs
+  (`CALANDRIA_WORKTREE_RETENTION_DAYS`, 14). Reclaiming a worktree LOOKS harmless, since
+  `ensureWorktree` self-heals a missing checkout on the next turn, so sweeping a live task's
+  checkout "works" while silently discarding its state. Two rules stop that: terminal-only (that
+  predicate) and never over work (`worktreePruneSafety()`, refused in `lib/taskMove.ts`'s words, so
+  a log line and a refused move say the same thing). The branch is always kept — a checkout is
+  regenerable, a branch is the task's diff — and no knob deletes one unattended. The sweep is OFF
+  by default, unlike the table prune, whose 180/400-day windows are longer than most instances have
+  existed; a window in weeks would start deleting on the first tick after an upgrade nobody asked
+  for. The clear goes through `clearTaskWorktreePath()` rather than `updateTask`, which stamps
+  `updated_at` — both the board's sort key and retention's clock — and a reclaim nobody asked for
+  must not float a six-month-old task to the top of Done. The DISK WARNING is not gated on the
+  sweep, since the instance that didn't opt in is the one that needs telling: measured each pass,
+  logged while over `CALANDRIA_WORKTREES_DISK_WARN_GB`, served on `schedulerHealth()`, shown above
+  the reclaim list in Settings → Storage. The ticker starts for it too.
+- **Runbooks** (`lib/runbooks/store.ts`, `lib/dispatch.ts`, `app/shell/Runbooks.tsx`) are
+  schedules with the clock taken off. A `runbooks` row is a saved prompt plus agent, permission
+  mode, priority and send_context, and pressing Run MINTS A FRESH TASK (tagged `tasks.runbook_id`)
+  exactly as a firing does. `fireSchedule`'s mint-and-launch tail was lifted into
+  **`lib/dispatch.ts`** (`dispatchPromptTask`), so both paths share one preflight (project,
+  `repo_path`, agent connected, `validatePrompt`), one worktree cut, one opening user message and
+  one `startTurn`. What stays in `lib/scheduler.ts` is what makes a firing a firing: `claimRun` /
+  `startRun` / `settleRun`, `next_fire_at`, the wall-clock stamp, `SCHEDULED_RUN_CONTEXT`. Two
+  seams hold the extraction together: `onTaskCreated` fires between `createTask` and the launch, so
+  the ledger link lands while the launch can still fail, and `DispatchResult` carries the task on
+  FAILURE whenever the row was already minted, so a fallen-over launch is retryable and reaches the
+  client instead of being stranded.
+
+  `background_jobs` does NOT reach the dispatcher: it governs work nobody is watching, and a
+  runbook is a button press. A dispatch correspondingly passes NO `RunContext`, so unlike a
+  scheduled turn it may legitimately park on a permission card. There is also no run ledger and no
+  counters. A schedule needs `schedule_runs` because an occurrence that never fired leaves no other
+  trace, while a dispatch produces a visible task immediately, so "last run" is `lastRunOf()` over
+  `tasks.runbook_id`, tie-broken on `rowid` (two dispatches in one millisecond really do collide,
+  and `created_at DESC` alone would show the older run as the latest). Counters were rejected for
+  lying the first time a minted task is deleted.
+
+  **A schedule may point at a runbook** (`schedules.runbook_id`, resolved by
+  `resolveScheduleRecipe`), so one recipe serves both triggers. The schedule's own columns stay
+  populated as the fallback, and the editor writes the runbook's recipe into them on save. The
+  hazard — unattended automation reading a mutable row — is made visible rather than prevented
+  (both editors state the coupling), except for deletion: `deleteRunbook()` copies the recipe BACK
+  into every linked schedule in one transaction before deleting, since `ON DELETE SET NULL` alone
+  would leave a schedule with no prompt firing nothing every morning. A cross-project link is
+  refused at save time and again at fire time, because a runbook is written against one repo's
+  command registry.
+
+  Agents get `create_runbook`, `list_runbooks` and `update_runbook` (`lib/runbookTools.ts`, shared
+  by the Claude driver and the stdio bridge so the two can't drift) and no delete, since hard
+  delete with no undo is the user's call. `update_runbook` is REFUSED for any runbook a schedule
+  fires, naming them: the runbook analogue of `isInertSuggestion()`, touch what nothing has
+  committed to. `created_by` is provenance shown on the card, not a tool parameter: both paths read
+  the agent off the caller's own task row, so a model can't file under another agent's name. Live
+  refresh rides `runbooks_changed`, a project-keyed global event alongside `task_deleted`; it skips
+  `/api/events`'s re-read enrichment more completely than its siblings, since no task row is
+  involved at all and its publishers key the bus with `""`.
+- **Scheduled tasks** (`lib/scheduler.ts`, `lib/schedule/`) are the app's only server-owned
+  periodic *work*. The retention prune shares the ticker but launches nothing, and the recap sweep
+  that resembles one is a browser `setInterval`, so it does nothing with no tab open. A `schedules`
+  row owns a prompt and a project; each firing MINTS A FRESH TASK (tagged `tasks.schedule_id`) and
+  launches its first turn the way `lib/autoStart.ts` does. `lib/schedule/time.ts` is `Intl`-only
+  wall-clock math: an IANA zone, never an offset, with both DST edges decided (a nonexistent wall
+  time fires when the gap closes; an ambiguous one fires once, on the earlier pass).
+  `UNIQUE(schedule_id, scheduled_for)` on `schedule_runs` is the durable claim that makes a double
+  fire impossible across overlapping ticks, a Run-now race, or a restart. One sweep consumes the
+  whole backlog: older slots are recorded `missed` and the newest fires once as `catch_up` if it's
+  inside the window, never silently skipped.
+
+  Scheduled turns carry a `RunContext` (`lib/runContext.ts`) marking them
+  `interactionPolicy: "deny"`, so the permission gate settles instead of parking on the
+  watcher-count heuristic, and the runner settles the run from its own `finally` and leaves
+  `awaiting_input` at 0 on success. Otherwise every morning's run would file a permanent item in
+  the "N need you" pill. Quiet is not invisible, though: a clean run rests on `tasks.unread_run_at`
+  (issue #28), a mark OVER the status the way a snooze is, which the board draws as its own "Ran
+  clean" group and which a status write (the card's Mark done) or the next turn's session opening
+  clears. Without it a success landed on running=0 / awaiting_input=0 / `in_progress` and nothing
+  ever moved it, so every firing left another permanent "In progress" row.
+
+  The ticker starts from a boot self-ping to `/api/instance/scheduler`, its own route because
+  `/api/instance/services-restore` is PINNED SDK-free while the scheduler reaches the runner. The
+  editor (`app/shell/Schedules.tsx`) validates a slash prompt against the project's real command
+  registry before saving, via `POST /api/schedules/validate` (`lib/schedule/commands.ts`), since an
+  unknown command is a SUCCESS at run time ("Unknown command: /x") and this is the only cheap place
+  to catch it; `fireSchedule` re-checks at FIRE time, where an unknown command settles the run
+  `failed` and mints nothing. The two must therefore agree: `slashCommandOf` returns null for a
+  token followed by `/` (a path, so `/etc/passwd, tell me…` is an ordinary prompt), and the probe
+  imports the driver's own `SETTING_SOURCES` rather than copying it, since validating against a
+  different registry than the turn gets would fail a real command every morning. Save still never
+  blocks: the probe reads one session's list and is a typo catcher, not an authority. It is also
+  BOUNDED (`CALANDRIA_SCHEDULE_PROBE_MS`), because it runs inside the ticker's single-flight sweep
+  and an unbounded read on a stalled CLI would leave `ticking` true forever, stopping every schedule
+  on the instance with no error to show for it. Against that same failure, `schedulerHealth()`
+  serves `lastTickAt`, `startedAt` and `tickMs`, which the card ages into a "looks stuck" banner.
+
+  Two more places a schedule must not go quiet. A `claimed`/`running` run row orphaned by a crash is
+  settled `interrupted` at DB init (`lib/db.ts`, beside the `tasks.running` reset), or it wedges
+  overlap detection for ~50 occurrences. And `claimRun` treats ONLY a unique-constraint failure as
+  "somebody else owns this slot"; anything else is logged and thrown rather than vanishing.
+  `interactionPolicy: "deny"` covers asks as well as permissions: the Claude driver's
+  AskUserQuestion hook and the bridge's `ask_user` both settle immediately as a decided permission
+  card (that hook fires in EVERY permission mode, including `bypassPermissions`, so parking there
+  was the one wedge even a bypassPermissions schedule couldn't dodge), and any such denial settles
+  the run `failed`, because a turn that stopped short of the job must never report a green "ran".
+- `lib/promptLimits.ts`, `lib/authFailure.ts` and `lib/approvalFailure.ts` — the *recoverable*
+  turn failures, classified agent-agnostically from the error text. Each appends a durable notice
+  to the persisted transcript line, which the UI matches verbatim to render one recovery button:
+  `/clear` for context overflow, Reconnect for a dead login, Retry for an approval-policy block. A
+  dead login additionally parks the pending queue, since every follow-up would fail identically,
+  and flags the agent instance-wide (`agent_auth_broken_<id>` in `lib/agents/connections.ts`,
+  relayed on `/api/events` as an `agent_auth` event) so the titlebar banner shows in every tab; any
+  successful turn clears it. An approval block is Codex-specific in practice; the driver's
+  self-heal is in `lib/agents/CLAUDE.md`.
+- `lib/config.ts` — all per-instance config, env-driven with documented defaults.
+  `lib/features.ts` — feature flags (env → `resolveFeatures()` server-side, `window.__FEATURES`
+  client-side).
+- Auth: `middleware.ts` gates every HTTP route, with no matcher on purpose. The provider is
+  selected by `lib/auth/origin.mjs`: no-login local mode by default, Cloudflare Access when
+  `CF_ACCESS_*` is set. **Both** modes have a browser-origin boundary, and they are different
+  rules; `lib/auth/local-origin.mjs` holds both. Local mode pins the *target* — loopback and
+  `PUBLIC_BASE_URL` are trusted, with explicit LAN origins via `CALANDRIA_ALLOWED_ORIGINS` — which
+  is the DNS-rebinding defense a mode with no login needs.
+
+  Access mode can't use a target allowlist (the tunnel hostname is unknowable and
+  `PUBLIC_BASE_URL` is optional) and doesn't need one, since a rebound host produces no valid
+  assertion. But the JWT proves identity, not *intent*: `CF_Authorization` is `SameSite=None`, so
+  the edge stamps a valid assertion on whatever a hostile page made the victim's browser send.
+  Hence `sameOriginWebSocketRequestAllowed` on upgrades, since a JWT-only gate hands a shell to a
+  cross-site WebSocket hijack, **and** `sameOriginHttpRequestAllowed` in `middleware.ts`. CORS does
+  not already cover the HTTP half; that was audited and disproved. `Request.json()` ignores
+  Content-Type while `text/plain` is CORS-safelisted, so a preflight-free `no-cors` POST reaches
+  every JSON route, `/api/tasks/[id]/messages` included, and many mutating routes ignore the body
+  and act on the path alone (`/merge`, `/abort`, `/clear`, `/pr`, …), reachable by a bare
+  cross-site form post. The HTTP rule is *narrower* than local mode's, rejecting only a
+  present-and-mismatched Origin and never on `Sec-Fetch-Site: cross-site`, because cross-site
+  navigations send no Origin and people really do link to a tunnel hostname;
+  `tests/localOrigin.test.ts` pins that navigation case against being "fixed" into the strict
+  version. `pty-server.js` mirrors the same mode-aware pair on top of its unforgeable loopback-peer
+  check: it must not assume it's behind `server.js`, and it must not enforce the other mode's
+  policy, a combination that killed the terminal on Access deployments with `PUBLIC_BASE_URL`
+  empty. Threat model in `lib/cf-access.mjs`. Health, version and usage routes accept the shared
+  `SERVICE_TOKEN` or the read-only `CALANDRIA_FLEET_TOKEN` instead; under Access that token is also
+  what the in-container callers use, so `docker/entrypoint.sh` mints one when none is supplied.
+- UI: `app/Shell.tsx` is the three-column shell (projects, tasks, live session), with the pieces in
+  `app/shell/` (`useTaskStream.ts` owns the one-EventSource-per-task logic; `SessionRail.tsx` the
+  DIFF / PREVIEW / CONTEXT tabs). `app/Terminal.tsx` is xterm.js over the `/pty` proxy.
+  `TerminalDrawer` (`Layout.tsx`) opens in the project's `repo_path` and carries a Project/Task
+  segmented toggle that re-roots the shell in the selected task's `worktree_path`: a real shell in
+  the checkout a task's changes live in, so tests can run against them before the merge. The scope
+  is a **pin**, not a derivation from the selected task, because `TerminalView` tears down and
+  respawns the shell whenever its `cwd` changes, so deriving it would kill a running `npm run dev`
+  every time the user clicked a different task card. The Task button is disabled until the task HAS
+  a worktree (cut on the first turn), which is why `worktree_path` is on the client's `TaskRow`;
+  `listTasks` selects `t.*`, so it was already on the wire.
 
 ### Scope
 
-`skills/` ships agent skills to USERS' projects (installed by `scripts/install-skills.sh` into `~/.claude/skills` + `~/.agents/skills`, or into a target repo); `.claude/skills/` is this repo's own tooling for people developing Calandria. Don't cross them.
+`skills/` ships agent skills to USERS' projects, installed by `scripts/install-skills.sh` into
+`~/.claude/skills` and `~/.agents/skills`, or into a target repo. `.claude/skills/` is this repo's
+own tooling for people developing Calandria. Don't cross them.
 
-This repo is the whole product — self-hosted only, with no control plane behind it. Don't add hosted/fleet/billing features or first-party identity; the only auth modes are the two in `lib/auth/`. Site-specific CLIs and config are an end user's concern, layered on the published image the way `examples/overlay/` shows, not merged in here.
+This repo is the whole product: self-hosted only, with no control plane behind it. Don't add
+hosted, fleet or billing features, or first-party identity; the only auth modes are the two in
+`lib/auth/`. Site-specific CLIs and config are an end user's concern, layered on the published
+image the way `examples/overlay/` shows, not merged in here.
 
 ### Where data lives
 
 | What | Where |
 |-|-|
 | DB (projects, tasks, transcripts, summaries) | `calandria.db` in `CALANDRIA_DB_DIR` (default `~/.calandria`; a pre-rename `~/.zen-orchestrator/orchestrator.db` is kept in place, never moved — `lib/storage.mjs`) |
-| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR` (default `~/.calandria/worktrees`; a populated legacy `~/.agent-orchestrator/worktrees` is kept — git pins absolute paths) — deliberately **outside** every repo |
+| Per-task git worktrees | `CALANDRIA_WORKTREES_DIR` (default `~/.calandria/worktrees`; a populated legacy `~/.agent-orchestrator/worktrees` is kept, since git pins absolute paths), always **outside** every repo |
 | Cloned project repos | `CALANDRIA_PROJECTS_DIR` (default `~/projects`) |
 
 ## Codebase graph
 
-A graphify knowledge graph of this repo (~2,700 nodes) lives in the main checkout at `/home/penmoid/repos/calandria/graphify-out/graph.json`. `graphify-out/` is gitignored, so task worktrees never contain it — always pass the absolute path. For architecture / "what calls X" / "where does Y live" questions, query it before grepping or reading files:
+A graphify knowledge graph of this repo (~2,700 nodes) lives in the main checkout at
+`/home/penmoid/repos/calandria/graphify-out/graph.json`. `graphify-out/` is gitignored, so task
+worktrees never contain it; always pass the absolute path. For architecture, "what calls X" or
+"where does Y live" questions, query it before grepping or reading files:
 
 ```bash
 graphify query "<question>" --graph /home/penmoid/repos/calandria/graphify-out/graph.json
 ```
 
-(`explain "<node>"` and `path "A" "B"` take the same `--graph` flag.) Post-commit/post-checkout hooks in the main checkout rebuild it on every commit there, so it tracks main — unmerged worktree changes aren't in it; verify locations against your working tree before editing.
+(`explain "<node>"` and `path "A" "B"` take the same `--graph` flag.) Post-commit and
+post-checkout hooks in the main checkout rebuild it on every commit there, so it tracks main.
+Unmerged worktree changes aren't in it; verify locations against your working tree before editing.
 
 ## Conventions & gotchas
 
-- **Env-driven, zero code edits per instance.** Every per-instance knob is an env var with a documented default — add new ones to `lib/config.ts` (or `lib/features.ts` for flags) **and** `.env.example`. `server.js`/`pty-server.js` can't import TS, so they read the same env names directly; keep names in sync.
-- **Plain-Node entrypoints stay plain.** `server.js` is CommonJS; anything it needs from `lib/` must be `.mjs` (dynamic-imported) — and every such `.mjs` file must be COPY'd into the runtime image in the `Dockerfile` (Next's build output doesn't include them; this has bitten before).
-- **`next.config.mjs` stays JS**, not TS — prod containers prune dev deps and a `.ts` config needs the `typescript` package at runtime.
-- **HMR-surviving server state lives on `globalThis`** (`lib/events.ts`, `lib/abort.ts`, `lib/asks.ts`, `lib/services.ts` all follow this pattern). Single Node process; no external queue/broker.
-- **Long work is a detached background job, never a held HTTP request** (turns, context refresh, services). Anything multi-minute must survive page reloads and tunnel drops, and should mark the instance busy via `lib/idle.ts` so the sleep daemon doesn't stop the container mid-work.
-- **Native modules** (`better-sqlite3`, `node-pty`) and the Agent SDK are in `serverExternalPackages` — don't let Next bundle them. `postinstall` fixes node-pty's exec bit.
-- **Don't import `lib/agents/registry.ts` from a low-level module.** The agent SDKs are ESM externals, which Turbopack compiles async, and async-ness propagates to every transitive importer — a route entry compiled sync then reads every export back as `undefined` (this 500'd `/api/services/grant` in prod). Modules that only need capability data or agent **ids** import `lib/agents/capabilities.ts` (`getCapabilities`/`listAgentIds`/`isAgentId`) instead. `tests/importGraph.test.ts` pins the SDK-free set — add new low-level modules to its `PINNED` list. **A module that launches turns but is reached from ordinary route entries must reach the runner through `await import()`, not a static import** — `lib/autoStart.ts` and `lib/deferredStart.ts`, pinned by the same test's `DYNAMIC_ONLY` list. Sync-compiled route entries are the whole hazard (`PATCH /api/tasks/[id]` and the internal agent-tools routes call the auto-start sweep), and a dynamic import resolves the namespace regardless of propagation — same reason `/api/instance/scheduler` loads `lib/scheduler.ts` that way. **And nothing behind `registry.ts` may import a launcher back, dynamically included**: the Claude driver's tool callbacks used to `await import("../../autoStart")` (`autoStart → runner → registry → claude/driver → autoStart`), and Turbopack counted the cycle even though the edge was dynamic — it stopped propagating async-ness into `autoStart`, every emitted copy was a sync factory reading `startTurn` off a pending Promise, and EVERY auto-start died with "startTurn is not a function" in prod while dev and vitest stayed green. The driver now takes what it needs as an injected callback (`TurnHooks` in `lib/agents/types.ts`: every `startTurn`/`startResumeTurn` caller passes `AUTO_START_HOOKS`, and the tool callback reports a cleared blocker instead of sweeping it), so the graph is a DAG — pinned by the acyclicity case in `tests/importGraph.test.ts`. Only the built server shows this class of bug, so the behavioral regression test is an e2e (`e2e/04-turn-behaviors.spec.ts`).
-- **Tests are hermetic**: `tests/setup.ts` points `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR` at tmp dirs and pins git config *before the module graph loads* (config is read at import time). Use `tests/helpers.ts` for git fixtures. New env-read-at-import config the suite depends on must be set there too. Platform-dependent spellings (`NUL` vs `/dev/null`, a shell the pty sidecar can spawn, a tree kill, `onPosix` for a case that pins POSIX semantics) come from `tests/platform.ts` — don't re-derive them per file. Env that only a fork or one machine needs goes in `tests/setup.local.ts` — an optional second `setupFiles` entry, gitignored and absent from a clean checkout, layered on top by `vitest.config.ts`. That's the seam a downstream repo uses instead of forking `tests/setup.ts`.
-- **Delete is hard delete** throughout — no soft-delete/undo.
-- **Auth is layered on purpose**: Next middleware for HTTP, `server.js` for WebSocket upgrades, per-service visibility for public service hostnames. Both Cloudflare Access mode and no-login local mode have an origin boundary; keep `lib/auth/local-origin.mjs` shared rather than letting the HTTP and WebSocket policies drift. When adding a route or upgrade path, decide which gate covers it.
-- **Commits are detailed** (explain the why); **keep README.md current** with app state when behavior changes. Markdown tables use minimal separators (`|-|-|`).
-- **A push isn't done until its CI runs conclude.** Watch to terminal state, diagnose red before rerunning, file an issue for anything CI-broken — full policy in `.github/CLAUDE.md`.
+- **Env-driven, zero code edits per instance.** Every per-instance knob is an env var with a
+  documented default. Add new ones to `lib/config.ts` (or `lib/features.ts` for flags) **and**
+  `.env.example`. `server.js` and `pty-server.js` can't import TS, so they read the same env names
+  directly; keep the names in sync.
+- **Plain-Node entrypoints stay plain.** `server.js` is CommonJS, so anything it needs from `lib/`
+  must be `.mjs` and dynamic-imported, and every such `.mjs` file must be COPY'd into the runtime
+  image in the `Dockerfile`. Next's build output doesn't include them, and this has bitten before.
+- **`next.config.mjs` stays JS**, not TS: prod containers prune dev deps and a `.ts` config needs
+  the `typescript` package at runtime.
+- **HMR-surviving server state lives on `globalThis`** — `lib/events.ts`, `lib/abort.ts`,
+  `lib/asks.ts` and `lib/services.ts` all follow this pattern. Single Node process, no external
+  queue or broker.
+- **Long work is a detached background job, never a held HTTP request** (turns, context refresh,
+  services). Anything multi-minute must survive page reloads and tunnel drops. Only live turns
+  register in `lib/abort.ts`, so that is all a sleep daemon or the shutdown drain can see.
+- **Native modules** (`better-sqlite3`, `node-pty`) and the Agent SDK are in
+  `serverExternalPackages`; don't let Next bundle them. `postinstall` fixes node-pty's exec bit.
+- **Don't import `lib/agents/registry.ts` from a low-level module.** The agent SDKs are ESM
+  externals, which Turbopack compiles async, and async-ness propagates to every transitive
+  importer, so a route entry compiled sync then reads every export back as `undefined` (this
+  500'd `/api/services/grant` in prod). Modules that only need capability data or agent **ids**
+  import `lib/agents/capabilities.ts` (`getCapabilities` / `listAgentIds` / `isAgentId`) instead.
+  `tests/importGraph.test.ts` pins the SDK-free set; add new low-level modules to its `PINNED`
+  list.
+
+  **A module that launches turns but is reached from ordinary route entries must reach the runner
+  through `await import()`, not a static import** — `lib/autoStart.ts` and `lib/deferredStart.ts`,
+  pinned by the same test's `DYNAMIC_ONLY` list. Sync-compiled route entries are the whole hazard
+  (`PATCH /api/tasks/[id]` and the internal agent-tools routes call the auto-start sweep), and a
+  dynamic import resolves the namespace regardless of propagation. Same reason
+  `/api/instance/scheduler` loads `lib/scheduler.ts` that way.
+
+  **And nothing behind `registry.ts` may import a launcher back, dynamic edges included.** The
+  Claude driver's tool callbacks used to `await import("../../autoStart")`
+  (`autoStart → runner → registry → claude/driver → autoStart`). Turbopack counted the cycle even
+  though the edge was dynamic, stopped propagating async-ness into `autoStart`, and emitted sync
+  factories reading `startTurn` off a pending Promise, so EVERY auto-start died with "startTurn is
+  not a function" in prod while dev and vitest stayed green. The driver now takes what it needs as
+  an injected callback (`TurnHooks` in `lib/agents/types.ts`: every `startTurn` /
+  `startResumeTurn` caller passes `AUTO_START_HOOKS`, and the tool callback reports a cleared
+  blocker instead of sweeping it), so the graph is a DAG, pinned by the acyclicity case in
+  `tests/importGraph.test.ts`. Only the built server shows this class of bug, so the behavioral
+  regression test is an e2e (`e2e/04-turn-behaviors.spec.ts`).
+- **Tests are hermetic.** `tests/setup.ts` points `CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR`
+  at tmp dirs and pins git config *before the module graph loads*, since config is read at import
+  time. Use `tests/helpers.ts` for git fixtures. New env-read-at-import config the suite depends on
+  must be set there too. Platform-dependent spellings (`NUL` versus `/dev/null`, a shell the pty
+  sidecar can spawn, a tree kill, `onPosix` for a case that pins POSIX semantics) come from
+  `tests/platform.ts`; don't re-derive them per file. Env that only a fork or one machine needs
+  goes in `tests/setup.local.ts`, an optional second `setupFiles` entry, gitignored and absent from
+  a clean checkout, layered on top by `vitest.config.ts`. That's the seam a downstream repo uses
+  instead of forking `tests/setup.ts`.
+- **Delete is hard delete** throughout: no soft-delete, no undo.
+- **Auth is layered.** Next middleware for HTTP, `server.js` for WebSocket upgrades, per-service
+  visibility for public service hostnames. Both Cloudflare Access mode and no-login local mode
+  have an origin boundary; keep `lib/auth/local-origin.mjs` shared rather than letting the HTTP and
+  WebSocket policies drift. When adding a route or upgrade path, decide which gate covers it.
+- **Commits are detailed** and explain the why. **Keep `README.md` current** with app state when
+  behavior changes. Markdown tables use minimal separators (`|-|-|`).
+- **A push isn't done until its CI runs conclude.** Watch to terminal state, diagnose red before
+  rerunning, and file an issue for anything CI-broken. Full policy in `.github/CLAUDE.md`.
 
 ## More detail
 
-`README.md` (concise product overview and quick start) · `docs/` (features, agents,
-services, self-hosting, and architecture) · `.env.example` (every env var, documented).
+`README.md` (product overview and quick start) · `docs/` (features, agents, services,
+self-hosting, architecture) · `.env.example` (every env var, documented) ·
+`lib/agents/CLAUDE.md` (per-driver detail, loaded when you open that directory).
 
-**Before adding to this file, read `docs/CONTEXT_BUDGET.md`** — it is 19,250 measured tokens
-loaded into every session (37.8% of a real session's starting context), so new material
-belongs in the nearest directory-scoped `CLAUDE.md` unless it's needed before you'd open that
-directory. Don't restate `docs/` prose here; that duplication has already drifted.
+**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 18,524 measured
+tokens, loaded into every session in this repo before any code is read, so new material belongs in
+the nearest directory-scoped `CLAUDE.md` unless you need it before you'd open that directory. Don't restate `docs/` prose here; that duplication has already
+drifted.

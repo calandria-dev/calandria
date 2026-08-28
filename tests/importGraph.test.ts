@@ -35,11 +35,13 @@ const PINNED = [
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
+  "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
+  "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
@@ -59,6 +61,7 @@ const PINNED = [
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "lib/contextWindow.ts", //     the gauge's miss policy; pure, and the client bundles it
   "lib/turnInput.ts", //        the live turn's message channel; a Map on globalThis, nothing more
+  "lib/turnActivity.ts", //     when each live turn last spoke + the idle mark; store + bus + abort/asks, no driving, and BOTH /api/events and the project GET read it
   "lib/notifications/notify.ts", //   composes notifications; store + bus only, no driving
   "lib/notifications/dispatcher.ts", // the bus subscriber behind /api/events
   "lib/push/store.ts", //         push subscriptions; DB only

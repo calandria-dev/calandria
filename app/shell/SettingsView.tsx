@@ -84,7 +84,7 @@ function AccountSection() {
         </>
       ) : (
         <div className="hlp" style={{ marginTop: 0 }}>
-          This instance isn&apos;t behind a sign-in (local/open mode) — there&apos;s no session to end.
+          This instance isn&apos;t behind a sign-in (local/open mode). There&apos;s no session to end.
         </div>
       )}
     </div>
@@ -117,7 +117,7 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
         <div key={a.id} className="field" style={{ marginBottom: 0 }}>
           <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {Icon.spark()} {a.label}
-            {a.id === def && <span className="opt">— default</span>}
+            {a.id === def && <span className="opt">(default)</span>}
             {a.connected && (a.authBroken
               // Connected on record but its login died — a green check here would
               // contradict the card below it (and the titlebar banner).
@@ -164,14 +164,14 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
   if (!u.id)
     return (
       <div className="hlp" style={{ marginTop: 8 }}>
-        {Icon.bolt()} No agent is connected — recaps and context refresh are paused. Connect one in Settings → Agents.
+        {Icon.bolt()} No agent is connected. Recaps and context refresh are paused. Connect one in Settings → Agents.
       </div>
     );
   const label = agentLabel(agents, u.id);
   return (
     <div className="hlp" style={{ marginTop: 8 }}>
       Running on <strong>{label}</strong>
-      {u.fallback && <span className="opt"> (fallback — {agentLabel(agents, u.configured)} isn&apos;t connected)</span>}
+      {u.fallback && <span className="opt"> (fallback: {agentLabel(agents, u.configured)} isn&apos;t connected)</span>}
     </div>
   );
 }
@@ -238,9 +238,9 @@ function PermissionRules() {
     <div className="field">
       <div className="lab">{Icon.check()} Remembered approvals</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-        Commands allowed without a prompt — the ones you chose <strong>Always allow</strong> for on a permission
+        Commands allowed without a prompt: the ones you chose <strong>Always allow</strong> for on a permission
         card, plus any you add here. They apply to one project and skip the prompt entirely, so revoke anything you
-        no longer want run unattended. A remembered command names a script, not a behaviour — <code>npm test</code>
+        no longer want run unattended. A remembered command names a script, not a behaviour: <code>npm test</code>
         {" "}is whatever the project says it is today.
       </div>
       {projects.length > 0 && (
@@ -267,7 +267,7 @@ function PermissionRules() {
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
             <strong>And its arguments</strong> remembers only the leading command and subcommand, exactly as the
-            permission card would — <code>git push origin main</code> is stored as <code>git push …</code>, and a line
+            permission card would: <code>git push origin main</code> is stored as <code>git push …</code>, and a line
             the shell could reinterpret (pipes, <code>$(…)</code>, <code>&amp;&amp;</code>) or one led by a wrapper
             like <code>sudo</code> can&apos;t be generalized at all. <strong>Exactly</strong> matches that one literal
             line and nothing else.
@@ -352,19 +352,19 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
     }
   }
   const pushHelp = push === "insecure"
-    ? "Push needs a secure origin, like every notification does — reach the instance over https or as localhost."
+    ? "Push needs a secure origin, like every notification does. Reach the instance over https or as localhost."
     : push === "needs_install"
       ? "On iPhone and iPad, push only works for an app on the Home Screen: Share → Add to Home Screen, open Calandria from there, and enable it here."
       : push === "unsupported"
         ? "This browser can't receive push notifications."
         : thisDevice
           ? "This device is subscribed. It hears every notification even with Calandria closed."
-          : "Subscribe this device to hear about a task that stopped even when Calandria isn't open — the notification arrives through the OS, like any app's.";
+          : "Subscribe this device to hear about a task that stopped even when Calandria isn't open. The notification arrives through the OS, like any app's.";
 
   const on = appDefaults.notifications !== "off";
   const kinds: [string, string, string][] = [
-    ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands — either way the task has stopped until you pick it up."],
-    ["notify_turn_failed", "A turn failed", "The session died — a dead login, a spent quota, a full context window, or a crash."],
+    ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
+    ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
     ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
   ];
 
@@ -415,13 +415,13 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
             // it keeps working with this window hidden to the tray.
             ? "The desktop app handles these itself, so the page's own channel is switched off — that's what stops every event arriving twice. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
             : perm === "insecure"
-            ? "Browsers only allow notifications on a secure origin, and this page is plain http — no site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
+            ? "Browsers only allow notifications on a secure origin, and this page is plain http. No site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
             : perm === "unsupported"
               ? "This browser can't show notifications."
               : perm === "granted"
                 ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
                 : perm === "denied"
-                  ? "You've blocked notifications for this site. Calandria can't ask again — unblock it in your browser's site settings for this address."
+                  ? "You've blocked notifications for this site. Calandria can't ask again. Unblock it in your browser's site settings for this address."
                   : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -437,9 +437,9 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
             {Icon.send()} {testState === "sending" ? "Sending…" : "Send test notification"}
           </button>
         </div>
-        {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent — it went through the same path a real notification takes{devices && devices.length > 0 ? `, including the push to ${devices.length === 1 ? "the subscribed device" : `all ${devices.length} subscribed devices`}` : ""}.</div>}
+        {testState === "sent" && <div className="hlp" style={{ marginTop: 8 }}>Sent: it went through the same path a real notification takes{devices && devices.length > 0 ? `, including the push to ${devices.length === 1 ? "the subscribed device" : `all ${devices.length} subscribed devices`}` : ""}.</div>}
         {testState === "off" && <div className="hlp" style={{ marginTop: 8 }}>Nothing sent: notifications are switched off above.</div>}
-        {testState === "failed" && <div className="hlp" style={{ marginTop: 8 }}>Notifications are on, but the server couldn&apos;t publish it — check the server log.</div>}
+        {testState === "failed" && <div className="hlp" style={{ marginTop: 8 }}>Notifications are on, but the server couldn&apos;t publish it. Check the server log.</div>}
         {testState === "error" && <div className="hlp" style={{ marginTop: 8 }}>Couldn&apos;t reach the server to send it.</div>}
       </div>
 
@@ -458,7 +458,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
           <div className="perm-rules" style={{ marginTop: 10 }}>
             {devices.map((d) => (
               <div className="perm-rule" key={d.id}>
-                <code>{d.label || "Unnamed device"}{d.id === thisDevice ? " — this device" : ""}</code>
+                <code>{d.label || "Unnamed device"}{d.id === thisDevice ? " (this device)" : ""}</code>
                 <span className="opt" title={d.last_error || undefined}>
                   {d.last_status === 0
                     ? `added ${relTime(d.created_at)}`
@@ -735,7 +735,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 </div>
                 <div style={{ display: "flex", gap: 14, maxWidth: 420 }}>
                   <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Percent of window <span className="opt">— %</span></div>
+                    <div className="lab">Percent of window <span className="opt">(%)</span></div>
                     <input
                       type="number" min={1} max={100} value={settings.clearThresholdPct}
                       onChange={(e) => setSetting("clearThresholdPct", Number(e.target.value) || 0)}
@@ -743,7 +743,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     />
                   </div>
                   <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Absolute tokens <span className="opt">— count</span></div>
+                    <div className="lab">Absolute tokens <span className="opt">(count)</span></div>
                     <input
                       type="number" min={1000} step={1000} value={settings.clearThresholdTokens}
                       onChange={(e) => setSetting("clearThresholdTokens", Number(e.target.value) || 0)}
@@ -764,7 +764,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     <div style={{ flex: 1 }}>
                       <div className="lab">{Icon.bolt()} Let Calandria use your agent for background work</div>
                       <div className="hlp" style={{ marginTop: 4 }}>
-                        Turn this off to stop unattended agent work. Things you explicitly ask for—such as <code>/clear</code>, Refresh with AI, or manually refreshing a recap—still run.
+                        Turn this off to stop unattended agent work. Things you explicitly ask for (such as <code>/clear</code>, Refresh with AI, or manually refreshing a recap) still run.
                       </div>
                     </div>
                     <button
@@ -798,7 +798,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.spark()} Utility agent</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Put Calandria&apos;s utility work on a cheaper or second login—for example, run recaps on Codex while keeping Claude quota for your main tasks.
+                    Put Calandria&apos;s utility work on a cheaper or second login, for example running recaps on Codex while keeping Claude quota for your main tasks.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {agents.agents.map((a) => (
@@ -844,7 +844,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="field">
                     <div className="lab">Run defaults for</div>
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Each agent carries its own model, reasoning &amp; permission defaults — pick which to edit.
+                      Each agent carries its own model, reasoning &amp; permission defaults. Pick which to edit.
                     </div>
                     <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
@@ -889,7 +889,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                     How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode except <strong>{bypassLabel}</strong>
-                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve — including while you&rsquo;re
+                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve, including while you&rsquo;re
                     away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>

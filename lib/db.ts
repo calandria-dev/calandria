@@ -280,6 +280,30 @@ export function init(db: Database.Database) {
       acknowledged_at INTEGER NOT NULL DEFAULT 0
     );
 
+    -- What a task's agent-configuration files looked like the last time a turn
+    -- was allowed to run under them (issue #43). One row per (task, file), where
+    -- 'file' is worktree-relative and comes from the driver's own
+    -- watchedSettingsFiles — today '.claude/settings.json', which the Claude CLI
+    -- re-reads on every turn and whose 'hooks' run shell commands outside the
+    -- permission gate entirely. The runner hashes the file before each turn and
+    -- holds the turn on a card when the hash moved (lib/settingsDrift.ts).
+    --
+    -- Its own table rather than a column on tasks: 'content' is the acknowledged
+    -- copy, kept so the card can show a real diff rather than "something
+    -- changed", and listTasks selects t.* straight onto the wire — a settings
+    -- file per task card is not something the board should be shipping. hash is
+    -- over the FULL file even when content was too big to keep, so an oversize
+    -- file still compares correctly; content is '' in that case.
+    -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
+    CREATE TABLE IF NOT EXISTS task_settings_snapshots (
+      task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file       TEXT NOT NULL,
+      hash       TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, file)
+    );
+
     -- Remembered "always allow" answers to a tool-permission prompt (the
     -- canUseTool gate under acceptEdits / plan — see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not
@@ -1051,23 +1075,23 @@ function seedIfEmpty(db: Database.Database) {
 // scaffolded repo (so the session behaves), with one line of framing. The
 // heavier "how Calandria works" teaching lives in the UI coach marks, not here.
 const WELCOME_CONTEXT =
-  "Aurora is a tiny one-page website — a placeholder landing page. The repo has just three files: " +
+  "Aurora is a tiny one-page website, a placeholder landing page. The repo has just three files: " +
   "index.html (the page), styles.css (its styling), and README.md. It's intentionally minimal so " +
   "every change is small and easy to review.\n\n" +
   "This \"Welcome\" project is a guided tour of Calandria. Starting the task on the right runs a real " +
-  "Claude session end to end — it streams its tool calls, asks you a question, makes a small change, " +
+  "Claude session end to end. It streams its tool calls, asks you a question, makes a small change, " +
   "and hands you a diff to review and merge, all in your own workspace. When you're comfortable, " +
   "delete this project and add one for your real codebase.";
 
 const TUTORIAL_TASK_DESC =
-  "This is a 2-minute hands-on tour of Calandria — it walks the whole loop in one session.\n\n" +
+  "This is a 2-minute hands-on tour of Calandria. It walks the whole loop in one session.\n\n" +
   "Please do exactly this:\n" +
-  "1. First, ask me which tagline style I'd like using a question with a few options — for example " +
+  "1. First, ask me which tagline style I'd like using a question with a few options: for example, " +
   "Playful, Professional, and Minimal. Wait for my answer before editing.\n" +
   "2. Read index.html, then add a single short tagline line directly under the <h1> headline, in the " +
   "style I chose. Keep the change to that one file so the diff is tiny.\n" +
   "3. Tell me in one sentence what you changed, and that it's ready to review in the Changes tab and merge.\n\n" +
-  "Keep it small — one line of copy is perfect.";
+  "Keep it small. One line of copy is perfect.";
 
 // Write the Aurora demo site into PROJECTS_DIR/welcome. Returns the path, or ""
 // if anything goes wrong (best-effort; must never throw — runs during DB init).
@@ -1160,9 +1184,9 @@ body {
 
 A tiny one-page site used for the Calandria welcome tour. Three files, no build step:
 
-- \`index.html\` — the page
-- \`styles.css\` — the styling
-- \`README.md\` — this file
+- \`index.html\`: the page
+- \`styles.css\`: the styling
+- \`README.md\`: this file
 
 Small on purpose, so every change is easy to read and merge.
 `,

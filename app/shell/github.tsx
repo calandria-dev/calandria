@@ -27,11 +27,11 @@ export function GitHubClonePicker({ value, onChange }: { value: string; onChange
         <GitHubConnect onConnected={refresh} />
       ) : (
         <div className="hlp" style={{ marginBottom: 14 }}>
-          The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so only public repos can be cloned — paste a URL below. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH — set <code>CALANDRIA_GH_BIN</code> to its full path.
+          The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so only public repos can be cloned. Paste a URL below. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH. Set <code>CALANDRIA_GH_BIN</code> to its full path.
         </div>
       )}
       <div className="field">
-        <div className="lab">Repository {status.authenticated && <span className="opt">— or paste any URL</span>}</div>
+        <div className="lab">Repository {status.authenticated && <span className="opt">(or paste any URL)</span>}</div>
         <input type="text" className="ctx-mono" value={value} placeholder="owner/repo or https://github.com/owner/repo"
           onChange={(e) => onChange(e.target.value)} />
       </div>
@@ -93,7 +93,7 @@ export function GitHubConnect({ onConnected }: { onConnected: () => void }) {
     return (
       <div className="field">
         <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
-          Connect GitHub once to pick from your repos — including private ones. The sign-in is stored in this workspace and survives restarts.
+          Connect GitHub once to pick from your repos (including private ones). The sign-in is stored in this workspace and survives restarts.
         </div>
         <button className="btn btn-line" disabled={busy} onClick={start} style={{ alignSelf: "flex-start" }}>
           {Icon.github()} {busy ? "Starting…" : "Connect GitHub"}
@@ -132,7 +132,7 @@ export function GitHubConnect({ onConnected }: { onConnected: () => void }) {
     );
   }
   // success
-  return <div className="hlp" style={{ marginBottom: 14 }}>{Icon.check()} Connected as <strong>{login.user}</strong> — loading your repos…</div>;
+  return <div className="hlp" style={{ marginBottom: 14 }}>{Icon.check()} Connected as <strong>{login.user}</strong>. Loading your repos…</div>;
 }
 
 // Searchable list of the user's repos (most recently pushed first).
@@ -210,7 +210,7 @@ export function GitHubSettings() {
 
   if (!status) return <LoadNote style={{ padding: 0 }}>Checking GitHub connection…</LoadNote>;
   if (!status.installed) {
-    return <div className="hlp">The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so there&apos;s nothing to connect here. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH — set <code>CALANDRIA_GH_BIN</code> to the binary&apos;s full path and restart. Public repos can still be cloned by URL when creating a project.</div>;
+    return <div className="hlp">The GitHub CLI (<code>gh</code>) wasn&apos;t found by the server, so there&apos;s nothing to connect here. If gh <em>is</em> installed, the server process doesn&apos;t read your shell profile&apos;s PATH. Set <code>CALANDRIA_GH_BIN</code> to the binary&apos;s full path and restart. Public repos can still be cloned by URL when creating a project.</div>;
   }
   return (
     <div className="field">

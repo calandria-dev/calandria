@@ -152,7 +152,7 @@ export async function retargetTaskBase(
   //    and the merge would both be against itself. Checked before the existence
   //    step below so this never mints a local ref on its way to a refusal.
   if (want === task.work_branch)
-    return refuse(`${want} is this task's own work branch — a task can't be based on the branch its commits are on.`);
+    return refuse(`${want} is this task's own work branch. A task can't be based on the branch its commits are on.`);
 
   // 3. Liveness. Re-read rather than trusting the caller's snapshot: a detached
   //    turn's copy of the row outlives a lot, and a retarget that resets a
@@ -161,7 +161,7 @@ export async function retargetTaskBase(
   const fresh = getTask(task.id);
   if (!fresh) return refuse("that task no longer exists.");
   if ((fresh.running === 1 || hasTurn(fresh.id)) && fresh.id !== opts.callerTaskId)
-    return refuse(`${fresh.title} has a turn running — wait for the session to finish before changing its base branch.`);
+    return refuse(`${fresh.title} has a turn running. Wait for the session to finish before changing its base branch.`);
 
   // 4. Merge in flight. The paused resolution merge in the worktree is against
   //    the OLD base; retargeting under it would land a merge nobody asked for.
@@ -169,7 +169,7 @@ export async function retargetTaskBase(
     const paused = await worktreeMergeStatus(fresh.worktree_path).catch(() => ({ mergeInProgress: false, unresolved: [] }));
     if (paused.mergeInProgress)
       return refuse(
-        `a merge of ${current} is paused in this task's worktree — accept or discard it first, or the retarget would land a merge nobody asked for.`
+        `a merge of ${current} is paused in this task's worktree. Accept or discard it first, or the retarget would land a merge nobody asked for.`
       );
   }
 
@@ -180,7 +180,7 @@ export async function retargetTaskBase(
   if (found.found === "missing")
     return refuse(
       found.remoteLabel
-        ? `${want} isn't a branch here — not locally, and not on ${found.remoteLabel}. Push it or check the spelling.`
+        ? `${want} isn't a branch here: not locally, and not on ${found.remoteLabel}. Push it or check the spelling.`
         : `${want} isn't a branch in this repository, and it has no remote to look on.`
     );
 
@@ -192,7 +192,7 @@ export async function retargetTaskBase(
   const holder = await worktreeForBranch(repo, want);
   if (holder && !holder.isMain)
     return refuse(
-      `${want} is checked out in ${holder.path}. Merging moves that branch, which would leave the session working in there describing a commit it no longer points at — pick a branch nothing has open.`
+      `${want} is checked out in ${holder.path}. Merging moves that branch, which would leave the session working in there describing a commit it no longer points at. Pick a branch nothing has open.`
     );
 
   const created = found.found === "created" ? found.label : undefined;
@@ -224,7 +224,7 @@ export async function retargetTaskBase(
       publishGlobal(fresh.id, { type: "task_edited" });
       return {
         ok: true, baseBranch: want, createdFrom: created, recut: true, behind: 0,
-        message: `Now based on ${want} — the worktree had nothing of its own, so it was re-cut from that branch and is up to date.${createdNote(created)}`,
+        message: `Now based on ${want}: the worktree had nothing of its own, so it was re-cut from that branch and is up to date.${createdNote(created)}`,
       };
     }
     // The reset didn't take (a git hiccup, a locked index). Fall through to the
@@ -253,7 +253,7 @@ export async function retargetTaskBase(
     ok: true, baseBranch: want, createdFrom: created, recut: false, behind,
     message:
       behind > 0
-        ? `Now based on ${want} (${behind} commit${behind === 1 ? "" : "s"} behind — sync to catch up).${createdNote(created)}`
+        ? `Now based on ${want} (${behind} commit${behind === 1 ? "" : "s"} behind, sync to catch up).${createdNote(created)}`
         : `Now based on ${want}.${createdNote(created)}`,
   };
 }
