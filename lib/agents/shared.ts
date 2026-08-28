@@ -82,6 +82,12 @@ export function buildProjectContext(project: Project, task: Task): string {
     // Scheduled wakeups (ScheduleWakeup / CronCreate / /loop) follow the same
     // rule — they only fire while the session is held open — so the model
     // learns the wakeup policy here rather than from a wake that never comes.
+    // The self-matching `pgrep -f` loop is named only in the unbounded branch:
+    // it is a process that never exits, written in the exact shape the shell
+    // tool's own "sleep is blocked" error recommends, and it held a real
+    // session open for ~30 minutes after its tests had passed. With a deadline
+    // set the linger cap eventually cuts it, so the warning isn't worth its
+    // tokens twice.
     lines.push(
       `\n---\nBackground shell tasks keep running after your turn ends: the session stays open ` +
         `until they settle and their completion notifications re-invoke you. ` +
@@ -92,7 +98,11 @@ export function buildProjectContext(project: Project, task: Task): string {
             `only when they fall inside that window; a wakeup beyond it is cancelled and named in a notice.`
           : `There is no deadline — the session waits until the work finishes (or the user stops it), ` +
             `so never background a process that doesn't exit on its own (a dev server, a watcher); ` +
-            `use the managed services / expose_service path for those instead. Scheduled wakeups ` +
+            `use the managed services / expose_service path for those instead. A watcher loop whose ` +
+            `own command line contains the pattern it greps for (\`while pgrep -f "vitest"; do sleep 20; done\`) ` +
+            `matches ITSELF and never exits — prefer \`run_in_background\` on the real command, which ` +
+            `already re-invokes you when it exits, and if you must poll, use \`pgrep -f "[v]itest"\`. ` +
+            `Scheduled wakeups ` +
             `(ScheduleWakeup, CronCreate) are honored the same way: the session stays open until they fire, ` +
             `and a recurring one keeps it open until you delete it or the user stops the session.`)
     );
