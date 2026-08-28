@@ -40,8 +40,14 @@ import { jget, jsend } from "./api";
 // because `behind` drops to 0; landing writes a merge commit the branch doesn't
 // carry, so it stays behind by one) or discarded (back to tier 3, which is
 // honest — main still moved on).
-function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
+// Under a PR landing policy the last tier changes shape: accepting the
+// resolution commits the base→branch merge and STOPS. Landing it into the local
+// base is exactly the move that can't be pushed afterwards, and the PR is what
+// moves the base. The earlier tiers (Sync, Fix with AI) are the same work in
+// either mode — they only ever touch the task's own branch — so they don't move.
+function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
   taskId: string; running: boolean;
+  prMode: boolean; // the project lands through pull requests (projects.landing_mode === "pr")
   // Bumped by the parent when Changes mutates the merge state (accept, discard,
   // land) — the banner otherwise re-reads only when a turn ends.
   refresh: number;
@@ -135,14 +141,19 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // base — exactly what TaskChanges.doComplete does, so the banner's button and
   // the tab's button can't drift. On success `behind` reads 0 and the banner
   // goes away on its own reload; a failure stays on screen with the reason.
+  // Under a PR policy it stops at the commit (`resolveOnly`), so nothing landed
+  // and `onMerged` — which marks the task merged — must not fire.
   const doAccept = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, { method: "POST" });
-      const res: { ok?: boolean; error?: string } = await r.json().catch(() => ({ ok: false, error: `merge request failed (HTTP ${r.status})` }));
-      if (res.ok) onMerged?.();
-      else setErr(res.error || "could not complete the merge");
+      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+        method: "POST",
+        ...(prMode ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ resolveOnly: true }) } : {}),
+      });
+      const res: { ok?: boolean; error?: string; resolveOnly?: boolean } = await r.json().catch(() => ({ ok: false, error: `merge request failed (HTTP ${r.status})` }));
+      if (res.ok && !res.resolveOnly) onMerged?.();
+      else if (!res.ok) setErr(res.error || "could not complete the merge");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); load(); onChanged(); }
@@ -154,11 +165,13 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // side moved is the difference between "something is wrong with my task" and
   // "main moved on", so the message names it.
   const why = resolved
-    ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
+    ? prMode
+      ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (commits it to this task's branch, which is what makes the PR mergeable) or discard it (restores the worktree). ${st.baseBranch} takes pull requests only, so nothing lands on it from here.`
+      : `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
     : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task. It just needs the newer commits before its own work can land.`;
 
   const msg = resolved
-    ? `Conflicts with ${st.baseBranch} resolved: review the result, then Accept & merge or Discard`
+    ? `Conflicts with ${st.baseBranch} resolved: review the result, then ${prMode ? "Accept resolution" : "Accept & merge"} or Discard`
     : paused
       ? `${st.baseBranch} moved on: ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
       : conflicts > 0
@@ -173,7 +186,9 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
       {resolved ? (
         <>
           <button className="tc-btn" onClick={onReview} disabled={busy || running}>Review</button>
-          <button className="tc-btn primary" onClick={doAccept} disabled={busy || running}>{busy ? "Merging…" : "Accept & merge"}</button>
+          <button className="tc-btn primary" onClick={doAccept} disabled={busy || running}>
+            {busy ? (prMode ? "Committing…" : "Merging…") : prMode ? "Accept resolution" : "Accept & merge"}
+          </button>
         </>
       ) : conflicts > 0 ? (
         <button className="tc-btn primary" onClick={doFix} disabled={busy || running}>{busy ? "…" : "Fix with AI"}</button>
@@ -804,7 +819,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         </div>
 
         {hasSession && (
-          <SyncBanner taskId={task.id} running={running} refresh={syncTick} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
+          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
         )}
 
         {clearConfirming && (
@@ -845,7 +860,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             </div>
           )
         ) : view === "changes" ? (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             // Resolution turn was kicked off (conflicts, not a clean merge) —
             // jump back to Chat so the user sees the message stream in. With

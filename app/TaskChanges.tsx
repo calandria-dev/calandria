@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
-import type { TaskComment } from "@/lib/types";
+import type { LandingMode, TaskComment } from "@/lib/types";
 
 interface DiffFile {
   path: string;
@@ -50,6 +50,7 @@ interface MergeResp {
   dirty?: DirtyEntry[];
   dirtyTruncated?: boolean;
   stashed?: { restored: boolean; sha: string; label: string; error?: string };
+  resolveOnly?: boolean; // the resolution was committed to the work branch; the base branch didn't move
 }
 // Returned by the AI-resolution callback wired from the parent (it runs the
 // /prepare step + streams the resolution turn into the transcript).
@@ -537,10 +538,15 @@ export default function TaskChanges({
   onSyncChanged,
   refresh,
   onSend,
+  landingMode = "merge",
 }: {
   taskId: string;
   projectId: string;
   running?: boolean;
+  // The project's landing policy. Under "pr" the base branch only moves through a
+  // pull request, which makes Create PR the way this work lands and a local merge
+  // a dead end — so the two buttons swap emphasis and the merge says what it is.
+  landingMode?: LandingMode;
   // Fired after any merge-state mutation here (land, prepare, accept, discard),
   // successful or not: the session's sync banner reads the same worktree and
   // only re-reads on its own when a turn ends, so without this an Accept or
@@ -569,6 +575,9 @@ export default function TaskChanges({
   const [resolving, setResolving] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [dirtyHelp, setDirtyHelp] = useState(false);
+  // PR mode only: the demoted Merge button's disclosure. First click states what
+  // a local merge does there, second one ("Merge anyway") actually merges.
+  const [localMergeOpen, setLocalMergeOpen] = useState(false);
   const [binaryConflicts, setBinaryConflicts] = useState<string[]>([]);
   const [mergeRes, setMergeRes] = useState<MergeResp | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -586,6 +595,10 @@ export default function TaskChanges({
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const secRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // The base branch only takes pull requests: a merge here can't be pushed, so
+  // Create PR is the primary action and Merge has to say what it really does.
+  const prMode = landingMode === "pr";
 
   const setView = (v: "unified" | "split") => {
     setViewMode(v);
@@ -619,6 +632,7 @@ export default function TaskChanges({
     setPrErr(null);
     setToggled(new Set());
     setManualOpen(false);
+    setLocalMergeOpen(false);
     setBinaryConflicts([]);
     setSel(null);
     setDraft("");
@@ -736,6 +750,7 @@ export default function TaskChanges({
   const doMerge = async (stashDirty?: string[]) => {
     setMerging(true);
     setMergeRes(null);
+    setLocalMergeOpen(false);
     try {
       const r = await fetch(`/api/tasks/${taskId}/merge`, {
         method: "POST",
@@ -801,16 +816,22 @@ export default function TaskChanges({
   // Accept a resolution: commit + land the (now clean) branch into the base.
   // Takes the same dirty-checkout acknowledgement as doMerge — this path lands
   // through the same in-place merge and can be refused by the same dirt.
+  //
+  // Under a PR landing policy it stops at the commit instead (`resolveOnly`):
+  // the branch now contains the base, which is what makes the PR mergeable, and
+  // the base itself is left for the PR to move. Nothing merged, so no onMerged.
   const doComplete = async (stashDirty?: string[]) => {
     setMerging(true);
+    const resolveOnly = prMode;
+    const body = stashDirty || resolveOnly ? JSON.stringify({ ...(stashDirty ? { stashDirty } : {}), ...(resolveOnly ? { resolveOnly } : {}) }) : null;
     try {
       const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
         method: "POST",
-        ...(stashDirty ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ stashDirty }) } : {}),
+        ...(body ? { headers: { "content-type": "application/json" }, body } : {}),
       });
       const res = await mergeJson(r);
       setMergeRes(res);
-      if (res.ok) onMerged?.();
+      if (res.ok && !res.resolveOnly) onMerged?.();
     } catch (e) {
       setMergeRes({ ok: false, targetBranch: "", committed: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -910,8 +931,15 @@ export default function TaskChanges({
             <button className="tc-btn" onClick={doAbort} disabled={merging || resolving}>
               Discard
             </button>
-            <button className="tc-btn primary" onClick={() => doComplete()} disabled={merging || resolving}>
-              {merging ? "Merging…" : "Accept & merge"}
+            <button
+              className="tc-btn primary"
+              onClick={() => doComplete()}
+              disabled={merging || resolving}
+              title={prMode
+                ? `Commit the resolved merge to ${data.branch}. ${data.baseLabel} takes pull requests only, so nothing lands on it here — the PR does that.`
+                : undefined}
+            >
+              {merging ? (prMode ? "Committing…" : "Merging…") : prMode ? "Accept resolution" : "Accept & merge"}
             </button>
           </>
         ) : resolving ? (
@@ -926,7 +954,7 @@ export default function TaskChanges({
             )}
             {(data.ahead > 0 || data.isDirty) && (
               <button
-                className="tc-btn"
+                className={`tc-btn${prMode ? " primary" : ""}`}
                 onClick={doCreatePr}
                 disabled={prBusy || merging}
                 title={prUrl ? "Push the branch's new commits to the open PR" : "Push the branch to origin and open a GitHub PR"}
@@ -934,9 +962,22 @@ export default function TaskChanges({
                 {prBusy ? (prUrl ? "Pushing…" : "Creating PR…") : prUrl ? "Update PR" : "Create PR"}
               </button>
             )}
+            {/* PR mode demotes this: the merge still works, but only ever on the
+                LOCAL base branch, which then can't be pushed. So it loses the
+                primary styling and the first click opens the note below rather
+                than merging. It is not removed — the conflict path (Resolve
+                manually / Fix with AI) hangs off a refused merge, and that is
+                still how a PR-mode branch gets un-conflicted. */}
             {pending && (
-              <button className="tc-btn primary" onClick={() => doMerge()} disabled={merging || prBusy}>
-                {merging ? "Merging…" : merged ? "Merge new changes" : `Merge to ${data.baseLabel}`}
+              <button
+                className={`tc-btn${prMode ? "" : " primary"}`}
+                onClick={() => (prMode ? setLocalMergeOpen((v) => !v) : doMerge())}
+                disabled={merging || prBusy}
+                title={prMode
+                  ? `${data.baseLabel} takes pull requests only. Merging here moves your local ${data.baseLabel} and cannot be pushed afterwards.`
+                  : undefined}
+              >
+                {merging ? "Merging…" : prMode ? "Merge locally…" : merged ? "Merge new changes" : `Merge to ${data.baseLabel}`}
               </button>
             )}
             {!pending && !merged && !nothing && <span className="tc-merged faint">Up to date</span>}
@@ -944,9 +985,30 @@ export default function TaskChanges({
         )}
       </div>
 
+      {localMergeOpen && !merging && (
+        <div className="tc-mergebar review">
+          <b>{data.baseLabel}</b> takes pull requests only, so this merge is <b>local only</b>: it moves the copy of{" "}
+          <code>{data.baseLabel}</code> in your checkout and <b>cannot be pushed</b> afterwards — the remote will reject it, leaving
+          your local branch diverged from origin. To land this work, use <b>Create PR</b>.
+          <div className="tc-conflict-actions">
+            <button className="tc-btn" onClick={() => setLocalMergeOpen(false)}>Cancel</button>
+            <button className="tc-btn" onClick={() => doMerge()} disabled={merging || prBusy}>
+              Merge anyway
+            </button>
+          </div>
+        </div>
+      )}
+
       {reviewing && (
         <div className="tc-mergebar review">
-          Conflicts resolved. Review the merged result below, then <b>Accept &amp; merge</b> or <b>Discard</b>.
+          {prMode ? (
+            <>
+              Conflicts resolved. Review the merged result below, then <b>Accept resolution</b> to commit it to{" "}
+              <code>{data.branch}</code> (which is what makes the PR mergeable) or <b>Discard</b>.
+            </>
+          ) : (
+            <>Conflicts resolved. Review the merged result below, then <b>Accept &amp; merge</b> or <b>Discard</b>.</>
+          )}
           {data.unresolved && data.unresolved.length > 0 && (
             <div className="tc-conflicts">
               {`⚠ ${data.unresolved.length} file(s) still unresolved:\n${data.unresolved.join("\n")}`}
@@ -970,11 +1032,26 @@ export default function TaskChanges({
       {mergeRes && (
         <div className={`tc-mergebar ${mergeRes.ok ? "ok" : "bad"}`}>
           {mergeRes.ok
-            ? mergeRes.alreadyMerged
-              ? `Already up to date with ${mergeRes.targetBranch}.`
-              : `Merged into ${mergeRes.targetBranch}.`
+            ? mergeRes.resolveOnly
+              ? `Resolution committed to ${mergeRes.targetBranch}. Nothing landed on the base branch — open or update the PR to land it.`
+              : mergeRes.alreadyMerged
+                ? `Already up to date with ${mergeRes.targetBranch}.`
+                : `Merged into ${mergeRes.targetBranch}.`
             : `⚠ ${mergeRes.error || "merge failed"}`}
-          {mergeRes.ok && !mergeRes.alreadyMerged && <PushBaseBranch projectId={projectId} />}
+          {/* Offering a push under a PR policy is the original lie: it would be
+              rejected, leaving a local base branch diverged from origin with no
+              way forward. Say what happened instead. */}
+          {mergeRes.ok && !mergeRes.alreadyMerged && !mergeRes.resolveOnly && (
+            prMode ? (
+              <div className="tc-manual">
+                This merge is <b>local only</b> and cannot be pushed: <code>{data.baseLabel}</code> takes pull requests. Use{" "}
+                <b>Create PR</b> to land the work on the remote, then reset your local <code>{data.baseLabel}</code> to origin once
+                the PR merges.
+              </div>
+            ) : (
+              <PushBaseBranch projectId={projectId} />
+            )
+          )}
           {/* The merge had to run in the project's own checkout and found it
               dirty. Show exactly what is in the way — usually a tool dropping,
               not the user's work — and offer to set it aside for the merge. */}

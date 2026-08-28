@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, baseRemote, fetchBase, mergeTask } from "../lib/git";
+import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask } from "../lib/git";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
+import { onPosix } from "./platform";
 
 describe("ensureWorktree — remote-aware base", () => {
   it("branches from the fetched remote tip when the local base branch is behind", async () => {
@@ -225,5 +226,46 @@ describe("pushBaseBranch", () => {
   it("says there is nowhere to push for a repo with no remote", async () => {
     const res = await pushBaseBranch(await makeRepo(), "main");
     expect(res.ok).toBe(false);
+  });
+
+  it("refuses before touching the network when the base branch only takes pull requests", async () => {
+    const { repo, origin } = await makeRepoWithOrigin();
+    const originTip = await git(origin, "rev-parse", "main");
+    await commitFile(repo, "local.txt", "mine\n", "local only");
+
+    const res = await pushBaseBranch(repo, "main", { prRequired: true });
+
+    expect(res).toMatchObject({ ok: false, prRequired: true, error: prRequiredMessage("main") });
+    // The point of the preflight: the remote was never asked.
+    expect(await git(origin, "rev-parse", "main")).toBe(originTip);
+  });
+
+  // The project's landing policy can be wrong or simply not set yet, so the
+  // remote still gets the last word — and GH006 is not a sentence to show anyone.
+  onPosix("turns a protected-branch rejection into the same sentence, keeping the forge's words as detail", async () => {
+    const { repo, origin } = await makeRepoWithOrigin();
+    // tests/setup.ts points core.hooksPath at the null device for the whole
+    // suite; re-enable hooks for THIS bare repo only, since standing in for the
+    // forge's refusal is the entire fixture.
+    await git(origin, "config", "core.hooksPath", path.join(origin, "hooks"));
+    const hook = path.join(origin, "hooks", "pre-receive");
+    fs.writeFileSync(
+      hook,
+      [
+        "#!/bin/sh",
+        'echo "error: GH006: Protected branch update failed for refs/heads/main." 1>&2',
+        'echo "error: Changes must be made through a pull request." 1>&2',
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(hook, 0o755);
+    await commitFile(repo, "local.txt", "mine\n", "local only");
+
+    const res = await pushBaseBranch(repo, "main");
+
+    expect(res).toMatchObject({ ok: false, prRequired: true, error: prRequiredMessage("main") });
+    expect(res.error).not.toMatch(/GH006/);
+    expect(res.detail).toContain("GH006");
   });
 });
