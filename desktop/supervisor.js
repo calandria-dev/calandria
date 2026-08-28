@@ -305,6 +305,14 @@ class Supervisor {
   }
 
   async start() {
+    // Which tree the sidecars are about to run out of. Packaged that is
+    // resources/app-payload, unpackaged the checkout, and CALANDRIA_REPO_ROOT
+    // overrides both — one line that distinguishes a self-contained install
+    // from one still leaning on somebody's working copy, which is exactly the
+    // thing a packaged test run has to be able to see (desktop/e2e/06-packaged
+    // .spec.ts). It goes to the boot screen too, so a launch that dies below
+    // says where it looked rather than only what it did not find.
+    this.log(`[shell] payload: ${this.repoRoot}`);
     if (!fs.existsSync(this.serverScript)) {
       throw new Error(`server entrypoint not found: ${this.serverScript}`);
     }

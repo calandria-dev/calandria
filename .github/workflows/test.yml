@@ -27,8 +27,12 @@
 #           (`test:desktop:supervisor`, `test:desktop:boot`) run nowhere at all,
 #           and the window layer — menu, single-instance lock, permission
 #           handler, external links, quit-drains — has no automated coverage on
-#           any OS. Same schedule as `e2e`, and costs a couple of minutes on top
-#           of a build.
+#           any OS. It then packages the shell (`electron-builder --dir`), moves
+#           the artifact out of the checkout and runs the window suite a second
+#           time against it with no CALANDRIA_REPO_ROOT — the developer path and
+#           the download path are different code, and only the second one is
+#           what ships. Same schedule as `e2e`; the packaged half roughly
+#           doubles the job, hence its 45-minute ceiling.
 #   windows — `npm run typecheck` + `npm test` on windows-latest. Calandria
 #           supports native Windows (docs/WINDOWS.md), and nothing else here
 #           would notice it breaking: every other job runs on Ubuntu, so a
@@ -332,7 +336,11 @@ jobs:
                   || github.event_name == 'workflow_dispatch'
                   || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 45, not `e2e`'s 30: this job runs the window suite TWICE — once against
+    # the dev shell, once against the packaged artifact — and pays for
+    # electron-builder plus a payload stage (a production-only `npm ci` and a
+    # vendored Node download) in between.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -382,12 +390,53 @@ jobs:
       # (desktop/test-real-boot.js) boots the real server.js/pty-server.js
       # through the supervisor. test:desktop:window is the Playwright
       # `_electron` suite in desktop/e2e/, under playwright.desktop.config.ts.
-      # --no-sandbox is passed because an unpacked Electron has no SUID
-      # chrome-sandbox helper — that is CI-only, and the lane that tests a
-      # packaged install must set CALANDRIA_DESKTOP_SANDBOX=1 so this flag is
-      # not what makes it pass there.
+      # The sandbox is disabled here because an unpacked Electron has neither a
+      # SUID chrome-sandbox helper nor an AppArmor profile permitting its user
+      # namespace — that is CI-only, and the lane that tests a packaged install
+      # sets CALANDRIA_DESKTOP_SANDBOX=1 so this is not what makes it pass
+      # there.
       - name: Run the desktop suite
         run: xvfb-run -a npm run test:desktop
+
+      # --- and now the same window suite against what a user downloads -----
+      #
+      # Everything above tests the shell running out of this checkout. That is
+      # the developer's path, not anybody's install: the payload staging, the
+      # asar, the vendored Node and the extraResources layout are all untested
+      # by it, and the research spike (docs/DESKTOP_E2E.md §2) measured a
+      # packaged app passing every assertion while still reading the repo.
+      #
+      # `--dir` only — no .deb/AppImage here. The unpacked tree is what the
+      # suite can launch, and building installers on top would add minutes
+      # (fpm on this payload takes several) to prove packaging steps this lane
+      # still could not exercise: what makes the sandbox work is the .deb's
+      # postinst, which installs an AppArmor profile — or, on a kernel without
+      # user namespaces, the SUID bit — and only an INSTALL runs it. That run
+      # is the bench lane's (docs/DESKTOP_E2E.md §4).
+      - name: Package the desktop app
+        working-directory: desktop
+        run: |
+          npm run payload -- --no-build
+          npx electron-builder --linux dir
+
+      # An installed app is never inside a source tree. Leaving the artifact at
+      # desktop/dist/ would let anything that resolves upward — a module, a
+      # lockfile, a relative path — find this repo and pass on a machine that
+      # has one, which is precisely the false green being guarded against.
+      # desktop/e2e/fixtures.ts refuses to launch a binary under the checkout,
+      # so this move is a requirement rather than tidiness.
+      - name: Move the artifact out of the checkout
+        run: mv desktop/dist/linux-unpacked "$RUNNER_TEMP/calandria-app"
+
+      # No CALANDRIA_DESKTOP_SANDBOX here, deliberately: nothing installed a
+      # sandbox mechanism for `--dir` output, so the suite still disables it and
+      # 06-packaged.spec.ts asserts that this pass is the disabled-sandbox one —
+      # every process in the same user namespace. The un-flagged run belongs to
+      # a real `.deb` install on the bench.
+      - name: Run the desktop suite against the package
+        env:
+          CALANDRIA_TEST_BIN: ${{ runner.temp }}/calandria-app/calandria-desktop
+        run: xvfb-run -a npm run test:desktop:window
 
       - name: Upload desktop artifacts
         if: failure()
