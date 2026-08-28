@@ -221,8 +221,8 @@ a real WindowServer, so nothing there needs a virtual display (§5).
 Windows had its own first run, on real hardware, and it found two more things
 (§5): a `SHELL` the shell used to invent for the pty sidecar, which had turned
 from a mitigation into a downgrade pinning every terminal tab to PowerShell 5.1,
-and a `waitForReady` that sits out its full 90 s timeout on a sidecar that
-already exited. What no first run on any platform covers is a real shutdown or
+and a `waitForReady` that sat out its full 90 s timeout on a sidecar that had
+already exited (both fixed). What no first run on any platform covers is a real shutdown or
 logout, where Electron emits neither `before-quit` nor `will-quit` — so the
 drain this section is largely about does not run at all (§5).
 
@@ -291,14 +291,22 @@ Two things the shell had wrong, one fixed here and one left as a finding.
   terminal tab would have been pinned to Windows PowerShell 5.1. Measured: with the
   injection gone, the pty sidecar spawns pwsh 7.6.5. The injection is removed; an inherited
   `SHELL` is still passed through untouched.
-- `waitForReady` does not short-circuit on a sidecar that has already exited. Two
-  supervisors against one `CALANDRIA_DB_DIR` reproduce it: the second one's `app` child
-  exits 1 immediately with the db-lock message, `onExit` fires correctly with
-  `dbLockHeld: true`, and then `start()` sits out the full 90s readiness timeout before
-  rejecting with a misleading `fetch failed`. `main.js` hides this — it shows the "another
+- `waitForReady` did not short-circuit on a sidecar that had already exited — **fixed**.
+  Two supervisors against one `CALANDRIA_DB_DIR` reproduced it: the second one's `app`
+  child exits 1 immediately with the db-lock message, `onExit` fires correctly with
+  `dbLockHeld: true`, and then `start()` sat out the full 90s readiness timeout before
+  rejecting with a misleading `fetch failed`. `main.js` hid this — it shows the "another
   Calandria is already running" box from `onExit` and calls `app.exit(1)` at once — so it
-  is latent rather than user-visible, but any non-Electron caller of `Supervisor` waits 90
-  seconds for a failure that was known in the first second.
+  was latent rather than user-visible, but any non-Electron caller of `Supervisor`
+  (`test-real-boot.js`, the e2e fixtures, a future service wrapper) waited 90 seconds for
+  a failure that was known in the first second. `start()` now races the readiness wait
+  against a promise that resolves on the first sidecar exit, aborts the losing poll, and
+  rejects with the child's own last log line (`the app sidecar exited with code 1:
+  [server] another Calandria process already holds this database …`, `code:
+  "ESIDECAREXIT"`). The timeout stays the backstop for the other failure — a sidecar that
+  is alive and simply never answers, where a still-running process is no evidence at all.
+  Both cases are pinned in `test-supervisor.js`; the dying-sidecar one asserts it fails in
+  under 5s against a 30s timeout, so a merely-faster `start()` cannot pass it.
 
 **Windows + WSL2** — `docs/WINDOWS.md` supports the server either way and this does not
 change that; what it settles is that the *shell* wraps the native server only. Running the

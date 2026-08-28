@@ -43,7 +43,7 @@ Env it understands:
 |-|-|
 | `CALANDRIA_NODE` | Node binary the sidecars run under. Set this if `node` isn't on the GUI PATH. |
 | `CALANDRIA_REPO_ROOT` | Repo to launch. Defaults to the parent of `desktop/` when run unpackaged, or to the bundled `app-payload` when packaged (see "Building a package" below) — this var wins over both, which is how a packaged binary gets pointed at a working checkout instead. |
-| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). |
+| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). Only ever paid by a sidecar that is *alive* and silent — one that exits during boot fails `start()` immediately instead. |
 | `PORT` / `PTY_PORT` | Preferred ports for the two sidecars. Taken ones are stepped past, not fought over — a preference, not a demand, so a second Calandria on a dev box still launches. |
 | `CALANDRIA_DB_DIR` | Which database to open. The shell doesn't read it: it reaches the sidecars by ordinary env inheritance, like the rest of the app's config below. (Same for its legacy `ORCH_DB_DIR` alias.) |
 
@@ -54,7 +54,7 @@ inherited unchanged.
 
 | File | What it is |
 |-|-|
-| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
+| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling (raced against the sidecars' own exits, so a boot that has already failed rejects in the first second with the child's reason rather than at the timeout with `fetch failed`), drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first — including the window's own close button, which is held open (with a title and an on-page overlay) until the drain finishes. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 24 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
