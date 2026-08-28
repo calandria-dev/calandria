@@ -7,6 +7,9 @@ node_modules
 .env*
 *.md
 docs
+# the calandria.dev site — built and deployed by .github/workflows/website.yml,
+# never served by the app
+website
 # the desktop shell wraps a running server from the outside; it is never in one
 desktop
 Dockerfile

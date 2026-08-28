@@ -46,12 +46,13 @@ resolved against the live Cloudflare API.
 | Fact | Value |
 |-|-|
 | Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
-| Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). This is the `CLOUDFLARE_ACCOUNT_ID` repo secret in Phase 1 step 7. |
+| Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). Set as the `CLOUDFLARE_ACCOUNT_ID` repo **variable** (see GitHub row). |
 | `calandria.dev` zone | **`active`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, activated 2026-08-28T01:54:45Z on `clyde.ns.cloudflare.com` / `mona.ns.cloudflare.com`. Phase 1 console steps 1–3 are **done**; start at step 4. |
-| DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
-| Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
-| MCP servers authorized | `cloudflare-docs` (public, no OAuth) and `cloudflare-api` (OAuth, 2026-08-27). `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` are still unauthorized; none of them is needed for a static Pages deploy, so Phase 1 is not blocked on them. |
-| GitHub secrets | `CLOUDFLARE_API_TOKEN` is set on `calandria-dev/calandria` (2026-08-28T02:04Z); its scopes are unverifiable from outside, so a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. **`CLOUDFLARE_ACCOUNT_ID` is not set yet** — it is not a secret, so a repo variable is fine, but the workflow must reference whichever one is used. |
+| DNS records | **The zone started empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" had nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. Phase 1 wrote the two records: proxied `CNAME calandria.dev -> calandria-dev.pages.dev` (`128841acfe5f3487a2bf80948cddc942`) and the same for `www` (`6b35df01fcb54ba10e016af05042caaa`), CNAME-flattened at the apex. **The plan's "Cloudflare writes the flattened CNAMEs itself" is true of the DASHBOARD, not the API** — `POST /pages/projects/{p}/domains` registers the hostname with the project and nothing else, so an API-driven setup leaves the zone empty and the domain stuck `pending` forever. Same asymmetry Cloudflare documents for AI Gateway custom domains. |
+| Pages project | **`calandria-dev`**, created 2026-08-28T02:48Z — id `ad29e998-0664-4098-b03c-86d108922b24`, Direct Upload (no Git source), production branch `main`, `calandria-dev.pages.dev`. Custom domains `calandria.dev` and `www.calandria.dev` attached; Cloudflare issues their certificates itself (HTTP validation). |
+| MCP servers authorized | **All five** as of 2026-08-28: `cloudflare-docs` (public) plus OAuth grants for `cloudflare-api`, `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` — each verified with a live call from a task session. Only `cloudflare-api` (+ docs) is needed for a static Pages deploy. |
+| GitHub credentials | Secret `CLOUDFLARE_API_TOKEN` (2026-08-28T02:04Z) and repo **variable** `CLOUDFLARE_ACCOUNT_ID` (2026-08-28T02:28Z) are both set on `calandria-dev/calandria`; the workflow references `${{ secrets.CLOUDFLARE_API_TOKEN }}` and `${{ vars.CLOUDFLARE_ACCOUNT_ID }}`. The account id is targeting, not auth — wrangler can infer it from a token that sees one account, but a Pages-scoped token often can't list memberships, and in CI that fails as "mandatory to specify an account ID", so it is set explicitly. Token scopes are unverifiable from outside: a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. |
+| SSL/TLS mode | **Full (strict)** — set in phase 1 (it was `full`). |
 | Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses the repo credentials above as planned. |
 
 Authorizing an OAuth MCP server from an agent session on this headless host: run
@@ -103,9 +104,9 @@ active; start at step 4.** They are kept for the record.
 5. Cloudflare → Rules → Redirect Rules: `www.calandria.dev/*` → `https://calandria.dev/$1`, 301.
 6. Cloudflare → SSL/TLS: Full (strict) and HSTS on (`.dev` is preloaded anyway,
    the header just makes the intent explicit).
-7. GitHub repo secrets: `CLOUDFLARE_API_TOKEN` (Account → Cloudflare Pages →
-   Edit) and `CLOUDFLARE_ACCOUNT_ID`.
-8. GitHub → repo → About → Website: `https://calandria.dev`.
+7. **Done 2026-08-28.** GitHub secret `CLOUDFLARE_API_TOKEN` (Account →
+   Cloudflare Pages → Edit) and repo variable `CLOUDFLARE_ACCOUNT_ID`.
+8. **Done 2026-08-28.** GitHub → repo → About → Website: `https://calandria.dev`.
 
 Repo side (task): `website/` Astro project whose only page is the brand lockup,
 one-line pitch, and links to GitHub and the README, plus
@@ -113,6 +114,79 @@ one-line pitch, and links to GitHub and the README, plus
 change; preview deploy on PRs). Registrar transfer to Cloudflare is a later,
 optional step: check the registration date first (60-day ICANN lock), and wait
 45 days after any DreamHost renewal or the transfer year is forfeited.
+
+### Phase 1 outcome (2026-08-28)
+
+**Repo side: done.** `website/` (Astro 7, one page, one dependency),
+`.github/workflows/website.yml`, and the hygiene items below. `website/README.md`
+is the working doc for phases 2 and 3.
+
+**Cloudflare side: steps 4–6 done**, through the `cloudflare-api` MCP server.
+Worth recording how, because it will come up again: reads went through freely,
+but every WRITE was refused by the Claude Code auto-mode classifier — creating a
+Pages project, attaching a domain and editing a ruleset are all outward-facing
+changes to a live account. Re-trying changed nothing. What unblocked it was the
+user authorizing the steps explicitly in the session; that is the affordance,
+not a retry.
+
+| Step | Done |
+|-|-|
+| 4a. Pages project | `calandria-dev`, id `ad29e998-0664-4098-b03c-86d108922b24`, Direct Upload (no `source`), production branch `main`, `calandria-dev.pages.dev` |
+| 4b. Custom domains | `calandria.dev` and `www.calandria.dev` attached, **plus the two proxied CNAMEs to `calandria-dev.pages.dev` written by hand** — the API does not create them the way the dashboard does (see the DNS row above). `calandria.dev` reached `active` with an `active` certificate ~4 minutes after the CNAME landed (`CN=calandria.dev`, Google Trust Services WE1, 2026-08-28 → 2026-11-26, chain verifies); `www` was still `pending` at the end of the session and should follow on its own |
+| 5. Redirect rule | Zone ruleset `970351bd62ac41659eb3d40dd57b0be4`, phase `http_request_dynamic_redirect`: `http.host eq "www.calandria.dev"` → 301 to `concat("https://calandria.dev", http.request.uri.path)`, query string preserved. A dynamic expression rather than a static `/$1` target, so path AND query survive |
+| 6. SSL/TLS | `full` → **`strict`** |
+
+**The domains were attached BEFORE the first deployment**, which inverts the
+order this plan states. Deliberate, and the reason the ordering rule exists does
+not apply: the rule guards against a `.dev` hostname resolving to something
+without a trusted certificate, and Pages issues the certificate on attach, not
+on deploy. The first deploy can only come from CI on `main` (Direct Upload needs
+the upload-token JWT, which the MCP transport cannot send — no custom headers),
+so waiting would have meant the certificate had not even started provisioning
+when the site went live. What attaching early actually costs is a window where
+`calandria.dev` serves Cloudflare's "nothing here yet" placeholder over valid
+TLS — strictly better than the NXDOMAIN the repo's About link already pointed at.
+
+Verified at the end of phase 1, before any deployment existed: `calandria.dev`
+resolves to Cloudflare's proxy, presents a valid certificate, and answers **522**
+— "no origin", which is exactly what an empty Pages project should say. So the
+`.dev` certificate hazard this whole phase is ordered around is closed, and the
+only thing between here and a live site is the first `pages deploy` from CI on
+`main`. (Two ways to be misled while checking this: a resolver that negative-cached
+the apex before the record existed keeps returning NXDOMAIN — query `@1.1.1.1`
+directly — and `curl` reporting `000` is that cache, not a TLS failure.)
+
+The **Pages vs Workers static assets** decision recorded above is now **closed by
+default**: the project exists, so a switch is a migration
+(`wrangler.jsonc` with `assets.directory`, `pages deploy` → `wrangler deploy`,
+and the custom domains moved) rather than a config choice.
+
+What phase 1 learned, beyond the plan:
+
+- **Node floor.** Astro 7 needs Node ≥22.12 and its dependency tree (undici 8)
+  needs ≥22.19, so `website/package.json` declares `>=22.19` — above `.nvmrc`'s
+  `22`, which is fine in CI (`setup-node` resolves the latest 22.x) but means a
+  host on an older 22.x cannot `npm ci` the site. The repo's `.npmrc` sets
+  `engine-strict` and **applies to `website/` too**, so that is a hard failure
+  with a clear message rather than a warning.
+- **Fonts are vendored, not depended on.** `@fontsource/*` would have been two
+  npm dependencies and a Vite-emitted asset graph to get two woff2 files; the
+  latin subsets are copied into `website/public/fonts/` instead, with
+  provenance and the OFL notice in `public/fonts/OFL.txt`. Site dependency
+  count: one (Astro).
+- **`public/` cannot reach outside the project root**, so `favicon.svg` and
+  `og.png` are copies of the handoff originals, not links. Re-copy on change.
+- **`wrangler-action` is pinned to v4.0.0, not the v3 the plan named.** v4's
+  only change is defaulting the installed Wrangler to v4; staying on v3 would
+  have meant pinning `wranglerVersion` by hand — a second version to rot.
+- **`tsconfig.json` had to exclude `website`.** Its `include` is `**/*.ts`, and
+  its `exclude` is relative to the repo root, so `website/node_modules` would
+  otherwise have been dragged into `npm run typecheck`.
+- **`.dev` HSTS, restated as an ordering rule**: attach the custom domains
+  (step 4) and let Cloudflare issue the cert BEFORE anyone links to the site.
+  Pages serves a valid certificate from the moment the domain is attached, even
+  with no deployment behind it, so the order in this plan is safe — what is not
+  safe is any DNS record pointing anywhere else.
 
 ## Phase 2 — docs site
 
@@ -153,15 +227,25 @@ OG image already exists (`docs/design/og.png`).
 
 ## Repo hygiene the site adds
 
+All of these landed in phase 1.
+
 - `release-please-config.json`: `"exclude-paths": ["website"]` on the root package
   so site-only commits don't land in the release PR. Known quirks
   (release-please #2301) — verify against the next real release PR rather than
   trusting the config.
-- `test.yml` and friends: `paths-ignore: [website/**]` so a site-only PR doesn't
-  spend the full e2e matrix; `website.yml` runs the site build instead.
-- Dependabot/Renovate: group the `website/` ecosystem so its `package.json`
-  doesn't double the PR queue.
-- `Dockerfile` / `.dockerignore`: exclude `website/` from the image context.
+- `test.yml` and `publish-image.yml`: `paths-ignore: [website/**]` on their
+  `push`/`pull_request` triggers, so a site-only PR spends neither the Windows
+  lanes nor a multi-arch container build; `website.yml` runs the site build
+  instead. Note the filter skips only when EVERY changed file is under
+  `website/`, so a mixed PR still runs the full gate. `test-shuffle.yml` and
+  `security-scan.yml` need nothing — both are `schedule`-only, and a path filter
+  has no meaning on a cron trigger.
+- Dependabot: `/website` is added as the file's one npm ecosystem, grouped into
+  a single weekly PR. This is a deliberate exception to that file's blanket npm
+  exclusion, because nothing else watches the site — both `npm audit` runs are
+  against the root lockfile, and `test.yml` now ignores `website/**` outright.
+- `.dockerignore`: `website` excluded from the image context.
+- `tsconfig.json`: `website` added to `exclude` (see the phase-1 outcome above).
 
 ## Sources
 

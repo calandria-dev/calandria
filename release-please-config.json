@@ -5,6 +5,10 @@
   "bump-patch-for-minor-pre-major": false,
   "include-component-in-tag": false,
   "packages": {
-    ".": {}
+    ".": {
+      "exclude-paths": [
+        "website"
+      ]
+    }
   }
 }

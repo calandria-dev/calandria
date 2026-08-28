@@ -81,3 +81,4 @@ orchestrator.db-wal
 !app/opengraph-image.png
 !docs/design/og.png
 !public/icons/*.png
+!website/public/*.png

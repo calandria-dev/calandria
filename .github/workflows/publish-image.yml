@@ -92,6 +92,12 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+    # website/ is the calandria.dev static site, not part of the image (it is
+    # in .dockerignore). A site-only PR has nothing for a multi-arch container
+    # build to validate, and this is the most expensive lane in the repo.
+    # Only skipped when EVERY changed file is under website/.
+    paths-ignore:
+      - website/**
   workflow_dispatch:
 
 # Workflow-level permissions are the floor; only the jobs that talk to the
