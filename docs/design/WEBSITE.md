@@ -19,6 +19,13 @@ separate-repo deploy patterns (August 2026; sources at the end).
 | Docs URL shape | Subpath `/docs`, not `docs.calandria.dev` | Falls out of the single build. Survey split 12 subdomain / 9 subpath — no convention to follow, so the simpler ops win. |
 | Versioning | None; docs track `main` | One rolling image, no LTS branches. Per-release snapshots (Docusaurus-style) mean back-porting every typo fix. Revisit only if a v1/v2 split ever happens. |
 
+Hosting recheck (2026-08-27, phase 0): Pages is **not** deprecated and still ships
+changes (Aug 11, 2026 changelog), but Cloudflare's Pages "Get started" page now
+opens with "Start new projects with Workers", and Workers static assets has had
+per-PR/per-branch preview URLs since Jul 2025 — the one Pages feature this plan
+picked it for. Plan left as-is per phase 0's scope; see **Cloudflare access** below
+for the open decision.
+
 Runner-up for docs: **VitePress**. It handles GitHub-flavoured Markdown slightly
 better out of the box (no mandatory front-matter, rewrites relative `.md` links,
 renders `> [!NOTE]` alerts), but it is a second framework and a second build, which
@@ -30,6 +37,34 @@ to know it; Infima look fights the brand), Mintlify/GitBook (hosted-only, wrong
 fit for a self-hosted product; Coolify reports leaving Mintlify over a surprise
 bill), MkDocs Material/Zensical (Python in the build loop), Fumadocs/Nextra
 (Next.js-native is not a reason to run Next for a static site; MDX default).
+
+## Cloudflare access
+
+Phase 0 verification, 2026-08-27. **Phase 1 reads this first.** Two lines below are
+still unresolved — an agent session cannot run OAuth, so the account id and zone
+state must come from a session where the API server is authorized.
+
+| Fact | Value |
+|-|-|
+| Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
+| `cloudflare-docs` MCP | Authorized (public, no OAuth). Search verified against "Pages custom domain CNAME flattening" and the Pages-vs-Workers question below. |
+| `cloudflare-api` MCP | **Not authorized** — `claude mcp list` reports "Needs authentication". Same for `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability`. Authorize with `/mcp` in an interactive `claude`; credentials land in `~/.claude` and later task sessions inherit them. |
+| Account id | **UNRESOLVED** — needs `cloudflare-api`. |
+| `calandria.dev` zone | **Not on Cloudflare yet.** `dig NS calandria.dev` → `ns1/ns2/ns3.dreamhost.com` (2026-08-27), so the console checklist in Phase 1 steps 1–3 has not been done. Whether a pending (unactivated) zone exists in the account is UNRESOLVED for the same reason. |
+| Pages project name | Use `calandria-dev`. Not confirmed free against the API; if creation collides, `calandria-site` is the fallback and this table gets corrected. |
+| Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` repo secrets as planned. |
+
+**Pages vs Workers static assets** (asked of `cloudflare-docs`, 2026-08-27): Pages is
+alive and still shipping features, but Cloudflare now steers new static projects to
+Workers — `/pages/get-started/` (updated Aug 21, 2026) carries "Workers supports most
+Pages use cases and offers a broader feature set… Start new projects with Workers",
+and the Workers best-practices page says the same. The plan's stated reason for Pages
+(free per-PR preview URLs) is no longer a differentiator: Workers has branch and
+commit preview URLs, and Workers custom domains want the zone on Cloudflare, which
+this plan does anyway. Nothing here forces a change and the phase-1 plan is unchanged,
+but if the decision is revisited it should be **before** phase 1 creates the project —
+a later switch is a migration (`wrangler.jsonc` with `assets.directory`, plus the
+`pages deploy` step in `website.yml` becoming `wrangler deploy`).
 
 ## Phase 1 — placeholder with a valid certificate
 
