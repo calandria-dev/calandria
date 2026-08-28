@@ -49,6 +49,13 @@ process owns and because persisting it would move `tasks.updated_at` — the boa
 card learns it, since a turn that has stopped producing transcript detail publishes nothing
 else at all.
 
+`app/shell/IdleStop.tsx` is the one affordance hung off that mark, and it inherits the same
+argument. A signal the server refuses to act on unilaterally should not be one click from a
+mis-aim either, so the chip arms on the first press, states what it cannot know, and stops
+on the second. It is on the list and board cards only: the session already has Stop in its
+composer, a few hundred pixels under the idle note, with the transcript in between to judge
+against — a second one there would be the same verb twice, under two policies.
+
 `lib/idleNudge.ts` is the opt-in other half (`CALANDRIA_TURN_IDLE_NUDGE`, off), hung on the
 same transition: the model is the only party that can judge its own wait, and reaching it
 costs a turn's tokens. It can only reach a LINGERING session, because the driver's `send`

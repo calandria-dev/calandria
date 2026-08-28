@@ -280,7 +280,7 @@ export default function Shell() {
       onSelectTask={o.setSelTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onShowRecap={o.showProjectHome} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
-      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask} onAckRun={o.ackRun}
+      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask} onAckRun={o.ackRun} onStopTurn={o.stopTurn}
       onBulkMove={setBulkMoveIds}
       onBulkTag={setBulkTagIds}
       baseBranchTick={o.baseBranchTick}
@@ -395,7 +395,7 @@ export default function Shell() {
       onSelectTask={openBoardTask} onNewTask={() => o.setModal("task")} onEditContext={() => o.setModal("context")}
       onShowSessions={() => o.setModal("sessions")} onEditTask={o.setEditId}
       onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
-      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask} onAckRun={o.ackRun}
+      onSnoozeTask={o.snoozeTask} onUnsnoozeTask={o.unsnoozeTask} onAckRun={o.ackRun} onStopTurn={o.stopTurn}
     >
       {task && boardPanel && (
         <>

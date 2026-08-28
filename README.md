@@ -70,12 +70,17 @@ Because that wait has no deadline, a session can also sit live and silent
 waiting on something that already finished — a poll against a service that
 died, a watcher loop that never exits. After 20 minutes with no output and no
 tool call, the task card and the session say "no activity for 34m" beside the
-running indicator. Nothing is stopped: the server can't tell a wedged wait
-from a slow one, and cutting a real 40-minute test run would be worse. It's
-also not a "needs you" item, since there's nothing to answer — open the task
-and decide, or press Stop. `CALANDRIA_TURN_IDLE_MS` moves the window, or 0
-turns the note off. A turn parked on a question or a permission card is never
-marked; that wait is meant to be open-ended.
+running indicator. Nothing is stopped for you: the server can't tell a wedged
+wait from a slow one, and cutting a real 40-minute test run would be worse.
+It's also not a "needs you" item, since there's nothing to answer. What the
+card does carry is the one action — a **Stop this turn** chip under that line,
+which arms on the first press and stops on the second. It asks because the
+signal is exactly as ambiguous for you as it is for the server, and a list is
+somewhere a stray click lands. The session gets no such chip: the composer's
+Stop is already in that view, with the transcript above it to judge against.
+`CALANDRIA_TURN_IDLE_MS` moves the window, or 0 turns the note off. A turn
+parked on a question or a permission card is never marked; that wait is meant
+to be open-ended.
 
 The session itself is told nothing by default, because only the model knows
 whether its wait still means anything and asking costs a turn. Set
