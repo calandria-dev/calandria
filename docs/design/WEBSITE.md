@@ -47,8 +47,8 @@ resolved against the live Cloudflare API.
 |-|-|
 | Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
 | Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). This is the `CLOUDFLARE_ACCOUNT_ID` repo secret in Phase 1 step 7. |
-| `calandria.dev` zone | **Exists, `pending`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, created 2026-08-28T01:04Z, never activated. So Phase 1 step 2 is already done and step 3 is the outstanding one: activation is blocked on `ns_delegated_from_provider` — the registrar (eNom, via DreamHost) still answers `ns1/ns2/ns3.dreamhost.com`. |
-| Nameservers to set at DreamHost | `clyde.ns.cloudflare.com` and `mona.ns.cloudflare.com` (the pair Cloudflare assigned this zone — they are per-zone, don't substitute another domain's). |
+| `calandria.dev` zone | **`active`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, activated 2026-08-28T01:54:45Z on `clyde.ns.cloudflare.com` / `mona.ns.cloudflare.com`. Phase 1 console steps 1–3 are **done**; start at step 4. |
+| DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
 | Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
 | MCP servers authorized | `cloudflare-docs` (public, no OAuth) and `cloudflare-api` (OAuth, 2026-08-27). `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` are still unauthorized; none of them is needed for a static Pages deploy, so Phase 1 is not blocked on them. |
 | Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` repo secrets as planned. |
@@ -83,12 +83,13 @@ HTTP for it, always. There is no "HTTP while the cert is pending" interim — DN
 must not point at anything that lacks a trusted cert. Today's parked page is
 already the failure mode.
 
-Console steps (user; nothing here is agent-doable):
+Console steps (user). **Steps 1–3 are done as of 2026-08-28T01:54Z — the zone is
+active; start at step 4.** They are kept for the record.
 
 1. DreamHost → Manage Domains → calandria.dev → note every existing DNS record
    (MX/TXT/CAA especially) before touching anything. If a CAA record exists, add
    `issue` entries for `letsencrypt.org`, `pki.goog`, `ssl.com` or Cloudflare's
-   issuance silently fails.
+   issuance silently fails. — Moot: the domain was parked with an empty zone.
 2. Cloudflare → Add site → `calandria.dev` (Free plan). Accept the scanned
    records, re-add any it missed from step 1. **Already done** — the zone exists and
    is `pending`; see Cloudflare access above.
