@@ -5,10 +5,11 @@
 > been promoted into a real Playwright suite (`desktop/e2e/`, its own
 > `playwright.desktop.config.ts`) and a `desktop` job runs it — plus the two
 > supervisor scripts that ran nowhere — in `.github/workflows/test.yml`, on the
-> same gate as `e2e`. Every §1 row below was re-measured on that landing except
-> two, which should be re-measured by the task that reaches them: the
-> packaged-build row (`desktop/package.json` still has no `electron-builder`, so
-> there is no artifact to point at) and the D-Bus notification row. The
+> same gate as `e2e`. Every §1 row below has since been re-measured, the last
+> two by the tasks that reached them: the packaged-build row on 2026-08-27
+> (there is an `electron-builder` config and a real artifact now) and the D-Bus
+> notification row on 2026-08-28, against the real shell on the bench rather
+> than a probe app. The
 > `PORT`/`PTY_PORT` bug §1 records has since been fixed; two NEW bugs the suite
 > found on its first green run are recorded in its place. Recommendation 3 has
 > been rewritten since: Windows is no longer blocked.
@@ -73,7 +74,7 @@ The harness was `desktop/test-window.js`; it is now the suite in
 | **The real shell boots the real app under Xvfb** | `xvfb-run node desktop/test-window.js`: first window **272 ms**, app URL loaded at **2316 ms**, the onboarding wizard rendered at 1440×900, 157 KB PNG. The window layer that had never rendered now renders in CI-shaped conditions. *(Re-run 2026-08-27 against the current tree: 531 ms / 1873 ms, 143 KB PNG, all seven assertions green. As the promoted suite: 356 ms first window, ~2.0 s to the app URL, 11 specs green in 1.2 min including three full boots.)* |
 | **A packaged build passes the same assertions** | `electron-builder --linux dir` → `CALANDRIA_TEST_BIN=…/calandria-desktop`: the harness takes the artifact or the dev shell through one switch. *(Re-verified 2026-08-27 on the bench VM, since the spike's numbers were never re-run: **15 passed, 2 skipped in 80 s**, the same figure for the relocated `--dir` output under Xvfb and for an installed `.deb` in the Xfce session. The artifact is much bigger than the spike's 282 MB — payload 1564 MB, `linux-unpacked` 2.1 GB, `.deb` 503 MB — which is the subject of its own task, "Trim the desktop payload's cross-libc duplicates".)* Two conditions make the run mean anything, both now enforced by `desktop/e2e/fixtures.ts`: **no `CALANDRIA_REPO_ROOT`** (the spike's packaged run was handed one, so it passed while still reading the repo — a real download would have died on the first boot) and the artifact **moved out of the checkout**, so nothing can resolve upward into a source tree that a user does not have. |
 | **Electron's own `--headless` is not a substitute for Xvfb** | Same app without a display and `--headless`: the process dies with **SIGTRAP** before the CDP socket settles. Xvfb (or a real session) is mandatory, not a preference. |
-| **Native notifications are assertable headlessly** (not re-run on landing) | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. |
+| **Native notifications are assertable by machine** | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. *(Re-measured 2026-08-28 on the bench against the real shell. The technique holds, with one addition: capturing `type=method_return` alongside the call and correlating on the serial yields the notification id the DAEMON minted, which turns "the app called libnotify" into "a daemon accepted it" — `desktop/e2e/09-bench-notifications.spec.ts`. Deliberately not `dunstctl history`, which would make the assertion about dunst rather than about the session.)* |
 | **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** *(170 ms on the 2026-08-27 re-run)* and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → drain → SIGTERM, asserted end to end. |
 | **The single-instance lock is observable** | A second `electron.launch()` against the same app failed to launch in **64–73 ms** *(109 ms on the re-run)* rather than starting a second server — `requestSingleInstanceLock()` doing its job, visible to the harness as a rejected launch. |
 | **The hermetic instance transfers unchanged** | `supervisor.js`'s `sidecarEnv()` forwards its own environment to both sidecars, so `e2e/env.ts`'s `SERVER_ENV` shape (temp `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`, pinned gitconfig, `CALANDRIA_E2E_MOCK_AGENT=1`) works as-is through `electron.launch({ env })`. No agent CLI, login or network is involved, exactly as in the browser suite. |
@@ -134,7 +135,7 @@ anything requiring a signed installer until installers exist.
 | Lane | Runner | Scope | Trigger |
 |-|-|-|-|
 | **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
-| **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb` install-and-run with the sandbox intact (recipe below), VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
+| **desktop-bench** (landed, runner not registered) | Proxmox VM, real session | The whole suite twice — dev shell, then an installed `.deb` at `/opt/Calandria` with the sandbox intact — plus three spec files gated on `CALANDRIA_DESKTOP_BENCH=1`: `09-bench-notifications`, `10-bench-tray`, `11-bench-window`. VNC for a human or an agent session to watch | `workflow_dispatch` + nightly, in its own workflow file (`.github/workflows/desktop-bench.yml`) with **no `pull_request` trigger at all** |
 | **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Packaged NSIS run when packaging reaches Windows | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
 | **desktop-macos** (landed) | GitHub-hosted `macos-latest` | The whole suite twice (dev shell, then a packaged `.app`), plus the three things only macOS has: the launchd PATH repair under a real `open` launch, the `hiddenInset` title bar, and the menu roles under a real menubar | **Weekly cron**, dispatch, or a PR carrying the `macos` label — not the shared `e2e` one |
 
@@ -258,6 +259,58 @@ Proxmox snapshot rollback between jobs, its own credentials (no 1Password
 service-account token, no cluster access), and exclusion from the nightly vzdump
 job — it is rebuildable, not precious.
 
+**The bench lane is its own workflow file, and that is the security control.**
+`.github/workflows/test.yml` triggers on `pull_request`, so a job in it is one
+careless `if:` edit away from letting a fork run code on a machine sitting on
+VLAN 3. `.github/workflows/desktop-bench.yml` has two triggers —
+`workflow_dispatch` and a nightly cron — and no `pull_request` among them, which
+makes the property structural rather than conditional, and visible in two lines
+rather than in a fifth gate expression that has to be kept in step with the
+other four. A `github.repository ==` guard sits on top so a fork that leaves
+scheduled workflows enabled queues nothing. Beyond the labels
+(`self-hosted, linux, x64, desktop-bench`) the runner owes the lane two things:
+the graphical session `desktop-bench-check` asserts, and passwordless
+`sudo dpkg` for the install step.
+
+**What the bench lane pins beyond re-running the shared specs.** Three files,
+each reading the result from outside the app, because inside it every one of
+these calls succeeds whether or not anything received it.
+`09-bench-notifications.spec.ts` drives a mock turn onto a permission card and
+captures the resulting `org.freedesktop.Notifications.Notify` on the session bus
+**together with the daemon's reply** — two `dbus-monitor` match rules
+correlated by serial, so the claim is "a daemon accepted this and minted id N"
+rather than "we called libnotify". It asserts the server's own wording (title,
+the `task · project` body, the failure's first line under it) precisely so that
+a shell which ever starts composing its own text goes red.
+`11-bench-window.spec.ts` pairs every window assertion with the WM's account of
+it: `_NET_WM_STATE_HIDDEN` for a minimise (an atom the window manager sets and
+the app cannot), the window leaving `_NET_CLIENT_LIST` for a close-to-hide, and
+`_NET_ACTIVE_WINDOW` naming the *same* window id after a second launch. Its
+last test pins the tray-residency toast at once per launch rather than once per
+close. `10-bench-tray.spec.ts` reads the tray from
+`org.kde.StatusNotifierWatcher` — matched by the owner pid of the D-Bus
+connection, since Electron's item is named `chrome_status_icon_N` and would not
+be distinguishable from the session's other icons — and walks its menu over
+`com.canonical.dbusmenu`, which is the only way to read a tray menu at all
+(`Tray` is a setter with no getter) and also the only place the "N need you"
+count is observable on a native surface.
+
+**The tray file is red on the bench today, and not because of the shell.**
+Measured 2026-08-28: xfce4-panel 4.18.4's built-in `systray` plugin crashes the
+moment Electron 44 registers a status icon, taking the
+`org.kde.StatusNotifierWatcher` name off the bus with it — sometimes logging
+"Plugin systray-6 has been automatically restarted after crash", sometimes just
+leaving the name unowned until the panel is restarted. Reproduced with both
+committed tray assets (so it is not the 32×32 PNG) and with a nine-line Electron
+app that does nothing but `new Tray(...)` (so it is not this shell), while
+`nm_applet`'s icon on the same session is unaffected. The spec recognises the
+unowned name and says all of that in its failure message rather than reading as
+a missing tray. Two consequences, and they belong to different owners: the bench
+needs a status-notifier host that survives a Chromium-shaped item before this
+lane can be green, and — a product question rather than a bench one — the
+shell's close-to-hide is gated on `new Tray()` not THROWING, which stays true on
+a session where the icon never actually appears.
+
 ## 5. The bench VM, concretely
 
 Provisioned 2026-08-25 and live. This section describes what exists; the
@@ -273,7 +326,7 @@ open question, and was wrong about all three.
 | Rendering | llvmpipe, `LIBGL_ALWAYS_SOFTWARE=1` (`llvmpipe (LLVM 20.1.2, 256 bits)`) |
 | Installed | node v22.23.2, npm 10.9.8, gh 2.98.0, Docker 29.7.2, xvfb, the Chromium shared-library set |
 | Rebuilt by | `roles/desktop_bench` + `desktop-bench.yml` in `ansible-orion` — idempotent, `ansible-lint` production profile. Fix drift by re-running the playbook, not by hand |
-| Runner | Not registered yet. The ephemeral-runner rules in §4 still stand |
+| Runner | Not registered yet. The ephemeral-runner rules in §4 still stand. The lane expects the labels `self-hosted, linux, x64, desktop-bench` and passwordless `sudo dpkg` (confirmed present on the VM 2026-08-28) |
 | Backups | Excluded from the nightly vzdump job |
 
 **Do not assume which node it is on.** PVE 9 replaced HA groups with
@@ -298,8 +351,14 @@ vncviewer localhost:5901
 
 `desktop-bench-check` on the bench asserts the session is real rather than a
 bare X server — it exits non-zero if any of the four things Xvfb cannot provide
-is missing. **Run it as a precondition in the native-integration specs**; if it
-fails, the specs are testing a broken session and their results mean nothing.
+is missing. It **is** the precondition in the native-integration specs —
+`assertBenchSession()` in `desktop/e2e/bench.ts` runs it in every `beforeAll`,
+and the lane runs it once more as its own step before `npm ci` so a broken
+session fails in five seconds rather than after a build. Each spec file asks for
+the checks it actually uses rather than for a green run overall, which matters
+here specifically: the status area dies as soon as any spec launches the shell,
+and an all-or-nothing precondition would take the notification and window files
+down with the tray one over a daemon neither of them touches.
 
 ```
 $ desktop-bench-check
@@ -313,7 +372,7 @@ gl renderer    llvmpipe (LLVM 20.1.2, 256 bits)
 node           v22.23.2
 ```
 
-### Two gotchas for the spec work
+### Three gotchas for the spec work
 
 **The session bus is not the systemd user bus.** `dbus-run-session` mints its
 own, and over SSH `pam_systemd` has *already* exported
@@ -330,6 +389,22 @@ because electron-builder's postinst makes `chrome-sandbox` SUID root — so a sp
 asserting sandbox behaviour must be explicit about which of the two paths it
 exercises. `desktop_bench_allow_unprivileged_userns` in the Ansible role flips
 it back to stock 24.04.
+
+**The panel's tray plugin does not survive Electron's status icon.** Measured
+2026-08-28 and written up in §4: xfce4-panel 4.18.4's built-in `systray` plugin
+crashes when Electron registers a `StatusNotifierItem`, and
+`org.kde.StatusNotifierWatcher` goes with it — so `desktop-bench-check` starts
+reporting `FAIL status notifier host` and the tray specs cannot find the icon.
+Recovering the session by hand, until the role grows a host that survives it:
+
+```bash
+# NOT `pkill -f xfce4-panel` — the pattern matches the ssh command line running it
+pkill -9 -x xfce4-panel; pkill -9 -x wrapper-2.0
+sleep 2; (setsid nohup xfce4-panel >/dev/null 2>&1 &)
+```
+
+The other two spec files are unaffected: `Tray` construction still succeeds
+inside Electron, so nothing else in the shell changes behaviour.
 
 ### Egress — answered
 
@@ -366,15 +441,16 @@ Obsidian vault.
    `preferredPorts()`, and the suite's own `CALANDRIA_DESKTOP_E2E_PORT` base
    (4741, clear of the browser suite's 4711).
 3. ~~Provision the bench VM~~ **Done** — `calandria-desktop-bench`, §5 for the
-   access recipe and the two D-Bus/sandbox gotchas. Still open: registering the
-   gated ephemeral runner, and the AWX job template for the playbook (tracked in
+   access recipe and the three session gotchas. Still open: registering the
+   gated ephemeral runner, the AWX job template for the playbook, and a
+   status-notifier host that survives an Electron status icon (all tracked in
    infra-claude).
 4. ~~Add `electron-builder` packaging, then point the same suite at the
    artifact.~~ **Done** — the `desktop` job packages, relocates and re-runs the
    window suite against the artifact, and `06-packaged.spec.ts` holds the
    payload/bundled-Node/sandbox assertions the dev shell cannot make. The
-   `.deb`-install half was verified by hand on the bench (§4) and still wants a
-   lane of its own, which is the native-integration task's.
+   `.deb`-install half was verified by hand on the bench (§4); it now has a lane
+   of its own — item 7 below.
 5. ~~Windows lane.~~ **Done** — the `windows-desktop` job, GitHub-hosted, with
    `05-windows-quit.spec.ts` for the `taskkill` paths. ~~The drain gap it pins is
    its own task ("Desktop shell: drain in-flight turns on quit under Windows").~~
@@ -393,3 +469,20 @@ Obsidian vault.
    those were open questions in `docs/DESKTOP_APP.md` §5. Signing, notarization
    and installers deliberately stay out: the lane ad-hoc signs only because
    arm64 will not exec an unsigned binary at all.
+7. ~~Bench lane: the native-integration specs and the `.deb` install.~~
+   **Landed** — `.github/workflows/desktop-bench.yml`, `workflow_dispatch` plus
+   a nightly cron and no `pull_request` trigger at all (§4), running the whole
+   suite against the dev shell and then against an installed `.deb`, with
+   `09-bench-notifications`, `10-bench-tray` and `11-bench-window` on top.
+   **Not yet executed by CI**: the ephemeral runner in item 3 does not exist, so
+   the specs were run by hand on the bench instead. In a full-suite run there
+   on 2026-08-28 (`DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run
+   test:desktop:window`, 3.1 min) the notification and window-manager files pass
+   and the tray file is red on the xfce4-panel bug §4 records — which is also
+   what proved the per-capability precondition was worth having, since the tray
+   crash happens on the FIRST shell launch of the run and an all-or-nothing
+   check took the other two files down with it. The tray file's D-Bus reads were
+   verified separately against a status-notifier item that IS registered
+   (`nm_applet`'s). The packaged half was exercised too: `--linux dir deb`,
+   `dpkg -i`, and the window suite against `/opt/Calandria` with
+   `CALANDRIA_DESKTOP_SANDBOX=1`.
