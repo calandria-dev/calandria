@@ -5,15 +5,29 @@ push is not a successful CI run: CI has caught stale tests, Docker-only breakage
 arch-specific failures that local runs can't. Main once sat red for ~9 hours across 12 pushes,
 because every agent verified locally and nobody watched Actions.
 
-- **Watch every push to terminal state.** After pushing to main, poll `gh run list` until the
-  runs for your SHA conclude (bounded: both workflows finish inside ~10 minutes). A dispatch that
-  ends before its CI concludes is unfinished work.
+- **Work lands through a pull request; there is no push to main.** The `main-require-pr`
+  ruleset rejects a direct push, allows squash as the only merge method, requires one approving
+  review, and has an empty bypass list — so this is not a convention you can decide to skip on a
+  small change. Push your branch, open the PR, and treat that PR as the unit of work.
+- **Watch a PR's checks to terminal state.** `gh pr checks <number> --watch` (or poll
+  `gh pr checks <number>`) until every check has a conclusion — bounded, the same ~10 minutes the
+  push-triggered workflows took. Green-on-your-branch is the deliverable; a dispatch that ends
+  with checks still pending is unfinished work, exactly as an unwatched push was. Two things the
+  old push-and-watch rule did not have to think about: `gh pr view --json mergeStateStatus` is
+  where "red", "behind main" and "needs a review" are distinguishable, and only the last of those
+  is the user's to clear.
+- **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
+  commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
+  and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
+  the release notes. `.github/workflows/pr-title.yml` fails the PR instead; the fix is to retitle,
+  which re-runs the check without a push. CONTRIBUTING.md has the type table.
 - **Red run: diagnose before rerunning.** Compare the failing step against the last green run on
   a sibling commit. If the failure is in an infra step your commit can't plausibly have caused
   (say the buildx floor-check dying with exit 255 before producing output, a known arm64/registry
   transient), run `gh run rerun <id> --failed` once. Green on attempt 2 means a flake; note it.
-  Red again, or any failure in a test, typecheck or build step, is real: fix it or revert your
-  commit. Never rerun to make a real failure go away.
+  Red again, or any failure in a test, typecheck or build step, is real: fix it, or revert the
+  commit — which is now itself a PR, titled `revert: ...` so release-please records it. Never
+  rerun to make a real failure go away.
 - **File issues for CI problems. You are empowered and expected to.** For a broken workflow, a
   recurring flake, a misconfiguration, or a red main you can't fix in-session, file a GitHub issue
   (or append to the open one) with the run URL and the failing step's output. Never leave main
