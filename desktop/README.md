@@ -71,18 +71,88 @@ In Electron's own runtime, from this directory:
 ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js
 ```
 
-Once packaging exists, the same window suite runs against the artifact:
+### Against the packaged artifact
+
+The same window suite takes a package instead of the dev shell — that is what
+`CALANDRIA_TEST_BIN` is for, and the CI lane runs both halves. Two rules make
+the second run mean something, and the suite enforces both:
+
+- **The artifact must sit outside this checkout.** `fixtures.ts` refuses to
+  launch a binary under the repo. An installed app never is, and one that is
+  can satisfy an upward path lookup — a module, a lockfile, a relative path —
+  from the tree it was built in.
+- **No `CALANDRIA_REPO_ROOT`.** The fixture drops it (and deletes an inherited
+  one) for a packaged run, so `main.js` has to resolve
+  `resources/app-payload`. During the research spike the packaged shell passed
+  every assertion while still reading the repo, because the harness handed it
+  that variable; a real download would have died on the first boot.
+
+`e2e/06-packaged.spec.ts` is the only packaged-only spec — it asserts the
+payload the app booted from, the bundled Node the sidecars ran under, and how
+`chrome-sandbox` is packaged. It skips itself when `CALANDRIA_TEST_BIN` is unset.
 
 ```bash
-CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
-  CALANDRIA_DESKTOP_SANDBOX=1 xvfb-run -a npm run test:desktop:window
+# unpacked: what CI does (electron-builder --dir has no SUID chrome-sandbox,
+# so --no-sandbox is still passed and the spec records that)
+cd desktop && npm run payload -- --no-build && npx electron-builder --linux dir
+cd .. && mv desktop/dist/linux-unpacked /tmp/calandria-app
+CALANDRIA_TEST_BIN=/tmp/calandria-app/calandria-desktop \
+  xvfb-run -a npm run test:desktop:window
+
+# installed: what the bench does — a real `.deb`, a real session, no --no-sandbox
+sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
+CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 \
+  DISPLAY=:1 npm run test:desktop:window
+
+# macOS: what the macos-desktop CI job does (--mac dir is the only target
+# wired up — see "Building a package" below — and unsigned in the Developer
+# ID sense, so an ad-hoc signature is what lets arm64 exec it at all)
+cd desktop && npm run dist:mac
+cd .. && mv desktop/dist/mac*/Calandria.app /tmp/calandria-app.app   # mac-arm64 or mac, by host arch
+codesign --force --deep --sign - /tmp/calandria-app.app
+CALANDRIA_TEST_BIN=/tmp/calandria-app.app/Contents/MacOS/Calandria \
+  CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-app.app \
+  npm run test:desktop:window
 ```
+
+`CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
+`CALANDRIA_TEST_BIN` and `CALANDRIA_DESKTOP_SANDBOX` above: it points at the
+`.app` itself rather than the binary inside it, which is what
+`08-macos-launchd.spec.ts` below needs to `open` the bundle through
+LaunchServices instead of spawning the executable directly.
+
+`CALANDRIA_DESKTOP_SANDBOX=1` is what stops the suite disabling the sandbox, so
+the flag cannot be what makes an installed app pass. It sets two things, and the
+second is not obvious: the `--no-sandbox` argument, **and**
+`chromiumSandbox: true` on `electron.launch()` — on Linux Playwright unshifts
+`--no-sandbox` onto the argument list itself unless that option is given
+(playwright-core 1.61.1). Omitting the flag was not enough; the packaged-install
+run was unsandboxed anyway until the option went in.
+
+In that mode `06-packaged.spec.ts` asserts the sandbox is **running** rather
+than that a mode bit is set, because the bit no longer decides it:
+electron-builder 26's `postinst` chmods `chrome-sandbox` to 0755 when
+unprivileged user namespaces work and installs
+`/etc/apparmor.d/calandria-desktop` instead, which is what keeps the namespace
+sandbox alive under Ubuntu 24.04's
+`kernel.apparmor_restrict_unprivileged_userns=1`. The SUID bit only appears on a
+kernel without user namespaces. What both mechanisms produce — and
+`--no-sandbox` cannot — is a descendant process in its own user namespace, which
+is what the spec reads out of `/proc`. That difference only reproduces on a
+machine where the package was actually installed (docs/DESKTOP_E2E.md §4).
+
+Traces are off for this suite (`playwright.desktop.config.ts`): Playwright's
+trace/video capture against a packaged Electron app is unreliable
+([microsoft/playwright#13180](https://github.com/microsoft/playwright/issues/13180)),
+so both lanes keep screenshots-on-failure plus the shell log
+`attachShellLog()` writes beside each instance's database.
 
 The suite resolves `playwright` from the repo root's `node_modules` (already a
 dev dependency for the browser suite) and needs `xvfb` plus Chromium's usual
-library set on a headless box. It passes `--no-sandbox` because an unpacked
-Electron has no SUID `chrome-sandbox`; a packaged install does, which is what
-`CALANDRIA_DESKTOP_SANDBOX=1` is for.
+library set on a headless box. It disables the sandbox because an unpacked
+Electron has neither a SUID `chrome-sandbox` nor an AppArmor profile permitting
+its user namespace; an install has one of the two, which is what
+`CALANDRIA_DESKTOP_SANDBOX=1` is for (see "Against the packaged artifact").
 
 **On Windows and macOS drop the `xvfb-run` prefix** — both have a real window
 station and need no display to be installed, which is why the `windows-desktop`
@@ -100,6 +170,30 @@ kill, so the turn is settled whether or not the platform can deliver a signal,
 and the assertion holds everywhere. What no test here covers is a real Windows
 shutdown or logout, where `before-quit`/`will-quit` are not emitted at all — a
 `session-end` listener does not exist yet, and nothing drains until it does.
+
+`e2e/07-macos.spec.ts` is darwin-only and skips itself elsewhere.
+`titleBarStyle: "hiddenInset"` is the whole point of it — plain `"default"`
+reserves a strip the renderer never draws into, and `getContentBounds()` only
+comes back equal to `getBounds()` under `hiddenInset` — so the spec pins that
+equality, that the traffic lights stay closable/minimizable/maximizable, that
+the app paints into the rows the native title bar used to own, and that the
+menubar's submenus still carry the roles macOS reads its keyboard shortcuts
+off (Edit: undo/redo/cut/copy/paste/select; the app menu: about/hide/quit;
+File: close, Cmd+W; Window: minimize) — a hand-rolled menu can drop a role
+while still looking right. It attaches a screenshot (`hiddenInset.png`) and a
+JSON probe of what sits under the traffic lights anyway, since that is
+exactly what an assertion can't answer and a human should look once on a
+green run. `e2e/08-macos-launchd.spec.ts` is darwin **and** packaged only,
+gated on `CALANDRIA_TEST_APP_BUNDLE`: a binary spawned directly, the way
+every other packaged spec launches it, inherits the spawning shell's PATH,
+but a `.app` opened by LaunchServices gets launchd's stub instead,
+`/usr/bin:/bin:/usr/sbin:/sbin`, with none of the user's own tooling on it — the reason
+`supervisor.js` repairs PATH from the login shell in the first place
+(`docs/DESKTOP_APP.md` §2). So the spec `open`s the bundle instead of
+spawning it, captures its stdout with `open --stdout`, and asserts the repair
+ran. It stays hermetic the way the other packaged specs do, `launchctl
+setenv`-ing `instanceEnv()`'s keys — PATH pointedly left out, since that's
+the variable under test — and unsets them in `afterAll`.
 
 One environment gotcha it handles for you, worth knowing if you run the shell by
 hand on a headless box: `Notification.permission` is `granted` in Electron
@@ -122,7 +216,21 @@ cd desktop
 npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
+npm run dist:mac      # → dist/mac(-arm64)/Calandria.app
 ```
+
+`dist:mac` is `--dir` only — no `dmg`/`zip` target is wired up yet, since
+there's nowhere to publish one to without Developer ID signing and
+notarization, which stay a separate later decision (see the closing note
+below). `mac.identity: null` tells electron-builder not to sign at all
+rather than search the keychain for an identity that isn't there, so the
+`.app` it produces is unsigned in the Developer ID sense — which is fine for a
+bundle you built yourself, since Gatekeeper's assessment is triggered by the
+quarantine attribute a *download* carries, and matters the moment anyone
+distributes one. Unlike Linux, though, that's not optional to work around:
+arm64 macOS refuses to `exec` a Mach-O carrying no signature whatsoever, so
+the `.app` needs at least an ad-hoc signature (`codesign --force --deep
+--sign -`) before anything, including the test suite below, can launch it.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

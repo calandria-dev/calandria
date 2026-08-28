@@ -42,8 +42,42 @@ const REPO_ROOT = path.resolve(DESKTOP_DIR, "..");
  * Either the dev shell (`electron .`) or a packaged build: point
  * `CALANDRIA_TEST_BIN` at the packaged executable to run the same specs against
  * the artifact a user would download.
+ *
+ * The packaged run is not the dev run with a different binary — see
+ * `instanceEnv()` and `assertOutsideCheckout()` below. It carries no
+ * `CALANDRIA_REPO_ROOT`, and the artifact must sit outside this checkout, so
+ * that what is exercised is the payload the installer laid down rather than the
+ * repo it happened to be built in.
  */
-const PACKAGED = process.env.CALANDRIA_TEST_BIN || null;
+export const PACKAGED = process.env.CALANDRIA_TEST_BIN || null;
+
+/**
+ * A packaged artifact still standing inside the checkout is not a packaged
+ * test.
+ *
+ * `desktop/main.js` resolves its repo root from `process.resourcesPath` when
+ * `app.isPackaged`, so a payload with a hole in it does not fall back to the
+ * repo — but everything *downstream* of the payload can: a stray relative path,
+ * a module resolved by walking up to the repo's `node_modules`, a lockfile Next
+ * finds two directories above. All of that is satisfied for free while the
+ * artifact lives at `desktop/dist/linux-unpacked/`, and satisfied by nothing on
+ * a user's machine. Relocating the artifact is what makes the difference
+ * observable, so refusing to run un-relocated is the assertion — a green run
+ * from inside the tree would be the exact false pass this lane exists to catch.
+ */
+function assertOutsideCheckout(bin: string): void {
+  const real = fs.realpathSync(bin);
+  const repo = fs.realpathSync(REPO_ROOT);
+  if (real === repo || real.startsWith(repo + path.sep)) {
+    throw new Error(
+      `CALANDRIA_TEST_BIN is inside this checkout (${real}).\n` +
+        `Move the artifact out of the repo before running the packaged suite — an installed ` +
+        `app is never inside a source tree, and testing one that is proves nothing about the ` +
+        `payload. e.g.  mv desktop/dist/linux-unpacked "$TMPDIR/calandria-app"  (or install the ` +
+        `.deb and point at /opt/Calandria/calandria-desktop). See desktop/README.md.`
+    );
+  }
+}
 
 /**
  * Linux-only, and CI-only there. Chromium's setuid sandbox helper needs the
@@ -59,6 +93,16 @@ const PACKAGED = process.env.CALANDRIA_TEST_BIN || null;
  * `01-shell.spec.ts` asserts `sandbox: true` on the renderer's webPreferences,
  * which is a different (and unaffected) setting: that is the renderer opting
  * out of Node, this is the OS-level process sandbox.
+ *
+ * PASSING THE FLAG IS NOT THE ONLY WAY IT GETS THERE, and this cost a
+ * measurement to find: on Linux `_electron.launch()` UNSHIFTS `--no-sandbox`
+ * onto the argument list itself unless `chromiumSandbox: true` is given
+ * (playwright-core 1.61.1, `Electron.launch`; the option is documented as
+ * "Enable Chromium sandboxing. Defaults to false."). So an installed .deb
+ * driven by this suite ran unsandboxed no matter what the fixture omitted —
+ * `app.commandLine.hasSwitch("no-sandbox")` read true against a launch that
+ * passed no such flag. `launchOptions()` below sets both halves from the one
+ * switch, so the flag is present exactly when the lane means it to be.
  */
 const NO_SANDBOX = process.platform === "linux" && process.env.CALANDRIA_DESKTOP_SANDBOX !== "1";
 
@@ -144,9 +188,17 @@ export function instanceEnv(root: string, port: number): Record<string, string> 
     CALANDRIA_DB_DIR: path.join(root, "db"),
     CALANDRIA_WORKTREES_DIR: path.join(root, "worktrees"),
     CALANDRIA_PROJECTS_DIR: path.join(root, "projects"),
-    // The shell launches whatever repo this is, not the parent of some
-    // installed app bundle.
-    CALANDRIA_REPO_ROOT: REPO_ROOT,
+    // Unpackaged, the shell launches whatever repo this is, not the parent of
+    // some installed app bundle.
+    //
+    // PACKAGED, this variable is deliberately ABSENT — it is the one piece of
+    // env that would hide the failure this lane exists to find. Setting it
+    // points a downloaded app back at a working checkout, which is how the
+    // research spike's packaged shell passed while still leaning on the repo:
+    // every assertion held, and a real download would have died on a missing
+    // payload. Without it `main.js` must resolve `resources/app-payload` and
+    // the artifact has to carry everything itself.
+    ...(PACKAGED ? {} : { CALANDRIA_REPO_ROOT: REPO_ROOT }),
     // Nothing here tests the ticker, and an unattended sweep inside a suite
     // that kills servers mid-run is only a source of noise.
     CALANDRIA_SCHEDULER: "off",
@@ -180,10 +232,24 @@ function launchArgs(root: string, opts: LaunchOptions): string[] {
   return args;
 }
 
+/**
+ * `chromiumSandbox` is the half of the sandbox decision that lives in
+ * Playwright rather than in our arguments — see `NO_SANDBOX`. Kept beside
+ * `launchArgs()` so the two can never disagree.
+ */
+function launchOptions(): { chromiumSandbox: boolean } {
+  return { chromiumSandbox: !NO_SANDBOX };
+}
+
 function launchEnv(root: string, port: number, opts: LaunchOptions): Record<string, string> {
   const inherited: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) inherited[k] = v;
-  // PATH matters: resolveNode() has to find a real `node` for the sidecars.
+  // The whole environment is inherited (PATH matters: resolveNode() has to find
+  // a real `node` for the sidecars), so a developer who exports
+  // CALANDRIA_REPO_ROOT for their own shell would otherwise re-introduce
+  // exactly the crutch instanceEnv() drops. Deleted rather than overwritten:
+  // "absent" is the state under test.
+  if (PACKAGED) delete inherited.CALANDRIA_REPO_ROOT;
   return { ...inherited, ...instanceEnv(root, port), ...(opts.env ?? {}) };
 }
 
@@ -202,8 +268,9 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   const env = launchEnv(root, port, opts);
 
   const app = await electron.launch({
-    ...(PACKAGED ? { executablePath: PACKAGED } : { executablePath: electronBinary() }),
+    executablePath: shellBinary(),
     args: launchArgs(root, opts),
+    ...launchOptions(),
     env,
     timeout: 120_000,
   });
@@ -246,6 +313,20 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   }
 
   return { app, win, origin, root, dbDir: path.join(root, "db"), firstUrl, bootScreenLog, log, proc };
+}
+
+/**
+ * The executable every launch in this file goes through: the packaged artifact
+ * when `CALANDRIA_TEST_BIN` names one, the unpacked dev Electron otherwise.
+ *
+ * The relocation check lives here rather than at module load so it reports as a
+ * failing test with the rest of the launch context, and so a spec that never
+ * launches (the win32-only file, on Linux) does not fail on it.
+ */
+export function shellBinary(): string {
+  if (!PACKAGED) return electronBinary();
+  assertOutsideCheckout(PACKAGED);
+  return PACKAGED;
 }
 
 /**
@@ -295,8 +376,9 @@ export async function launchDuplicate(shell: Shell): Promise<{ refused: boolean;
   const opts: LaunchOptions = { userDataDir: userDataDir(shell.root) };
   try {
     const second = await electron.launch({
-      ...(PACKAGED ? { executablePath: PACKAGED } : { executablePath: electronBinary() }),
+      executablePath: shellBinary(),
       args: launchArgs(shell.root, opts),
+      ...launchOptions(),
       env: launchEnv(shell.root, port, opts),
       timeout: 25_000,
     });
