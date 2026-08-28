@@ -22,6 +22,7 @@ import {
   treeAlive,
   treeMatchesCommand,
 } from "@/lib/processTree";
+import { outputLines } from "./platform";
 
 const posix = process.platform !== "win32";
 const onPosix = posix ? it : it.skip;
@@ -143,8 +144,7 @@ function spawnService(): { proc: ChildProcess; pid: number; command: string } {
 /** Every live pid in `pid`'s process group, per `ps`. */
 function groupMembers(pid: number): string[] {
   const out = execFileSync("ps", ["-A", "-o", "pgid=,pid=,command="], { encoding: "utf8" });
-  return out
-    .split("\n")
+  return outputLines(out)
     .map((l) => l.trim())
     .filter((l) => Number(l.slice(0, l.indexOf(" "))) === pid);
 }
