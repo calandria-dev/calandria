@@ -37,9 +37,9 @@ today.
    window lifecycle, the menu, single-instance, external links, the permission
    handler, the db-lock collision and quit-drains — the whole of §4's unverified
    list, for Linux.
-2. **One Proxmox VM: a Linux *desktop bench*.** A real session (labwc or GNOME +
-   D-Bus + a notification daemon), VNC/RDP for a human, registered as a
-   **gated, ephemeral** GitHub Actions runner. It runs the native-integration
+2. ~~**One Proxmox VM: a Linux *desktop bench*.**~~ **Provisioned** 2026-08-25 —
+   an Xfce session, VNC over an SSH tunnel, described in §5. Not yet registered
+   as a **gated, ephemeral** GitHub Actions runner. It runs the native-integration
    half — notifications, tray, window manager behaviour, packaged `.deb`/
    AppImage install — and doubles as the machine where "first run on a machine
    with a display" actually happens.
@@ -259,26 +259,90 @@ job — it is rebuildable, not precious.
 
 ## 5. The bench VM, concretely
 
-Sized from the live inventory: Orion has 51–99 GiB free per node and 29 TiB of
-Ceph headroom; Carina does not (carina1 has 6 GiB free). Put it on **orion3**,
-the lightest-loaded node.
+Provisioned 2026-08-25 and live. This section describes what exists; the
+plan it replaced said "put it on orion3", "labwc or GNOME" and left egress an
+open question, and was wrong about all three.
 
 | | |
 |-|-|
-| Base | Ubuntu 24.04 template (VMID 9901), 4 vCPU / 8 GiB / 60 GiB |
-| Provisioned by | `ansible-orion`'s `roles/proxmox_vm` + an entry in `vars/vms_orion.yml`, run through `provision-vms.yaml` (no AWX job template exists for it yet — that is a prerequisite step, not a blocker) |
-| Software | Node 22 (`.nvmrc`), git, `gh`, Xvfb + the Chromium library set, a real session (labwc or GNOME), `dbus-x11`, `dunst`, a VNC/RDP server, Docker (so the existing `*:docker` lanes work there too) |
-| Rendering | SwiftShader/llvmpipe. No GPU exists on the fleet and none is needed — every measurement above was software-rendered |
-| Runner | GitHub Actions self-hosted, ephemeral, labels `self-hosted,linux,x64,desktop` |
+| Host | `calandria-desktop-bench`, **192.168.3.70** (VLAN 3), VMID 3050 |
+| Spec | Ubuntu 24.04, 4 vCPU / 8 GiB / 60 GiB on `ceph-ssd` |
+| Placement | **HA-enabled with no placement rule — it floats across all four Orion nodes.** orion3 was only the clone target |
+| Session | Xfce on `:1` — xfwm4, xfce4-panel with an explicit `systray` plugin (StatusNotifierItem host), dunst |
+| Rendering | llvmpipe, `LIBGL_ALWAYS_SOFTWARE=1` (`llvmpipe (LLVM 20.1.2, 256 bits)`) |
+| Installed | node v22.23.2, npm 10.9.8, gh 2.98.0, Docker 29.7.2, xvfb, the Chromium shared-library set |
+| Rebuilt by | `roles/desktop_bench` + `desktop-bench.yml` in `ansible-orion` — idempotent, `ansible-lint` production profile. Fix drift by re-running the playbook, not by hand |
+| Runner | Not registered yet. The ephemeral-runner rules in §4 still stand |
 | Backups | Excluded from the nightly vzdump job |
 
-Why a VM at all, when the ubuntu runner already does most of it: a real session
-is what surfaces the class of bug Xvfb hides — a window manager that reparents,
-a compositor that ignores `titleBarStyle`, a tray icon with no AppIndicator host,
-a notification daemon with its own idea of urgency — and it is the only place
-where a human (or a Calandria agent session with VNC) can *watch* the app run
-and take over. It is also where the packaged `.deb` can be installed as a user
-would install it, SUID sandbox and all.
+**Do not assume which node it is on.** PVE 9 replaced HA groups with
+`/cluster/ha/rules`, and a resource with no rule attached is eligible
+everywhere; ProxLB also live-migrates it on its own 12h cycle.
+
+**Why Xfce**, which the plan did not consider: it is the mainstream target that
+still fits 4 vCPU on llvmpipe, and GNOME 46 has no legacy tray at all — it would
+have made tray testing *worse*, not more realistic. Xfwm4 reparents, which is
+the class of behaviour Xvfb hides and the bench exists to catch.
+
+### Access
+
+VNC binds to **loopback only**, deliberately: reaching the session means SSH to
+the box first, so the SSH key is the credential and there is no VNC password to
+store anywhere.
+
+```bash
+ssh -L 5901:localhost:5901 penmoid@192.168.3.70
+vncviewer localhost:5901
+```
+
+`desktop-bench-check` on the bench asserts the session is real rather than a
+bare X server — it exits non-zero if any of the four things Xvfb cannot provide
+is missing. **Run it as a precondition in the native-integration specs**; if it
+fails, the specs are testing a broken session and their results mean nothing.
+
+```
+$ desktop-bench-check
+display        :1
+ok    X server reachable
+ok    window manager running
+ok    notification daemon
+ok    status notifier host
+window manager Xfwm4
+gl renderer    llvmpipe (LLVM 20.1.2, 256 bits)
+node           v22.23.2
+```
+
+### Two gotchas for the spec work
+
+**The session bus is not the systemd user bus.** `dbus-run-session` mints its
+own, and over SSH `pam_systemd` has *already* exported
+`DBUS_SESSION_BUS_ADDRESS` pointing at `$XDG_RUNTIME_DIR/bus`. Anything talking
+to the session's daemons from outside must read the address the session
+publishes to `~/.vnc/session-bus` and **ignore the inherited value** — deferring
+to it silently queries the wrong bus and reports healthy daemons as missing.
+
+**Electron's namespace sandbox.** Ubuntu 24.04 ships
+`kernel.apparmor_restrict_unprivileged_userns=1`, which denies it when the app
+runs from a source checkout (`npx electron .`). The bench sets it to `0` so the
+CI lane needs no `--no-sandbox`. A packaged `.deb` is unaffected either way,
+because electron-builder's postinst makes `chrome-sandbox` SUID root — so a spec
+asserting sandbox behaviour must be explicit about which of the two paths it
+exercises. `desktop_bench_allow_unprivileged_userns` in the Ansible role flips
+it back to stock 24.04.
+
+### Egress — answered
+
+**VLAN 3 egress to the public internet is open, subnet-wide**, checked against
+the live ruleset rather than assumed: the UDM Pro's zone-based firewall sends
+Internal→External through a catch-all ALLOW (the only blocks in that path are
+scoped to one client MAC or to unrelated IPs), and the Proxmox firewall is
+disabled at datacenter, node and VM level. Verified empirically — a real 200 on
+an Electron CDN download from a VLAN 3 host, plus GitHub, npm, ghcr.io and
+Docker Hub. One caveat before blaming your test: **IPS runs in active blocking
+mode** on VLAN 3, not detect-only, so an intermittently dropped connection in a
+CI job is worth checking against Suricata alerts before assuming a config
+problem. Full write-up: `Infrastructure/Networking/VLAN Egress Policy.md` in the
+Obsidian vault.
 
 ## 6. Cost
 
@@ -286,7 +350,7 @@ would install it, SUID sandbox and all.
 |-|-|
 | The `desktop-linux` CI lane | ~2–4 min for the dev-shell half, plus the packaged half: **25 s** to stage the payload and **20 s** for `electron-builder --dir` (bench, warm — a cold runner also pays a production-only `npm ci` and one ~30 MB Node download), then the window suite again at ~80 s. Free (public repo); the job's ceiling is 45 min |
 | The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (24 specs over eight files, nine of them Windows- or macOS-gated) with `desktop/test-window.js` retired into it |
-| Bench VM | 4 vCPU / 8 GiB / 60 GiB on orion3 + one Ansible inventory entry; ongoing patching |
+| Bench VM | 4 vCPU / 8 GiB / 60 GiB, HA across the Orion nodes; one `ansible-orion` role + playbook; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
 | Windows lane | Landed: free minutes on GitHub-hosted `windows-latest`, ~2x the Ubuntu lane's wall clock. Deliberately not the Proxmox template — see §4 |
 | macOS lane | Free minutes; the real cost is signing/notarization, already priced in `DESKTOP_APP.md` §6 |
@@ -300,7 +364,10 @@ would install it, SUID sandbox and all.
    deterministic port so it cannot collide with a live instance.~~ **Done** —
    `preferredPorts()`, and the suite's own `CALANDRIA_DESKTOP_E2E_PORT` base
    (4741, clear of the browser suite's 4711).
-3. Provision the bench VM and register the gated ephemeral runner.
+3. ~~Provision the bench VM~~ **Done** — `calandria-desktop-bench`, §5 for the
+   access recipe and the two D-Bus/sandbox gotchas. Still open: registering the
+   gated ephemeral runner, and the AWX job template for the playbook (tracked in
+   infra-claude).
 4. ~~Add `electron-builder` packaging, then point the same suite at the
    artifact.~~ **Done** — the `desktop` job packages, relocates and re-runs the
    window suite against the artifact, and `06-packaged.spec.ts` holds the
