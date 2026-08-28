@@ -13,6 +13,7 @@ import { repoLockKey, withRepoLock } from "../lib/repoLock";
 import { ensureWorktree } from "../lib/git";
 import { git, makeRepo, tmpDir, uid } from "./helpers";
 import { canonicalPath } from "@/lib/paths";
+import { outputLines } from "./platform";
 
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
@@ -182,8 +183,7 @@ describe("withRepoLock", () => {
     // `git worktree list` prints C:/Users/... on Windows where path.join built
     // C:\Users\..., so the two sides are compared through canonicalPath rather
     // than as raw strings (lib/paths.ts).
-    const listed = (await git(repo, "worktree", "list", "--porcelain"))
-      .split("\n")
+    const listed = outputLines(await git(repo, "worktree", "list", "--porcelain"))
       .filter((line) => line.startsWith("worktree "))
       .map((line) => canonicalPath(line.slice("worktree ".length).trim()));
     expect(listed).toContain(canonicalPath(wtA!.path));

@@ -9,6 +9,11 @@
  *     delivering SIGINT to another process — is skipped on win32 with a comment
  *     rather than ported into something that pins nothing.
  *
+ * `outputLines` is a third kind and the one that bit us: not a spelling a test
+ * chooses, but a fact about what a native Windows tool writes back. It lives
+ * here for the same reason as the rest — so the next test to shell out doesn't
+ * re-derive it, and get it wrong the same way (issue #53).
+ *
  * Nothing here changes what runs on Linux/macOS: every value below resolves to
  * exactly the literal the suite used before on those platforms.
  */
@@ -39,6 +44,31 @@ export const NULL_DEVICE = IS_WIN ? "NUL" : "/dev/null";
  * always `cmd.exe`, and unlike PowerShell it needs no execution-policy blessing.
  */
 export const TEST_SHELL = IS_WIN ? process.env.COMSPEC || "cmd.exe" : "/bin/sh";
+
+/**
+ * A subprocess's stdout, as lines.
+ *
+ * Split on `/\r?\n/` rather than `"\n"`, because a NATIVE Windows binary writes
+ * its stdout in text mode and terminates every line with CRLF. Splitting on the
+ * bare newline leaves a trailing `\r` on each entry, and no `toBe`/`toContain`/
+ * `$`-anchored assertion can then match — while on Linux the identical code is
+ * correct, so the failure is invisible everywhere but the Windows lanes. That is
+ * exactly how it reached main: `tar -tzf` in `tests/backup.test.ts` (issue #53).
+ *
+ * Only native binaries do this. Git for Windows is an MSYS build and keeps its
+ * pipes in binary mode, so `git log` / `git worktree list` emit LF on every
+ * platform, which is why the suite's many git callers were never affected.
+ *
+ * A trailing blank line is dropped, since a final newline terminates the last
+ * line rather than starting an empty one. Blank lines in the middle are kept —
+ * `filter(Boolean)` at a call site would also have swallowed the lone `\r` that
+ * made the original failure read as a phantom entry.
+ */
+export function outputLines(stdout: string): string[] {
+  const lines = stdout.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
 
 /**
  * `detached` for a child whose whole tree the test will need to kill. On POSIX
