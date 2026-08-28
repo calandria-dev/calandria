@@ -132,19 +132,87 @@ carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
   the database.
 - The db-lock exit reaches the user as "another Calandria is already running".
 - `app.quit()` drains a live turn — the row is settled in SQLite after the
-  process is gone — and the server exits.
+  process is gone — and the server exits. So does closing the WINDOW, which is
+  the quit a Windows or Linux user actually performs, and which now keeps the
+  window on screen while it waits (see below).
+- Copy and paste: Ctrl/Cmd+C in the renderer reaches the OS clipboard and
+  Ctrl/Cmd+V comes back. The menu test above asserts the Edit roles exist; this
+  asserts they do something.
 - One smoke path through the app inside the window, so SSE and the renderer are
-  known to work under Electron's own network stack.
+  known to work under Electron's own network stack — plus the terminal panel,
+  which is xterm over the `/pty` upgrade `server.js` proxies to the sidecar and
+  is the only coverage that sidecar has in either suite.
 
-**Still unverified:** everything that needs a *real* session rather than a
-virtual display — a window manager that reparents, a tray with an AppIndicator
-host, and a notification that actually reaches a daemon. (The macOS
-`hiddenInset` title bar was on this list until the `macos-desktop` lane; a
-hosted macOS runner has a real WindowServer, so nothing there needs a virtual
-display in the first place — see §5.) (The suite has to point libnotify at a dead bus to run at all:
-without a notification daemon each native notification blocks Electron's main
-process for 25 s. See `DESKTOP_E2E.md` §1.) First run on a desktop machine is
-still a step worth taking, and is likely to find small things.
+### The first run with a display (2026-08-28)
+
+The window had never been looked at — the spike box is headless — so this was
+one session driven end to end and then run again by hand under a **window
+manager and a notification daemon**: Xvfb with openbox, dbus and dunst on the
+dev box. Not a physical desktop: no GPU, no compositor, no Wayland, no login
+session. What it establishes is the class of thing a bare virtual display
+hides, which is most of what was on this list; what it does not is anything
+that needs a real seat, which stays the bench VM's job (§5, `DESKTOP_E2E.md`
+§5).
+
+What it found, in order of how much it mattered:
+
+- **Closing the window drained invisibly.** The X button is the ordinary quit on
+  Windows and Linux, and it reaches the drain by a different route than
+  Cmd/Ctrl+Q does: `close` → `window-all-closed` → `quit()` → `before-quit`. The
+  window was destroyed 15 ms in (measured) and everything after that — the POST
+  to `/api/instance/drain`, settling the turns, stopping the sidecars — happened
+  with nothing on screen. A fast drain hides it; a real turn mid-write does not,
+  and a user who relaunches inside that window is told another Calandria is
+  already running, which reads as a crash rather than as a shutdown still in
+  progress. `main.js` now `preventDefault`s the close and routes it through
+  `app.quit()`, so the window is still there to carry the drain state, and that
+  state is now an overlay on the page as well as the window title — the title
+  alone is invisible on a desktop that draws no title bar, and the page
+  underneath is a live app whose server is being stopped out from under it.
+  Pinned by the third test in `desktop/e2e/03-quit-drain.spec.ts`, which reads
+  the state from inside the main process at `before-quit` rather than racing a
+  200 ms drain from outside.
+- **The window title belongs to the page, not to us.** It reads
+  "Calandria - Welcome" under a WM, because `app/Shell.tsx` sets `document.title`
+  per project and a page title outranks `BrowserWindow`'s. `setTitle()` still
+  lands during the drain (nothing re-renders it in that window), but that is
+  exactly why the drain overlay above is not optional.
+- **`npm start` from a checkout needs `--no-sandbox` on Linux.** Electron
+  unpacked by npm has a `chrome-sandbox` owned by the user, and Chromium refuses
+  to run rather than run unsandboxed: `FATAL: The SUID sandbox helper binary was
+  found, but is not configured correctly`, then SIGTRAP. Either pass the flag or
+  `sudo chown root:root` + `chmod 4755` that file. Not a shell bug and not
+  present in a packaged install (the `.deb` sets it), but it is step one of the
+  developer flow, so `desktop/README.md` now says so. The suite never hit it
+  because `_electron.launch()` passes `--no-sandbox` on Linux itself.
+- **Everything else in the window worked on first sight.** The boot screen with
+  its streaming log, the handoff, a live turn arriving over SSE, the diff with
+  its hunk, the terminal panel talking to the pty sidecar, external links
+  leaving for the browser. Under openbox the window is reparented and decorated
+  (`_NET_FRAME_EXTENTS` = 1,1,20,5); **F11 sent as a real X key** — the View
+  menu's `togglefullscreen` accelerator, not a CDP call — takes it to
+  `_NET_WM_STATE_FULLSCREEN` at the full 1600x1000 and back; Ctrl+plus and
+  Ctrl+0 zoom and reset.
+- **A native notification really reaches a daemon.** With dunst owning
+  `org.freedesktop.Notifications`, a task parking on a permission card produced
+  `Waiting for input` / `Notify me · WM Run`, appname `calandria-desktop`. This
+  is the one thing the CI lanes structurally cannot show: they point libnotify
+  at a dead bus on purpose, because without a daemon each notification blocks
+  Electron's main process for GDBus's 25 s timeout (`DESKTOP_E2E.md` §1).
+- **The native menu bar sits above the app's own header row** on Linux (and
+  Windows), where Electron draws it inside the window. Two chrome rows, both
+  legible; left alone deliberately rather than hidden behind
+  `autoHideMenuBar`, since on those platforms the menu is the only discoverable
+  home for Reload app, Open in browser and the zoom items. This is the same
+  question `titleBarStyle: "hiddenInset"` answers on macOS, decided the other
+  way because the surfaces are not the same.
+
+**Still unverified:** a tray icon with an AppIndicator host (there is no tray
+yet), a real compositor — Wayland, a GPU, a login session, a dock — and the
+install paths that put a `.desktop` entry and an icon in front of a user. The
+macOS `hiddenInset` title bar is the `macos-desktop` lane's (a hosted runner has
+a real WindowServer, so nothing there needs a virtual display — see §5), and
+first run on Windows has its own task.
 
 Packaging (`electron-builder`) is no longer on this list — see §6. Still not
 attempted: tray/menubar, deep links (`calandria://`), dock badge for the "N need

@@ -158,6 +158,38 @@ test("the permission handler grants notifications and denies everything else", a
   expect(camera).not.toBe("granted");
 });
 
+test("copy and paste reach the system clipboard", async () => {
+  // The menu test above asserts the Edit roles EXIST. This asserts they do
+  // something: a keystroke in the renderer ends up on the OS clipboard and
+  // comes back. It is the one shell behaviour a user notices instantly when it
+  // is missing, and on macOS the roles are literally where Cmd+C comes from —
+  // an application menu without `{ role: "editMenu" }` leaves the app unable to
+  // copy at all, with no error anywhere to say so.
+  //
+  // A textarea injected into the app's own page rather than a product surface:
+  // the subject is the shell's editing pipeline, and depending on the composer
+  // would make this fail for reasons that have nothing to do with it.
+  await shell.win.evaluate(() => {
+    const t = document.createElement("textarea");
+    t.id = "clipboard-probe";
+    t.style.cssText = "position:fixed;top:0;left:0;z-index:2147483647";
+    document.body.appendChild(t);
+  });
+  const probe = shell.win.locator("#clipboard-probe");
+
+  await probe.fill("clipboard-probe-42");
+  await probe.press("ControlOrMeta+a");
+  await probe.press("ControlOrMeta+c");
+  expect(await shell.app.evaluate(({ clipboard }) => clipboard.readText())).toBe("clipboard-probe-42");
+
+  await shell.app.evaluate(({ clipboard }) => clipboard.writeText("clipboard-probe-99"));
+  await probe.press("ControlOrMeta+a");
+  await probe.press("ControlOrMeta+v");
+  await expect(probe).toHaveValue("clipboard-probe-99");
+
+  await shell.win.evaluate(() => document.getElementById("clipboard-probe")?.remove());
+});
+
 test("external links leave for the real browser instead of navigating the app", async () => {
   // `shell` in main.js is the same object this patches — it destructures the
   // electron module at load, so the method swap is visible to it.

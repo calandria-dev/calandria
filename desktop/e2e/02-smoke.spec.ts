@@ -76,3 +76,25 @@ test("a turn streams into the transcript inside the Electron window", async () =
   // The diff rail read the worktree the turn wrote in.
   await expect(shell.win.getByText("greeting.txt").first()).toBeVisible({ timeout: 30_000 });
 });
+
+test("the terminal panel reaches the pty sidecar the shell started", async () => {
+  // The SECOND product path in this file, and it earns the exception for the
+  // same reason the first one does: nothing else asserts it anywhere. The
+  // browser suite has no terminal coverage at all, so `/pty` — a WebSocket
+  // upgrade proxied by server.js to the second process the supervisor spawned —
+  // is otherwise only ever proven by `test-real-boot.js` starting the sidecar,
+  // not by anything talking to it. Inside the shell that is three of its moving
+  // parts at once: the port pair `pickPorts()` chose, the sidecar's env from
+  // `sidecarEnv()`, and Electron's own network stack carrying the upgrade.
+  await shell.win.getByRole("button", { name: "Terminal", exact: true }).click();
+  const rows = shell.win.locator(".xterm-rows");
+  await expect(rows).toBeVisible({ timeout: 30_000 });
+
+  await shell.win.locator(".xterm").first().click();
+  // Quoted mid-word so the assertion cannot pass on the shell's ECHO of what
+  // was typed: `hello-from-electron` unbroken exists only in the OUTPUT.
+  await shell.win.keyboard.type('echo he"llo"-from-electron\n');
+  await expect(rows).toContainText("hello-from-electron", { timeout: 30_000 });
+
+  await shell.win.getByTitle("Hide terminal (the shell keeps running)").click();
+});

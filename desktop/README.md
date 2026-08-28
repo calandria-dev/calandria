@@ -23,7 +23,19 @@ npm start
 
 The window shows a boot log until the server answers `/api/version`, then loads
 the app. Quitting drains in-flight turns before exiting (`/api/instance/drain` →
-SIGTERM), the same way stopping the server from a terminal does.
+SIGTERM), the same way stopping the server from a terminal does — and closing
+the window is that same quit, so it stays on screen with a "finishing in-flight
+turns…" overlay until the drain is done rather than vanishing while the process
+is still working.
+
+**On Linux, `npm start` needs `-- --no-sandbox`** — or a one-time
+`sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod
+4755` on the same file. npm unpacks Electron as you, so its setuid sandbox
+helper is not root-owned, and Chromium aborts (`FATAL: The SUID sandbox helper
+binary was found, but is not configured correctly`, then SIGTRAP) rather than
+run unsandboxed. A packaged install has none of this: the `.deb`'s postinst
+sets the bit. The e2e suite does not hit it either — Playwright's
+`_electron.launch()` adds `--no-sandbox` on Linux itself (`e2e/fixtures.ts`).
 
 Env it understands:
 
@@ -43,11 +55,11 @@ inherited unchanged.
 | File | What it is |
 |-|-|
 | `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
-| `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first. No preload, no IPC, no `nodeIntegration`. |
+| `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first — including the window's own close button, which is held open (with a title and an on-page overlay) until the drain finishes. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 24 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
-| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, quit-drains-in-flight-work, and one smoke path through the app inside the window. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
+| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work by both routes (`app.quit()` and closing the window), and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
 
 ## Tests

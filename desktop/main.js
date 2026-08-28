@@ -69,7 +69,7 @@ function main() {
     if (quitting || !supervisor) return;
     quitting = true;
     event.preventDefault();
-    win?.setTitle("Calandria — finishing in-flight turns…");
+    showDraining();
     try {
       await supervisor.stop();
     } finally {
@@ -121,6 +121,30 @@ function createWindow() {
     event.preventDefault();
     shell.openExternal(url);
   });
+
+  // The X button is how a window gets closed on Windows and Linux, and it is
+  // the one quit path with nothing to look at: `window-all-closed` → `quit()` →
+  // `before-quit` still drains the in-flight turns, but the window is already
+  // gone — measured at 15 ms — so for however long the drain takes (up to
+  // CALANDRIA_SHUTDOWN_GRACE_MS + 4 s) the app is off the screen and alive in
+  // the process table, and a user who relaunches inside that window is told
+  // another Calandria is already running. Route the close through `app.quit()`
+  // instead and keep the window up while the drain runs, which is what
+  // `before-quit`'s title change was always addressed to.
+  //
+  // Not on macOS: there, closing the window is not quitting (see
+  // `window-all-closed` above), and preventing the close would make it so.
+  //
+  // A SECOND close during the drain is allowed through — by then the user has
+  // seen the drain state and asked twice, and `supervisor.stop()` is bounded
+  // anyway, so the wait cannot outlive the grace.
+  if (process.platform !== "darwin") {
+    win.on("close", (event) => {
+      if (quitting || !supervisor) return;
+      event.preventDefault();
+      app.quit();
+    });
+  }
 
   win.on("closed", () => {
     win = null;
@@ -200,6 +224,49 @@ async function boot() {
     app.exit(1);
   }
 }
+
+/**
+ * What quitting looks like while `supervisor.stop()` waits for the turns.
+ *
+ * Two signals because they answer to two places. The TITLE is what a window
+ * manager shows, and on macOS it is the only one that matters — the window
+ * stays and the user is looking at the dock. The OVERLAY is on the page, which
+ * is where the eyes are on every platform, and it is also the only cue on a
+ * desktop that draws no title bar at all. The page underneath is a live app
+ * whose server is being shut down out from under it, so leaving it alone would
+ * mean the last thing the user sees is a UI going wrong rather than one being
+ * put away.
+ *
+ * Written from the main process, like the boot log and for the same reason:
+ * the app serves its own CSP and a main-process evaluation is not subject to
+ * it, so nothing here depends on the page cooperating. Best-effort throughout —
+ * a window mid-navigation, or already gone, must not hold up the quit.
+ */
+function showDraining() {
+  win?.setTitle("Calandria — finishing in-flight turns…");
+  win?.webContents.executeJavaScript(DRAIN_OVERLAY).catch(() => {});
+}
+
+const DRAIN_OVERLAY = `(() => {
+  if (document.getElementById("calandria-draining")) return;
+  const el = document.createElement("div");
+  el.id = "calandria-draining";
+  el.setAttribute("role", "status");
+  el.style.cssText = [
+    "position:fixed", "inset:0", "z-index:2147483647",
+    "display:flex", "flex-direction:column", "align-items:center", "justify-content:center", "gap:10px",
+    "background:rgba(11,13,16,.92)", "color:#e6e8eb", "-webkit-backdrop-filter:blur(2px)", "backdrop-filter:blur(2px)",
+    'font:14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  ].join(";");
+  const h = document.createElement("div");
+  h.style.cssText = "font-size:16px;font-weight:600;letter-spacing:.2px";
+  h.textContent = "Finishing in-flight turns…";
+  const sub = document.createElement("div");
+  sub.style.cssText = "color:#8b939c;font-size:12.5px";
+  sub.textContent = "Calandria is settling running sessions before it stops. This window closes on its own.";
+  el.append(h, sub);
+  document.body.appendChild(el);
+})()`;
 
 function buildMenu() {
   // Without an application menu, macOS loses Cmd+C/V/A entirely — the roles

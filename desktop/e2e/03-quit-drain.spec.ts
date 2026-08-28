@@ -13,8 +13,13 @@
  * mid-write turn off, which leaves `running = 1` behind for `recoverFromCrash()`
  * to mop up on the next boot.
  *
- * TWO TESTS, NOT ONE, AND BOTH HOLD ON EVERY PLATFORM. They used to be split
- * by platform: the drain rode on the SIGTERM that `supervisor.stop()` sent,
+ * A THIRD TEST covers the OTHER quit — the window's own close button, which
+ * reaches `before-quit` through `window-all-closed` and is what a Windows or
+ * Linux user actually presses. It is skipped on macOS, where closing a window
+ * is not quitting at all.
+ *
+ * THE `app.quit()` PATH IS TWO TESTS, NOT ONE, AND BOTH HOLD ON EVERY
+ * PLATFORM. They used to be split by platform: the drain rode on the SIGTERM that `supervisor.stop()` sent,
  * and Windows has no deliverable one — `child.kill("SIGTERM")` there is a
  * `TerminateProcess`, so `server.js` never reached its handler and the turn
  * was cut off mid-write. The supervisor now makes the drain request itself
@@ -120,6 +125,114 @@ test("the in-flight turn was settled rather than cut off mid-write", async () =>
       `the turn was still marked running after the shell exited (quit took ${quitMs}ms) — ` +
         "before-quit returned before server.js finished draining"
     ).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("closing the window keeps it on screen until the drain is done", async () => {
+  // macOS closes the window WITHOUT quitting — `window-all-closed` deliberately
+  // does nothing there and the app stays in the dock — so there is no drain to
+  // keep a window open for, and main.js does not intercept the close.
+  test.skip(process.platform === "darwin", "closing a window is not quitting on macOS");
+
+  // The X button, which is how a window gets closed on Windows and Linux, and
+  // a different chain from the one above: `close` → `window-all-closed` →
+  // `quit()` → `before-quit`. It used to take the window away 15 ms in and
+  // drain behind it, so for as long as the drain took (a real agent turn, not
+  // this instant mock one) the app was off the screen and alive in the process
+  // table — and a user who relaunched inside that window was told another
+  // Calandria was already running, which reads as a crash rather than as a
+  // shutdown still in progress. `main.js` now preventDefaults the close and
+  // routes it through `app.quit()`, so the window is still there to carry the
+  // drain state `before-quit` sets.
+  //
+  // Its own instance: the shell above is gone, and this one ends too.
+  shell = await launchShell("close-drain", { env: { CALANDRIA_SHUTDOWN_GRACE_MS: "15000" } });
+  await ensureOnboarded(shell.origin);
+  const repoPath = makeFixtureRepo("desktop-close");
+  const project = await createProject(shell.origin, "Desktop Close", repoPath);
+  const task = await createTask(shell.origin, {
+    projectId: project.id,
+    title: "Hold a turn open",
+    description: "Take your time. e2e:sleep=30000",
+  });
+  await sendMessage(shell.origin, task.id);
+  await expect
+    .poll(async () => (await getTask(shell.origin, task.id)).running, {
+      timeout: 60_000,
+      message: "the mock turn never started",
+    })
+    .toBe(1);
+
+  // Registered BEFORE the close: `app.waitForEvent("close")` only sees events
+  // that arrive after it is called, and this drain can be over in ~200 ms.
+  let exited = false;
+  shell.proc.once("exit", () => {
+    exited = true;
+  });
+
+  // The drain state is READ FROM INSIDE the main process, at the moment
+  // `before-quit` runs, and left on disk to be read after the exit. Sampling it
+  // from out here would be a race the shell wins: settling one aborted mock
+  // turn takes ~200 ms end to end, the same order as a CDP round trip, so a
+  // spec that polled the live window would go green or red on runner speed.
+  // This listener is registered after main.js's, so it runs while that one is
+  // awaiting `supervisor.stop()` with the quit already prevented.
+  const statePath = path.join(shell.root, "drain-state.json");
+  await shell.app.evaluate(async ({ app, BrowserWindow }, file) => {
+    app.on("before-quit", async () => {
+      const w = BrowserWindow.getAllWindows()[0];
+      const state = {
+        windows: BrowserWindow.getAllWindows().length,
+        visible: w?.isVisible() ?? false,
+        title: w?.getTitle() ?? "",
+        overlay: "",
+      };
+      // The title is set synchronously; the overlay lands an IPC hop later, so
+      // poll for it briefly rather than record a half-applied state.
+      for (let i = 0; i < 20 && !state.overlay; i++) {
+        state.overlay = await (w?.webContents
+          .executeJavaScript("document.getElementById('calandria-draining')?.innerText || ''")
+          .catch(() => "") ?? Promise.resolve(""));
+        if (!state.overlay) await new Promise((r) => setTimeout(r, 50));
+      }
+      // `require` is not in scope for a Playwright-evaluated function (measured:
+      // undefined), but the main process is a CommonJS entry, so its module's
+      // own require is.
+      process.mainModule!.require("node:fs").writeFileSync(file, JSON.stringify(state));
+    });
+  }, statePath);
+
+  const origin = shell.origin;
+  await shell.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+
+  await expect
+    .poll(() => fs.existsSync(statePath), { timeout: 90_000, message: "before-quit never ran" })
+    .toBe(true);
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+    windows: number;
+    visible: boolean;
+    title: string;
+    overlay: string;
+  };
+  // Both halves matter, and they show in different places: the title is what a
+  // window manager renders (and on a desktop that draws no title bar, nothing
+  // does), the overlay is on the page, where the user is actually looking.
+  expect(state.windows, "the window was gone while the drain was still running").toBe(1);
+  expect(state.visible).toBe(true);
+  expect(state.title).toContain("finishing in-flight turns");
+  expect(state.overlay).toContain("Finishing in-flight turns");
+
+  // ...and it is a shutdown, not a hang: the process goes, the port goes with
+  // it, and the turn is settled rather than cut off — the same three facts the
+  // `app.quit()` path is held to above.
+  await expect.poll(() => exited, { timeout: 90_000, message: "the shell never exited" }).toBe(true);
+  expect(await serverIsUp(origin)).toBe(false);
+  const db = new Database(dbFile(shell.dbDir), { readonly: true });
+  try {
+    const row = db.prepare("SELECT running FROM tasks WHERE id = ?").get(task.id) as { running: number } | undefined;
+    expect(row?.running, "the turn was still marked running after a window close").toBe(0);
   } finally {
     db.close();
   }
