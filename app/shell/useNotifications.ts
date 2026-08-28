@@ -22,14 +22,45 @@ export function shouldDisplay(
   return !(ctx.visible && ctx.selectedTaskId === payload.taskId);
 }
 
-export type BrowserNotificationState = NotificationPermission | "unsupported" | "insecure";
+export type BrowserNotificationState =
+  | NotificationPermission
+  | "unsupported"
+  | "insecure"
+  | "desktop_shell";
+
+/**
+ * Is this page running inside the Electron desktop shell (desktop/main.js)?
+ *
+ * A user-agent read, and deliberately not a server-side flag. What is being
+ * asked here is a fact about the CLIENT — the same server can be open in the
+ * shell and in an ordinary browser tab at the same moment, and both an env var
+ * on the sidecars and the per-instance `window.__FEATURES` bundle would answer
+ * one of them with the other's truth. The UA is the only signal that already
+ * travels per client, and usePush.ts reads it for iPadOS for the same reason.
+ *
+ * The `Calandria-Desktop/` token is our own, appended by the shell, so the part
+ * of this that matters can only "rot" if we retire it ourselves. `Electron/` is
+ * kept as a fallback so a packaged build that predates the token still gets the
+ * right copy — and getting this wrong costs a sentence of help text, not a
+ * notification: the hook below stands down either way (see hardenSession()).
+ */
+export function isDesktopShell(userAgent: string): boolean {
+  return /\bCalandria-Desktop\/|\bElectron\//.test(userAgent);
+}
 
 /**
  * The pure classifier behind notificationPermission(), pinned by a test.
  *
- * The insecure check comes FIRST because it explains the other two signals
- * away: outside a secure context Chrome reports permission "denied" without
- * ever having prompted (and can never prompt), and some browsers hide the
+ * The desktop shell comes first and outranks every browser signal, because
+ * inside it none of them describe the channel the user actually hears. The
+ * shell denies the renderer `notifications` (both handlers) and raises them
+ * from the Electron main process instead, so `Notification.permission` reads
+ * "denied" while the OS toasts keep arriving — literally true and completely
+ * misleading, and the page cannot see the channel that replaced it.
+ *
+ * Then the insecure check, because it explains the other two signals away:
+ * outside a secure context Chrome reports permission "denied" without ever
+ * having prompted (and can never prompt), and some browsers hide the
  * Notification API entirely. Reading either of those at face value produces
  * the wrong diagnosis — "you blocked this site" or "this browser can't" —
  * when the real fix is reaching the instance over https or localhost.
@@ -37,10 +68,12 @@ export type BrowserNotificationState = NotificationPermission | "unsupported" | 
  * notifications genuinely cannot work.
  */
 export function classifyNotificationSupport(env: {
+  desktopShell: boolean;
   secureContext: boolean;
   hasNotificationApi: boolean;
   permission: NotificationPermission | null;
 }): BrowserNotificationState {
+  if (env.desktopShell) return "desktop_shell";
   if (!env.secureContext) return "insecure";
   if (!env.hasNotificationApi || env.permission === null) return "unsupported";
   return env.permission;
@@ -51,6 +84,7 @@ export function notificationPermission(): BrowserNotificationState {
   if (typeof window === "undefined") return "unsupported";
   const hasApi = "Notification" in window;
   return classifyNotificationSupport({
+    desktopShell: isDesktopShell(navigator.userAgent),
     secureContext: window.isSecureContext,
     hasNotificationApi: hasApi,
     permission: hasApi ? Notification.permission : null,

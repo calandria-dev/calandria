@@ -259,12 +259,17 @@ setenv`-ing `instanceEnv()`'s keys — PATH pointedly left out, since that's
 the variable under test — and unsets them in `afterAll`.
 
 One environment gotcha it handles for you, worth knowing if you run the shell by
-hand on a headless box: `Notification.permission` is `granted` in Electron
-without anything asking, so the app posts real native notifications, and on
-Linux with a session bus but **no** notification daemon each one blocks the
-Electron main process for GDBus's 25-second timeout. The suite points
-`DBUS_SESSION_BUS_ADDRESS` at a socket that does not exist so libnotify fails
-immediately instead.
+hand on a headless box: on Linux with a session bus but **no** notification
+daemon, every native notification blocks the Electron main process for GDBus's
+25-second timeout. The suite points `DBUS_SESSION_BUS_ADDRESS` at a socket that
+does not exist so libnotify fails immediately instead. `main.js` now denies the
+renderer that permission — both the request and the *check*, since Electron
+answers checks "granted" by default and the page reads `Notification.permission`
+— so the page can no longer trigger it on every turn event; the shell's own
+notifications are the same call on the same thread, which is why the dead socket
+stays. Denying the check is also why the shell appends `Calandria-Desktop/` to
+the user agent: Settings → Notifications reads that same permission and would
+otherwise report the browser channel as blocked (`docs/DESKTOP_APP.md` §5.1).
 
 Electron is a `devDependency`, so an `npm install` run with `NODE_ENV=production`
 in the environment reports "up to date" and installs nothing — including in an

@@ -403,9 +403,18 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       </div>
 
       <div className="field">
-        <div className="lab">{Icon.bolt()} Browser notifications</div>
+        <div className="lab">{Icon.bolt()} {perm === "desktop_shell" ? "Desktop notifications" : "Browser notifications"}</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          {perm === "insecure"
+          {perm === "desktop_shell"
+            // The page's own channel really is switched off in here, and saying
+            // so plainly is the point: read straight off Notification.permission
+            // this card used to report "blocked", sending the user hunting for a
+            // browser site setting that doesn't exist in the shell — while OS
+            // notifications were arriving the whole time from a channel the page
+            // can't see. The desktop app raises them from outside the window, so
+            // it keeps working with this window hidden to the tray.
+            ? "The desktop app handles these itself, so the page's own channel is switched off — that's what stops every event arriving twice. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
+            : perm === "insecure"
             ? "Browsers only allow notifications on a secure origin, and this page is plain http — no site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
             : perm === "unsupported"
               ? "This browser can't show notifications."
@@ -421,7 +430,10 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
               {Icon.bell()} Enable browser notifications
             </button>
           )}
-          <button className="btn btn-line btn-sm" onClick={sendTest} disabled={(perm !== "granted" && !(devices && devices.length > 0)) || testState === "sending"}>
+          {/* `desktop_shell` counts as a live channel here even though it isn't
+              "granted": the test goes through the server the same way a real
+              notification does, and the shell's main process raises it. */}
+          <button className="btn btn-line btn-sm" onClick={sendTest} disabled={(perm !== "granted" && perm !== "desktop_shell" && !(devices && devices.length > 0)) || testState === "sending"}>
             {Icon.send()} {testState === "sending" ? "Sending…" : "Send test notification"}
           </button>
         </div>
