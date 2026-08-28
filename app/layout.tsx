@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   // may not own. Only set for instances that configured a public origin.
   metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
   title: "Calandria",
-  description: "Run parallel agent sessions across every project, host each app live under your own domain, and verify changes from any device.",
+  description: "Run Claude Code and Codex in parallel across every project, from any browser. Self-hosted, one git worktree per task, no API key.",
   applicationName: "Calandria",
   // iOS has no manifest-driven install; these metas are what make "Add to Home
   // Screen" open a standalone window. black-translucent lets the page extend

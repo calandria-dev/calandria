@@ -1,56 +1,59 @@
 # Document collaboration mode
 
-When an agent writes or edits a text file, its section in the Changes tab
-carries a **Collaborate** button, and so does the **Write**/**Edit** tool card in
-the transcript. The two differ in what they can see: the Changes tab follows the
-diff, which lists tracked changes plus untracked files *minus* anything
-gitignored, so notes the agent keeps under an ignored `scratch/` or `.local/`
-never appear there. The tool card is keyed on the path the agent actually wrote
-(the runner stores it worktree-relative on the tool message, and only when it
-resolves inside the task's worktree), so those files open the moment the Write
-lands — and any document opens without switching to the diff. Either way the
-file is read by `GET /api/tasks/[id]/file`, which confines reads to the worktree
-and knows nothing about git status.
+When an agent writes or edits a text file, a **Collaborate** button appears on
+that file's row in the Changes tab and on the **Write**/**Edit** tool card in
+the transcript.
 
-It opens the file as a document — not hunk by hunk — so you can work on it the
-way you'd proofread in a word processor:
+The two buttons see different files. The Changes tab button follows the diff,
+which lists tracked changes plus untracked files, minus anything gitignored:
+notes the agent keeps under an ignored `scratch/` or `.local/` never show up
+there. The tool card button is keyed on the path the agent actually wrote (the
+runner stores it worktree-relative on the tool message, and only when it
+resolves inside the task's worktree), so it opens the moment the Write lands,
+and you don't need to switch to the diff tab to reach it.
 
-- **Edit** — a source editor beside a live render (markdown; a ```mermaid
+Either way, `GET /api/tasks/[id]/file` reads the file. That route confines
+reads to the worktree and doesn't check git status.
+
+It opens the file as a whole document, letting you proofread it the way you
+would in a word processor:
+
+- **Edit**: a source editor beside a live render for markdown (a ```mermaid```
   fence renders as a diagram, see below), or the editor alone with syntax
-  picked from the filename (any other text file). Untouched
-  lines never change; how the edited ones reach the file is the **Edits**
-  picker in the footer (it appears once you've changed something, and the
-  choice is remembered per browser):
-  - **Write to file** (default) — Send writes the edited text straight into
+  picked from the filename for any other text file. Untouched lines never
+  change. How the edited ones reach the file is set by the **Edits** picker in
+  the footer, which appears once you've changed something, and your choice
+  persists per browser:
+  - **Write to file** (default): Send writes the edited text straight into
     the task's worktree (`POST /api/tasks/[id]/file`, the read route's twin,
-    under the same path guard) and the message carries the diff *for context
-    only*, telling the agent the file already has these changes. This is the
-    reliable route: a model asked to apply a patch verbatim sometimes doesn't.
-    The server refuses it in two cases, both 409: **a turn is running** (the
-    agent owns the worktree until it ends — the picker greys the option out
-    and your edits go as a patch until then), and **the file changed since you
-    opened it** (the agent's last turn or a terminal wrote it; your edits were
-    made against text that is no longer there, so send them as a patch for
-    the agent to reconcile, or cancel and reopen).
-  - **Send as patch** — the message carries a unified diff the agent is told
-    to apply exactly as written. Nothing touches the worktree but the agent's
-    own session, which is the reason to pick it.
-- **Comment** — the rendered document (the verbatim text, for a non-markdown
-  file). Select a passage and press **Add comment** to attach a note to it; a
-  **General comments** box takes feedback
-  that isn't tied to any passage. Commented passages stay tinted while the
-  modal is open, and clicking a comment scrolls to its passage.
+    under the same path guard). The message carries the diff for context
+    only, telling the agent the file already has these changes. This is the
+    reliable route, because a model asked to apply a patch verbatim sometimes
+    doesn't. The server responds with a 409 in two cases: a turn is
+    running, so the picker greys out the option and edits go as a patch until
+    it ends; or the file changed since you opened it, because the agent's
+    last turn or a terminal wrote to it. In that case your edits were made
+    against text that no longer exists, so send them as a patch for the agent
+    to reconcile, or cancel and reopen.
+  - **Send as patch**: the message carries a unified diff the agent is told
+    to apply exactly as written. Nothing but the agent's own session touches
+    the worktree.
+- **Comment**: the rendered document, or the verbatim text for a non-markdown
+  file. Select a passage and press **Add comment** to attach a note to it. A
+  **General comments** box takes feedback that isn't tied to any passage.
+  Commented passages stay tinted while the modal is open, and clicking a
+  comment scrolls to its passage.
 
-Both tabs work on the same document state, so you can edit *and* comment in one
+Both tabs share the same document state, so you can edit and comment in one
 pass. **Send to agent** composes one message (`lib/collab.ts`,
 `buildCollabPacket`) and sends it through the ordinary chat path, so it queues
 behind a running turn like any other message. **Cancel** discards your edits
-and the general note (after a confirmation when there are any); passage
-comments are already saved and are there when you reopen the document.
+and the general note, asking for confirmation if there are any. Passage
+comments are already saved and remain when you reopen the document.
 
-What the agent receives (patch mode; in direct mode the "My edits" preamble
+What the agent receives in patch mode (in direct mode the "My edits" preamble
 says the file on disk already has the changes and the diff must not be
-re-applied, and comment line numbers refer to the current file):
+reapplied, and comment line numbers refer to the current file):
 
 ```
 Document review of `docs/setup.md` — I read it in collaboration mode and have feedback.
@@ -80,92 +83,107 @@ Too terse for a first-time reader overall.
 Work through this on the document, then summarize what you changed.
 ```
 
-A passage comment carries the selected text as rendered (no `**`/`#`/link
-syntax — the selection happens in the rendered view), the nearest heading above
-it, and the source line range `locateQuote()` finds for it — first as a verbatim
-substring of the source, then by a markdown-syntax-insensitive match that
-tolerates emphasis, code spans, list markers, links and soft line breaks. When
-neither finds it, the packet says so and the heading is the anchor.
+A passage comment carries the selected text as rendered (no `**`, `#`, or
+link syntax, since the selection happens in the rendered view), the nearest
+heading above it, and the source line range that `locateQuote()` finds for
+it. It first tries a verbatim substring match against the source, then a
+markdown-syntax-insensitive match that tolerates emphasis, code spans, list
+markers, links, and soft line breaks. When neither match succeeds, the packet
+says so and uses the heading as the anchor.
 
 ## Diagrams
 
-A ```` ```mermaid ```` fence renders as the diagram it describes, in both tabs
+A ```` ```mermaid ```` fence renders as the diagram it describes in both tabs
 (`<Markdown diagrams>` → `app/Mermaid.tsx`), so an agent's design doc reads as
-a design doc and a passage comment can be attached to a node label like any
-other text. The transcript keeps showing the fence as code, deliberately:
-a message re-renders on every streamed token, so a half-written diagram would
-fail to parse on each one — and a document is read whole. In the Edit tab the
-render follows the source with a short debounce, and a source that doesn't
-parse keeps the **last good diagram** on screen, dimmed, with the parser's
-message under it — a diagram being typed is invalid far more often than
-valid, and the picture blinking out on every keystroke would make the live
-render useless exactly when it's wanted. Rendering runs with mermaid's
-`strict` security level (the SVG goes through DOMPurify — the source is
-whatever the agent or the user wrote) and follows the app theme. `mermaid` is
-loaded on first use with a dynamic import, so its ~2MB never reaches a session
-that opens no diagram.
+a design doc, and a passage comment can attach to a node label like any other
+text.
+
+The transcript keeps showing the fence as code, because a message re-renders
+on every streamed token: a half-written diagram would fail to parse on each
+one, while a document is read whole only after it finishes.
+
+In the Edit tab, the render follows the source with a short debounce. When
+the source doesn't parse, it keeps the **last good diagram** on screen,
+dimmed, with the parser's message underneath, because a diagram being typed
+is invalid more often than valid, and a picture that blinks out on every
+keystroke isn't useful while you're typing.
+
+Rendering runs with mermaid's `strict` security level (the SVG goes through
+DOMPurify, since the source is whatever the agent or the user wrote) and
+follows the app theme. `mermaid` loads on first use through a dynamic import,
+so its ~2MB never reaches a session that opens no diagram.
 
 ## Comments are saved as you go
 
-Passage comments persist the moment you add them — `task_doc_comments`, via
-`/api/tasks/[id]/doc-comments` — so a review survives a reload or the Changes
-tab remounting (it does that on every rail collapse and tab switch, which
-unmounts this modal). Each comment is stamped with the *file's* git blob sha
-as it was loaded (the file route's `sha`), not the worktree HEAD: an agent
-edits documents without committing, so HEAD wouldn't see the change a review
-is actually about. On Send, the drafts folded into the packet are marked sent
-— read-only from then on, but still listed against the document, under "Sent
-to agent" — and once the file's content moves on from the sha they were
-written against, they collapse into a "Show N outdated comment(s)" group
-rather than being guess-painted onto text they weren't written for. Drafts
-stay live regardless of their anchor — removable, and folded into the next Send
-(the user decides whether they still apply) — and are flagged "not found" if
-their passage isn't in the current text.
+Passage comments persist the moment you add them, to `task_doc_comments` via
+`/api/tasks/[id]/doc-comments`, so a review survives a reload or the Changes
+tab remounting (which happens on every rail collapse and tab switch,
+unmounting this modal).
 
-## Why a source editor, not a WYSIWYG one
+Each comment is stamped with the file's git blob sha as it was loaded (the
+file route's `sha`), not the worktree HEAD. An agent edits documents without
+committing, so HEAD wouldn't reflect the change a review is actually about.
 
-The spike surveyed the widely used editors (August 2026): MDXEditor, Milkdown,
-TipTap (+ `@tiptap/markdown`), Lexical (`@lexical/markdown`), Plate
-(`@platejs/markdown` + `@platejs/comment`), BlockNote, Remirror, Toast UI,
-`@uiw/react-md-editor`, and CodeMirror 6 — plus the annotation libraries
-(Recogito, Annotorious, `web-highlighter`, `rangy`, `react-text-annotate`).
+On Send, the drafts folded into the packet are marked sent: read-only from
+then on, but still listed against the document under "Sent to agent". Once
+the file's content moves past the sha they were written against, they
+collapse into a "Show N outdated comment(s)" group instead of being matched
+against text they weren't written for.
 
-Every rich editor works by parsing markdown into its own document model and
-**re-serializing on save**, which rewrites list markers, table padding, heading
-styles and blank lines the user never touched. BlockNote's API is literally
-named `blocksToMarkdownLossy`; MDXEditor and TipTap have open issues about
-normalization. What leaves this modal is a *diff sent to an agent*, so that
-noise would be read as instructions. CodeMirror edits the literal text, which
-makes "untouched lines come back byte-identical" true by construction — and
-the rendered view sits beside it, so the document still reads as a document.
+Drafts stay live regardless of their anchor. They can be removed, and each
+Send folds in whatever is still open so you decide whether it still applies.
+A draft is flagged "not found" if its passage isn't in the current text.
 
-On comments: TipTap's Comments extension is Tiptap Cloud Pro (paid). BlockNote's
-requires a Yjs `ThreadStore` even for one user. Plate's `@platejs/comment` is
-the one standalone, mark-based option and would be the pick if a single-library
-WYSIWYG were ever wanted — with the round-trip caveat above. For a
-select-and-annotate flow over an already-rendered document, the native
+## Editor choice: source over WYSIWYG
+
+The spike surveyed the widely used editors as of August 2026: MDXEditor,
+Milkdown, TipTap (with `@tiptap/markdown`), Lexical (`@lexical/markdown`),
+Plate (`@platejs/markdown` and `@platejs/comment`), BlockNote, Remirror,
+Toast UI, `@uiw/react-md-editor`, and CodeMirror 6, plus the annotation
+libraries Recogito, Annotorious, `web-highlighter`, `rangy`, and
+`react-text-annotate`.
+
+Every rich editor parses markdown into its own document model and
+re-serializes on save, which rewrites list markers, table padding, heading
+styles, and blank lines you never touched. BlockNote's API is literally named
+`blocksToMarkdownLossy`, and MDXEditor and TipTap both have open issues about
+normalization. What leaves this modal is a diff sent to an agent, so that
+noise would be read as instructions.
+
+CodeMirror edits the literal text, so untouched lines come back
+byte-identical. The rendered view sits beside it, so the document still
+reads as a document.
+
+For comments: TipTap's Comments extension is Tiptap Cloud Pro (paid), and
+BlockNote's requires a Yjs `ThreadStore` even for one user. Plate's
+`@platejs/comment` is the one standalone, mark-based option, and would be the
+pick if the app ever wanted a single-library WYSIWYG, subject to the
+round-trip caveat above.
+
+For a select-and-annotate flow over an already-rendered document, the native
 `Selection`/`Range` API plus the CSS Custom Highlight API (`CSS.highlights`,
-Chrome 105+ / Safari 17.2+ / Firefox 140+) does the job with no dependency and
-no DOM mutation under react-markdown; browsers without it still get the comment
-list, just not the tint. `web-highlighter` was the fallback candidate and wasn't
-needed.
+Chrome 105+, Safari 17.2+, Firefox 140+) does the job with no dependency and
+no DOM mutation under react-markdown. Browsers without it still get the
+comment list, just not the tint. `web-highlighter` was the fallback candidate
+and wasn't needed.
 
-Dependencies added: `diff` (jsdiff, the unified patch), `@uiw/react-codemirror`,
-`@codemirror/lang-markdown`, `@codemirror/language-data` — CodeMirror is loaded
-through `next/dynamic` so it stays out of the main bundle until a document is
-opened — and `mermaid`, loaded the same lazy way on the first diagram.
+Dependencies added: `diff` (jsdiff, for the unified patch),
+`@uiw/react-codemirror`, `@codemirror/lang-markdown`, and
+`@codemirror/language-data`. CodeMirror loads through `next/dynamic`, so it
+stays out of the main bundle until a document is opened, and `mermaid` loads
+the same lazy way on the first diagram.
 
 ## What the spike does not do (yet)
 
-- Edits in the Edit tab and the General comments box are still modal-only —
-  closing discards them (after a confirmation).
-- A direct write isn't versioned or undoable beyond what git offers: the
-  worktree is the task's branch, so `git diff` in the task terminal shows it
-  and `git checkout -- <file>` takes it back, but there is no in-app undo.
-- The rendered view can't tell two identical passages apart: a quote is
-  re-found by text search, so a selection inside the second of two identical
-  sentences highlights the first. Rare in prose; the line number in the packet
-  is computed the same way.
-- Only markdown files get the button (`isMarkdownPath`); nothing stops the
-  same modal from opening any text file, the render tab would just be less
-  useful.
+- Edits in the Edit tab and the General comments box are modal-only: closing
+  discards them, after a confirmation.
+- A direct write isn't versioned or undoable beyond what git offers. The
+  worktree is the task's branch, so `git diff` in the task terminal shows the
+  change and `git checkout -- <file>` reverts it, but there is no in-app
+  undo.
+- The rendered view can't tell two identical passages apart. A quote is
+  found again by text search, so a selection inside the second of two
+  identical sentences highlights the first. This is rare in prose; the line
+  number in the packet is computed the same way.
+- Only markdown files get the button (`isMarkdownPath`). The same modal can
+  open any text file; the render tab is just less useful for one.

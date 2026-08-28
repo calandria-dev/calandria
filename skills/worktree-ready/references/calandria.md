@@ -11,8 +11,8 @@ happen](#what-does-not-happen) · [Ports and services](#ports-and-services) ·
 ## Worktree creation
 
 - One worktree per **task**, at `~/.calandria/worktrees/<task-id>`
-  (`CALANDRIA_WORKTREES_DIR`) — deliberately **outside** the project repo, so
-  the workspace-root corruption problem in `ecosystems.md` doesn't apply.
+  (`CALANDRIA_WORKTREES_DIR`), **outside** the project repo, so the
+  workspace-root corruption problem in `ecosystems.md` doesn't apply.
 - Branch `calandria/<task-id>`, created with `git worktree add -b`.
 - Cut from the project's base branch resolved to a **pinned SHA**, or from the
   fetched remote tip when local base is merely behind it.
@@ -48,17 +48,17 @@ Two different paths, and only one of them gets a port:
 | Managed service (`dev`/`setup`/`test`, `expose_service`) | project's main checkout | injected, one per **project** |
 | Agent runs a server itself in its worktree | the task's worktree | nothing injected |
 
-Consequences worth stating in a report:
+Consequences to state in a report:
 
 - There is **one port per project**, not per task. Two tasks cannot each run
   the project's `dev` service; the second gets a readable "port already in use"
   error.
 - An agent that starts a server in its own worktree picks its own port. It can
-  only pick one if the repo honors `PORT` — otherwise it's stuck on whatever
+  only pick one if the repo honors `PORT`; otherwise it's stuck on whatever
   literal is in the source, colliding with every sibling task.
 - Once it has picked, `expose_service(name, port)` registers it and returns a
   URL. Registration is keyed by project and name, so two tasks exposing the
-  same name overwrite each other — have the agent use a name that includes the
+  same name overwrite each other. Have the agent use a name that includes the
   task.
 - A dev server behind that URL sees a proxied hostname, so host checks need to
   allow it: `CALANDRIA_PUBLIC_HOST` is injected for services, and Vite
@@ -66,13 +66,14 @@ Consequences worth stating in a report:
 
 ## Project settings that help
 
-- **Project context** — the free-text "what we're building" field, sent into
-  new task sessions. The bootstrap command belongs in the repo's `CLAUDE.md` /
-  `AGENTS.md` first (it's version-controlled and reviewable), but naming it
-  here too costs nothing and reaches sessions that don't load the repo file.
-- **Base branch** — worktrees are cut from it, so a stale base means every task
+- **Project context**: the free-text "what we're building" field, sent into
+  new task sessions. Put the bootstrap command in the repo's `CLAUDE.md` /
+  `AGENTS.md` first, since that's version-controlled and reviewable, but
+  naming it here too costs nothing and reaches sessions that don't load the
+  repo file.
+- **Base branch**: worktrees are cut from it, so a stale base means every task
   starts from stale code and every merge carries noise.
-- **Agent** — Claude Code sessions read `CLAUDE.md` and the repo's
+- **Agent**: Claude Code sessions read `CLAUDE.md` and the repo's
   `.claude/skills`; Codex sessions read `AGENTS.md` and `.agents/skills`. A
   project that might use either needs both files present.
 
@@ -85,5 +86,5 @@ and per-worktree dependency installs land on top of that.
 That's what makes install size a real finding rather than a nitpick: on a repo
 where `npm install` is 500MB, twenty finished tasks are 10GB nobody has looked
 at. It's also the argument for pnpm's global store in a repo that will see
-heavy parallel use — the saving is multiplied by every task ever run, not just
-the ones running now.
+heavy parallel use, since the saving is multiplied by every task ever run, not
+just the ones running now.
