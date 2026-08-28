@@ -56,7 +56,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: (name: string, description: string, schema: unknown, handler: unknown) => ({ name, description, schema, handler }),
 }));
 
-import { claudeDriver, SETTING_SOURCES } from "@/lib/agents/claude/driver";
+import { claudeDriver, SETTING_SOURCES, WATCHED_SETTINGS_FILES, WORKTREE_SETTINGS_FILE } from "@/lib/agents/claude/driver";
 import { listSlashCommands } from "@/lib/schedule/commands";
 import type { Project, Task } from "@/lib/types";
 
@@ -137,6 +137,41 @@ describe("claude driver setting sources", () => {
     expect(options.skills).toBeUndefined();
     // Turns are resumed by session id across a task's whole lineage.
     expect(options.persistSession).toBeUndefined();
+  });
+});
+
+describe("drift detection covers every source a turn loads from the worktree", () => {
+  // The other half of the 'local' decision above (issue #43). Dropping 'local'
+  // closed the source a human review can never see; 'project' stays, and what
+  // makes that safe is that the runner hashes the file before every turn and
+  // holds the turn on a card when it moved (lib/settingsDrift.ts). The two
+  // facts — which sources a turn loads, and which files that gate watches —
+  // must be ONE fact, or re-adding a source re-opens the hole under a name
+  // nothing is looking at.
+  it("derives the watch list from SETTING_SOURCES rather than restating it", () => {
+    // Asserted as a DERIVATION, not as a value: every source a turn loads that
+    // resolves inside the task's own worktree is watched, and nothing else is.
+    const worktreeSources = SETTING_SOURCES.filter((s) => WORKTREE_SETTINGS_FILE[s]);
+    for (const source of worktreeSources) {
+      expect(WATCHED_SETTINGS_FILES, `${source} is loaded but unwatched`).toContain(WORKTREE_SETTINGS_FILE[source]);
+    }
+    expect(WATCHED_SETTINGS_FILES).toHaveLength(worktreeSources.length);
+    // The driver publishes it on the seam the runner reads (AgentDriver), which
+    // is the only reason the gate fires for a Claude task and not a Codex one.
+    expect(claudeDriver.watchedSettingsFiles).toEqual(WATCHED_SETTINGS_FILES);
+    expect(claudeDriver.watchedSettingsFiles).toContain(".claude/settings.json");
+  });
+
+  it("maps every source in the SDK's union, so a re-added one arrives watched", () => {
+    // The map is total over SettingSource (a compile-time obligation), and
+    // these are the two entries that decide what re-adding a source would do:
+    // 'local' would be covered the moment it went back into SETTING_SOURCES,
+    // and 'user' is null because ~/.claude is the operator's own machine —
+    // outside every worktree, no more trusted than the person running the app,
+    // and holding a turn on it would be raising a card against yourself.
+    expect(WORKTREE_SETTINGS_FILE.local).toBe(".claude/settings.local.json");
+    expect(WORKTREE_SETTINGS_FILE.project).toBe(".claude/settings.json");
+    expect(WORKTREE_SETTINGS_FILE.user).toBeNull();
   });
 });
 

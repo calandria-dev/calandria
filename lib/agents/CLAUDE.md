@@ -109,8 +109,12 @@ what a task trusts. `local` (`<worktree>/.claude/settings.local.json`) is droppe
 default set, because it's agent-writable and gitignored by convention, so a hook, permission-allow
 rule or env var planted there never appears in the diff a human reviews and still runs next turn
 with no `canUseTool` check in between. `project` is kept despite also being worktree-writable,
-since it's tracked and shows up in that same diff. `tests/claudeSettingSources.test.ts` pins both
-halves.
+because it's tracked and shows up in that same diff — and, since nothing forces that review to
+happen before the NEXT TURN, because the runner hashes it before every turn and holds the turn on
+a card when it moved (`lib/settingsDrift.ts`, issue #43). That watch list is DERIVED from
+`SETTING_SOURCES` via `WORKTREE_SETTINGS_FILE`, a total map over the SDK's union, so re-adding a
+worktree-resolved source extends the gate to it in the same edit rather than re-opening the hole
+under a name nothing is watching. `tests/claudeSettingSources.test.ts` pins all of it.
 
 Inheritance grants nothing on its own. Those servers' tools go through `canUseTool` like any
 other call: auto-approved under `bypassPermissions`, classifier-screened under `auto`, a

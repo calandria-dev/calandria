@@ -254,6 +254,31 @@ export interface AgentDriver {
   runTurn(task: Task, project: Project, userText: string, abort?: AbortController, hooks?: TurnHooks): AsyncGenerator<StreamEvent>;
 
   /**
+   * Files INSIDE the task's working directory that this driver re-reads from
+   * disk at the start of every turn and then obeys — worktree-relative paths.
+   *
+   * These are the files that are configuration to the agent and ordinary
+   * writable files to the task: `.claude/settings.json` carries `hooks` (literal
+   * shell commands run on tool/session events, outside canUseTool entirely),
+   * `permissions.allow` (auto-approval with no gate call at all) and `env`. An
+   * agent can write one in turn N and have it take effect in turn N+1, and so
+   * can a commit the base branch brought in, with nothing between the write and
+   * the run but a human happening to read the diff (issue #43).
+   *
+   * Naming them here is what lets the runner hash each one before the turn
+   * starts and hold the turn on a card when it has changed since the turn this
+   * task last ran (lib/settingsDrift.ts). It is the driver's list because only
+   * the driver knows which files its CLI loads: the Claude driver derives it
+   * from SETTING_SOURCES, so re-adding a source re-derives the watch list
+   * rather than leaving a new one unwatched.
+   *
+   * OPTIONAL. Omitted (or empty) means "this agent loads nothing from the
+   * worktree that it will then execute" — Codex, whose config is ~/.codex only
+   * — and the gate is skipped entirely for that agent's tasks.
+   */
+  watchedSettingsFiles?: string[];
+
+  /**
    * The slash commands a turn on this task WOULD expand, so the composer's "/"
    * menu can offer them instead of guessing. Scoped to the task because the
    * answer depends on its worktree: `.claude/commands` in the checked-out repo

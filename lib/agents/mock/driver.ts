@@ -102,6 +102,15 @@ export const mockDriver: AgentDriver = {
   label: "Mock Agent",
   capabilities: MOCK_CAPABILITIES,
 
+  // Stands in for the Claude driver's WATCHED_SETTINGS_FILES so the runner's
+  // pre-turn settings gate (lib/settingsDrift.ts, issue #43) is exercised end
+  // to end in the built server, card and all. The mock reads nothing from this
+  // file; what the e2e is testing is the gate and its UI, and both are the
+  // runner's, driven off exactly this declaration. `e2e:write=` is what plants
+  // the file, which is also the escalation being modelled: an agent writing
+  // the settings its NEXT turn would run under.
+  watchedSettingsFiles: [".claude/settings.json"],
+
   async listCommands() {
     return MOCK_COMMANDS;
   },
