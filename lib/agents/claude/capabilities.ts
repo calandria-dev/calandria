@@ -111,7 +111,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // bypassPermissions, classifier-screened under the "auto" default, a
   // permission card otherwise —
   // reachable in every mode, which is what makes this differ from Codex, where
-  // an inherited tool call can never succeed. CLAUDE.md has the comparison.
+  // an inherited tool call can never succeed. lib/agents/CLAUDE.md compares them.
   inheritsUserMcpServers: true,
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   // The driver holds the session open past the result while run_in_background
