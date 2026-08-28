@@ -1,3 +1,7 @@
+---
+title: "Supported agents"
+---
+
 # Supported agents
 
 Calandria supports Claude Code and OpenAI Codex as first-class task agents. Connect either

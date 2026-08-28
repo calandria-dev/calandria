@@ -1,3 +1,7 @@
+---
+title: "Cross-platform desktop app (spike)"
+---
+
 # Cross-platform desktop app (spike)
 
 **Question:** can Calandria be wrapped as a desktop app (Electron or similar), and what

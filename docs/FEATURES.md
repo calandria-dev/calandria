@@ -1,3 +1,7 @@
+---
+title: "Features"
+---
+
 # Features
 
 Calandria is a control room for running coding-agent work across repositories. This page

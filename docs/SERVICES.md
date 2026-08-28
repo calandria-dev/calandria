@@ -1,3 +1,7 @@
+---
+title: "Managed services"
+---
+
 # Managed services
 
 Calandria can supervise a project's development, setup, and test processes. Services belong

@@ -1,3 +1,7 @@
+---
+title: "Windows"
+---
+
 # Windows
 
 Calandria runs on Windows two ways, both supported:

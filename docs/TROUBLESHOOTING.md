@@ -1,3 +1,7 @@
+---
+title: "Troubleshooting"
+---
+
 # Troubleshooting
 
 First-incident runbooks for the failure modes a self-hoster actually hits. The rest of `docs/`

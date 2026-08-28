@@ -1,0 +1,82 @@
+---
+/* The /docs landing page.
+
+   It is a page in `website/`, not a file in `docs/`, on purpose. The repo's
+   README is the project's front door and GitHub renders it — copying it in here
+   would be a second thing to keep current, and phase 3's landing page is where
+   that material belongs anyway. So the README is LINKED, not duplicated, and
+   this page is nothing but a way in to the thirteen documents beside it.
+
+   `StarlightPage` is Starlight's supported way to give a hand-written page the
+   docs layout: same shell, same sidebar, same search index. */
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+
+const sections = [
+  {
+    title: "Get it running",
+    entries: [
+      ["/docs/installation/", "Installation", "Requirements, the two-command start, and running from source."],
+      ["/docs/self-hosting/", "Self-hosting", "Docker, tunnels, auth, backups, upgrades, and every environment variable."],
+      ["/docs/windows/", "Windows", "Native Windows and WSL2, and which one to pick."],
+      ["/docs/troubleshooting/", "Troubleshooting", "First-incident runbooks: DB corruption, disk fill, headless re-auth, boot failures."],
+    ],
+  },
+  {
+    title: "What it does",
+    entries: [
+      ["/docs/features/", "Features", "Tasks, worktrees, diff review, merge and PRs, the board, schedules, runbooks."],
+      ["/docs/agents/", "Agents", "Claude Code and OpenAI Codex: what each driver supports and how they differ."],
+      ["/docs/services/", "Services", "Long-running processes a task can start, and how they get a public URL."],
+      ["/docs/insights/", "Insights", "Spend, tokens, tasks shipped, and lines merged."],
+      ["/docs/document-collaboration/", "Document collaboration", "Editing documents with an agent instead of a codebase."],
+    ],
+  },
+  {
+    title: "Under the hood",
+    entries: [
+      ["/docs/architecture/", "Architecture", "Processes, the turn lifecycle, the agent-driver seam, where data lives."],
+      ["/docs/desktop-app/", "Desktop app", "The cross-platform desktop spike and what it concluded."],
+      ["/docs/context-budget/", "Context budget", "What CLAUDE.md costs every session, and the rule for growing it."],
+      ["/docs/community/", "Community", "Where to ask, propose, report, and contribute."],
+    ],
+  },
+];
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Calandria documentation",
+    description:
+      "Install, self-host, and understand Calandria — a local-first control room for running many coding-agent sessions in parallel.",
+    tableOfContents: false,
+    editUrl: false,
+  }}
+>
+  <p>
+    Calandria runs many Claude Code and Codex sessions in parallel across your
+    projects, from one screen. Every task gets its own agent session in its own
+    git worktree; turns run on the server and survive the browser closing.
+  </p>
+  <p>
+    These pages are the repo's <code>docs/</code> directory rendered in place, so
+    they always match the branch they were written on. The{" "}
+    <a href="https://github.com/calandria-dev/calandria#readme">README</a> is the
+    short version, and every page here has an “Edit page” link to its Markdown
+    source.
+  </p>
+
+  {
+    sections.map((section) => (
+      <>
+        <h2>{section.title}</h2>
+        <ul>
+          {section.entries.map(([href, label, blurb]) => (
+            <li>
+              <a href={href}>{label}</a> — {blurb}
+            </li>
+          ))}
+        </ul>
+      </>
+    ))
+  }
+</StarlightPage>
