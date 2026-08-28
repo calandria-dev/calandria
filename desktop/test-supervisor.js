@@ -246,26 +246,85 @@ function hold(port) {
     }
   });
 
-  await test("stop() lets the server drain before it exits, and reaps both", async () => {
-    const sup = new Supervisor(stubOpts({ port: 45120, ptyPort: 45121 }));
+  await test("stop() POSTs the drain and waits for it before killing, and reaps both", async () => {
+    const drainLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "calandria-drain-")), "drain.log");
+    fs.writeFileSync(drainLog, ""); // so "never drained" reads as an empty file rather than an ENOENT
+    const sup = new Supervisor(
+      stubOpts({
+        port: 45120,
+        ptyPort: 45121,
+        env: { ...process.env, STUB_DRAIN_LOG: drainLog, SERVICE_TOKEN: "stub-token" },
+      })
+    );
     await sup.start();
     await sup.stop();
     assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
+    // The platform-independent half, and the point of the whole route: the
+    // drain is a request the SHELL made, carrying the same header server.js
+    // sends, so it lands without any signal having to be deliverable.
+    assert.equal(fs.readFileSync(drainLog, "utf8").trim(), "drain token=stub-token");
+    const log = sup.recentLog(50);
+    assert.ok(log.includes("drain complete"), "stop() should have waited for the drain, not fired and forgotten");
+    assert.ok(log.includes("[shell] drained in-flight turns (status 200)"), "the shell should say it drained");
     if (IS_WIN) {
-      // The documented Windows gap, pinned rather than skipped: there is no
-      // deliverable SIGTERM, so `child.kill("SIGTERM")` is a TerminateProcess
-      // and the stub's handler never runs. The shell reaps both sidecars —
-      // that half is what stop() still guarantees — but nothing drains, which
-      // is why desktop/e2e/03-quit-drain.spec.ts marks its DB assertion
-      // test.fail() here and why the shell needs to POST /api/instance/drain
-      // itself before killing. When that lands, this branch changes with it.
-      assert.ok(!sup.recentLog(50).includes("draining"), "a SIGTERM handler cannot have run on win32");
-      assert.notEqual(sup.children.find((c) => c.name === "app").exited.code, 0);
+      // There is still no deliverable SIGTERM here — `child.kill("SIGTERM")`
+      // is a TerminateProcess and the stub's signal handler never runs. That
+      // is now a property of the BACKSTOP rather than a gap: everything the
+      // app needed to settle settled over HTTP a moment earlier.
+      assert.ok(!log.includes("drained, exiting"), "a SIGTERM handler cannot have run on win32");
       return;
     }
-    assert.ok(sup.recentLog(50).includes("draining"), "server should have run its drain handler");
-    assert.ok(sup.recentLog(50).includes("drained, exiting"), "drain should have been allowed to finish");
+    // On POSIX the signal path still runs afterwards, unchanged — server.js
+    // POSTs the same route from its own handler and exits 0. It finds nothing
+    // left in flight, which is why the drain above is the mechanism and this
+    // is the backstop.
+    assert.ok(log.includes("draining"), "server should have run its own SIGTERM drain handler too");
+    assert.ok(log.includes("drained, exiting"), "the signal-side drain should have been allowed to finish");
     assert.equal(sup.children.find((c) => c.name === "app").exited.code, 0);
+  });
+
+  await test("the drain still lands when the signal buys nothing (the Windows case, on any box)", async () => {
+    // `ignore-term` stands in for TerminateProcess semantics on a POSIX box:
+    // the signal accomplishes nothing the server can act on, so a drain that
+    // rode on it would not happen at all. What is asserted is the ORDER —
+    // drained, then killed — because "the file exists afterwards" would also
+    // be true of a shell that drained a corpse.
+    const drainLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "calandria-drain-")), "drain.log");
+    fs.writeFileSync(drainLog, ""); // so "never drained" reads as an empty file rather than an ENOENT
+    const sup = new Supervisor(
+      stubOpts({
+        port: 45130,
+        ptyPort: 45131,
+        env: { ...process.env, STUB_MODE: "ignore-term", STUB_DRAIN_LOG: drainLog },
+      })
+    );
+    await sup.start();
+    await sup.stop({ graceMs: 400 });
+    // No SERVICE_TOKEN in this env: the header is sent only when there is one,
+    // exactly as server.js does it.
+    assert.equal(fs.readFileSync(drainLog, "utf8").trim(), "drain token=none");
+    const lines = sup.recentLog(80).split("\n");
+    const drained = lines.findIndex((l) => l.includes("drain complete"));
+    const gone = lines.findIndex((l) => l.includes("[shell] app exited"));
+    assert.ok(drained >= 0, "the stub never saw a drain request");
+    assert.ok(gone > drained, "the app was killed before its drain finished");
+    assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
+  });
+
+  await test("a drain that never answers doesn't hold the quit open forever", async () => {
+    // The bound is why this can be awaited from `before-quit` at all: a wedged
+    // server (or a route that never becomes reachable) must cost the quit a
+    // known number of seconds, not the window's lifetime.
+    const sup = new Supervisor(
+      stubOpts({ port: 45135, ptyPort: 45136, env: { ...process.env, STUB_MODE: "drain-hang" } })
+    );
+    await sup.start();
+    const started = Date.now();
+    await sup.stop({ drainMs: 600, graceMs: 1000 });
+    const took = Date.now() - started;
+    assert.ok(took < 4000, `stop() took ${took}ms — the drain wait looks unbounded`);
+    assert.ok(sup.recentLog(50).includes("drain request failed"), "an abandoned drain should say so in the log");
+    assert.ok(sup.children.every((c) => c.exited), "every sidecar should still be reaped");
   });
 
   await test("stop() SIGKILLs a sidecar that ignores SIGTERM", async () => {

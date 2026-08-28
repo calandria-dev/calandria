@@ -62,9 +62,9 @@ function main() {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  // Quit is the only place in-flight turns can be drained: server.js's SIGTERM
-  // handler POSTs /api/instance/drain and exits when they settle. Hold the quit
-  // open for exactly as long as that takes.
+  // Quit is the only place in-flight turns can be drained: supervisor.stop()
+  // POSTs /api/instance/drain and waits for the turns to settle before it
+  // stops the sidecars. Hold the quit open for exactly as long as that takes.
   app.on("before-quit", async (event) => {
     if (quitting || !supervisor) return;
     quitting = true;

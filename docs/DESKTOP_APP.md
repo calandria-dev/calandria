@@ -56,7 +56,7 @@ bridge, while a bridge would hand any XSS in the transcript renderer the whole
 Node API. External links open in the user's real browser.
 
 `supervisor.js` contains no `require("electron")`. That is not tidiness: it makes
-the risky half testable on a headless box (21 assertions, `node
+the risky half testable on a headless box (25 assertions, `node
 test-supervisor.js`, ~9 s, no display), and it means a later swap to Tauri or a
 tray-only launcher reuses it whole.
 
@@ -74,7 +74,7 @@ not inferred.
 | **Hosting the server in Electron would break Codex turns** | `lib/agents/codex/driver.ts:58,74` registers the MCP tool bridge as `command: process.execPath, args: [calandria-mcp.mjs]` with a **closed four-key env** (`CALANDRIA_TASK_ID`, `CALANDRIA_PROJECT_ID`, `CALANDRIA_BASE_URL`, `SERVICE_TOKEN`). Inside Electron that `execPath` is the Electron binary and the child inherits no `ELECTRON_RUN_AS_NODE`, so every Codex turn would silently launch a GUI process instead of the bridge. |
 | Two independent port searches collide | With 3000 and 3001 both busy (a live instance), the first draft of `pickPorts` gave **both** sidecars 3002; one lost the bind, and the readiness probe happily talked to whichever won — `pty-server.js` answers every path with a 200 banner, so `/api/version` "succeeded". Fixed by a shared claim set, and the readiness probe now insists on the app's JSON shape. Found by booting the real server, not by the stubs. |
 | macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin` — not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are all invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. |
-| The real server boots under the shell's supervisor | `node desktop/test-real-boot.js`: **919 ms** to `/api/version`, on ports 3002/3003 (stepped past the live instance), app HTML served, `/pty` proxied to the sidecar we chose, `CALANDRIA_DB_DIR` honoured, both sidecars drained on SIGTERM with no SIGKILL. |
+| The real server boots under the shell's supervisor | `node desktop/test-real-boot.js`: **919 ms** to `/api/version`, on ports 3002/3003 (stepped past the live instance), app HTML served, `/pty` proxied to the sidecar we chose, `CALANDRIA_DB_DIR` honoured, both sidecars drained and reaped with no SIGKILL. |
 | Electron's size is not the dominant term | Electron 44 linux-x64 unpacks to **282 MB**. The payload it would wrap — `.next` (127 MB) plus a pruned `node_modules` — is larger; the container carrying the same payload with Debian, git, gh and both agent CLIs is **3.99 GB**. |
 | **…and the packaged app confirms it** | `npm run dist:linux` (2026-08-27, this machine): `dist/linux-unpacked` **2.1 GB**, AppImage **653 MB**, deb **485 MB**. Electron is ~13% of it. The payload's `node_modules` is **1.6 GB** on its own. |
 | What is actually big is the agent CLIs | Inside that 1.6 GB: `@openai/codex-linux-x64` **350 MB**, `@anthropic-ai/claude-agent-sdk-linux-x64` **230 MB** + its `-musl` twin **225 MB**, `@next/swc-linux-x64-gnu` **137 MB** + its `-musl` twin **137 MB**. npm already scoped these to linux-x64; the ~380 MB of glibc/musl duplication is what a desktop build could still drop. |
@@ -103,13 +103,13 @@ Electron's runtime flags.
 
 ## 4. What the prototype does — and what is unverified
 
-Working and tested (`desktop/test-supervisor.js`, 21 assertions; `desktop/test-real-boot.js`, 8):
+Working and tested (`desktop/test-supervisor.js`, 25 assertions; `desktop/test-real-boot.js`, 8):
 
 - Node resolution — `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH, with an actionable error naming everything it tried.
 - macOS launchd-PATH detection and repair from the login shell, fenced against rc-file chatter, `null` rather than a throw on failure.
 - Port selection that steps past a running instance and never hands both sidecars the same port, seeded from `PORT`/`PTY_PORT` when they are set (a preference — a busy one is still stepped past).
 - Readiness polling that insists on the app's own `/api/version` shape.
-- Quit → SIGTERM → the server's own `/api/instance/drain` → exit, with SIGKILL only as a backstop and a bounded wait so nothing outlives the window holding the db lock.
+- Quit → POST `/api/instance/drain` → SIGTERM → exit, with SIGKILL only as a backstop and a bounded wait so nothing outlives the window holding the db lock. The supervisor makes the drain request itself rather than relying on the server's own signal handler, so it works identically where SIGTERM is not deliverable.
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported as "another Calandria is already running", not as a crash.
 - A boot screen that streams sidecar logs, because a cold first launch is otherwise indistinguishable from a hang.
 
@@ -157,16 +157,23 @@ on a real screen.
 
 **Windows** — the server's own gaps are closed ([`WINDOWS.md`](WINDOWS.md)):
 the pty sidecar probes a real Windows shell, managed services are killed as a
-`taskkill /T` tree, and path identity is case-folded. One gap is the
-supervisor's, not the app's: `.kill()` on Windows is `TerminateProcess`, so a
-quit from the shell degrades to a hard stop and an in-flight turn is interrupted
-rather than settled. `npm start` solves the same problem for the console with
-`scripts/start.mjs`, which relies on the console broadcasting Ctrl+C — a path a
-GUI supervisor doesn't have. It needs a graceful-shutdown channel that is not a
-signal: POST `/api/instance/drain` and wait for it before killing. (`npm start`
-used to carry a POSIX-only inline `NODE_ENV=production` prefix; it now goes
-through `cross-env`, and the supervisor spawns `node` directly with an env
-regardless.)
+`taskkill /T` tree, and path identity is case-folded. The gap that was the
+supervisor's, not the app's — `.kill()` on Windows is `TerminateProcess`, so a
+quit from the shell had no signal to carry a graceful shutdown — is closed:
+`stop()` POSTs `/api/instance/drain` itself and waits for it, bounded by
+`CALANDRIA_SHUTDOWN_GRACE_MS`, before it ever sends the kill. The signal path is
+now the backstop rather than the mechanism, so it degrades the same way on every
+platform instead of only where SIGTERM is deliverable. `npm start` solves the
+same problem for the console with `scripts/start.mjs`, which relies on the
+console broadcasting Ctrl+C — a path a GUI supervisor doesn't have, which is why
+the drain still has to be requested rather than signalled. (`npm start` used to
+carry a POSIX-only inline `NODE_ENV=production` prefix; it now goes through
+`cross-env`, and the supervisor spawns `node` directly with an env regardless.)
+One gap remains, and no test covers it: on a real shutdown or logout Electron
+emits neither `before-quit` nor `will-quit` (the session ends through
+`WM_QUERYENDSESSION`/`WM_ENDSESSION` instead), so nothing drains — a
+`session-end` listener does not exist yet. `desktop/e2e/05-windows-quit.spec.ts`'s
+header is the existing statement of that gap.
 
 **Linux** — works as-is under X11/Wayland. `chrome-sandbox` must be
 root-owned/4755 when running from a plain directory (packaged builds handle it);
