@@ -52,6 +52,70 @@ The e2e suite is much slower, so it doesn't run on every push. It runs on `main`
 on a pull request labelled `e2e`. Add that label when a change touches the core flow
 (onboarding, turns, diff, merge) and you want the browser-level proof before merge.
 
+`.github/workflows/pr-title.yml` is a separate, seconds-long job that checks your pull
+request **title** parses as a Conventional Commit. It has its own workflow because it must
+run on PRs that `test.yml` skips (website-only changes) and must re-run when you retitle.
+See [Pull requests](#pull-requests) for why the title matters.
+
+## Pull requests
+
+**Every change lands through a pull request.** Direct pushes to `main` are rejected by a
+repository ruleset — there is no bypass list, so this applies to maintainers and to agents
+as much as to first-time contributors. A branch that is "just a docs fix" still opens a PR.
+
+The ruleset also fixes two things about how a PR lands:
+
+- **Squash merge only.** Merge commits and rebase merges are refused. Your branch becomes
+  exactly one commit on `main`, however many commits you pushed to it.
+- **One approving review** is required before the merge button works.
+
+### Your PR title becomes the commit message
+
+Because the merge is a squash, GitHub composes the single resulting commit's subject from
+the pull request, and `.github/workflows/release-please.yml` then reads exactly those
+subjects — every commit since the last tag — to decide the next version number and to write
+`CHANGELOG.md`.
+
+A subject release-please can't parse isn't an error. It's simply skipped: no version bump,
+no changelog line, nothing in the logs. A PR titled `Fix the thing` ships a real bug fix
+into a release whose notes don't mention it, and there is no later point at which anybody
+finds out.
+
+So the title has to be a [Conventional Commit](https://www.conventionalcommits.org/):
+
+```
+<type>[(scope)][!]: <description>
+```
+
+| Type | Effect |
+|-|-|
+| `feat` | Minor bump; listed under **Features** |
+| `fix` | Patch bump; listed under **Bug Fixes** |
+| `perf`, `revert` | Listed in the changelog, no bump |
+| `docs`, `style`, `chore`, `refactor`, `test`, `build`, `ci` | Recorded, hidden from the changelog |
+
+Those twelve are the whole list. A type outside it (`update:`, `chores:`) parses as a
+commit and is then dropped by the changelog writer — the same silent loss as no type at
+all — so the CI check refuses it rather than letting it through.
+
+A `!` before the colon marks a breaking change. While Calandria is pre-1.0 that moves the
+**minor** version, not the major (`bump-minor-pre-major` in `release-please-config.json`).
+
+```
+feat: surface a red PR in the "Needs you" inbox
+fix(runner): keep a queued follow-up in its own worktree
+docs: document the Conventional Commit PR title requirement
+feat!: drop the control-plane interop routes
+```
+
+Reverting needs the `revert:` type; GitHub's default `Revert "..."` title doesn't parse.
+If the check goes red, edit the title — it re-runs by itself, with no new push.
+
+**Write your commit subjects the same way.** The repository's squash setting is currently
+`COMMIT_OR_PR_TITLE`, which uses the PR title for a branch with several commits but the
+lone commit's own subject for a branch with one — and CI can only see the title. Keeping
+both conventional means it doesn't matter which one GitHub picks.
+
 ## Before starting
 
 - Search existing issues and discussions first.
