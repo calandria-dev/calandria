@@ -101,25 +101,19 @@ function hold(port) {
     assert.equal(env.HOME, "/home/x");
   });
 
-  await test("sidecarEnv gives the pty sidecar a shell it can actually spawn on Windows", async () => {
+  await test("sidecarEnv never invents a SHELL — the pty sidecar probes a better one", async () => {
     // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
-    // default (docs/WINDOWS.md). $SHELL is a POSIX convention, so a Windows
-    // desktop launch has none — and the supervisor filling it in is the
-    // shell-side half of that, needing no app change.
+    // default (docs/WINDOWS.md). The supervisor used to fill $SHELL in on win32
+    // from COMSPEC, back when that probe was a hardcoded "/bin/zsh"; now that it
+    // prefers pwsh.exe, setting $SHELL SHORT-CIRCUITS it and pins every desktop
+    // terminal tab to cmd.exe. So the same assertion holds on both platforms:
+    // an inherited SHELL is passed through, and an absent one stays absent.
     const win = sidecarEnv({ env: { COMSPEC: "C:\\Windows\\system32\\cmd.exe" }, port: 1, ptyPort: 2 });
     const noComspec = sidecarEnv({ env: {}, port: 1, ptyPort: 2 });
     const preset = sidecarEnv({ env: { SHELL: "C:\\ProgramData\\nu\\nu.exe", COMSPEC: "cmd.exe" }, port: 1, ptyPort: 2 });
-    if (IS_WIN) {
-      assert.equal(win.SHELL, "C:\\Windows\\system32\\cmd.exe", "COMSPEC is the first choice");
-      assert.equal(noComspec.SHELL, "powershell.exe", "and PowerShell the fallback when even COMSPEC is unset");
-      assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe", "an inherited SHELL is never overwritten");
-    } else {
-      // The POSIX half of the same contract: nothing is invented, because
-      // pty-server.js's own fallback is the right answer here.
-      assert.equal(win.SHELL, undefined);
-      assert.equal(noComspec.SHELL, undefined);
-      assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe");
-    }
+    assert.equal(win.SHELL, undefined, "COMSPEC is not promoted to SHELL");
+    assert.equal(noComspec.SHELL, undefined, "and nothing is invented when neither is set");
+    assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe", "an inherited SHELL is never overwritten");
   });
 
   await test("needsPathRepair fires on launchd's stub PATH and not on a real one", async () => {
@@ -240,7 +234,10 @@ function hold(port) {
       assert.match(line, /nodeenv=production/);
       assert.match(line, IS_WIN ? /argv0=node\.exe/i : /argv0=node/);
       assert.match(line, new RegExp(`ppid=${process.pid}\\b`), "the sidecar's parent should be this process, with no shell in between");
-      if (IS_WIN) assert.doesNotMatch(line, /shell=unset/, "pty-server.js would fall through to a POSIX default");
+      // No $SHELL assertion here on purpose: the supervisor deliberately does
+      // not invent one (see the sidecarEnv test above), so what the child sees
+      // is whatever the launching desktop session had — and on Windows that is
+      // usually nothing, which is the case pty-server.js's own probe handles.
     } finally {
       await sup.stop();
     }

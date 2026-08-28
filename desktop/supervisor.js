@@ -166,9 +166,15 @@ function nodeVersion(bin, env = process.env) {
  * invoke into a headless node, and ELECTRON_IS_DEV / _RUN_AS_NODE showing up in
  * a user's terminal is confusing at best.
  *
- * SET — ports, NODE_ENV, and on Windows a SHELL, because pty-server.js falls
- * back to "/bin/zsh" when SHELL is unset (docs/WINDOWS.md). Setting it here is
- * a shell-side mitigation that needs no app change.
+ * SET — ports and NODE_ENV, and nothing else. There used to be a win32 SHELL
+ * fallback here, from when pty-server.js's unset-$SHELL default was "/bin/zsh";
+ * the Windows-support work replaced that with a real probe (CALANDRIA_PTY_SHELL
+ * -> $SHELL -> pwsh.exe -> powershell.exe -> COMSPEC, docs/WINDOWS.md), which
+ * turned the mitigation into a DOWNGRADE: $SHELL is checked before the probe, so
+ * injecting COMSPEC handed every desktop terminal tab cmd.exe on a box where the
+ * server on its own would have picked PowerShell. Measured on Windows 11 with
+ * pwsh 7 installed. An inherited SHELL is still passed through untouched, which
+ * is the case the removal does not change.
  */
 function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {} } = {}) {
   const out = {};
@@ -181,9 +187,6 @@ function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {}
   if (ptyPort) out.PTY_PORT = String(ptyPort);
   out.PTY_HOST = env.PTY_HOST || "127.0.0.1";
   if (dbDir) out.CALANDRIA_DB_DIR = dbDir;
-  if (process.platform === "win32" && !out.SHELL) {
-    out.SHELL = out.COMSPEC || "powershell.exe";
-  }
   return { ...out, ...extra };
 }
 
