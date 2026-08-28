@@ -72,7 +72,7 @@ Every row was run on this machine (Linux x64, Node 22.18.0, Electron 44.0.0), no
 | An Electron binary is not a Node binary | `electron ./script.js` boots a Chromium app (here: aborts on the SUID sandbox check). `ELECTRON_RUN_AS_NODE=1 electron ./script.js` prints the script's output. |
 | **Hosting the server in Electron would break Codex turns** | `lib/agents/codex/driver.ts:58,74` registers the MCP tool bridge as `command: process.execPath, args: [calandria-mcp.mjs]` with a closed four-key env (`CALANDRIA_TASK_ID`, `CALANDRIA_PROJECT_ID`, `CALANDRIA_BASE_URL`, `SERVICE_TOKEN`). Inside Electron, `execPath` is the Electron binary and the child inherits no `ELECTRON_RUN_AS_NODE`, so every Codex turn would launch a GUI process instead of the bridge. |
 | Two independent port searches collide | With 3000 and 3001 both busy, the first draft of `pickPorts` gave both sidecars 3002. One lost the bind; the readiness probe talked to whichever won, since `pty-server.js` answers every path with a 200 banner, so `/api/version` "succeeded." Fixed with a shared claim set; the probe now insists on the app's JSON shape. Found by booting the real server, not the stubs. |
-| macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin`, not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. |
+| macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin`, not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. **This row is the one finding here that CI cannot re-measure** — a hosted `macos-latest` provisions its launchd domain with a wider PATH, so a GUI launch there is handed that instead (measured: run 33195354526, the app took the un-repaired branch). §5 has the manual check; the lane covers the repair rather than the inheritance. |
 | The real server boots under the shell's supervisor | `node desktop/test-real-boot.js`: **919 ms** to `/api/version`, on ports 3002/3003 (stepped past the live instance), app HTML served, `/pty` proxied to the sidecar chosen, `CALANDRIA_DB_DIR` honored, both sidecars drained on SIGTERM with no SIGKILL. |
 | Electron's size is not the dominant term | Electron 44 linux-x64 unpacks to **282 MB**. The payload it would wrap, `.next` (127 MB) plus a pruned `node_modules`, is larger; the container carrying the same payload with Debian, git, gh and both agent CLIs is **3.99 GB**. |
 | **…and the packaged app confirms it** | `npm run dist:linux` (2026-08-27, this machine, before the payload trim below): `dist/linux-unpacked` **2.1 GB**, AppImage **653 MB**, deb **485 MB**. Electron is ~13% of it. The payload's `node_modules` is **1.6 GB** on its own. |
@@ -251,13 +251,36 @@ you" count, window-bounds persistence, auto-update.
 
 ## 5. Per-platform gaps
 
-**macOS** — the PATH repair above is mandatory, not polish, and it is no longer
-taken on faith: the `macos-desktop` lane (`docs/DESKTOP_E2E.md` §4) `open`s the
-packaged `.app` through LaunchServices, exactly as a double-click does, and
-asserts that the supervisor was handed launchd's stub PATH and recovered a real
-one from the login shell. That is a claim no other spec can make — every
-`_electron` launch is a child of the test process and inherits its PATH, which
-is the environment where the repair does nothing. `hiddenInset` is settled the
+**macOS** — the PATH repair above is mandatory, not polish, and the *repair* is
+no longer taken on faith: the `macos-desktop` lane (`docs/DESKTOP_E2E.md` §4)
+`open`s the packaged `.app` through LaunchServices, exactly as a double-click
+does, and asserts that the supervisor met the stub PATH there and recovered a
+real one from the login shell — a login-shell probe running inside a GUI process
+with no controlling terminal, which is a claim no other spec can make. Every
+`_electron` launch is a child of the test process and inherits its PATH, the
+environment where the repair does nothing.
+
+The **inheritance** half is not CI's to prove. A hosted `macos-latest` hands a
+GUI app a launchd domain its image has already widened, so the lane plants the
+stub with `launchctl setenv` and asserts what happens next; it records the
+domain's own PATH on every run, so the day an image stops widening it is
+visible. The premise itself — a `.app` double-clicked by a real user gets
+`/usr/bin:/bin:/usr/sbin:/sbin` — is a **manual check on a real Mac**, and takes
+one launch:
+
+```bash
+open -n -a /Applications/Calandria.app --stdout /tmp/calandria-gui.log \
+  --stderr /tmp/calandria-gui.log
+grep '^\[shell\] PATH' /tmp/calandria-gui.log
+```
+
+`PATH looked like launchd's stub — took the login shell's instead` is the
+premise holding and the repair firing. `PATH is not launchd's stub, using it
+as-is: …` prints what was inherited instead, which is either a `launchctl
+setenv PATH` / `launchctl config user path` somebody set or the row in §2 having
+gone stale on a newer macOS. Worth re-running on each macOS major.
+
+`hiddenInset` is settled the
 same way: the window's content box and its frame are asserted to be the same
 rectangle (under `default` macOS steals a strip for the title bar, so they are
 not), the traffic lights are asserted to survive, and the lane uploads a

@@ -373,6 +373,13 @@ class Supervisor {
       } else {
         this.log(`[shell] WARN: PATH looks minimal and the login-shell probe failed; git/gh/codex may not resolve`);
       }
+    } else {
+      // The quiet branch used to log nothing at all, which made "the app can't
+      // find codex" undiagnosable from a log — and left
+      // desktop/e2e/08-macos-launchd.spec.ts unable to tell "the repair is
+      // broken" from "this machine was never handed the stub". One line, on the
+      // branch that is about to decide whether every agent CLI resolves.
+      this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.env.PATH}`);
     }
 
     const node = resolveNode({ env: this.effectiveEnv, resourcesPath: this.resourcesPath });
