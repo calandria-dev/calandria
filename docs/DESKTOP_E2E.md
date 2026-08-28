@@ -198,10 +198,16 @@ counterpart, and the native-integration specs that genuinely need a live session
 stay on the bench where they belong.
 
 What the landed lane pins, beyond re-running the shared specs:
-`desktop/e2e/05-windows-quit.spec.ts` (win32-only) asserts that a plain
-`taskkill` runs `before-quit` and takes the sidecars with it, and that
-`taskkill /F` without `/T` orphans them — which is why the suite's own teardown
-backstop uses `/T`. `03-quit-drain.spec.ts`'s database assertion no longer
+`desktop/e2e/05-windows-quit.spec.ts` (win32-only) asserts what the two
+`taskkill` spellings do. A plain one is a `WM_CLOSE`, and since close-to-tray
+landed the shell answers it by **hiding**: the window goes, the process and both
+sidecars stay, and no quit lifecycle runs — so the spec follows it with a real
+`app.quit()` to show that *that* is what reaps them. `taskkill /F` without `/T`
+is a `TerminateProcess` that orphans them, which is why the suite's own teardown
+backstop uses `/T`. Both tests take the Electron pid from
+`app.evaluate(() => process.pid)` rather than `app.process().pid`: on win32
+Playwright launches Electron through a `cmd.exe` wrapper (`shell: true`), so the
+pid it hands back is one generation above the process the sidecars hang off. `03-quit-drain.spec.ts`'s database assertion no longer
 carries the `test.fail()` annotation it used to on Windows: the supervisor now
 POSTs `/api/instance/drain` and waits for it before it ever sends the kill, so
 the drain happens whether or not the platform can deliver a signal, and the
