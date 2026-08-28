@@ -627,19 +627,52 @@ gitignored.
 
 ## 7. Cost of going further (phase 2)
 
+Prices below were re-checked on 2026-08-28. Two things had moved since this table
+was first written, and both change what to buy.
+
 | Item | Cost |
 |-|-|
-| Apple Developer Program + notarization | $99/yr, plus a signing lane in CI |
-| Windows code signing (OV/EV) | ~$200-400/yr; unsigned means a SmartScreen warning on every install |
+| Apple Developer Program + notarization | $99/yr. An **individual** membership is enough — D-U-N-S and organization enrolment are only for Organization accounts — and notarization is included. |
+| Windows code signing | Azure Trusted Signing at $9.99/month, or a traditional OV certificate at roughly $129/yr. **Not EV.** |
 | Three-OS build matrix | New CI lane; the payload's native addons are installed per platform (they follow the *bundled* Node, not Electron, under this architecture) |
 | Auto-update | `electron-updater` + a release channel; interacts with release-please and the existing edge/latest image publishing |
 | Security cadence | Chromium CVEs become our shipping obligation once binaries carry our name |
 | Support surface | "It won't start" reports from machines whose PATH, Node, or antivirus we cannot see |
 
-Against that: the wrapper removes a terminal and a URL from the daily loop, and adds
-reliable OS notifications. That's a real improvement for a daily driver and a thin one for
-an occasional user, so the recommendation is to ship the free half now and let demand pay
-for the rest.
+**EV is no longer worth its premium on Windows.** It used to buy immediate
+SmartScreen reputation where OV had to earn it by download volume. Microsoft's
+Trusted Root Program removed that in March 2024 and its own documentation now
+says paying extra for EV solely to avoid SmartScreen warnings is not justified.
+The only thing EV still buys is kernel-mode driver signing, which this app will
+never do.
+
+The two remaining Windows routes differ on eligibility rather than price.
+**Azure Trusted Signing** (renamed Azure Artifact Signing) is the cheaper and
+far more CI-friendly one: `electron-builder` supports it directly through
+`win.sign.type: "azure"`, and it authenticates from GitHub Actions by OIDC
+workload-identity federation, so there is no key and no secret to store. But
+organizations must be a US or Canada legal entity with three or more years of
+verifiable business history, and the individual path is a limited preview — so
+eligibility is the first thing to check, not the last. Failing that, a
+**traditional OV certificate** has no such gate. Since the CA/Browser Forum's
+June 2023 rule the private key must live in FIPS 140-2 Level 2 hardware, which
+ended file-based certificates; budget for a cloud HSM signing service rather
+than a USB token, which is close to unusable from CI.
+
+**On macOS the $99 is not a premium, it is the price of the feature.** An
+unsigned or ad-hoc-signed app cannot auto-update at all: Squirrel.Mac, which
+`electron-updater` uses there, verifies the signature on the downloaded bundle
+before installing, and Electron's own documentation states that `autoUpdater`
+requires a signed app to work. Windows and Linux degrade — a SmartScreen
+warning, an unverified package — while macOS simply does not function.
+
+Linux costs nothing and has nothing to enrol with. Publishing SHA-256 checksums
+beside the artifacts, and optionally a detached GPG signature, is the whole
+convention.
+
+Against all of that: the wrapper removes a terminal and a URL from the daily loop, and
+adds reliable OS notifications. That's a real improvement for a daily driver and a thin
+one for an occasional user.
 
 ## 8. Next steps
 
