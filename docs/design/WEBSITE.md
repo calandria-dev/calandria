@@ -19,6 +19,13 @@ separate-repo deploy patterns (August 2026; sources at the end).
 | Docs URL shape | Subpath `/docs`, not `docs.calandria.dev` | Falls out of the single build. Survey split 12 subdomain / 9 subpath — no convention to follow, so the simpler ops win. |
 | Versioning | None; docs track `main` | One rolling image, no LTS branches. Per-release snapshots (Docusaurus-style) mean back-porting every typo fix. Revisit only if a v1/v2 split ever happens. |
 
+Hosting recheck (2026-08-27, phase 0): Pages is **not** deprecated and still ships
+changes (Aug 11, 2026 changelog), but Cloudflare's Pages "Get started" page now
+opens with "Start new projects with Workers", and Workers static assets has had
+per-PR/per-branch preview URLs since Jul 2025 — the one Pages feature this plan
+picked it for. Plan left as-is per phase 0's scope; see **Cloudflare access** below
+for the open decision.
+
 Runner-up for docs: **VitePress**. It handles GitHub-flavoured Markdown slightly
 better out of the box (no mandatory front-matter, rewrites relative `.md` links,
 renders `> [!NOTE]` alerts), but it is a second framework and a second build, which
@@ -31,6 +38,45 @@ fit for a self-hosted product; Coolify reports leaving Mintlify over a surprise
 bill), MkDocs Material/Zensical (Python in the build loop), Fumadocs/Nextra
 (Next.js-native is not a reason to run Next for a static site; MDX default).
 
+## Cloudflare access
+
+Phase 0 verification, 2026-08-27. **Phase 1 reads this first.** All of it is
+resolved against the live Cloudflare API.
+
+| Fact | Value |
+|-|-|
+| Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
+| Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). This is the `CLOUDFLARE_ACCOUNT_ID` repo secret in Phase 1 step 7. |
+| `calandria.dev` zone | **`active`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, activated 2026-08-28T01:54:45Z on `clyde.ns.cloudflare.com` / `mona.ns.cloudflare.com`. Phase 1 console steps 1–3 are **done**; start at step 4. |
+| DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
+| Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
+| MCP servers authorized | `cloudflare-docs` (public, no OAuth) and `cloudflare-api` (OAuth, 2026-08-27). `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` are still unauthorized; none of them is needed for a static Pages deploy, so Phase 1 is not blocked on them. |
+| GitHub secrets | `CLOUDFLARE_API_TOKEN` is set on `calandria-dev/calandria` (2026-08-28T02:04Z); its scopes are unverifiable from outside, so a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. **`CLOUDFLARE_ACCOUNT_ID` is not set yet** — it is not a secret, so a repo variable is fine, but the workflow must reference whichever one is used. |
+| Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses the repo credentials above as planned. |
+
+Authorizing an OAuth MCP server from an agent session on this headless host: run
+`script -qefc "claude mcp login '<server>'" /tmp/x.log` (the PTY is what the CLI
+requires; without it the flow aborts on "stdin isn't a terminal"), read the
+authorization URL out of the log, then open it in a browser on another machine with
+`ssh -N -L 3118:localhost:3118 <host>` forwarding the callback port. No code is ever
+pasted back. Credentials land in `~/.claude`, so later task sessions inherit them —
+but a session that was already running when the grant landed will not have the
+server's tools; reach them through a one-shot `claude -p --allowedTools
+"mcp__plugin_cloudflare_cloudflare-api"` subprocess instead, which is how the values
+in this table were read.
+
+**Pages vs Workers static assets** (asked of `cloudflare-docs`, 2026-08-27): Pages is
+alive and still shipping features, but Cloudflare now steers new static projects to
+Workers — `/pages/get-started/` (updated Aug 21, 2026) carries "Workers supports most
+Pages use cases and offers a broader feature set… Start new projects with Workers",
+and the Workers best-practices page says the same. The plan's stated reason for Pages
+(free per-PR preview URLs) is no longer a differentiator: Workers has branch and
+commit preview URLs, and Workers custom domains want the zone on Cloudflare, which
+this plan does anyway. Nothing here forces a change and the phase-1 plan is unchanged,
+but if the decision is revisited it should be **before** phase 1 creates the project —
+a later switch is a migration (`wrangler.jsonc` with `assets.directory`, plus the
+`pages deploy` step in `website.yml` becoming `wrangler deploy`).
+
 ## Phase 1 — placeholder with a valid certificate
 
 `.dev` is on the Chromium HSTS preload list as a whole TLD: browsers refuse plain
@@ -38,16 +84,19 @@ HTTP for it, always. There is no "HTTP while the cert is pending" interim — DN
 must not point at anything that lacks a trusted cert. Today's parked page is
 already the failure mode.
 
-Console steps (user; nothing here is agent-doable):
+Console steps (user). **Steps 1–3 are done as of 2026-08-28T01:54Z — the zone is
+active; start at step 4.** They are kept for the record.
 
 1. DreamHost → Manage Domains → calandria.dev → note every existing DNS record
    (MX/TXT/CAA especially) before touching anything. If a CAA record exists, add
    `issue` entries for `letsencrypt.org`, `pki.goog`, `ssl.com` or Cloudflare's
-   issuance silently fails.
+   issuance silently fails. — Moot: the domain was parked with an empty zone.
 2. Cloudflare → Add site → `calandria.dev` (Free plan). Accept the scanned
-   records, re-add any it missed from step 1.
-3. DreamHost → Nameservers → "I'll use my own" → the two Cloudflare nameservers.
-   Propagation: DreamHost says hours; usually under one.
+   records, re-add any it missed from step 1. **Already done** — the zone exists and
+   is `pending`; see Cloudflare access above.
+3. DreamHost → Nameservers → "I'll use my own" → the two Cloudflare nameservers
+   (`clyde.ns.cloudflare.com`, `mona.ns.cloudflare.com`). This is the step the zone
+   is waiting on. Propagation: DreamHost says hours; usually under one.
 4. Cloudflare → Workers & Pages → create the Pages project (Direct Upload; the
    workflow in this repo deploys into it). Custom domains: `calandria.dev` and
    `www.calandria.dev` — Cloudflare writes the flattened CNAMEs itself.
