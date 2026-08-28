@@ -4,9 +4,13 @@ title: "Pushing bulk collection into subagents"
 
 # Pushing bulk collection into subagents
 
-`CLAUDE.md`'s **Collecting context** section tells a task session to dispatch a subagent rather
-than run a fourth read-only command in a row. This document is the measurement behind that rule and
-the A/B that checked it. Every number is reproducible; re-measure before arguing with it.
+A task session is told to dispatch a subagent rather than run a third read-only command in a row.
+The rule is in the **session prompt** — `buildProjectContext()` in `lib/agents/shared.ts`, appended
+to every Claude turn's system prompt — rather than in `CLAUDE.md`, and this document is why.
+Round one is the measurement the rule came from and the A/B that checked it. Round two is what
+happened when the same rule moved out of `CLAUDE.md` and into the prompt, because in `CLAUDE.md` it
+was losing to the CLI's own instructions. Every number is reproducible; re-measure before arguing
+with it.
 
 ## What was measured
 
@@ -89,6 +93,24 @@ to do two things a restatement of the general principle cannot: **name the confl
 ("dispatching a collection subagent is requested work"), and **give the trigger as a countable
 condition** rather than a judgement call, because the general form has now had a month to work.
 
+### What the CLI actually injects (2.1.240)
+
+Round two rests on knowing exactly what is being argued with, so it was read out of the CLI bundle
+rather than inferred. Three separate texts, gated three different ways:
+
+| Text | Where | Gate |
+|-|-|-|
+| *"Do your work through the Bash tool wherever it can accomplish the job: read files with cat, head, or sed -n, search with grep and find … Fall back to a dedicated tool only when Bash genuinely cannot do the job."* | a meta message in the conversation | permission mode: `auto` ("While auto mode is active"), `bypassPermissions` (same text, different preamble), and any mode with the bash-first flag set |
+| *"Do not call the AgentTool unless the user requested it"* / *"Do not use workflows or deep-research unless the user requested it"* | system prompt | the **model**, not the mode — an Opus 5 prompt bundle, plus an experiment that can override the string outright |
+| *"## Delegating to subagents — Subagents multiply cost and time … Do not fan out multiple subagents on a single small task."* | system prompt | an experiment (`CLAUDE_CODE_THISTLE_GREBE`, values `default` / `no_nudges` / `counter_steer`), with a per-model floor |
+
+The third one matters more than its size suggests: it is a full section arguing the opposite of
+this repo's rule, it is off by default on this machine today (verified by asking a session, on both
+Opus and Sonnet, whether its instructions contain "Subagents multiply cost and time" — no by
+default, yes with the env var set to `counter_steer`), and nothing about it is ours to control. Any
+delegation rule that only works while it happens to be off is not a rule, which is why round two
+measures it forced on.
+
 ## The dispatches those sweeps should have been
 
 Taken from the sampled sessions; the first three are in `CLAUDE.md` as the worked examples.
@@ -154,7 +176,10 @@ audits env vars, `p3` audits everything periodic, `p4` inventories the test suit
 undercut it:
 
 - **The mechanism mostly didn't fire.** Across eight treatment runs, exactly one dispatched a
-  subagent. `p1`, `p3` and `p4` delegated nothing and still came in 31–77% cheaper, so whatever
+  subagent. (Re-derived from the stored results for round two: 2 of 7 — `p1 repeat` and `p2` each
+  show a subagent model beside `opus` in `usage.modelUsage`. Round two also found this rate is not
+  stable across days, so treat the exact figure as an anecdote and see "The `CLAUDE.md` arm is not
+  stable" below.) `p1`, `p3` and `p4` delegated nothing and still came in 31–77% cheaper, so whatever
   produced those numbers, it was not delegation. The section may simply be priming frugality by
   telling the model what its context costs.
 - **Control-arm variance rivals the effect.** Two identical control runs of `p1` measured 5.14 M and
@@ -186,7 +211,7 @@ rule, estimated and reported **4** — the identical error, now on the other sid
 never about delegation. It was about a session substituting a cheap proxy for a measurement, which
 either arm will do given the chance.
 
-## Verdict
+## Verdict on round one
 
 **The token saving is not verified, and this document should not be cited as if it were.** The
 direction was right in six of seven pairs, but the effect is inside the control's own variance, the
@@ -199,6 +224,157 @@ answering a measurement question by estimating it, at a real cost in wall clock.
 at `+1,731` tokens per session, and treat the delegation half as unproven — the honest open problem
 is that a `CLAUDE.md` section is losing to a system-prompt instruction seven times out of eight, and
 that is what a further round should attack.
+
+*Round two did attack it, and revised two things in this verdict: the delegation half now fires
+(from the prompt rather than from here), and the "seven times out of eight" is not a rate that
+reproduces. The `+1,731` tokens are also gone — most of that section moved out.*
+
+## Round two: the same rule, moved into the prompt
+
+Round one left a mechanical problem, not a content problem: the rule was right and nobody ran it.
+The change that carries round two is therefore **where the rule is stated**. The delegation half of
+the `CLAUDE.md` section was deleted and re-stated in `buildProjectContext()`, which the Claude
+driver passes as `systemPrompt.append`, so it lands after every section the CLI wrote, including
+both of the ones that argue the other way. Two wordings changed with it, each condemned by
+something round one had already seen — so the arms below differ in placement *and* in these, and a
+reader who wants placement isolated should re-run with the round-one text appended verbatim:
+
+- **The trigger became a pure count.** Round one said "a third read-only command in a row against
+  the same question". A model that rules each command a different question never fires it by its
+  own reckoning, and that is a judgement call wearing a number's clothes. It now reads: two
+  read-only commands since your last edit or decision, the third goes to a subagent, *whatever it
+  is about*.
+- **It names what it is overriding.** Not "delegate more" but "this overrides the standing caution
+  against unprompted subagents and auto mode's instruction to work through Bash". A general
+  principle loses to a specific instruction; a specific counter-instruction does not.
+
+### What is measured, and what is not
+
+**Dispatch rate is the metric.** Round one's cache-read numbers could not settle anything — two
+identical control runs differed by 32%, the same magnitude as the effect. A run counts as
+dispatching if any `Agent` tool_use appears in the **main loop**; subagent steps (`parent_tool_use_id`
+set) are excluded from every count here.
+
+Runs are **capped at 20 main-loop assistant blocks**, which is what makes 30 runs affordable: a full
+run is 30–100 turns and millions of cache-read tokens, and the decision being measured is made in
+the first few. The cap can only *censor* a late dispatch, never invent an early one, so it is
+conservative in the direction that matters. One asymmetry it introduces, and the reason the token
+columns below are reported but not argued from: a dispatching run spends its blocks on `Agent`
+calls and often finishes its subagents before hitting the cap, while a reading run hits 20 blocks
+quickly, so the two arms are truncated at the same block count but at different points in the work.
+
+### Auto mode, three prompts, three runs each
+
+`p1`, `p3` and `p4` are round one's prompts — the three that delegated nothing then. Same model
+(`claude-opus-5`), same `--permission-mode auto`, MCP off, two `git worktree --detach` checkouts
+that differ only in `CLAUDE.md`, with the treatment arm additionally passing the shipped directive
+via `--append-system-prompt`. Runs are concurrent so both arms see the same contention.
+
+| Prompt | Arm | Dispatched | Bash before the first dispatch | Bash in the window | Agents dispatched |
+|-|-|-|-|-|-|
+| p1 | `CLAUDE.md` | 2/3 | 1, 2, — | 14, 11, 11 | 0, 2, 2 |
+| p1 | session prompt | **3/3** | 0, 1, 1 | **2, 3, 2** | 4, 7, 4 |
+| p3 | `CLAUDE.md` | 3/3 | 1, 0, 2 | 10, 8, 13 | 2, 3, 2 |
+| p3 | session prompt | **3/3** | 0, 0, 0 | **2, 1, 1** | 4, 4, 4 |
+| p4 | `CLAUDE.md` | 2/3 | 4, —, 3 | 8, 10, 8 | 1, 0, 1 |
+| p4 | session prompt | **3/3** | 0, 2, 2 | **7, 7, 7** | 2, 3, 4 |
+
+Aggregate: **9/9 against 7/9** on the binary, which at that n proves nothing on its own. The
+separation is in *when* and *how much*:
+
+| | `CLAUDE.md` (n=9) | Session prompt (n=9) |
+|-|-|-|
+| Dispatched at all | 7 | 9 |
+| Median read-only Bash calls before the first dispatch | 2 | **0** |
+| Opened the turn with a dispatch (turn 1) | 1 | **5** |
+| Bash calls inside the 20-block window, mean | 10.3 | **3.6** |
+| Largest batch sent in a single message | 3 | **6** |
+| Main-loop `cache_read`, mean | 0.60 M | 0.33 M |
+| Subagent `cache_read`, mean | 1.21 M | 6.04 M |
+
+The behavioural claim this supports is narrow and is the one that was asked for: **the rule fires,
+and it fires before the sweep rather than after it.** In `CLAUDE.md` the model reads first and
+delegates what's left; in the prompt it delegates first. `p4` is the honest exception — the
+test-suite inventory keeps 7 Bash calls in both arms, which is what the anti-proxy rule demands of
+it, since counting test cases means running vitest rather than delegating a grep.
+
+One round-one rule held everywhere: **all 32 dispatches across both arms passed
+`run_in_background: false`.** 26 went to `general-purpose`/`sonnet` and 6 to `Explore`/`haiku`, and
+the briefs were facet-split ("the decision half", "the persistence and transport half") rather than
+one agent handed the whole question.
+
+### The `CLAUDE.md` arm is not stable, and round one's "one in eight" should not be quoted
+
+The same arm, the same prompts and the same machine dispatched in **2 of 7** round-one runs and
+**7 of 9** round-two runs, four hours apart. (Round one's rate was re-derived independently for
+this, from `usage.modelUsage` in its stored results: a run that dispatched shows a `haiku` or
+`sonnet` entry beside the `opus` one.) Nothing in the repo changed between them, so something
+outside it did — CLI experiment arms are fetched per session, and the anti-delegation section
+above is exactly the sort of thing that flips. Two consequences: the "seven times in eight" framing
+should be retired, and **any single-digit dispatch-rate comparison across days is worthless**. Both
+arms of round two were run inside the same hour, which is the only reason its numbers are
+comparable to each other.
+
+### Permission mode is part of the effect
+
+Round one blamed `auto`'s Bash-first meta message. Probed directly — the `CLAUDE.md` text with no
+appended directive, `p1`, twice per mode:
+
+| Mode | Dispatched | Bash before the first dispatch |
+|-|-|-|
+| `auto` (from the table above) | 2/3 | 1, 2, — |
+| `acceptEdits` | 2/2 | 0, 0 |
+| `bypassPermissions` | 2/2 | 0, 0 |
+
+Small n, but the direction is consistent and it matches what the CLI bundle says: outside `auto`
+the same rule dispatches immediately. So part of what round one measured really was a permission-mode
+artifact, and Calandria cannot fix it by changing mode — `auto` is the default for good reasons.
+What the appended directive does is recover turn-one dispatch *inside* `auto`.
+
+### With the CLI's anti-delegation section forced on
+
+`CLAUDE_CODE_THISTLE_GREBE=counter_steer` injects the "## Delegating to subagents" section
+("subagents multiply cost and time … do not fan out"), which is the strongest thing the CLI can say
+against this rule and which may one day be on by default.
+
+| Prompt | Arm | Dispatched | Bash before the first dispatch | Bash in the window |
+|-|-|-|-|-|
+| p1 | `CLAUDE.md` | no | — | 13 |
+| p1 | session prompt | yes, 4 agents | 1 | 6 |
+| p3 | `CLAUDE.md` | yes, 1 agent | 2 | 11 |
+| p3 | session prompt | yes, 2 agents | 0 | 2 |
+| p4 | `CLAUDE.md` | no | — | 10 |
+| p4 | session prompt | yes, 3 agents | 2 | 7 |
+
+One run per cell, so this is a smoke test rather than a measurement — but the direction is the one
+that matters. Forcing the section on takes the `CLAUDE.md` arm from 7/9 to **1/3** (11.3 Bash calls
+per run) while the prompt arm holds at **3/3** (5.0). Both arms delegate less under it than without
+it; only one of them still delegates at all. The rule survives the strongest thing the CLI says
+against it, and the file that had been carrying it does not.
+
+It also offers a candidate explanation for round one: if that experiment was on for those sessions,
+round one measured the `CLAUDE.md` rule against the strong form of the CLI's objection and round two
+measured it against the weak one, which would account for the same arm reading 2/7 in the morning
+and 7/9 in the afternoon. That is unverifiable after the fact and is flagged, not claimed.
+
+### What round two does not show
+
+- **Nothing about cost.** The token columns are recorded because they were free to collect, not
+  because they settle anything: the two arms are truncated at different points in the work, and the
+  subagent bill rises by more than the coordinator's falls inside that window. Whether the whole
+  turn ends up cheaper is the next round's question, and it needs uncapped runs.
+- **Nothing about answer quality.** A capped run has no final answer to judge. Round one's judge
+  pass found the arms roughly level and found one real defect, which produced the anti-proxy rule
+  that both arms now carry.
+
+### What shipped
+
+The directive is in `buildProjectContext()`, gated on `CALANDRIA_DELEGATE_COLLECTION` (default on)
+and on the `dispatchesSubagents` capability, so a Codex turn — which has no subagent verb — never
+sees it. It costs **620 tokens on every turn's system prompt**, measured; root `CLAUDE.md` gave back
+552 of that once per session in this repo, and every other project on the instance pays the 620 with
+no offset. `tests/delegateCollection.test.ts` pins the three things that are load-bearing rather
+than editorial: that it is present, that it is **last**, and that the trigger is a count.
 
 ## How to re-measure
 
@@ -215,3 +391,24 @@ json --strict-mcp-config --mcp-config '{"mcpServers":{}}'`. The mode flag matter
 Calandria launches tasks in and it is the mode carrying the instruction this section overrides.
 Disabling MCP costs some fidelity and removes a large source of variance; both arms take the same
 hit.
+
+For round two, three changes to that recipe, all of which are what made 30 runs affordable and the
+numbers comparable:
+
+- `--output-format stream-json --verbose` instead of `json`, read line by line. The result JSON has
+  no tool calls in it, so dispatch has to be inferred from `usage.modelUsage`; the stream has the
+  `tool_use` blocks themselves, and `parent_tool_use_id` is what separates the main loop from its
+  subagents. Group main-loop blocks by `message.id` before counting "turns" — the CLI emits one
+  stream event per content block, so four parallel `Agent` calls arrive as four events in one
+  message, and counting events makes a batch look like a serial chain.
+- **Kill the run at 20 main-loop assistant blocks.** A full run is 30–100 turns; the dispatch
+  decision is made in the first handful. `subprocess.Popen(..., start_new_session=True)` and
+  `os.killpg` on the way out, or the CLI's children outlive the runner.
+- Both arms inside the same hour, and the treatment as `--append-system-prompt "$(…)"` rather than
+  as a second checkout, so the only difference is the text under test. Verify the append actually
+  landed before trusting a null result — one cheap run asking whether the instructions contain a
+  distinctive sentence from it.
+
+To re-check the robustness case, set `CLAUDE_CODE_THISTLE_GREBE=counter_steer` in the runner's
+environment; to check whether it is on by default on some future CLI, ask a one-line session
+whether its instructions contain "Subagents multiply cost and time".

@@ -54,6 +54,16 @@ server and transcripts are saved, so a browser reload or a sleeping laptop
 doesn't interrupt anything. `/clear` starts a fresh context window and keeps
 the task's history as a summary.
 
+A session is also told to push bulk context collection into subagents: past two
+read-only commands in a row, the third goes to a subagent that reports its
+conclusions and `file:line`s rather than pouring file contents into the
+session's own window. That is a deliberate override of the CLI's own defaults,
+which ask for work to go through the shell and for subagents to be left alone
+unless the user asked — measured across 198 sessions on one instance, first
+turns spent 79% of their tool calls on the shell and, in the 25 most expensive,
+none at all on a subagent (`docs/DELEGATION.md`).
+`CALANDRIA_DELEGATE_COLLECTION=off` leaves sessions on those defaults.
+
 When a Claude turn starts background shell work or schedules a wakeup
 (`ScheduleWakeup`, `CronCreate`, `/loop`), the session stays open after the
 model stops. The task shows "working in background" or "waiting to wake at
