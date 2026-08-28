@@ -28,6 +28,11 @@
 //   and open-ended BY DESIGN — flagging them would fire the mark on ordinary use
 //   and teach people to ignore it.
 //
+// The model is the one party that CAN judge its own wait, and it is reached
+// from the same transition — but only on an instance that opted in, because
+// reaching it costs a turn's tokens. That half lives in lib/idleNudge.ts; the
+// mark below is complete without it and unchanged by it.
+//
 // State is in memory on globalThis, the same pattern (and for the same reason)
 // as lib/abort.ts, lib/asks.ts and lib/turnInput.ts: it describes a turn owned
 // by THIS process, it must survive dev HMR, and it must die with the process —
@@ -40,7 +45,11 @@ import { activeTurnIds } from "./abort";
 import { hasOpenAsk } from "./asks";
 import { TURN_IDLE_MS, TURN_IDLE_SWEEP_MS } from "./config";
 import { publishGlobal } from "./events";
+import { nudgeIdleTurn } from "./idleNudge";
+import { createLogger } from "./log.mjs";
 import { getTask } from "./store";
+
+const log = createLogger("turn-idle");
 
 interface TurnActivity {
   /** When this turn last produced anything the runner persisted. */
@@ -51,6 +60,15 @@ interface TurnActivity {
    * surface age it ("no activity for 34m") without a second field.
    */
   idleSince: number;
+  /**
+   * Whether this turn has already been TOLD it went quiet (lib/idleNudge.ts,
+   * off unless CALANDRIA_TURN_IDLE_NUDGE). Deliberately NOT cleared by
+   * markTurnActivity, unlike `idleSince`: a nudged model that answered and went
+   * back to waiting has considered the question and said yes, so telling it
+   * again is a loop that bills for itself. One per turn, for the life of the
+   * turn.
+   */
+  nudged: boolean;
 }
 
 declare global {
@@ -81,7 +99,7 @@ export function markTurnActivity(taskId: string): void {
   const now = Date.now();
   const rec = reg.get(taskId);
   if (!rec) {
-    reg.set(taskId, { at: now, idleSince: 0 });
+    reg.set(taskId, { at: now, idleSince: 0, nudged: false });
     startIdleSweep();
     return;
   }
@@ -144,6 +162,24 @@ export function sweepIdleTurns(now: number = Date.now()): void {
     // Deleted mid-turn: nothing left to mark, and the next pass prunes it.
     if (!task || task.awaiting_input) continue;
     rec.idleSince = rec.at;
+    // Tell the model too, if this instance asked for that. Between the mark and
+    // the publish on purpose: a nudge that lands ends the linger, and the one
+    // event that follows should carry the row as it is AFTER that rather than
+    // leaving every card saying "working in background" until the next
+    // boundary. The mark itself stands either way — the nudge is us talking,
+    // not the session, so it must not reset a clock that measures the session.
+    // A turn that answers clears the mark through markTurnActivity like any
+    // other output; one that stays silent goes on being marked, which is the
+    // whole point of not treating the nudge as activity.
+    if (!rec.nudged) {
+      try {
+        if (nudgeIdleTurn(id, rec.idleSince, now)) rec.nudged = true;
+      } catch (err) {
+        // Advisory, like the sweep around it. A failed nudge must never cost
+        // the rest of this pass the marks it was about to set.
+        log.error("idle nudge failed", { task: id, err });
+      }
+    }
     publishGlobal(id, { type: "turn_idle" });
   }
   if (reg.size === 0) stopIdleSweep();

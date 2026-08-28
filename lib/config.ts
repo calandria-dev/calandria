@@ -206,6 +206,24 @@ export const TURN_IDLE_SWEEP_MS = Math.max(
 );
 
 /**
+ * Whether the idle mark is also told to the MODEL. Off by default, and the only
+ * knob here that spends tokens: when a turn is marked idle (above), the session
+ * is sent a one-line message asking it to re-check whether what it is waiting on
+ * is still worth waiting for, which starts a real turn and bills for it.
+ *
+ * Safe to switch on, but not free. It can only ever reach a LINGERING session —
+ * the driver refuses a message mid-thought, so a long build or a slow tool call
+ * is unreachable by construction — it lands at most once per turn, and it never
+ * fires on a scheduled run, where nobody would read the outcome. See
+ * lib/idleNudge.ts for the whole argument. Leave it off on an instance running a
+ * fleet of long-lived tasks whose waits are legitimate; turn it on where a
+ * wedged wait costs more than the turn that would end it.
+ */
+export const TURN_IDLE_NUDGE_ENABLED = ["1", "on", "true", "yes"].includes(
+  String(readEnv("CALANDRIA_TURN_IDLE_NUDGE") || "").toLowerCase(),
+);
+
+/**
  * How long the graceful-shutdown drain (POST /api/instance/drain, pinged by
  * server.js's SIGTERM/SIGINT handler before it exits) waits for in-flight
  * turns to abort and unwind before giving up and letting the process exit

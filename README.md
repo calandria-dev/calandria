@@ -77,6 +77,14 @@ and decide, or press Stop. `CALANDRIA_TURN_IDLE_MS` moves the window, or 0
 turns the note off. A turn parked on a question or a permission card is never
 marked; that wait is meant to be open-ended.
 
+The session itself is told nothing by default, because only the model knows
+whether its wait still means anything and asking costs a turn. Set
+`CALANDRIA_TURN_IDLE_NUDGE=1` and a turn that goes quiet is sent one line
+asking it to re-check what it is waiting on — at most once per turn, only when
+the session is lingering (a build or a tool call in flight is never
+interrupted), never on a scheduled run, and never ahead of a message you have
+already queued. The transcript records that it was sent.
+
 ## What you get
 
 - **Parallel, isolated tasks:** work across several repositories without
