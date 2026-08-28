@@ -116,6 +116,51 @@ test("agent suggestions land in the Suggested tray", async ({ page, request }) =
   await expect(page.locator(".sg-name").filter({ hasText: "Refactor the widget factory" })).toBeVisible();
 });
 
+test("a suggestion is reviewable in the transcript that made it, and starts from there", async ({ page, request }) => {
+  // The point of the card: the user watching the session sees the proposal
+  // where it was made, and can act on it without leaving for the tray.
+  const suggested = `Cache the widget lookups ${uid()}`;
+  const task = await createTask(request, {
+    projectId,
+    title: "Suggesting in-window",
+    description: `e2e:suggest=${suggested}`,
+  });
+  await sendMessage(request, task.id);
+  await waitForIdle(request, task.id);
+
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText("Suggesting in-window").first().click();
+
+  // The card is settled onto the suggest_task call's own row — not floating
+  // beside it — and names the project the task was filed into, because
+  // suggest_task can point anywhere.
+  const card = page.locator(".sugcard");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await expect(card).toContainText(suggested);
+  await expect(card.locator(".sugcard-proj")).toContainText(PROJECT);
+
+  // Start mints the session from here, exactly as the tray's Start does.
+  await card.getByRole("button", { name: "Start" }).click();
+
+  await expect
+    .poll(async () => {
+      const detail = await (await request.get(`/api/projects/${projectId}`)).json();
+      const row = detail.tasks.find((t: { title: string }) => t.title === suggested);
+      return !!row && row.suggested === 0 && row.started === 1;
+    }, { timeout: 30_000, message: "the suggestion never launched a session" })
+    .toBe(true);
+
+  // Re-read the transcript that offered it: the state is derived from the task
+  // row, so the card must not still be offering to start it a second time.
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText("Suggesting in-window").first().click();
+  const settled = page.locator(".sugcard");
+  await expect(settled).toContainText("Session started", { timeout: 20_000 });
+  await expect(settled.getByRole("button", { name: "Start" })).toHaveCount(0);
+});
+
 test("a suggestion filed into another project reaches that project's tray live", async ({ page, request }) => {
   // The cross-project fan-out: the turn runs in PROJECT, the task lands in
   // OTHER. The receiving tray is the one that has to refresh, and it belongs to

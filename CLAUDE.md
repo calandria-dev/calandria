@@ -181,9 +181,32 @@ never falling back to the calling project. It resolves BEFORE the insert, so the
 `send_context` and position come from the target. `blocked_by` follows the target too
 (`setTaskDeps` is project-scoped; unusable refs are reported back rather than dropped), and the
 `suggested` event carries the target's project id (`suggestedProjectId` on the wire) so the
-receiving tray refreshes even when it isn't the project on screen. Reads range as widely:
-`list_tasks` takes the same optional `project` and flags the caller `current: true`, and
-`get_task` reads any id, defaulting to the session's own.
+receiving tray refreshes even when it isn't the project on screen. It also carries the id of the
+task it CREATED, which is what makes a suggestion reviewable where it was made: the runner settles
+it onto the `suggest_task` tool row the call produced — the same move a CLI-side refusal makes with
+its already-decided card (the permission gate above) — and `Transcript.tsx` renders a **suggestion
+card** there with the tray's own Start / Add / Dismiss, wired to `useShell`'s handlers so a session
+started from the transcript is indistinguishable from one started from the tray.
+
+Only the two ids are persisted (`ToolData.suggestion`); everything the card shows is re-read per
+render through `GET /api/tasks/[id]/suggestion`, so a reloaded transcript says *Session started* /
+*Added* / *Withdrawn* / *no longer exists* instead of offering Start twice or 404ing on a row that
+Dismiss hard-deleted. **Start is deliberately withheld for a suggestion filed into a DIFFERENT
+project**: starting it mints and selects that task, dragging the user out of the session they are
+reading into a project they may not have on screen, which is worse than the tray round trip it
+saves. Such a card names the target project and offers only the two actions that don't navigate.
+
+Correlation is by the tool's own `name` — now on the `tool` StreamEvent and on `ToolData`, because
+a title is human prose and free to be re-worded — matched as a SUBSTRING in `lib/suggestionCard.ts`
+since the prefix belongs to the driver rather than the tool (`mcp__calandria__suggest_task`
+in-process, `calandria__suggest_task` over the bridge). A turn on the runner's stream settles in
+memory, queueing each call so a parallel batch lands one card apiece; the stdio bridge's endpoint
+is reached out of band with no tool_use id, so it patches the newest unclaimed `suggest_task` row
+instead — which is why the runner re-reads that one field before writing a `tool_result` over the
+top.
+
+Reads range as widely as filing does: `list_tasks` takes the same optional `project` and flags the
+caller `current: true`, and `get_task` reads any id, defaulting to the session's own.
 
 `update_task` writes **any task in any project**: the caller's own row by default, or any other
 id, including ones the user accepted or started. The only refusal is `running=1`. A write the old

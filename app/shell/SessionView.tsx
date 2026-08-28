@@ -18,7 +18,7 @@ import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
-import { MessageView, SessionBreak, type LimitResume } from "./Transcript";
+import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
@@ -296,7 +296,7 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -316,6 +316,13 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   onAnswer: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void;
   onDecidePermission: (permId: string, decision: PermissionDecision, note: string) => void;
   onCancelQueued: (pendingId: string) => void;
+  // The Suggested tray's own three actions, reached from a suggestion card the
+  // transcript settles onto the suggest_task call that filed the task. Passed
+  // through rather than reimplemented: a suggestion started from the transcript
+  // must behave exactly like one started from the tray.
+  onStartSuggestion?: (taskId: string) => void | Promise<void>;
+  onAcceptSuggestion?: (taskId: string) => void | Promise<void>;
+  onDismissSuggestion?: (taskId: string) => void | Promise<void>;
   onBack?: () => void; mobile?: boolean;
   railW: number; onRailWidth: (w: number) => void; onRailReset: () => void;
   railCollapsed: boolean; onRailCollapse: () => void; onRailExpand: () => void;
@@ -397,6 +404,22 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     onStart();
     return null;
   });
+  // The suggestion card's three actions, identity-stable for MessageView's memo
+  // and bundled into one object so the memo isn't defeated by a fresh literal
+  // each render. `project.id` rides along because the card has to know whether
+  // the suggestion was filed HERE — Start navigates, and a cross-project card
+  // deliberately doesn't offer it (see SuggestionView).
+  //
+  // useStableAsync rather than useStableHandler: the card re-reads the task as
+  // soon as the action resolves, so a wrapper that dropped the promise would
+  // have it refetching the state the action hasn't finished changing.
+  const stableStartSuggestion = useStableAsync(async (id: string) => { await onStartSuggestion?.(id); });
+  const stableAcceptSuggestion = useStableAsync(async (id: string) => { await onAcceptSuggestion?.(id); });
+  const stableDismissSuggestion = useStableAsync(async (id: string) => { await onDismissSuggestion?.(id); });
+  const suggestionActions = useMemo<SuggestionActions>(
+    () => ({ projectId: project.id, onStart: stableStartSuggestion, onAccept: stableAcceptSuggestion, onDismiss: stableDismissSuggestion }),
+    [project.id, stableStartSuggestion, stableAcceptSuggestion, stableDismissSuggestion],
+  );
   // Worktree-relative path open in collaboration mode from a tool card, or
   // null. Dropped on task switch: the path was resolved against THAT task's
   // worktree, and the setter is passed to MessageView as-is (a stable identity,
@@ -525,7 +548,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // Only the newest message may offer to resume at the reset —
                 // an older usage-limit notice describes a limit that has healed.
                 const last = si === sessions.length - 1 && mi === s.messages.length - 1;
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} limitResume={last ? limitResume : undefined} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
@@ -542,7 +565,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           {/* Follow-ups queued mid-turn, pinned below the live turn — they
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
           ))}
         </div>
       </div>

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getProject } from "@/lib/store";
 import { createSuggestedTask, resolveTargetProject } from "@/lib/agentTools";
 import { publish } from "@/lib/events";
+import { attachSuggestionToCall } from "@/lib/suggestionCard";
 import type { Priority } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -59,12 +60,33 @@ export async function POST(req: NextRequest) {
   });
   if (!task) return NextResponse.json({ error: text }, { status: 404 });
 
-  // Announce it on the calling task's channel — the same event the Claude
-  // driver yields, so GET /api/events refreshes the receiving project's tray
-  // live. Without this the bridge path is silent on the bus entirely and a
-  // Codex suggestion only appears after a reload. Not persisted, matching the
-  // runner's handling of the driver's own `suggested` event.
-  if (body.taskId) publish(body.taskId, { type: "suggested", title: task.title, projectId: target.project.id });
+  // Two things happen on the calling task's channel, and only if we know which
+  // task that is.
+  //
+  // First the transcript card: the runner settles one onto the suggest_task
+  // tool row for a driver whose suggestions ride its event stream, but this
+  // endpoint is reached out-of-band by a Codex session's MCP client and never
+  // passes through that loop — so the row is found and patched here instead
+  // (see lib/suggestionCard.ts for why newest-unclaimed-first is the
+  // correlation). A miss is fine and is the pre-existing behaviour: the call
+  // hasn't streamed its tool row yet, or this driver reports no tool name, and
+  // the suggestion simply lives in the tray as before.
+  //
+  // Then the event itself — the same one the Claude driver yields, so GET
+  // /api/events refreshes the receiving project's tray live. Without it the
+  // bridge path is silent on the bus entirely and a Codex suggestion only
+  // appears after a reload. `msgId` rides along so an open transcript patches
+  // the card in without refetching.
+  if (body.taskId) {
+    const msgId = attachSuggestionToCall(body.taskId, { taskId: task.id, projectId: target.project.id });
+    publish(body.taskId, {
+      type: "suggested",
+      title: task.title,
+      projectId: target.project.id,
+      taskId: task.id,
+      ...(msgId ? { msgId } : {}),
+    });
+  }
 
   return NextResponse.json({ ok: true, id: task.id, title: task.title, projectId: target.project.id, projectName: target.project.name, text });
 }

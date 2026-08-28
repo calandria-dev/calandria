@@ -8,7 +8,8 @@
 // turn. Stopping is only ever explicit, via lib/abort.ts (/abort route).
 
 import fs from "node:fs";
-import { updateTask, addMessage, updateMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
+import { isSuggestTaskTool } from "@/lib/suggestionCard";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -469,6 +470,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   let opened = false;
   // tool_use_id -> { dbId, data } so a later tool_result can be merged in.
   const toolMsgs: Record<string, { dbId: string; data: ToolData }> = {};
+  // suggest_task tool_use ids whose `suggested` event hasn't arrived yet, oldest
+  // first. The tool row is created when the call streams; the id of the task it
+  // filed is only known when the tool reports back, so the two are matched in
+  // order — a planning turn issues its whole batch in one assistant message,
+  // and each call is entitled to exactly one card.
+  const pendingSuggestCalls: string[] = [];
   // Everything currently parked on the user — AskUserQuestion cards and
   // permission prompts alike. One assistant message can park several at once,
   // and awaiting_input must stay up until the last one is settled.
@@ -599,13 +606,31 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // is inside the worktree: that's the form the file route takes, and a
         // path it would refuse must not grow a Collaborate button.
         const file = ev.file ? worktreeRelative(task.worktree_path, ev.file) ?? undefined : undefined;
-        const data: ToolData = { title: ev.title, detail: ev.detail, peek: ev.peek, diff: ev.diff, file };
+        const data: ToolData = { title: ev.title, name: ev.name, detail: ev.detail, peek: ev.peek, diff: ev.diff, file };
         const m = addMessage(id, gen, "tool", JSON.stringify(data));
         toolMsgs[ev.id] = { dbId: m.id, data };
+        // A suggest_task call gets a card settled onto it the moment the tool
+        // reports what it filed (below) — queue the row so a parallel batch of
+        // suggestions lands one card each, in the order the calls were made.
+        if (isSuggestTaskTool(ev.name)) pendingSuggestCalls.push(ev.id);
         publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
         const t = toolMsgs[ev.id];
         if (t) {
+          // A suggest_task row can have been given its card OUT OF BAND while
+          // the call was in flight — the stdio bridge's endpoint writes
+          // straight to the message row, since a Codex session's MCP client
+          // never touches this event stream. Our in-memory copy predates that
+          // write, so re-read it before stamping the result over the top;
+          // otherwise the card the bridge just attached disappears one event
+          // later. Narrowed to suggest_task rows so an ordinary tool_result
+          // still costs no read.
+          if (isSuggestTaskTool(t.data.name) && !t.data.suggestion) {
+            try {
+              const fresh = JSON.parse(getMessage(t.dbId)?.content ?? "{}") as ToolData;
+              if (fresh.suggestion) t.data.suggestion = fresh.suggestion;
+            } catch { /* keep what we have */ }
+          }
           t.data.result = ev.content;
           t.data.isError = ev.isError;
           if (ev.peek) t.data.peek = ev.peek;
@@ -748,6 +773,32 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const note = `⏵ ${ev.summary || `Background task ${ev.status}`}`;
         const m = addMessage(id, gen, "system", note);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+      } else if (ev.type === "suggested") {
+        // The suggestion is already committed; what happens here is only about
+        // where the user SEES it. It settles onto the suggest_task tool row the
+        // call created — the same move an already-decided permission card makes
+        // above — so the proposal is reviewable in the session that made it
+        // instead of only in a tray the user has to go and find.
+        //
+        // Nothing but the two ids is persisted: the card re-reads the task on
+        // every render, so a transcript reloaded next week shows what the row
+        // is NOW (started, accepted, withdrawn, deleted) rather than the offer
+        // that was true the moment the tool ran. A driver that reports no task
+        // id, or a suggestion with no call to settle onto (the mock's directive
+        // path before it grew a tool row), falls through to a bare publish —
+        // the tray still refreshes, exactly as it did before.
+        // Only a report that names its task consumes a queued call: a driver
+        // that omits the id has no card to place, and popping the queue for it
+        // would offset every later suggestion onto the wrong row.
+        const callId = ev.taskId ? pendingSuggestCalls.shift() : undefined;
+        const t = callId ? toolMsgs[callId] : undefined;
+        if (ev.taskId && t) {
+          t.data.suggestion = { taskId: ev.taskId, projectId: ev.projectId };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        } else {
+          publish(id, ev);
+        }
       } else if (ev.type === "usage") {
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += ev.usage[k] || 0;

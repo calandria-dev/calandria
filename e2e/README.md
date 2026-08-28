@@ -120,7 +120,7 @@ can be removed to reclaim disk.
   | `e2e:write=<relpath>:<content>` | write that file in the task worktree |
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
   | `e2e:fail=<message>` | end the turn with an error event |
-  | `e2e:suggest=<title>` | create a suggested task + emit the event |
+  | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call — tool row, result, then the event — so the transcript's suggestion card is exercised too |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into another project (id or name), through the real strict resolver; an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | `e2e:blocked=<command>` | that Bash call rejected by the CLI itself: an already-decided card with no buttons, nothing parked on the user |
@@ -133,7 +133,7 @@ can be removed to reclaim disk.
 | `01-onboarding.spec.ts` | first-run wizard: connect agent → verify → tutorial seeded (must run first; needs the untouched fresh DB) |
 | `02-core-flow.spec.ts` | the core loop through the UI: new project → new task → session runs → transcript streams → diff → merge to main → file really lands on the base branch |
 | `03-views.spec.ts` | list ⇄ board (kanban) toggle, status columns, card placement |
-| `04-turn-behaviors.spec.ts` | mid-turn queueing, Stop, failed-turn notices, suggestions tray, session resume |
+| `04-turn-behaviors.spec.ts` | mid-turn queueing, Stop, failed-turn notices, suggestions tray + the transcript card that settles onto the call, session resume |
 | `05-api-smoke.spec.ts` | REST contracts: diff/sync shapes, `/clear` generation lineage, agent registry, hard deletes |
 | `06-move-task.spec.ts` | re-filing an unstarted task to another project from the Edit modal |
 | `07-move-tasks-bulk.spec.ts` | multi-select + Move to project…: one request for a whole selection, refusals reported |

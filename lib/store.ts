@@ -1435,6 +1435,27 @@ export function addMessage(taskId: string, generation: number, role: MsgRole, co
   return { id, task_id: taskId, generation, role, content, created_at: now };
 }
 
+/**
+ * The task's most recent `tool` messages, NEWEST FIRST.
+ *
+ * The seam for a card that has to settle onto the call that produced it without
+ * holding that call's tool_use id. The runner never needs this — it keeps the
+ * live turn's tool rows in memory — but the stdio bridge's suggest_task
+ * endpoint does: it is invoked out-of-band by a Codex session's MCP client, so
+ * the only thing it knows about the call in flight is which task it belongs to.
+ * Capped because only the tail can be that call; a full transcript read to find
+ * the last few rows would grow with the session.
+ */
+export function recentToolMessages(taskId: string, limit = 10): Message[] {
+  return getDb()
+    .prepare("SELECT * FROM messages WHERE task_id = ? AND role = 'tool' ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(taskId, limit) as Message[];
+}
+
+export function getMessage(id: string): Message | undefined {
+  return getDb().prepare("SELECT * FROM messages WHERE id = ?").get(id) as Message | undefined;
+}
+
 export function updateMessage(id: string, content: string) {
   getDb().prepare("UPDATE messages SET content = ? WHERE id = ?").run(content, id);
 }
