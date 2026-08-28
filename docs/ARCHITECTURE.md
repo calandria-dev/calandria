@@ -1,3 +1,7 @@
+---
+title: "Architecture"
+---
+
 # Architecture
 
 How Calandria is put together. This is the public companion to [`CLAUDE.md`](../CLAUDE.md)

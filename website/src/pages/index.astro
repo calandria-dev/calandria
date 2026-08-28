@@ -3,7 +3,6 @@ import Logomark from "../components/Logomark.astro";
 import "../styles/tokens.css";
 
 const repo = "https://github.com/calandria-dev/calandria";
-const readme = `${repo}#readme`;
 const title = "Calandria";
 const pitch =
   "Run Claude Code and Codex in parallel across every project, from any browser.";
@@ -44,8 +43,8 @@ const pitch =
       <p class="pitch">{pitch}</p>
 
       <nav class="links">
-        <a class="btn primary" href={repo}>GitHub</a>
-        <a class="btn" href={readme}>Read the README</a>
+        <a class="btn primary" href="/docs/">Read the docs</a>
+        <a class="btn" href={repo}>GitHub</a>
       </nav>
     </main>
 

@@ -1,0 +1,42 @@
+---
+/* Overrides Starlight's SiteTitle so the header carries the brand lockup from
+   the handoff rather than a plain word: the same inline `Logomark` the landing
+   page uses, tinted with `currentColor` so it follows the theme, and the
+   wordmark set in Spectral. Starlight's own `logo` option renders an `<img>`,
+   which cannot take `currentColor` and would mean shipping a second, separately
+   coloured copy of the SVG for each theme. */
+import Logomark from "./Logomark.astro";
+
+const { siteTitleHref, siteTitle } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="site-title sl-flex">
+  <Logomark class="mark" size="calc(var(--sl-text-h4) * 1.224)" />
+  <span translate="no">{siteTitle}</span>
+</a>
+
+<style>
+  @layer starlight.core {
+    .site-title {
+      align-items: center;
+      /* The handoff's lockup gap: 0.3x the wordmark size. */
+      gap: calc(var(--sl-text-h4) * 0.3);
+      font-family: var(--sl-font-display);
+      font-size: var(--sl-text-h4);
+      font-weight: 500;
+      color: var(--sl-color-white);
+      text-decoration: none;
+      white-space: nowrap;
+      min-width: 0;
+    }
+
+    .mark {
+      color: var(--sl-color-text-accent);
+      flex-shrink: 0;
+    }
+
+    span {
+      overflow: hidden;
+    }
+  }
+</style>

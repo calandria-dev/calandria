@@ -1,8 +1,12 @@
-/* Brand tokens for calandria.dev, taken from docs/design/handoff/styles.css.
-   The app ships four themes switched with [data-theme]; a one-page placeholder
-   has nothing to switch with, so it carries only cherenkov — dark as the
-   default (as in the app) and light through the OS preference. Only the tokens
-   this page actually paints with are here; the full set lives in the handoff. */
+/* Brand tokens for the calandria.dev landing page, taken from
+   docs/design/handoff/styles.css. The app ships four themes switched with
+   [data-theme]; this page has nothing to switch with, so it carries only
+   cherenkov — dark as the default (as in the app) and light through the OS
+   preference. Only the tokens this page actually paints with are here; the full
+   set lives in the handoff. The docs at /docs map the same palette onto
+   Starlight's variables in starlight.css. */
+@import "./fonts.css";
+
 :root {
   --font-display: "Spectral", Georgia, serif;
   --font-body: "Source Sans 3 Variable", "Source Sans 3", system-ui, sans-serif;
@@ -27,35 +31,5 @@
     --dim: #5d7d87;
     --accent: #0e8a7d;
     color-scheme: light;
-  }
-}
-
-/* Self-hosted per the handoff ("do not ship the Google Fonts CDN import").
-   Latin subsets only, and only the two faces this page sets: Spectral 500 for
-   the wordmark, Source Sans 3 for everything else. Licences: fonts/OFL.txt. */
-@font-face {
-  font-family: "Spectral";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("/fonts/spectral-500-latin.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Source Sans 3 Variable";
-  font-style: normal;
-  font-weight: 200 900;
-  font-display: swap;
-  src: url("/fonts/source-sans-3-variable-latin.woff2") format("woff2-variations");
-}
-
-/* The handoff's global motion rule. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
   }
 }

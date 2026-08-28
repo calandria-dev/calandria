@@ -1,3 +1,7 @@
+---
+title: "CLAUDE.md's context budget"
+---
+
 # CLAUDE.md's context budget
 
 `CLAUDE.md` is loaded into every session in this repo before any code is read, so its size is

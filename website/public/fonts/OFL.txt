@@ -1,4 +1,4 @@
-Both faces in this directory are licensed under the SIL Open Font License 1.1.
+All three faces in this directory are licensed under the SIL Open Font License 1.1.
 
   spectral-500-latin.woff2
     Spectral, Medium (500), latin subset.
@@ -10,9 +10,16 @@ Both faces in this directory are licensed under the SIL Open Font License 1.1.
     Copyright 2010-2023 Adobe (http://www.adobe.com/)
     https://github.com/adobe-fonts/source-sans
 
+  jetbrains-mono-variable-latin.woff2
+    JetBrains Mono, variable weight axis (100-800), latin subset.
+    Copyright 2020 The JetBrains Mono Project Authors
+    https://github.com/JetBrains/JetBrainsMono
+
 Full licence text: https://openfontlicense.org/open-font-license-official-text/
 
 The subsets were taken from the Fontsource distributions of the upstream
-releases (@fontsource/spectral, @fontsource-variable/source-sans-3, both
-5.3.0) and vendored rather than pulled as a dependency: the placeholder needs
-exactly two files, and vendoring keeps the site's only npm dependency Astro.
+releases (@fontsource/spectral, @fontsource-variable/source-sans-3 5.3.0;
+@fontsource-variable/jetbrains-mono, added with the docs site) and vendored
+rather than pulled as dependencies: the site needs exactly three files, and
+vendoring keeps them out of the npm dependency graph and out of Vite's asset
+pipeline.

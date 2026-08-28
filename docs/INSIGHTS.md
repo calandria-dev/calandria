@@ -1,3 +1,7 @@
+---
+title: "Insights and usage"
+---
+
 # Insights and usage
 
 Calandria shows what your agents process and what they ship without sending repository data

@@ -214,6 +214,68 @@ What phase 1 learned, beyond the plan:
 - README links (`docs/SELF_HOSTING.md` etc.) keep pointing at the repo; the site
   is the rendered mirror, GitHub stays a first-class reader.
 
+### Phase 2 outcome (2026-08-28)
+
+Done, and the plan above survived contact except where noted. `website/` now
+builds two things: `/` (the phase-1 placeholder) and `/docs` (Starlight over the
+repo's `docs/*.md`, read in place). 16 pages, one Astro build, one Pages project.
+
+| Item | How it landed |
+|-|-|
+| Loader | `glob({ base: "../docs", pattern: ["*.md", "!CLAUDE.md"] })` in `website/src/content.config.ts`; `generateId` prefixes `docs/`, which is what mounts the collection at `/docs/` and leaves `/` to the landing page. `docs/design/` and `docs/superpowers/` are excluded by the top-level-only pattern |
+| Slugs | `SELF_HOSTING.md` -> `/docs/self-hosting/` — lowercased, `_` to `-`. File names are a GitHub convention; URLs are not |
+| Docs index | A hand-written `/docs/` page in `website/` (`StarlightPage`), not the README. Copying the README would be a second thing to keep current, and phase 3's landing page is where that material belongs |
+| Front-matter | A three-line `title` block on all 13 files, matching each H1. The H1 stays in the file (GitHub needs it) and is dropped from the RENDER, or Starlight prints the title twice |
+| Link rewriting | `website/src/plugins/docs-links.mjs`, one remark plugin: sibling `.md` -> `/docs/<slug>/#hash`, anything above `docs/` or inside an unpublished subdirectory -> `github.com/…/blob/main/…` (`tree` for directories). Source files keep their GitHub-correct relative links |
+| Images | Nothing needed. Astro resolves `images/board.png` relative to the Markdown file's own location even with an external loader base, and optimizes them to webp |
+| Mermaid | `rehype-mermaid`, `inline-svg`, so diagrams need no browser JavaScript |
+| Theme | `website/src/styles/starlight.css` maps cherenkov onto Starlight's `--sl-*` ramp; `fonts.css` is shared with the landing page. JetBrains Mono vendored as the third face |
+| Search | Pagefind (Starlight's default), verified in the built output |
+| Sidebar | Hand-ordered in `astro.config.mjs`, reading order rather than alphabetical |
+| Landing page | Its primary CTA is now `/docs/` rather than the README — a docs site reachable only from GitHub is half-shipped |
+| Agent rules | `docs/CLAUDE.md`, four sentences. Directory-scoped, so it costs 0 tokens at session start and loads when an agent opens anything in `docs/` (`docs/CONTEXT_BUDGET.md` measured that mechanism) |
+
+Four things the plan did not anticipate:
+
+- **`starlight-links-validator` cannot validate content that lives outside the
+  Astro project**, which is this whole design. It identifies a page by
+  `path.relative(<srcDir>/content/docs, <file>)`, so every doc came back as
+  `../../../docs/self_hosting/`, no target lookup matched, and it failed the
+  build with all 35 internal links reported invalid — the correct ones included.
+  Replaced with `website/src/plugins/link-check.mjs`, a ~130-line integration
+  that walks `dist/` after the build, collects each page's anchors, and fails on
+  an internal link pointing at a page or fragment that is not there. Checking the
+  BUILT output is strictly more coverage (rendered anchors, the hand-written
+  `/docs/` index, the sidebar) and it has no assumption to break. External links
+  are deliberately not checked: a build that reaches the network fails for
+  reasons unrelated to the commit. Verified negatively — pointing one link at a
+  heading that does not exist fails the build naming both ends.
+- **Mermaid renders at build time, which means a browser in CI.**
+  `rehype-mermaid` -> `mermaid-isomorphic` -> playwright, and `npm ci` fetches
+  the package but not the binary, so `website.yml` gains
+  `npx playwright install --with-deps --only-shell chromium`. Measured: the
+  headless SHELL alone is enough (~115 MB rather than a full Chromium).
+  **There are no mermaid fences in `docs/` today** — the three the plan counted
+  are prose mentioning the app's own mermaid support, and the real ones went in
+  the docs de-slop pass. The support is in so the first one works; verified by
+  adding a fence temporarily, and reverted.
+- **"Edit page" cannot come from `editLink.baseUrl`.** Starlight builds it by
+  concatenating the base with the entry's `filePath`, which here is
+  `../docs/SELF_HOSTING.md`; the `..` then eats a segment, so `…/edit/main/`
+  silently produced `…/edit/docs/SELF_HOSTING.md` with the branch missing. A
+  three-line route middleware (`website/src/starlightRouteData.ts`) makes the
+  path repo-relative first.
+- **Astro 7 deprecated `markdown.remarkPlugins` / `markdown.rehypePlugins`** in
+  favour of `markdown.processor: unified({...})` from `@astrojs/markdown-remark`.
+
+Verified: `cd website && npm run build` is clean — no warnings (`cron` and
+`promql` fences have no Shiki grammar and are aliased to plaintext rather than
+warning twice every build), 16 pages, link check green. All ten `{…}`-in-inline-
+code cases in `ARCHITECTURE.md` / `SELF_HOSTING.md` render literally, which is
+the CommonMark-not-MDX bet from the table above paying off. Pagefind search
+driven in a real browser against `dist/`: "worktree" returns Self-hosting and
+Troubleshooting with working sub-anchors, no page errors.
+
 ## Phase 3 — full marketing site
 
 Skeleton common to Coolify / Dokploy / Homarr / Docmost / Open WebUI landing
