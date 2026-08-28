@@ -37,6 +37,18 @@ drains the oldest already-parked follow-up into the same open session, since the
 turn has already ended and that follow-up was waiting for exactly this. A send is refused
 while anything is still queued, so a new message waits behind what came before.
 
+`lib/turnActivity.ts` watches the same open-endedness from the other side. It stamps the
+moment of every event the runner persists, and a sweep that runs only while a turn is live
+marks any turn that has produced nothing for `CALANDRIA_TURN_IDLE_MS` (20 minutes) — unless
+it is parked on the user, which is silent for a legitimate reason. The mark is a report, not
+a deadline: `schedulerHealth()`'s "looks stuck" banner is the model, and the same argument
+applies (the server cannot distinguish a wedged wait from a slow one, so it says how long
+and lets the human judge). It is in-memory only, both because it describes a turn this
+process owns and because persisting it would move `tasks.updated_at` — the board's sort key
+— every time a task went QUIET. The one coarse `turn_idle` event on `/api/events` is how a
+card learns it, since a turn that has stopped producing transcript detail publishes nothing
+else at all.
+
 `GET` on the same route is the SSE watch stream: a `snapshot` of the persisted transcript,
 then a live tail. It is reconnect-safe, supports any number of viewers, and works with zero
 viewers.

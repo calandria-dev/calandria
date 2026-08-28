@@ -7,6 +7,7 @@ import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
+import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, RAN_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
@@ -53,13 +54,20 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // The model's turn ended but the session is held open for run_in_background
   // work — live, but nothing to watch and nothing needed from the user.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
+  // Live, but nothing has come out of it for a long time (./idleTurn.ts). Said
+  // beside the running state rather than instead of it: the turn IS still going
+  // and may be doing real work, so this reports the gap and leaves the call to
+  // whoever reads it.
+  const idle = isIdleTurn(task, running) && !awaiting;
+  useIdleClock(idle);
+  const idleNote = idle ? ` · ${idleFor(task.idle_since ?? 0)}` : "";
   // Awaiting wins over running: a turn parked on a question is live but really
   // waiting on you, so it should read "waiting", not "working".
   const activity = snoozed ? `snoozed · wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
-    : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
-    : running ? "live · working"
+    : inBackground ? `live · ${task.background_note || "working in background"}${idleNote || ` · ${relTime(task.updated_at)}`}`
+    : running ? `live · working${idleNote}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
@@ -133,7 +141,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
       {task.description && <div className="tdesc">{task.description}</div>}
       <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />
       <div className="task-foot">
-        <span className="activity">{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
+        <span className={`activity${idle ? " idle" : ""}`} title={idle ? IDLE_TITLE : undefined}>{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
         <span className="spacer" />
         {/* Lower right, not the title row: inline there, the badge + pill took
             half the width the title exists to use. */}

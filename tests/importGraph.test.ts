@@ -60,6 +60,7 @@ const PINNED = [
   "lib/runContext.ts", //        why a turn is running; a Map on globalThis, nothing more
   "lib/contextWindow.ts", //     the gauge's miss policy; pure, and the client bundles it
   "lib/turnInput.ts", //        the live turn's message channel; a Map on globalThis, nothing more
+  "lib/turnActivity.ts", //     when each live turn last spoke + the idle mark; store + bus + abort/asks, no driving, and BOTH /api/events and the project GET read it
   "lib/notifications/notify.ts", //   composes notifications; store + bus only, no driving
   "lib/notifications/dispatcher.ts", // the bus subscriber behind /api/events
   "lib/push/store.ts", //         push subscriptions; DB only

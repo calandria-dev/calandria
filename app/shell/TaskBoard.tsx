@@ -7,6 +7,7 @@ import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
+import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, RAN_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
@@ -170,10 +171,15 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   const queued = isQueuedStart(task) && !running;
   // Ran unattended, cleanly, and unread — the ran-clean column's state.
   const ranClean = !snoozed && !awaiting && isUnreadRun(task);
+  // Live but silent for a long stretch (./idleTurn.ts) — reported next to the
+  // running state, never in place of it.
+  const idle = isIdleTurn(task, running) && !awaiting;
+  useIdleClock(idle);
+  const idleNote = idle ? ` · ${idleFor(task.idle_since ?? 0)}` : "";
   const activity = snoozed ? `wakes ${wakeLabel(task.snoozed_until)}`
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
-    : inBackground ? `live · ${task.background_note || "working in background"} · ${relTime(task.updated_at)}`
-    : running ? "live · working"
+    : inBackground ? `live · ${task.background_note || "working in background"}${idleNote || ` · ${relTime(task.updated_at)}`}`
+    : running ? `live · working${idleNote}`
     : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
     : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
@@ -204,7 +210,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
             line each; the chip filter still narrows those columns. */}
         {!mini && <TagBadges tagIds={task.tag_ids} tagsById={tagsById} onSelect={onSelectTag} />}
         <AgentBadge label={agentLabel(agents, task.agent)} multi={!mini && agents.agents.length > 1} />
-        <span className={`bc-act ${awaiting ? "need" : running ? "on" : ""}`}>{activity}</span>
+        <span className={`bc-act ${awaiting ? "need" : running ? "on" : ""}${idle ? " idle" : ""}`} title={idle ? IDLE_TITLE : undefined}>{activity}</span>
       </div>
       {running && <div className="bc-bar"><i /></div>}
       {/* Why this card is back in a column you didn't move it to. */}

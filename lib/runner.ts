@@ -14,6 +14,7 @@ import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
+import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
 import { SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -503,6 +504,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // (each SDK result message carries its own), hence a running sum rather than
   // a last-wins snapshot.
   const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // Start the idle clock (lib/turnActivity.ts) at the launch rather than at the
+  // first event: a turn that hangs before the session ever opens is exactly the
+  // kind of silence worth reporting, and with no baseline it would never be.
+  markTurnActivity(id);
 
   // Turn lifecycle, line 1 of 2 (issue #16). The runner used to log failures
   // and nothing else, so a healthy instance said nothing at all about the work
@@ -577,6 +582,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // through any public/documented API, so persisting one would mean reading
     // private, minified SDK internals liable to break on every version bump.
     for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController, hooks)) {
+      // This turn is producing something, whatever it is. One Map write, before
+      // the branch ladder, so nothing added below can forget to do it — and it
+      // is what makes the gaps BETWEEN these events the signal the idle mark is
+      // derived from (lib/turnActivity.ts).
+      markTurnActivity(id);
       // Persist first, then publish enriched with the DB message id — so a
       // snapshot taken at any instant plus the live tail never loses an event,
       // and clients can upsert by id instead of appending duplicates.
@@ -1122,6 +1132,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // Release occupancy only now, at the very end of this synchronous block —
       // a no-op if a Stop already deleted the entry or a handoff replaced it.
       unregisterTurn(id, abortController);
+      // The idle clock only describes a LIVE turn, so it retires with the slot.
+      // Deliberately not on the handoff/superseded paths: the successor turn is
+      // the same session continuing, and it re-stamps on entry anyway.
+      forgetTurnActivity(id);
       // Emitted after the task row settles, so a client refreshing on turn_end
       // reads the final running/awaiting_input state. Skipped when a queued
       // follow-up or a successor turn is taking over — that turn will emit its
