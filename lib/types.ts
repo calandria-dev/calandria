@@ -89,6 +89,7 @@ export interface Task {
   pr_review: string; // gh's reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED; "" = not required)
   pr_merged_at: number; // when GITHUB merged it (0 = not merged there) — distinct from merged_at, our local merge
   pr_synced_at: number; // when we last heard from GitHub (0 = never); the staleness clock every trigger reads
+  pr_failing: string; // JSON PrFailingCheck[] — the red entries behind pr_checks='failing' ("" when nothing is red)
   generation: number; // increments on each /clear
   position: number; // manual order within the project (list groups + board columns, ascending)
   started: number; // 1 once the initial prompt has been sent

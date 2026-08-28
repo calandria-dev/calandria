@@ -34,6 +34,12 @@ because every agent verified locally and nobody watched Actions.
   Red again, or any failure in a test, typecheck or build step, is real: fix it, or revert the
   commit — which is now itself a PR, titled `revert: ...` so release-please records it. Never
   rerun to make a real failure go away.
+- **The app is a backstop, not a substitute.** Calandria now raises a task whose open PR has a
+  failing check rollup into the "Needs you" inbox, names the red job, and offers a Fix CI button
+  that seeds a turn with its log tail. That exists because this rule was pure policy and main
+  once sat red for hours anyway. It catches what a session MISSED; it does not relieve the
+  session of watching its own push to terminal state, because a dispatch that ends red has
+  already handed the user a task they thought was finished.
 - **File issues for CI problems. You are empowered and expected to.** For a broken workflow, a
   recurring flake, a misconfiguration, or a red main you can't fix in-session, file a GitHub issue
   (or append to the open one) with the run URL and the failing step's output. Never leave main

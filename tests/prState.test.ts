@@ -28,6 +28,7 @@ const snapshot = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
   review: "",
   mergedAt: 0,
   mergeState: "CLEAN",
+  failing: [],
   ...over,
 });
 

@@ -601,6 +601,23 @@ export type PrState = "open" | "merged" | "closed";
  */
 export type PrChecks = "pending" | "passing" | "failing" | "none";
 
+/**
+ * One red check, named and linkable. "checks failing" is a verdict nobody can
+ * act on: the whole point of surfacing a red PR is to say WHICH job broke and
+ * where its log is, so the answer is one click away rather than a trip to the
+ * Actions tab to find out.
+ */
+export interface PrFailingCheck {
+  /** The job/context name, as GitHub shows it ("test (20.x)", "typecheck"). */
+  name: string;
+  /** The run/job URL, or "" when the entry carried none. */
+  url: string;
+  /** The workflow the job belongs to ("Tests"), "" for a legacy status context. */
+  workflow: string;
+  /** gh's verdict for this one: FAILURE / TIMED_OUT / CANCELLED / … */
+  verdict: string;
+}
+
 export interface PrSnapshot {
   number: number;
   state: PrState;
@@ -611,16 +628,34 @@ export interface PrSnapshot {
   mergedAt: number;
   /** gh's mergeStateStatus (CLEAN/BLOCKED/DIRTY/BEHIND/…), "" when unknown. */
   mergeState: string;
+  /** The red entries behind `checks: "failing"` — empty for every other rollup. */
+  failing: PrFailingCheck[];
 }
 
 // One entry of gh's statusCheckRollup: a GitHub Actions CheckRun (status +
-// conclusion) or a legacy commit StatusContext (state). Both shapes come back
-// in the same array, which is why each field is optional here.
+// conclusion, named by `name` under `workflowName`) or a legacy commit
+// StatusContext (state, named by `context`, linked by `targetUrl`). Both shapes
+// come back in the same array, which is why each field is optional here.
 interface RollupEntry {
   __typename?: string;
   status?: string;
   conclusion?: string;
   state?: string;
+  name?: string;
+  context?: string;
+  detailsUrl?: string;
+  targetUrl?: string;
+  workflowName?: string;
+}
+
+// The one verdict an entry carries, whichever shape it is.
+//   CheckRun: `conclusion`, and only once `status` is COMPLETED — an
+//     in-flight run's conclusion is null, not a pass.
+//   StatusContext: `state` is the verdict outright.
+// "" means "nothing decided yet".
+function verdictOf(e: RollupEntry): string {
+  const raw = (e.status !== undefined ? (e.status === "COMPLETED" ? e.conclusion : "") : e.state) || "";
+  return raw.toUpperCase();
 }
 
 // A check run only has a verdict once it has COMPLETED; anything else (QUEUED,
@@ -642,10 +677,7 @@ export function rollupChecks(entries: RollupEntry[] | null | undefined): PrCheck
   let pending = false;
   let failing = false;
   for (const e of entries) {
-    // CheckRun: the verdict is `conclusion`, and only once `status` is COMPLETED.
-    // StatusContext: `state` is the verdict outright.
-    const verdict = (e.status !== undefined ? (e.status === "COMPLETED" ? e.conclusion : "") : e.state) || "";
-    const v = verdict.toUpperCase();
+    const v = verdictOf(e);
     if (!v || v === "PENDING" || v === "EXPECTED") pending = true;
     else if (CHECK_FAIL.has(v)) failing = true;
     else if (!CHECK_PASS.has(v)) pending = true; // an unknown verdict is not a pass
@@ -653,6 +685,34 @@ export function rollupChecks(entries: RollupEntry[] | null | undefined): PrCheck
   if (failing) return "failing";
   if (pending) return "pending";
   return "passing";
+}
+
+// How many red checks are worth keeping. A workflow that fans out over a
+// fifteen-entry matrix goes red fifteen times for one bug, and the row this
+// lands in is read on every task list — the cap is what stops a JSON column and
+// a chip from growing with the matrix.
+const MAX_FAILING = 8;
+
+/**
+ * The red entries behind a "failing" rollup, in gh's order. Pure — exported for
+ * tests, and shares verdictOf() with rollupChecks() so the two can never
+ * disagree about which entries are the red ones.
+ */
+export function failingChecks(entries: RollupEntry[] | null | undefined): PrFailingCheck[] {
+  if (!entries) return [];
+  const out: PrFailingCheck[] = [];
+  for (const e of entries) {
+    if (out.length >= MAX_FAILING) break;
+    const v = verdictOf(e);
+    if (!CHECK_FAIL.has(v)) continue;
+    out.push({
+      name: String(e.name || e.context || "check"),
+      url: String(e.detailsUrl || e.targetUrl || ""),
+      workflow: String(e.workflowName || ""),
+      verdict: v,
+    });
+  }
+  return out;
 }
 
 /** What a refresh came back with: a snapshot, or why it couldn't get one. */
@@ -720,6 +780,67 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
       review: String(raw.reviewDecision || ""),
       mergedAt: Number.isFinite(mergedAt) ? mergedAt : 0,
       mergeState: String(raw.mergeStateStatus || ""),
+      failing: failingChecks(raw.statusCheckRollup),
     },
   };
+}
+
+// A CheckRun's detailsUrl: …/actions/runs/<runId>/job/<jobId>. Both halves are
+// wanted, but never together: `gh run view` refuses a run-id AND --job in one
+// call, so the job id (when there is one) narrows the log to the job that
+// actually went red and the run id is the fallback for a URL without one.
+function actionsIds(url: string): { runId: string; jobId: string } | null {
+  const m = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/.exec(url || "");
+  if (!m) return null;
+  return { runId: m[1], jobId: m[2] || "" };
+}
+
+/** The tail of a failed job's log, or why it couldn't be read. */
+export type CheckLogResult = { ok: true; log: string } | { ok: false; error: string };
+
+/**
+ * The tail of the FAILED steps of one check run's log (`gh run view
+ * --log-failed`), which is the part that says what actually broke — a full job
+ * log is megabytes of setup and green steps.
+ *
+ * Best-effort by contract, like every other network call in this file: a legacy
+ * status context with no Actions URL, a log GitHub has already expired, a
+ * logged-out gh and a dead network all come back as a reported failure. The
+ * caller (the "Fix CI" prompt) is still useful with the job NAME alone, so a
+ * missing log must degrade rather than fail the click.
+ */
+export async function fetchCheckLog(cwd: string, url: string, tailLines: number): Promise<CheckLogResult> {
+  const ids = actionsIds(url);
+  if (!ids) return { ok: false, error: "not a GitHub Actions run" };
+  const st = await ghStatus();
+  if (!st.installed) return { ok: false, error: ghMissingMessage() };
+  if (!st.authenticated) return { ok: false, error: "gh is not logged in to GitHub" };
+
+  // The job form first (one job's failed steps), the whole run as the fallback:
+  // a job id can be stale or belong to a re-run, and a fatter log still names
+  // the failure.
+  const attempts = ids.jobId
+    ? [["run", "view", "--job", ids.jobId, "--log-failed"], ["run", "view", ids.runId, "--log-failed"]]
+    : [["run", "view", ids.runId, "--log-failed"]];
+
+  let lastError = "";
+  for (const args of attempts) {
+    try {
+      const { stdout } = await run(resolveGhBin(), args, {
+        cwd,
+        timeout: 60_000,
+        maxBuffer: 32 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+      });
+      const lines = String(stdout || "").split("\n").filter((l) => l.trim() !== "");
+      if (lines.length === 0) {
+        lastError = "GitHub returned no failed-step log";
+        continue;
+      }
+      return { ok: true, log: lines.slice(-tailLines).join("\n") };
+    } catch (e) {
+      lastError = cliErrorMessage(e, "gh run view errored");
+    }
+  }
+  return { ok: false, error: lastError };
 }

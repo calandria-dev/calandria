@@ -27,7 +27,7 @@
 // ordinary sync-compiled route entries.
 
 import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount } from "./store";
-import { fetchPrState, type PrSnapshot } from "./github";
+import { fetchPrState, type PrFailingCheck, type PrSnapshot } from "./github";
 import { publishGlobal, watcherCount } from "./events";
 import { PR_POLL_BATCH, PR_POLL_MS, PR_STALE_MS } from "./config";
 import type { Task } from "./types";
@@ -52,6 +52,24 @@ export interface PrView {
   merged_at: number;
   synced_at: number;
   refreshing: boolean;
+  /** The red checks, parsed out of tasks.pr_failing. Empty unless checks = "failing". */
+  failing: PrFailingCheck[];
+}
+
+/**
+ * The red checks stored on a task row. Defensive on purpose: the column is JSON
+ * this process wrote, but it is also a column an older build never wrote and a
+ * hand-edited database could hold anything in, and a malformed one must cost a
+ * chip its detail rather than throw inside a task list.
+ */
+export function parseFailingChecks(json: string): PrFailingCheck[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? (v as PrFailingCheck[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** The stored PR state for a task, or null when it has no PR. */
@@ -66,19 +84,29 @@ export function prView(task: Task): PrView | null {
     merged_at: task.pr_merged_at,
     synced_at: task.pr_synced_at,
     refreshing: inFlight.has(task.id),
+    failing: parseFailingChecks(task.pr_failing),
   };
+}
+
+// The red-check list as it is stored: gh's own order, so a rollup that hasn't
+// moved serializes identically and `changed()` stays quiet.
+function serializeFailing(snap: PrSnapshot): string {
+  return snap.failing.length ? JSON.stringify(snap.failing) : "";
 }
 
 // Did GitHub actually tell us something new? pr_synced_at moves on EVERY
 // refresh, so comparing whole rows would publish a "the task changed" event
 // every five minutes forever and have every tab refetch its tray for nothing.
-// Only the four facts a human can see count as a change.
+// Only the facts a human can see count as a change — which includes WHICH
+// checks are red, since a second job going red under an already-red rollup
+// changes what the chip names and what a "Fix CI" turn would be told.
 function changed(task: Task, snap: PrSnapshot): boolean {
   return (
     task.pr_state !== snap.state ||
     task.pr_checks !== snap.checks ||
     task.pr_review !== snap.review ||
-    task.pr_merged_at !== snap.mergedAt
+    task.pr_merged_at !== snap.mergedAt ||
+    task.pr_failing !== serializeFailing(snap)
   );
 }
 
@@ -126,6 +154,7 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
         review: task.pr_review,
         merged_at: task.pr_merged_at,
         synced_at: now,
+        failing: task.pr_failing,
       });
       return { ok: false, reason: "failed", error: res.error };
     }
@@ -138,6 +167,7 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
       review: snap.review,
       merged_at: snap.mergedAt,
       synced_at: now,
+      failing: serializeFailing(snap),
     });
     // task_edited is the "refetch the row" event, which is exactly right here:
     // the coarse wire payload can't carry pr_state or a check rollup, so

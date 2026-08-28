@@ -1396,6 +1396,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
 .sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
 .sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
+/* Red PR (SessionView's CiBanner). Its own tone rather than .conflict's amber:
+   a merge conflict is work in front of you, a failing check is something
+   already broken. The check names inside it are links to the run. */
+.sync-banner.ci-failing{color:var(--red);background:var(--red-soft);border-color:var(--red);}
+.sync-banner.ci-failing .ci-check{color:inherit;text-decoration:underline;text-underline-offset:2px;}
+.sync-banner.ci-failing .ci-check:hover{text-decoration:none;}
+.sync-banner.ci-failing .tc-btn.primary{border-color:var(--red);background:var(--red);color:var(--on-accent);}
+.ny-row .ny-ci{color:var(--red);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
 .sync-err{color:var(--err);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
