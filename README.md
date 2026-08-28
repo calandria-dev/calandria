@@ -31,7 +31,9 @@ covers it. No API key needed.
 - **Review every change.** Read the diff next to the conversation, then
   merge, resolve conflicts, or open a pull request. Once a PR exists, its
   state — open, merged or closed, checks green or red, review approved or
-  not — stays live on the task without you opening GitHub.
+  not — stays live on the task without you opening GitHub, and one button
+  squash-merges it from there. Where the repo allows auto-merge, that click
+  queues it and GitHub lands the PR the moment its checks pass.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen

@@ -58,6 +58,8 @@ export interface TaskRow {
   pr_checks: string; // "pending" | "passing" | "failing" | "none" (no CI configured)
   pr_review: string; // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED ("" = review not required)
   pr_merged_at: number; // when GITHUB merged it (0 = not merged there); not merged_at, which is our local merge
+  pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
+  pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
   pr_synced_at: number; // when the server last heard from GitHub (0 = never)
   generation: number;
   started: number;

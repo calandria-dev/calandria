@@ -45,8 +45,9 @@ Calandria puts the task conversation and git diff side by side. From there you c
 - review every changed file before it reaches the base branch;
 - sync a stale task branch;
 - merge with one click;
-- ask the agent to resolve conflicts; or
-- create a GitHub pull request.
+- ask the agent to resolve conflicts;
+- create a GitHub pull request; or
+- squash-merge that pull request without leaving the app.
 
 ![Diff review beside the agent session](images/changes.png)
 
@@ -59,6 +60,33 @@ over the same event stream every other lifecycle fact uses. A merged or closed P
 re-read, and a sweep is skipped entirely when no tab is open, so the cost is bounded by open
 work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
 turns the timer off and leaves the other three triggers.
+
+#### Squash & merge from the rail
+
+Once the PR is open, green and approved, landing it is one button on the diff rail:
+`gh pr merge --squash --auto --delete-branch`, run through the same `gh` the Create PR button
+uses. `--auto` is the point. Where the repo has auto-merge enabled and required checks
+configured, the click **queues** the merge and GitHub lands it the moment CI goes green, so
+there is no tab to babysit. A repo with auto-merge switched off — or a PR with nothing left
+to wait for — falls back to a plain `--squash`, and the result says which of the two you got:
+"GitHub will squash-merge this as soon as its requirements are met" is a different promise
+from "squash-merged".
+
+The button is enabled off GitHub's own answer, not optimistically. It is disabled, and says
+why, when the PR is a draft, already merged, closed, conflicting with its base, or has
+failing checks; a merge waiting on a required review or a still-running check is exactly what
+`--auto` is for, so those stay clickable. The route re-runs the same check against a fresh
+`gh pr view` before it acts, so a build that went red while the rail was on screen is refused
+rather than merged, and it refuses outright while the task has a turn running — the agent may
+be pushing more commits into the branch the PR is built from. Only the local branch is kept:
+`--delete-branch` removes the branch on GitHub, while the task's own branch stays, because a
+checkout is regenerable and a branch is the task's diff.
+
+It is a **user** action and only a user action. There is no agent tool for it and no
+scheduled path, deliberately: `.github/CLAUDE.md` holds this repo's own agents to merging
+only on an explicit human answer, and a POST an agent could reach would be that gate's back
+door. After a successful merge the route does no cleanup of its own — it forces the PR-state
+refresh that records the merge and leaves the worktree to the reclaim path.
 
 Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
 work requires an explicit permanent-discard confirmation.

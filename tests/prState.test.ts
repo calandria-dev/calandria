@@ -28,6 +28,7 @@ const snapshot = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
   review: "",
   mergedAt: 0,
   mergeState: "CLEAN",
+  draft: false,
   ...over,
 });
 
@@ -122,6 +123,29 @@ describe("refreshPrState", () => {
     expect(task.pr_synced_at).toBeGreaterThan(0);
     // The board and the session rail update off this, the same way every other
     // lifecycle fact reaches them.
+    expect(w.seen.map((e) => e.type)).toContain("task_edited");
+  });
+
+  it("persists draft and mergeability, and announces a change in either", async () => {
+    // The two facts the Squash & merge button is enabled off (lib/prMerge.ts).
+    // Both used to be dropped on the floor: mergeStateStatus was fetched and
+    // never stored, isDraft was never asked for.
+    const { taskId } = taskWithPr();
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot({ draft: true, mergeState: "DRAFT" }) });
+    await refreshPrState(taskId);
+    expect(getTask(taskId)!.pr_draft).toBe(1);
+    expect(getTask(taskId)!.pr_merge_state).toBe("DRAFT");
+
+    // Marking it ready for review changes nothing else — state is still open,
+    // checks still passing — so unless changed() counts these two, the rail
+    // would keep the button disabled until something unrelated moved.
+    const w = watch(taskId);
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot({ draft: false, mergeState: "CLEAN" }) });
+    const res = await refreshPrState(taskId, { force: true });
+    w.off();
+
+    expect(res).toMatchObject({ ok: true, changed: true });
+    expect(getTask(taskId)!.pr_draft).toBe(0);
     expect(w.seen.map((e) => e.type)).toContain("task_edited");
   });
 

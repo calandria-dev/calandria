@@ -1030,6 +1030,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-btn.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent);}
 /* the PR link rendered as an <a> in the same toolbar row */
 a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height:1.4;}
+/* Squash & merge PR. Deliberately not .primary: the local "Merge to <base>"
+   button next to it already owns that slot, and two accent-filled buttons side
+   by side make the toolbar ask twice. This reads as the GitHub-side action. */
+.tc-prmerge:not(:disabled){border-color:var(--green);color:var(--green);}
+.tc-prmerge:hover:not(:disabled){background:var(--green-soft);}
 .tc-merged{font-size:12px;font-weight:600;color:var(--green);}
 .tc-merged.faint{color:var(--ink-3);font-weight:500;}
 .tc-mergebar{margin:10px 16px 0;padding:8px 10px;border-radius:var(--r-sm);font-size:12px;}
