@@ -23,6 +23,7 @@ import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } f
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
+import { PrChip } from "./PrChip";
 import { ColResize, ColRail } from "./Layout";
 import { jget, jsend } from "./api";
 
@@ -456,8 +457,6 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const usage = usageSplit(task);
   const cost = costDisplay(findAgent(agents, task.agent));
   const multiAgent = agents.agents.length > 1;
-  // PR number for the header chip, parsed from the stored URL (…/pull/42).
-  const prNum = task.pr_url?.match(/\/pull\/(\d+)/)?.[1];
   // True while a question card is still unanswered — hides the "thinking" dots,
   // since Claude is parked on the user, not working.
   const awaitingAnswer = useMemo(() => messages.some((m) => {
@@ -604,11 +603,9 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // desktop, demoted to its tail on mobile (see the rail's comment).
   const infoChips = (
     <>
-      {task.pr_url && (
-        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request: ${task.pr_url}`}>
-          {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
-        </a>
-      )}
+      {/* Live PR state — number, state, check rollup, review decision — read off
+          the task row and kept fresh by lib/prState.ts. */}
+      <PrChip task={task} />
       {/* Which feature(s) this session is a step of — a task can carry several.
           Clicking one lights that tag's chip in the list/board, the way the
           row badges do. */}

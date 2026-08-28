@@ -48,6 +48,15 @@ export interface TaskRow {
   session_id: string | null;
   worktree_path: string; // isolated git worktree this task runs in ("" = not created yet — appears on the first turn)
   pr_url: string; // GitHub PR opened from this task's branch ("" = none yet)
+  // Live PR state, refreshed from GitHub in the background (lib/prState.ts) and
+  // arriving here on task_edited. All five are "" / 0 until the first refresh
+  // answers, which is what the chip draws as "checking…" rather than guessing.
+  pr_number: number; // parsed from pr_url when the PR was created — never re-derived per render
+  pr_state: string; // "open" | "merged" | "closed"
+  pr_checks: string; // "pending" | "passing" | "failing" | "none" (no CI configured)
+  pr_review: string; // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED ("" = review not required)
+  pr_merged_at: number; // when GITHUB merged it (0 = not merged there); not merged_at, which is our local merge
+  pr_synced_at: number; // when the server last heard from GitHub (0 = never)
   generation: number;
   started: number;
   running: number;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
+import { startPrPolling } from "@/lib/prState";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,12 @@ export async function POST() {
   // Not gated by CALANDRIA_SCHEDULER — it isn't a schedule.
   const { startDeferredStartTicker } = await import("@/lib/deferredStart");
   startDeferredStartTicker();
+  // The PR-state sweep rides the same ping so an instance that restarts with
+  // open PRs starts watching them again without waiting for someone to open a
+  // task. Statically imported, unlike the two above: lib/prState.ts is
+  // SDK-free (PINNED), so there is no async-module hazard to dodge. It starts
+  // nothing when no task has an open PR.
+  startPrPolling();
   return NextResponse.json({ ok: true, ...schedulerHealth() });
 }
 

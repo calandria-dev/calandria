@@ -62,6 +62,15 @@ export interface Task {
   base_branch: string;
   merged_at: number; // when this task's branch was merged back (0 = not merged)
   pr_url: string; // GitHub PR opened from this task's branch via "Create PR" ("" = none)
+  // Live PR state, refreshed from `gh pr view` by lib/prState.ts. See the
+  // schema comment in lib/db.ts for what each one means and why pr_merged_at is
+  // not merged_at.
+  pr_number: number; // the number parsed out of pr_url when the PR was created (0 = none)
+  pr_state: string; // "open" | "merged" | "closed" ("" = never refreshed)
+  pr_checks: string; // "pending" | "passing" | "failing" | "none" ("" = never refreshed)
+  pr_review: string; // gh's reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED; "" = not required)
+  pr_merged_at: number; // when GITHUB merged it (0 = not merged there) — distinct from merged_at, our local merge
+  pr_synced_at: number; // when we last heard from GitHub (0 = never); the staleness clock every trigger reads
   generation: number; // increments on each /clear
   position: number; // manual order within the project (list groups + board columns, ascending)
   started: number; // 1 once the initial prompt has been sent
