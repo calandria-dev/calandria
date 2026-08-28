@@ -15,7 +15,7 @@ import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, a
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
-import { SHUTDOWN_GRACE_MS } from "@/lib/config";
+import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
@@ -24,7 +24,15 @@ import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailur
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
-import { DENIED_INTERRUPTED } from "@/lib/permissions";
+import { DENIED_INTERRUPTED, DENIED_TIMED_OUT, parseDecision, waitForPermission } from "@/lib/permissions";
+import {
+  acceptSettingsChanges,
+  checkSettingsDrift,
+  settingsBlockedError,
+  settingsDriftNotice,
+  settingsDriftRequest,
+  SETTINGS_DENIED_UNATTENDED,
+} from "@/lib/settingsDrift";
 import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { sendTurnInput } from "@/lib/turnInput";
@@ -497,6 +505,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // that there was no one to approve it, and draining the queue now would run
   // every follow-up into the same wall.
   let unattendedDeny = false;
+  // Set when the pre-turn settings gate refused (issue #43): the task's own
+  // .claude/settings.json changed since it last ran and the change wasn't
+  // approved, so this turn never reached the agent. The queue is parked for the
+  // same reason as the two above — every follow-up would raise the identical
+  // card — and the task is left flagged, because the way out is a person
+  // reading a diff.
+  let settingsBlocked = false;
   const startedAt = Date.now();
   // What this turn spent, accumulated from the same `usage` events that write
   // task_usage, so the lifecycle line in the finally can report tokens without
@@ -560,6 +575,106 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       const m = addMessage(id, gen, "system", syncNote);
       publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen, ts: m.created_at });
     }
+
+    const driver = getDriver(task.agent);
+    // The pre-turn settings gate (issue #43). The agent has not started yet,
+    // and whatever `.claude/settings.json` says at this instant is what its
+    // hooks, permission-allow rules and env are for the whole turn — loaded
+    // from disk before canUseTool exists to have an opinion. That file lives in
+    // the worktree, so the previous turn could have written it, and the
+    // fast-forward a few lines above could have brought it in from base.
+    //
+    // So: hash what the driver says it will load, and if it moved since the
+    // version this task last ran under, park HERE. Deliberately the same
+    // machinery as a tool prompt — same PermissionRequest, same ask registry,
+    // same POST /answer route, same transcript row — because the answer means
+    // the same thing and a second answering path is a second thing to get
+    // wrong. The notice goes first so the transcript reads as a statement
+    // followed by a question, and so the fact survives even if the card is
+    // never answered.
+    const watched = driver.watchedSettingsFiles ?? [];
+    const settingsRoot = task.worktree_path || project.repo_path;
+    const changes = watched.length && settingsRoot ? checkSettingsDrift(id, settingsRoot, watched) : [];
+    if (changes.length) {
+      const notice = settingsDriftNotice(changes);
+      const nm = addMessage(id, gen, "system", notice);
+      publish(id, { type: "notice", content: notice, msgId: nm.id, generation: gen, ts: nm.created_at });
+
+      const request = settingsDriftRequest(
+        `settings:${gen}:${startedAt}`,
+        id,
+        changes,
+        PERMISSION_PROMPT_TIMEOUT_MS,
+        PERMISSION_UNATTENDED_MS
+      );
+      const data: ToolData = { title: request.title, permission: { request } };
+      const cm = addMessage(id, gen, "tool", JSON.stringify(data));
+      toolMsgs[request.id] = { dbId: cm.id, data };
+      openAsks.add(request.id);
+      updateTask(id, { awaiting_input: 1 });
+      publish(id, { type: "permission", request, msgId: cm.id, generation: gen, ts: cm.created_at });
+
+      // The same settle the driver's permission_decided branch performs, done
+      // here because this card was never on the driver's stream: nothing has
+      // asked the agent for anything yet.
+      const settle = (outcome: PermissionOutcome) => {
+        data.permission = { request, outcome };
+        updateMessage(cm.id, JSON.stringify(data));
+        openAsks.delete(request.id);
+        if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
+        publish(id, { type: "permission_decided", id: request.id, outcome, msgId: cm.id, generation: gen });
+      };
+
+      const waited = await waitForPermission({
+        taskId: id,
+        id: request.id,
+        signal: abortController.signal,
+        attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
+        unattendedMs: PERMISSION_UNATTENDED_MS,
+      });
+      if ("aborted" in waited) {
+        // Stopped while the card was open. Not a failure and not a refusal —
+        // the finally below settles it as a stopped turn, and the baseline is
+        // left alone so the next turn asks again.
+        settle({ decision: "deny", auto: true, reason: "interrupted", note: DENIED_INTERRUPTED });
+        return;
+      }
+      if ("expired" in waited) {
+        // Nobody answered: a declared-unattended (scheduled) run settles
+        // instantly, an unwatched one after the short grace. Adopting new agent
+        // settings is not something an absent human can be taken to have
+        // agreed to, so both refuse — and the schedule run settles `failed` off
+        // the turnError below rather than reporting a quiet green "ran".
+        const unattended = waited.expired === "unattended";
+        settle({
+          decision: "deny",
+          auto: true,
+          reason: waited.expired,
+          note: unattended ? SETTINGS_DENIED_UNATTENDED : DENIED_TIMED_OUT,
+        });
+        settingsBlocked = true;
+        turnError = settingsBlockedError(changes, unattended ? "unattended" : "timeout");
+        publishTurnError(id, gen, turnError);
+        return;
+      }
+      const { decision, note } = parseDecision(waited.answers);
+      if (decision === "deny") {
+        settle({ decision, note: note || undefined });
+        settingsBlocked = true;
+        turnError = settingsBlockedError(changes, "declined");
+        publishTurnError(id, gen, turnError);
+        return;
+      }
+      // Approved. The new version becomes what this task runs under, so the
+      // next turn is silent until it changes again — an "always allow" would
+      // have been a standing grant to whatever the file says NEXT, which is
+      // the thing being gated, so there is no such offer on the card.
+      acceptSettingsChanges(id, changes);
+      // Recorded as allow_once whatever the client sent: with no scope offer on
+      // the card, an "allow_always" answer has nothing to remember, and the
+      // settled view would claim a rule that doesn't exist.
+      settle({ decision: "allow_once" });
+    }
     // Orphan-on-crash investigation (issue #14 item 2): both agent SDKs spawn
     // the claude/codex CLI as a plain (non-detached) child tied to THIS
     // abortController, not to server lifecycle. Verified against the
@@ -581,7 +696,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // neither agent SDK exposes the underlying child process (or its pid)
     // through any public/documented API, so persisting one would mean reading
     // private, minified SDK internals liable to break on every version bump.
-    for await (const ev of getDriver(task.agent).runTurn(task, project, userText, abortController, hooks)) {
+    for await (const ev of driver.runTurn(task, project, userText, abortController, hooks)) {
       // This turn is producing something, whatever it is. One Map write, before
       // the branch ladder, so nothing added below can forget to do it — and it
       // is what makes the gaps BETWEEN these events the signal the idle mark is
@@ -958,9 +1073,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // sat at running=0 / awaiting_input=0 / status=in_progress, which is
       // indistinguishable from live work and which nothing ever moved, so every
       // firing left one more permanent "In progress" row behind (issue #28).
+      // A turn the settings gate refused never opened a session, so the clause
+      // below would leave it flagged for nothing — and it is precisely the case
+      // that needs a person: the way out is reading a diff and deciding, which
+      // is what the "N need you" pill is for. Including the scheduled case,
+      // where the alternative is a run that refused itself at 08:30 and said so
+      // only in a ledger nobody opens.
       updateTask(id, {
         running: 0, background_pending: 0, background_note: "", session_id: sessionId,
-        awaiting_input: opened && !scheduledOk ? 1 : 0,
+        awaiting_input: (opened && !scheduledOk) || settingsBlocked ? 1 : 0,
         // Only a run that actually opened a session produced anything to read.
         ...(scheduledOk && opened ? { unread_run_at: Date.now() } : {}),
       });
@@ -1015,18 +1136,25 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
-    } else if (authFailure || usageLimitFailure || unattendedDeny) {
-      // The login (or the quota, or the absent human) is what failed — not the
-      // work: draining now would run each follow-up straight into the same
-      // authentication error / spent limit / unanswerable permission prompt,
-      // emptying the queue and stacking identical walls of red for messages
-      // that never actually ran. Leave them parked (they're rows in
-      // pending_messages, so they survive a reload and still render as queued
-      // bubbles) and say so once. They drain normally at the end of the next
-      // turn, after a reconnect / once the limit resets / once you're back.
+    } else if (authFailure || usageLimitFailure || unattendedDeny || settingsBlocked) {
+      // The login (or the quota, or the absent human, or an unapproved settings
+      // change) is what failed — not the work: draining now would run each
+      // follow-up straight into the same authentication error / spent limit /
+      // unanswerable permission prompt / identical settings card, emptying the
+      // queue and stacking identical walls of red for messages that never
+      // actually ran. Leave them parked (they're rows in pending_messages, so
+      // they survive a reload and still render as queued bubbles) and say so
+      // once. They drain normally at the end of the next turn, after a
+      // reconnect / once the limit resets / once you're back.
       const parked = listPendingMessages(id).length;
       if (parked) {
-        const when = authFailure ? "once you reconnect" : usageLimitFailure ? "once the limit resets" : "when you send the next message";
+        const when = authFailure
+          ? "once you reconnect"
+          : usageLimitFailure
+            ? "once the limit resets"
+            : settingsBlocked
+              ? "once you've approved the settings change"
+              : "when you send the next message";
         const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue: ${parked === 1 ? "it runs" : "they run"} ${when}.`;
         // Best-effort: the task row can be gone by now (deleted mid-turn), and a
         // FOREIGN KEY throw here would escape the detached run()'s finally.

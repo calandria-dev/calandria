@@ -218,25 +218,40 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   const [sent, setSent] = useState(false);
   if (!req) return null;
 
+  // The pre-turn settings gate (lib/settingsDrift.ts, issue #43): the same card
+  // asking about a different thing — not one tool call, but the configuration
+  // the whole turn would load. Declining doesn't refuse a call and let the
+  // session carry on; it means the turn never runs, so every sentence below
+  // that promises otherwise has to change. There is also nobody to write a note
+  // TO — the agent hasn't started — so the note field goes away with it.
+  const settings = req.kind === "settings";
+
   if (outcome) {
     const allowed = outcome.decision !== "deny";
     const blocked = outcome.reason === "blocked";
     const what = blocked
       ? blockedHead(outcome.blockedBy)
-      : outcome.decision === "allow_always"
-        ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
-        : outcome.decision === "allow_once"
-          ? "You allowed this once"
-          : outcome.auto ? "Declined automatically" : "You declined this";
+      : settings
+        ? allowed
+          ? "You approved this settings change"
+          : outcome.auto ? "Declined automatically — the turn did not run" : "You declined this settings change"
+        : outcome.decision === "allow_always"
+          ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
+          : outcome.decision === "allow_once"
+            ? "You allowed this once"
+            : outcome.auto ? "Declined automatically" : "You declined this";
     return (
       <div className={`perm settled ${allowed ? "ok" : "no"}`}>
         <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
         <div className="perm-what">{req.title}</div>
-        {/* Only on a block: this card was never open, so it's the one place the
-            user gets to see what the agent was actually about to run. Every
-            other outcome had the input on screen before it settled. */}
-        {blocked && req.detail && <pre className="perm-pre">{req.detail}</pre>}
-        {blocked && !!req.diff?.length && (
+        {/* On a block: this card was never open, so it's the one place the user
+            gets to see what the agent was actually about to run. On a settings
+            change: what changed is the whole point of the record, and unlike a
+            tool call it stays true afterwards — the file is still sitting in
+            the worktree. Every other outcome had its input on screen before it
+            settled. */}
+        {(blocked || settings) && req.detail && <pre className="perm-pre">{req.detail}</pre>}
+        {(blocked || settings) && !!req.diff?.length && (
           <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
         )}
         {outcome.note && <div className="perm-note">{outcome.note}</div>}
@@ -248,22 +263,28 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   const decide = (d: PermissionDecision) => { if (!sent) { setSent(true); onDecide(d, note); } };
   return (
     <div className="perm">
-      <div className="perm-head">{Icon.lock()} {agentLabel} needs permission</div>
+      <div className="perm-head">{Icon.lock()} {settings ? "This task's settings changed" : `${agentLabel} needs permission`}</div>
       <div className="perm-what">{req.title}</div>
       {req.description && <div className="perm-sub">{req.description}</div>}
       {req.detail && <pre className="perm-pre">{req.detail}</pre>}
       {!!req.diff?.length && (
         <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
       )}
-      <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
+      {!settings && (
+        <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
+      )}
       <div className="perm-foot">
-        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>Allow once</button>
+        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>{settings ? "Run this turn" : "Allow once"}</button>
         {req.scope && (
           <button className="btn btn-sm" onClick={() => decide("allow_always")} disabled={sent} title={req.scope.label}>{req.scope.label}</button>
         )}
         <button className="btn btn-sm btn-danger" onClick={() => decide("deny")} disabled={sent}>Decline</button>
       </div>
-      <div className="perm-hint">Declines automatically if nobody responds. The session keeps running either way.</div>
+      <div className="perm-hint">
+        {settings
+          ? "Declining ends this turn before the agent starts — nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
+          : "Declines automatically if nobody responds. The session keeps running either way."}
+      </div>
     </div>
   );
 }

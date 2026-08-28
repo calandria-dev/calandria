@@ -156,6 +156,19 @@ an unparseable answer, or a turn ending with a card still open (settled by the r
 `finally`, or by a restart for any left in the DB). An unattended auto-deny also parks
 queued follow-ups, the same way a dead login does.
 
+The same card is also raised **before** a turn, by the runner rather than by a tool call
+(**`lib/settingsDrift.ts`**, issue #43). `AgentDriver.watchedSettingsFiles` names the files a
+driver re-reads from disk every turn and then obeys — `<worktree>/.claude/settings.json` for
+Claude, derived from `SETTING_SOURCES` so a re-added source arrives watched — and those files
+live where the agent's own writes land, so turn N can write what turn N+1 loads (hooks run
+shell commands outside `canUseTool` entirely). The runner hashes each one before calling
+`runTurn`, compares against `task_settings_snapshots`, and on a change publishes a `notice`
+plus a `PermissionRequest` carrying `kind: "settings"` and the diff. Approving adopts the new
+version as the baseline and the turn proceeds; declining ends the turn before the driver is
+touched, parks the queue and leaves `awaiting_input` set. A first sighting is recorded
+silently — nothing has run under an older version — and a declared-unattended run (a
+schedule) refuses immediately, settling the run `failed`.
+
 The CLI can also refuse a call without consulting `canUseTool`: the `auto` classifier can
 veto something, or a deny rule in the loaded settings can block it. That arrives as a
 `system`/`permission_denied` message rather than a card. There is nothing to answer, but the

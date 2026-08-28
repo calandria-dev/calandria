@@ -334,6 +334,18 @@ export type PermissionDecision = "allow_once" | "allow_always" | "deny";
 // instead — see the note in lib/permissions.ts.
 export type PermissionMatchKind = "bash_prefix" | "bash_exact";
 
+// One watched setting file as this task last ran under it
+// (task_settings_snapshots — see lib/settingsDrift.ts). `file` is
+// worktree-relative; `hash` is over the whole file even when `content` is ''
+// because the file was too big to keep a copy of.
+export interface SettingsSnapshot {
+  task_id: string;
+  file: string;
+  hash: string;
+  content: string;
+  updated_at: number;
+}
+
 // A remembered "always allow" (permission_rules table), scoped to one project.
 export interface PermissionRule {
   id: string;
@@ -361,6 +373,20 @@ export interface PermissionScopeOffer {
 export interface PermissionRequest {
   id: string;
   tool: string;
+  /**
+   * What this card is asking about. Absent = the ordinary canUseTool gate on a
+   * tool call, which is every card that existed before this field.
+   *
+   * "settings" is the PRE-TURN gate (lib/settingsDrift.ts, issue #43): the
+   * agent hasn't started, and what needs approving isn't a call but the
+   * configuration the whole turn would run under. It rides the same
+   * request/outcome/answer machinery — one card shape, one answer route, one
+   * transcript row — and only the wording differs, so it is a field here rather
+   * than a second kind of card: declining ends the turn before it runs instead
+   * of refusing one call inside it, so the UI must not tell the user "the
+   * session keeps running either way".
+   */
+  kind?: "settings";
   /** Headline: the CLI's own prompt sentence when it supplies one, else a derived title. */
   title: string;
   /** The input worth judging — the full command for Bash, the path for a write. */

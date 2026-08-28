@@ -130,12 +130,10 @@ import { claudeUsage } from "./usage";
 // at it. 'project' is worktree-writable too, but at least a human reviewing
 // the diff has a shot at catching it; 'local' guarantees they never see it.
 //
-// Not addressed here (tracked as follow-up, not this fix): these files are
-// re-read from disk on every turn, so nothing stops a worktree's
-// settings.json from drifting between the turn a human reviewed and the turn
-// that runs next. Hash-pinning the file at worktree creation and re-diffing
-// it before each turn would close that gap; this change only removes the
-// source that review can never see in the first place.
+// The other half — these files are re-read from disk on EVERY turn, so
+// nothing stopped a worktree's settings.json from drifting between the turn a
+// human reviewed and the turn that runs next — is closed by
+// WATCHED_SETTINGS_FILES below (issue #43), not by narrowing this list.
 //
 // EXPORTED because it is load-bearing outside this file too: the schedule
 // preflight (lib/schedule/commands.ts) opens a throwaway session purely to read
@@ -146,6 +144,36 @@ import { claudeUsage } from "./usage";
 // tests/claudeSettingSources.test.ts, which drives the real probe through the
 // mocked SDK and reads the sources back.
 export const SETTING_SOURCES: SettingSource[] = ["user", "project"];
+
+// Where each source resolves, for the sources that resolve INSIDE the task's
+// own working directory — the ones a turn can rewrite for the next turn.
+//
+// A total Record over the SDK's SettingSource union on purpose, so the mapping
+// can't fall behind the union: if a future SDK adds a tier, this stops
+// compiling and somebody has to say where it lives and whether a task can write
+// it, rather than the new source quietly joining SETTING_SOURCES unwatched.
+// 'user' is ~/.claude/settings.json — the operator's own machine, outside every
+// worktree and no more trusted than the person running Calandria — so it maps
+// to null and is deliberately not watched: it changes when the operator changes
+// it, and holding a turn on that would be a card raised against yourself.
+export const WORKTREE_SETTINGS_FILE: Record<SettingSource, string | null> = {
+  user: null,
+  project: ".claude/settings.json",
+  local: ".claude/settings.local.json",
+};
+
+// What the runner hashes before every turn on a Claude task (issue #43).
+//
+// DERIVED from SETTING_SOURCES rather than written out, which is the whole
+// point: the two facts — "which sources a turn loads" and "which files drift
+// detection covers" — are one fact with one source of truth, so re-adding
+// 'local' to the list above extends the gate to it in the same edit instead of
+// re-opening the hole under a second, silent name. Pinned by
+// tests/claudeSettingSources.test.ts, which asserts the DERIVATION rather than
+// the current value; the runner half is tests/settingsDrift.test.ts.
+export const WATCHED_SETTINGS_FILES: string[] = SETTING_SOURCES.flatMap(
+  (source) => WORKTREE_SETTINGS_FILE[source] ?? []
+);
 
 // Where a session for this task runs: its isolated worktree, falling back to
 // the shared repo path (non-git projects, or worktree creation skipped).
@@ -1457,6 +1485,9 @@ export const claudeDriver: AgentDriver = {
     return claudeCapabilities();
   },
   runTurn,
+  // The worktree files a turn loads and obeys, so the runner can hold a turn
+  // whose settings changed under it (issue #43 — see WATCHED_SETTINGS_FILES).
+  watchedSettingsFiles: WATCHED_SETTINGS_FILES,
   // What a turn on this task would actually expand — read from the same
   // settings a turn loads, rooted at the same cwd. See ./commands.ts.
   //

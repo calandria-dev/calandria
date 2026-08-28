@@ -41,6 +41,7 @@ const PINNED = [
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
+  "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
