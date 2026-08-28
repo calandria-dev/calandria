@@ -13,10 +13,11 @@
  * mid-write turn off, which leaves `running = 1` behind for `recoverFromCrash()`
  * to mop up on the next boot.
  *
- * A THIRD TEST covers the OTHER quit — the window's own close button, which
- * reaches `before-quit` through `window-all-closed` and is what a Windows or
- * Linux user actually presses. It is skipped on macOS, where closing a window
- * is not quitting at all.
+ * A THIRD TEST covers the window's own close button, which no longer quits at
+ * all: it hides the window and leaves the server running, and the drain then
+ * happens on the explicit quit that follows — with the window brought back for
+ * it. That is the tray's doing (docs/DESKTOP_APP.md §5.1) and it holds on all
+ * three platforms, so unlike its predecessor it is skipped nowhere.
  *
  * THE `app.quit()` PATH IS TWO TESTS, NOT ONE, AND BOTH HOLD ON EVERY
  * PLATFORM. They used to be split by platform: the drain rode on the SIGTERM that `supervisor.stop()` sent,
@@ -130,22 +131,34 @@ test("the in-flight turn was settled rather than cut off mid-write", async () =>
   }
 });
 
-test("closing the window keeps it on screen until the drain is done", async () => {
-  // macOS closes the window WITHOUT quitting — `window-all-closed` deliberately
-  // does nothing there and the app stays in the dock — so there is no drain to
-  // keep a window open for, and main.js does not intercept the close.
-  test.skip(process.platform === "darwin", "closing a window is not quitting on macOS");
-
-  // The X button, which is how a window gets closed on Windows and Linux, and
-  // a different chain from the one above: `close` → `window-all-closed` →
-  // `quit()` → `before-quit`. It used to take the window away 15 ms in and
-  // drain behind it, so for as long as the drain took (a real agent turn, not
-  // this instant mock one) the app was off the screen and alive in the process
-  // table — and a user who relaunched inside that window was told another
-  // Calandria was already running, which reads as a crash rather than as a
-  // shutdown still in progress. `main.js` now preventDefaults the close and
-  // routes it through `app.quit()`, so the window is still there to carry the
-  // drain state `before-quit` sets.
+test("closing the window hides it, and the later quit brings it back to drain", async () => {
+  // TWO CLAIMS, ONE INSTANCE, because the second only means anything after the
+  // first: closing the window no longer quits (the server keeps running with
+  // the turn in flight), and quitting afterwards puts the window back on screen
+  // to carry the drain.
+  //
+  // The X button used to BE the quit on Windows and Linux, and this test used
+  // to assert that chain. It changed with the tray: a shell that can be present
+  // without a window can afford to treat close as "put it away", and on a
+  // window whose job is supervising long agent turns that is the better default
+  // — an absent-minded X should not settle work in flight, however cleanly.
+  // See "Close vs quit" in docs/DESKTOP_APP.md §5.1. What did NOT change is the
+  // reason the old test existed: whenever a drain does run, the window has to
+  // be in front of the user for it, or a shutdown that takes up to
+  // CALANDRIA_SHUTDOWN_GRACE_MS + 4 s reads as a hang — and now that quit can
+  // be asked for from the tray with nothing on screen, `showDraining()` has to
+  // un-hide the window first.
+  //
+  // Runs on macOS too, unlike the version before it: hiding on close is now one
+  // rule on all three platforms (it also keeps the SPA's state, which a real
+  // close throws away), so there is nothing platform-specific left to skip.
+  //
+  // It IS conditional on one thing, though, and this spec is where that would
+  // show up: hiding is gated on `Tray` having been constructed, since hiding
+  // into a session with no status area is how a user loses the app. A runner
+  // where the tray fails to appear would fail the first claim below with the
+  // shell having quit instead — check the attached log for
+  // "[shell] no tray available" before reading that as a regression.
   //
   // Its own instance: the shell above is gone, and this one ends too.
   shell = await launchShell("close-drain", { env: { CALANDRIA_SHUTDOWN_GRACE_MS: "15000" } });
@@ -189,13 +202,15 @@ test("closing the window keeps it on screen until the drain is done", async () =
         title: w?.getTitle() ?? "",
         overlay: "",
       };
-      // The title is set synchronously; the overlay lands an IPC hop later, so
-      // poll for it briefly rather than record a half-applied state.
-      for (let i = 0; i < 20 && !state.overlay; i++) {
+      // The title is set synchronously; the overlay lands an IPC hop later and
+      // the un-hide is a round trip to the window manager, so poll for both
+      // rather than record a half-applied state.
+      for (let i = 0; i < 40 && !(state.overlay && state.visible); i++) {
+        state.visible = w?.isVisible() ?? false;
         state.overlay = await (w?.webContents
           .executeJavaScript("document.getElementById('calandria-draining')?.innerText || ''")
           .catch(() => "") ?? Promise.resolve(""));
-        if (!state.overlay) await new Promise((r) => setTimeout(r, 50));
+        if (!(state.overlay && state.visible)) await new Promise((r) => setTimeout(r, 50));
       }
       // `require` is not in scope for a Playwright-evaluated function (measured:
       // undefined), but the main process is a CommonJS entry, so its module's
@@ -206,6 +221,27 @@ test("closing the window keeps it on screen until the drain is done", async () =
 
   const origin = shell.origin;
   await shell.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+
+  // CLAIM ONE. The window goes away, the window OBJECT does not, and neither
+  // does the server: a hidden Calandria is a running Calandria. Polled rather
+  // than read once — `hide()` is an async trip to the window manager, and on
+  // Linux a compositor can take a frame or two to unmap.
+  await expect
+    .poll(
+      async () =>
+        shell.app.evaluate(({ BrowserWindow }) => {
+          const w = BrowserWindow.getAllWindows()[0];
+          return { windows: BrowserWindow.getAllWindows().length, visible: w?.isVisible() ?? false };
+        }),
+      { timeout: 15_000, message: "the window never hid" }
+    )
+    .toEqual({ windows: 1, visible: false });
+  expect(await serverIsUp(origin), "closing the window took the server down with it").toBe(true);
+  expect((await getTask(origin, task.id)).running, "closing the window settled the in-flight turn").toBe(1);
+  expect(exited, "closing the window quit the app").toBe(false);
+
+  // CLAIM TWO. Now quit for real, from where the tray's Quit item goes.
+  await shell.app.evaluate(({ app }) => app.quit());
 
   await expect
     .poll(() => fs.existsSync(statePath), { timeout: 90_000, message: "before-quit never ran" })
@@ -232,7 +268,7 @@ test("closing the window keeps it on screen until the drain is done", async () =
   const db = new Database(dbFile(shell.dbDir), { readonly: true });
   try {
     const row = db.prepare("SELECT running FROM tasks WHERE id = ?").get(task.id) as { running: number } | undefined;
-    expect(row?.running, "the turn was still marked running after a window close").toBe(0);
+    expect(row?.running, "the turn was still marked running after the quit").toBe(0);
   } finally {
     db.close();
   }

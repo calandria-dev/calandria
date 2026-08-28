@@ -2,7 +2,8 @@
 
 A minimal Electron shell that launches the local Calandria server and shows it in
 a window, so the app starts by double-clicking an icon instead of by opening a
-terminal, running `npm start`, and typing a URL.
+terminal, running `npm start`, and typing a URL — and then tells you when a task
+needs you, from the dock and the tray, whether or not the window is open.
 
 **This is spike code**, kept because it is the cheapest way to answer the
 questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) — which also carries
@@ -55,11 +56,13 @@ inherited unchanged.
 | File | What it is |
 |-|-|
 | `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling (raced against the sidecars' own exits, so a boot that has already failed rejects in the first second with the child's reason rather than at the timeout with `fetch failed`), drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
-| `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first — including the window's own close button, which is held open (with a title and an on-page overlay) until the drain finishes. No preload, no IPC, no `nodeIntegration`. |
+| `main.js` | Electron main: one window, an application menu, a tray icon, external links to the real browser, and quit-drains-first (held open, with a title and an on-page overlay, until the drain finishes). Closing the window **hides** it — quitting is asked for by name; see "Close vs quit" in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §5.1. No preload, no IPC, no `nodeIntegration`. |
+| `notifier.js` | The notification/badge policy, Electron-free for the same reason `supervisor.js` is: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. It renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. |
+| `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (ImageMagick + a font — needed by nobody but whoever changes the mark). |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 24 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
+| `test-supervisor.js` | 34 assertions over `supervisor.js` and `notifier.js` (plus two source checks on `main.js`'s wiring), against stub sidecars and a stub event stream. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
-| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work by both routes (`app.quit()` and closing the window), and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
+| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
 
 ## Tests

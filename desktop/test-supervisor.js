@@ -13,7 +13,17 @@ const net = require("node:net");
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
+const http = require("node:http");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
+const {
+  AppEvents,
+  NeedsYou,
+  createSseParser,
+  overlayIconName,
+  selectedTaskFromUrl,
+  shouldNotify,
+  trayTooltip,
+} = require("./notifier");
 
 const HERE = __dirname;
 // Three cases below assert POSIX process semantics rather than merely using
@@ -464,6 +474,204 @@ function hold(port) {
     assert.notEqual(ctor, -1, "main.js should construct a Supervisor");
     assert.notEqual(wiring, -1, "main.js must pass PORT/PTY_PORT to the Supervisor");
     assert.ok(wiring > ctor, "the ports must go INTO the Supervisor's options");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Notifications, badge, tray (notifier.js). Everything below runs headless on
+  // purpose: the policy — which events raise a toast, what the badge counts,
+  // when a toast would be redundant — is exactly the part a display cannot
+  // check for you, and desktop/e2e is where the Electron calls get exercised.
+  // ---------------------------------------------------------------------------
+
+  await test("the SSE reader reassembles frames split across chunks and drops keep-alives", async () => {
+    const got = [];
+    const parser = createSseParser((d) => got.push(d));
+    // Exactly what /api/events writes on connect, then a frame torn in half by
+    // a chunk boundary — the case that makes this a push parser rather than a
+    // split().
+    parser.push(": connected\n\n");
+    parser.push('data: {"type":"task","taskId":"a"}\n\ndata: {"type":"notif');
+    assert.deepEqual(got, ['{"type":"task","taskId":"a"}']);
+    parser.push('ication"}\n\n: ping\n\n');
+    assert.deepEqual(got, ['{"type":"task","taskId":"a"}', '{"type":"notification"}']);
+    assert.equal(parser.pending, "", "a complete stream should leave nothing buffered");
+    // A half-written frame is held, not delivered.
+    parser.push("data: {\"partial\"");
+    assert.equal(got.length, 2);
+    assert.notEqual(parser.pending, "");
+  });
+
+  await test("the badge counts every live project, and asks to reseed when it cannot", async () => {
+    const n = new NeedsYou();
+    // Deprecated projects are excluded here for the same reason the titlebar
+    // pill excludes them (app/shell/useShell.ts) — an archived project must not
+    // badge the dock.
+    assert.equal(
+      n.seed([
+        { id: "p1", awaiting_count: 2 },
+        { id: "p2", awaiting_count: 1 },
+        { id: "p3", awaiting_count: 7, deprecated: 1 },
+      ]),
+      3,
+    );
+    // A task event carries its own project's fresh count; the total is the sum.
+    assert.equal(n.apply({ type: "task", projectId: "p2", awaiting_count: 4 }), "ok");
+    assert.equal(n.total, 6);
+    assert.equal(n.apply({ type: "task_deleted", projectId: "p1", awaiting_count: 0 }), "ok");
+    assert.equal(n.total, 4);
+    // Silent on events that say nothing about the count.
+    assert.equal(n.apply({ type: "agent_auth", agent: "claude", broken: true }), null);
+    assert.equal(n.total, 4);
+    // The two cases only the server can settle.
+    assert.equal(n.apply({ type: "task", projectId: "brand-new", awaiting_count: 1 }), "reseed");
+    assert.equal(n.apply({ type: "tasks_moved", taskIds: ["t"], fromProjectIds: ["p1"], toProjectId: "p2" }), "reseed");
+  });
+
+  await test("the shell suppresses exactly one toast: the task you are looking at", async () => {
+    const payload = { id: "awaiting_input:t1", taskId: "t1", title: "Waiting for input", body: "…" };
+    // The whole rule, matching shouldDisplay in app/shell/useNotifications.ts.
+    assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t1" }), false);
+    assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t2" }), true);
+    // Hidden to the tray, or behind the editor: this is what the shell is for.
+    assert.equal(shouldNotify(payload, { focused: false, selectedTaskId: "t1" }), true);
+    // A test send (Settings → "Send test notification") belongs to no task, so
+    // it must show even while that very screen is focused.
+    assert.equal(shouldNotify({ id: "test", taskId: "", title: "Test" }, { focused: true, selectedTaskId: null }), true);
+    // Nothing to say, nothing shown.
+    assert.equal(shouldNotify(null, { focused: false, selectedTaskId: null }), false);
+    assert.equal(shouldNotify({ id: "x", taskId: "t1", title: "" }, { focused: false, selectedTaskId: null }), false);
+  });
+
+  await test("the selected task is readable off the window URL alone", async () => {
+    // This is what makes the suppression above possible with no preload and no
+    // IPC: the app mirrors its selection into the query string
+    // (app/shell/persist.ts), so webContents.getURL() is the answer.
+    assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1&task=t9"), "t9");
+    assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1"), null);
+    assert.equal(selectedTaskFromUrl(`file://${path.join(HERE, "loading.html")}`), null);
+    assert.equal(selectedTaskFromUrl(""), null);
+  });
+
+  await test("every taskbar overlay the badge can ask for is a file that ships", async () => {
+    assert.equal(overlayIconName(0), null);
+    assert.equal(overlayIconName(-1), null);
+    assert.equal(overlayIconName(NaN), null);
+    assert.equal(overlayIconName(1), "badge-1.png");
+    assert.equal(overlayIconName(9), "badge-9.png");
+    // Windows' overlay is 16x16: past one digit it is a symbol, not a number.
+    assert.equal(overlayIconName(10), "badge-9plus.png");
+    assert.equal(overlayIconName(4711), "badge-9plus.png");
+    const assets = path.join(HERE, "assets");
+    for (let i = 1; i <= 12; i++) {
+      const name = overlayIconName(i);
+      assert.ok(fs.existsSync(path.join(assets, name)), `missing overlay asset ${name}`);
+    }
+    // The tray icons, including the macOS template pair — a Tray constructed
+    // from a missing path throws, which would take the whole shell down at boot.
+    for (const f of ["tray.png", "trayTemplate.png", "trayTemplate@2x.png"]) {
+      assert.ok(fs.existsSync(path.join(assets, f)), `missing tray asset ${f}`);
+    }
+  });
+
+  await test("the tray tooltip says the count in words, and gets the plural right", async () => {
+    assert.equal(trayTooltip(0), "Calandria");
+    assert.equal(trayTooltip(1), "Calandria — 1 task needs you");
+    assert.equal(trayTooltip(3), "Calandria — 3 tasks need you");
+  });
+
+  await test("the event subscription seeds the badge, delivers notifications, and reconnects", async () => {
+    // A stand-in for /api/events and /api/projects, so the whole loop —
+    // seed, subscribe, parse, drop, reconnect, reseed — runs with no display
+    // and no server build.
+    const notified = [];
+    const badges = [];
+    let streams = 0;
+    /** @type {import("node:http").ServerResponse | null} */
+    let live = null;
+    let awaiting = 2;
+    const server = http.createServer((req, res) => {
+      if (req.url.startsWith("/api/projects")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify([{ id: "p1", awaiting_count: awaiting }, { id: "p2", awaiting_count: 0, deprecated: 1 }]));
+        return;
+      }
+      streams += 1;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": connected\n\n");
+      live = res;
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const events = new AppEvents({
+      origin,
+      onProjects: (projects) => badges.push(new NeedsYou().seed(projects)),
+      onEvent: (ev) => ev.type === "notification" && notified.push(ev.payload),
+      onLog: () => {},
+      minBackoffMs: 10,
+      maxBackoffMs: 10,
+    });
+    const until = async (fn, what) => {
+      for (let i = 0; i < 200; i++) {
+        if (fn()) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.fail(`timed out waiting for ${what}`);
+    };
+    try {
+      // Seeded from the project list before a single event arrives — a fresh
+      // launch usually has work waiting from the last session, and a badge that
+      // only appears on the next turn boundary would be wrong until then.
+      await events.refreshProjects();
+      assert.deepEqual(badges, [2]);
+      events.start();
+      await until(() => live, "the stream to open");
+      live.write(`data: ${JSON.stringify({ type: "notification", payload: { id: "awaiting_input:t1", title: "Waiting for input", body: "Do the thing", taskId: "t1", projectId: "p1" } })}\n\n`);
+      await until(() => notified.length === 1, "the notification to arrive");
+      assert.equal(notified[0].title, "Waiting for input");
+      // The server goes away mid-stream (a restart, a sleep). The shell has to
+      // come back on its own AND refetch the project list, because this stream
+      // is a live tail: whatever was published while it was dark is gone.
+      awaiting = 5;
+      live.end();
+      live = null;
+      await until(() => streams === 2, "the stream to reconnect");
+      await until(() => badges.length === 2, "the reconnect to reseed the badge");
+      assert.equal(badges[1], 5, "the count after a reconnect must come from the server, not from before the drop");
+    } finally {
+      events.stop();
+      live?.end();
+      server.close();
+    }
+  });
+
+  await test("main.js wires the shell half of all of that", async () => {
+    // main.js is `require("electron")` at line 1 and cannot be loaded by this
+    // runner, so the wiring — as opposed to the policy above — is asserted on
+    // the source. Same approach as the port-wiring case, and for the same
+    // reason: every one of these was once absent and none of them has a
+    // headless failure mode.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    // The main process is the notification channel, so the renderer's must be
+    // off — granting both gives two toasts per event out of one payload.
+    assert.ok(
+      /setPermissionRequestHandler[\s\S]{0,400}?callback\(permission === "clipboard-sanitized-write"\)/.test(src),
+      "the renderer must NOT be granted the notifications permission",
+    );
+    assert.ok(/new Notification\(/.test(src), "main.js should raise notifications itself");
+    assert.ok(/calandria:goto-task/.test(src), "clicking a notification must select the task");
+    assert.ok(/new Tray\(/.test(src) && /setContextMenu/.test(src), "main.js should build a tray with a menu");
+    assert.ok(/setBadgeCount/.test(src) && /setOverlayIcon/.test(src), "both badge APIs should be wired");
+    // Close hides; quitting is asked for by name. If this ever flips back,
+    // desktop/e2e/03-quit-drain.spec.ts and §5.1 of docs/DESKTOP_APP.md have to
+    // move with it.
+    const close = src.indexOf('win.on("close"');
+    assert.notEqual(close, -1, "main.js should intercept the window close");
+    const body = src.slice(close, close + 700);
+    assert.ok(/win\.hide\(\)/.test(body), "closing the window should hide it");
+    // ...but only where there is something to come back from. A session with no
+    // status area gets a Tray that never appears, and hiding into that is how a
+    // user loses the app.
+    assert.ok(/if \(!tray\)/.test(body), "hiding must be gated on the tray existing");
   });
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

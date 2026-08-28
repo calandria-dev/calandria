@@ -56,7 +56,7 @@ bridge, while a bridge would hand any XSS in the transcript renderer the whole
 Node API. External links open in the user's real browser.
 
 `supervisor.js` contains no `require("electron")`. That is not tidiness: it makes
-the risky half testable on a headless box (25 assertions, `node
+the risky half testable on a headless box (34 assertions, `node
 test-supervisor.js`, ~9 s, no display), and it means a later swap to Tauri or a
 tray-only launcher reuses it whole.
 
@@ -107,7 +107,7 @@ Electron's runtime flags.
 
 ## 4. What the prototype does — and what is unverified
 
-Working and tested (`desktop/test-supervisor.js`, 25 assertions; `desktop/test-real-boot.js`, 8):
+Working and tested (`desktop/test-supervisor.js`, 34 assertions; `desktop/test-real-boot.js`, 8):
 
 - Node resolution — `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH, with an actionable error naming everything it tried.
 - macOS launchd-PATH detection and repair from the login shell, fenced against rc-file chatter, `null` rather than a throw on failure.
@@ -116,6 +116,7 @@ Working and tested (`desktop/test-supervisor.js`, 25 assertions; `desktop/test-r
 - Quit → POST `/api/instance/drain` → SIGTERM → exit, with SIGKILL only as a backstop and a bounded wait so nothing outlives the window holding the db lock. The supervisor makes the drain request itself rather than relying on the server's own signal handler, so it works identically where SIGTERM is not deliverable.
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported as "another Calandria is already running", not as a crash.
 - A boot screen that streams sidecar logs, because a cold first launch is otherwise indistinguishable from a hang.
+- The notification and badge policy (§5.1): which events raise a toast, what the instance-wide "needs you" count adds up to, when a toast would be redundant, and a reconnecting subscription to `/api/events` driven against a stub server.
 
 Also working and tested, since 2026-08-27, by the Playwright `_electron` suite in
 `desktop/e2e/` under a virtual display — the `desktop` job in
@@ -129,16 +130,16 @@ carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
 - The application menu and its roles, and the two items the View menu owns.
 - The renderer is still a hardened browser tab — `contextIsolation`, `sandbox`,
   no `nodeIntegration`, no preload.
-- The permission handler: notifications granted, everything else refused.
+- The permission handler: everything refused, notifications now included — the main process owns that channel (§5.1), and both the request and the *check* have to say no or the renderer shows a duplicate.
 - External links leave through `shell.openExternal` on both paths
   (`setWindowOpenHandler` and `will-navigate`) and the window stays on the app.
 - A second launch is refused by the single-instance lock rather than racing for
   the database.
 - The db-lock exit reaches the user as "another Calandria is already running".
 - `app.quit()` drains a live turn — the row is settled in SQLite after the
-  process is gone — and the server exits. So does closing the WINDOW, which is
-  the quit a Windows or Linux user actually performs, and which now keeps the
-  window on screen while it waits (see below).
+  process is gone — and the server exits. Closing the WINDOW does not: it hides
+  to the tray and leaves the server running, and the quit that follows brings
+  the window back to carry the drain (§5.1).
 - Copy and paste: Ctrl/Cmd+C in the renderer reaches the OS clipboard and
   Ctrl/Cmd+V comes back. The menu test above asserts the Edit roles exist; this
   asserts they do something.
@@ -358,6 +359,131 @@ sandbox survive Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1`
 (measured on the bench, `docs/DESKTOP_E2E.md` §1). AppImage/deb/rpm are all
 electron-builder targets.
 
+### 5.1 Notifications, tray, and close vs quit
+
+The one thing this shell does that a browser tab cannot, and the reason to have
+it: an OS notification and a dock badge when a task needs you, with the server
+still running when the window is not.
+
+**The notifications are the app's own, rendered somewhere new.**
+`lib/notifications/notify.ts` already composes them — it owns which kinds are
+enabled, which rows stay quiet, how a repeat inside ten seconds is collapsed,
+and the wording — and publishes the finished payload on `GET /api/events`,
+which is also how the web UI receives it. So `desktop/notifier.js` subscribes to
+that stream over loopback and `main.js` renders what it is handed. Re-deriving
+"a task went `awaiting_input`" from the raw task events would have produced a
+second, differently worded, differently gated channel out of the same facts, and
+one that ignored the switches in Settings → Notifications. The Web Push half of
+the same fan-out (service worker + VAPID, aimed at phones) is untouched: this is
+a third consumer of one payload, not a rewiring of the second.
+
+That makes the renderer's own channel a duplicate, so it is switched off — and
+switching it off takes **two** handlers, which is the part that is easy to get
+wrong. `setPermissionRequestHandler` no longer grants `notifications`, but
+`app/shell/useNotifications.ts` never asks: it reads `Notification.permission`,
+a permission *check*, and Electron answers checks with a hardcoded "granted"
+when no check handler is set. Without `setPermissionCheckHandler` the hook sails
+past its own guard and every event arrives twice. Only `notifications` is named
+there; every other check keeps Electron's default, so the request handler stays
+the single statement of the deny-by-default policy.
+
+**Clicking a toast** raises the window and selects the task, through the app's
+existing `calandria:goto-task` window event — the same one the browser channel
+and the service worker dispatch. Evaluated into the page from the main process
+rather than sent over IPC, for the reason the shell has no preload at all: a
+bridge would exist on every page the window ever loads, to serve one call.
+
+**One suppression, and it is the browser's**: don't interrupt someone about the
+very task they are looking at. The shell can answer both halves of that without
+a bridge. "Looking at" is the window being visible *and* focused — a stricter
+test than a tab's `visibilityState`, and a fairer one, since a window sitting
+behind the editor is not being looked at. *Which* task comes off
+`webContents.getURL()`: the app mirrors its open project/task into
+`?project=&task=` so a refresh lands back where you were, which makes the window
+URL a synchronous, always-current read of the selection.
+
+**The badge** is the instance-wide "N need you" count — the same number the
+app's own titlebar pill shows, and computed the same way, because the wire
+carries no instance-wide total: every task event carries `awaiting_count` for
+the one project it belongs to, so the shell keeps the per-project figures and
+sums them, skipping `deprecated` projects exactly as the pill does. It is seeded
+from `/api/projects` before the first event, since a fresh launch usually has
+work waiting from the last session, and reseeded on every reconnect, because
+`/api/events` is a live tail and whatever was published while the shell was dark
+is gone.
+
+Three platforms, two APIs:
+
+| | Badge | Tray icon |
+|-|-|-|
+| macOS | `app.setBadgeCount` — `dock.setBadge` underneath | `trayTemplate.png` + `@2x`, monochrome; AppKit inverts it for the dark menu bar |
+| Windows | No numeric badge exists: the taskbar overlay is a 16×16 image, so the digits are pre-rendered PNGs (`badge-1` … `badge-9`, `badge-9plus`) and `setOverlayIcon` picks one | `tray.png`, in the brand colour |
+| Linux | `app.setBadgeCount` — a Unity launcher entry, a no-op on desktops that have none, so it is called rather than probed | `tray.png`; a session with no status area logs and carries on |
+
+The assets are committed PNGs. `desktop/scripts/make-assets.py` regenerates them
+from primitives (ImageMagick and a font, neither of which any CI lane needs) so
+the mark can be changed without reverse-engineering a binary. The mark itself is
+the app icon reduced to its single foreground rod and resting ellipse — the full
+ten-rod logo turns to mush at 16 px, which is the size a tray actually gets.
+
+**Close vs quit.** One rule on all three platforms: the X button and Cmd/Ctrl+W
+**hide** the window; quitting is asked for by name, from the tray's Quit item or
+the application menu.
+
+| | Before | Now |
+|-|-|-|
+| macOS | Close destroys the window; app stays in the dock; `activate` builds a new one | Close hides it; `activate` shows the same one, with the SPA's state intact |
+| Windows / Linux | Close quits: `window-all-closed` → `quit()` → drain → exit | Close hides to the tray; the server keeps running — unless there is no tray, where it still quits |
+
+Closing used to quit on Windows and Linux because "leaving turns running
+invisibly with no window is worse than stopping them", and that was right while
+the shell had no way to be present without a window. It has one now: the tray
+icon is on screen, it carries the count, and Show is one click away, so a hidden
+Calandria is no more invisible than a minimised one. Against that, close-to-quit
+on a window whose job is supervising long agent turns means every absent-minded
+X settles work in flight — and the drain that protects it makes the shutdown
+slower, not less unwanted. macOS hides rather than closes for a second reason
+that applies everywhere: hiding keeps the renderer alive, so the open
+transcript, the scroll position and the SSE streams survive and reopening is
+instant instead of a cold reload.
+
+Three closes are still let through, all deliberate, and the first is the
+load-bearing one: **hiding happens only where there is a tray to hide into.**
+`Tray` construction fails soft on a session with no status area, and hiding
+there would put the app somewhere the user cannot retrieve it from — which is
+the old rationale, still correct in the one case that still matches it. So on a
+trayless desktop, close quits, exactly as it used to. A close that arrives
+*before* the server is up is let through for the same reason (no server to keep
+alive, no tray yet) and `window-all-closed` turns it into a quit. And one that
+arrives *during* a drain is honoured, because by then the user has seen the
+drain state and asked twice.
+
+Because quit can now be asked for with nothing on screen, `showDraining()`
+un-hides the window first — the drain overlay and title were always addressed to
+someone who could see them. The first hide of each launch also raises a one-time
+notification saying the app is still running, since hiding is the one action
+here with no visible result and, on Windows and Linux, a change from what the
+button used to do.
+
+Two things this leaves owing, both recorded rather than fixed. On Linux an
+Electron notification is a libnotify call on the UI thread, and with a session
+bus present but no daemon owning `org.freedesktop.Notifications` each one blocks
+the whole main process for GDBus's 25-second timeout — measured, and the reason
+the e2e suite points `DBUS_SESSION_BUS_ADDRESS` at a dead socket
+([`DESKTOP_E2E.md`](DESKTOP_E2E.md) §2). Denying the renderer's channel takes
+the page out of that path; it does not take the shell out of it, and a desktop
+with no notification daemon is a configuration nobody here has. And Settings →
+Notifications reads `Notification.permission`, so inside the shell it now
+reports the browser channel as blocked — true, and misleading, since the toasts
+work. Telling the two apart needs the app to know it is inside the shell, which
+is a wire it does not have.
+
+What is **not** yet verified: none of this has run in front of a human or under
+an assertion that a notification actually reached the OS. The headless tests
+cover the policy and `desktop/e2e` covers the permission handler and the
+close-then-quit sequence; the notification, tray and badge calls themselves are
+what the desktop bench's native-integration specs are for.
+
 ## 6. Packaging
 
 The prototype now produces a real artifact, not just a `desktop/` checkout:
@@ -480,5 +606,5 @@ the free half now and let demand pay for the rest.
 
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
 2. Decide between window-first and tray-first for phase 1 (both are the same supervisor).
-3. Native notifications + dock/taskbar badge wired to the existing "needs you" count — the highest-value thing the shell can add that a browser tab cannot.
+3. ~~Native notifications + dock/taskbar badge wired to the existing "needs you" count~~ — done (§5.1), and with it the tray that lets the server outlive the window. Still to prove on a real desktop: that a toast reaches the OS, that the tray menu works under each status-area implementation, and that the badge renders — the bench's native-integration specs.
 4. Only then: signing, auto-update (packaging itself is done — §6).
