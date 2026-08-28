@@ -15,7 +15,7 @@ import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import type { TaskStreamEvent } from "@/lib/types";
 
-const TOO_LARGE = `Message too large (over ${Math.floor(MAX_MESSAGE_CHARS / 1024)} KB). Paste big text as an attachment instead — it'll be saved as a file and read on demand, keeping it out of the prompt.`;
+const TOO_LARGE = `Message too large (over ${Math.floor(MAX_MESSAGE_CHARS / 1024)} KB). Paste big text as an attachment instead. It'll be saved as a file and read on demand, keeping it out of the prompt.`;
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;

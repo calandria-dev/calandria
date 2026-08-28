@@ -151,7 +151,7 @@ test("the strip renames the tag and deletes it without touching its tasks", asyn
 
   // Delete is two-step and the confirmation names what survives.
   await strip.getByRole("button", { name: "Delete tag" }).click();
-  await strip.getByRole("button", { name: "Delete — 3 tasks stay" }).click();
+  await strip.getByRole("button", { name: "Delete: 3 tasks stay" }).click();
   // The chip bar falls back to All, and every task that carried it is still
   // here — including `outsider`, which keeps the OTHER tag it also carries.
   await expect(page.locator(".gstrip")).toHaveCount(0);

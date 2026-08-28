@@ -26,7 +26,7 @@ export function WelcomeCoach() {
 
   const steps: [string, string][] = [
     ["Start", "Press Start and watch Claude stream its tool calls live."],
-    ["Answer", "It’ll pause to ask you a quick question — pick an option."],
+    ["Answer", "It’ll pause to ask you a quick question: pick an option."],
     ["Review & merge", "Open Changes, read the diff, then one-click merge."],
   ];
 
@@ -34,7 +34,7 @@ export function WelcomeCoach() {
     <div className="wcoach">
       <div className="wcoach-head">
         <span className="wcoach-ic">{Icon.bolt()}</span>
-        <div className="wcoach-title">Welcome — this is a live 2-minute tour</div>
+        <div className="wcoach-title">Welcome: this is a live 2-minute tour</div>
         <button className="wcoach-x" onClick={dismiss} title="Dismiss">{Icon.x()}</button>
       </div>
       <div className="wcoach-sub">
@@ -72,7 +72,7 @@ export function WelcomeNudge({ onCreateProject, onClose }: { onCreateProject: ()
   return (
     <Modal
       title="You just ran the whole loop 🎉"
-      sub="Streaming · a question · a diff · a merge — all in your own workspace."
+      sub="Streaming · a question · a diff · a merge, all in your own workspace."
       onClose={onClose}
       width={520}
       footer={<>
@@ -94,7 +94,7 @@ export function WelcomeNudge({ onCreateProject, onClose }: { onCreateProject: ()
       {perm === "granted" && (
         <div className="hlp" style={{ margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: "var(--green, var(--accent))", display: "inline-flex" }}>{Icon.check()}</span>
-          Notifications on — step away while sessions run.
+          Notifications on. Step away while sessions run.
         </div>
       )}
     </Modal>

@@ -120,7 +120,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const stale = staleFields(getTask(id)!, edit.changes);
     if (stale.length) {
       return NextResponse.json(
-        { error: `${stale.join("; ")} — changed since this edit, so reverting it would overwrite a later change. Revert newer edits first, or edit the task directly.` },
+        { error: `${stale.join("; ")}: changed since this edit, so reverting it would overwrite a later change. Revert newer edits first, or edit the task directly.` },
         { status: 409 }
       );
     }
@@ -142,7 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const back = await setTaskBaseBranch(task, project, typeof baseChange.before_value === "string" ? baseChange.before_value : "");
       if (!back.ok)
         return NextResponse.json(
-          { error: `could not put the base branch back: ${back.error} Nothing was reverted — set it by hand from the task's edit dialog.` },
+          { error: `could not put the base branch back: ${back.error} Nothing was reverted. Set it by hand from the task's edit dialog.` },
           { status: 409 }
         );
     }

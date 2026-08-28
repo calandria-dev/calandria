@@ -254,18 +254,18 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
   // "15:30" is the feature contradicting, on its most visible artifact, the one
   // thing it is fastidious about.
   const stamp = formatWallClock(run.scheduled_for, schedule.timezone);
-  const late = run.trigger === "catch_up" ? " (catching up — the app was not running at the scheduled time)" : "";
+  const late = run.trigger === "catch_up" ? " (catching up: the app was not running at the scheduled time)" : "";
 
   const result = await dispatchPromptTask({
     project_id: schedule.project_id,
-    title: `${schedule.name} — ${stamp}`,
+    title: `${schedule.name}: ${stamp}`,
     description: `Created automatically by the "${schedule.name}" schedule (${describeSpec(specOf(schedule))}).`,
     prompt: recipe.prompt,
     agent: recipe.agent,
     permission_mode: recipe.permission_mode,
     send_context: recipe.send_context !== 0,
     priority: recipe.priority,
-    note: `▶ Scheduled — ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`,
+    note: `▶ Scheduled: ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`,
     runContext: { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: run.id },
     schedule_id: schedule.id,
     // Tagged on the minted task too, so a run is traceable to the recipe that

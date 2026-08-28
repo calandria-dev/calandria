@@ -27,7 +27,7 @@ export async function POST(req: Request) {
       const tag = getTag(id);
       if (!tag) return NextResponse.json({ error: "no such tag" }, { status: 400 });
       if (tag.project_id !== body.project_id)
-        return NextResponse.json({ error: "tag belongs to another project — a tag can't span projects" }, { status: 400 });
+        return NextResponse.json({ error: "tag belongs to another project. A tag can't span projects" }, { status: 400 });
     }
   }
   const task = createTask({

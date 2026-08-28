@@ -194,7 +194,7 @@ const BLOCKED_BY: Record<string, string> = {
   mode: "Blocked by this task's permission mode",
   rule: "Blocked by a deny rule in your Claude Code settings",
   asyncAgent: "Blocked by Claude Code's background-agent policy",
-  subcommandResults: "Blocked by Claude Code — one of the command's subcommands isn't allowed",
+  subcommandResults: "Blocked by Claude Code: one of the command's subcommands isn't allowed",
 };
 const blockedHead = (by?: string): string =>
   (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
@@ -222,7 +222,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
     const what = blocked
       ? blockedHead(outcome.blockedBy)
       : outcome.decision === "allow_always"
-        ? `Allowed — ${outcome.remembered ?? "remembered for this project"}`
+        ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
         : outcome.decision === "allow_once"
           ? "You allowed this once"
           : outcome.auto ? "Declined automatically" : "You declined this";
@@ -238,7 +238,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
           <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
         )}
         {outcome.note && <div className="perm-note">{outcome.note}</div>}
-        {blocked && <div className="perm-hint">You weren&apos;t asked — change this task&apos;s permission mode if it should have been allowed.</div>}
+        {blocked && <div className="perm-hint">You weren&apos;t asked. Change this task&apos;s permission mode if it should have been allowed.</div>}
       </div>
     );
   }
@@ -261,7 +261,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
         )}
         <button className="btn btn-sm btn-danger" onClick={() => decide("deny")} disabled={sent}>Decline</button>
       </div>
-      <div className="perm-hint">Declines automatically if nobody responds — the session keeps running either way.</div>
+      <div className="perm-hint">Declines automatically if nobody responds. The session keeps running either way.</div>
     </div>
   );
 }
@@ -417,14 +417,14 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
             {m.content}
             {limitResume && limitResume.queuedAt > 0 && (
               <div className="overflow-actions queued">
-                <span className="queued-note">{Icon.clock()} Queued — resumes {wakeLabel(limitResume.queuedAt)}.</span>
+                <span className="queued-note">{Icon.clock()} Queued: resumes {wakeLabel(limitResume.queuedAt)}.</span>
                 <button className="btn btn-sm" onClick={limitResume.onCancel} title="Don't resume automatically">Cancel</button>
               </div>
             )}
             {limitResume && limitResume.queuedAt === 0 && limitResume.resetAt != null && (
               <div className="overflow-actions">
                 <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
-                  title="Resume this session on its own once the usage window resets — the queued follow-up if there is one, otherwise a continue prompt">
+                  title="Resume this session on its own once the usage window resets: the queued follow-up if there is one, otherwise a continue prompt">
                   {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
                 </button>
               </div>

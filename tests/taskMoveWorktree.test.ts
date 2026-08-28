@@ -182,7 +182,7 @@ describe("discarding a worktree that still holds work", () => {
     const body = await res.json();
 
     expect(res.status).toBe(409);
-    expect(body.error).toMatch(/unsaved work — uncommitted changes/);
+    expect(body.error).toMatch(/unsaved work: uncommitted changes/);
     // The flag the client uses to offer the stronger confirmation rather than
     // presenting this as a dead end.
     expect(body.needs_discard_unsafe).toBe(true);

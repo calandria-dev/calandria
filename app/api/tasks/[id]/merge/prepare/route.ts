@@ -22,7 +22,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const task = getTask(id);
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
     if (task.running || hasTurn(id))
-      return NextResponse.json({ error: "task is running — wait for the session to finish before merging" }, { status: 409 });
+      return NextResponse.json({ error: "task is running. Wait for the session to finish before merging" }, { status: 409 });
     if (!task.worktree_path || !task.work_branch)
       return NextResponse.json({ error: "this task has no isolated branch to merge" }, { status: 400 });
     const project = getProject(task.project_id);

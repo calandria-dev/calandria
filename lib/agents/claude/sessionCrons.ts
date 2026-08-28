@@ -180,11 +180,11 @@ export function wakeTimeLabel(fireAt: number | null, now: number = Date.now()): 
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
 }
 
-/** One cron, for a notice: `at 12:00 — "prompt…"` / `on \`* * * * *\` (next 12:00) — "prompt…"`. */
+/** One cron, for a notice: `at 12:00, "prompt…"` / `on \`* * * * *\` (next 12:00), "prompt…"`. */
 export function describeCron(c: PlannedCron, now: number = Date.now(), promptChars = 160): string {
   const when = c.recurring ? `on \`${c.schedule}\` (next ${wakeTimeLabel(c.fireAt, now)})` : `at ${wakeTimeLabel(c.fireAt, now)}`;
   const prompt = c.prompt.length > promptChars ? c.prompt.slice(0, promptChars) + "…" : c.prompt;
-  return `${when} — "${prompt}"`;
+  return `${when}, "${prompt}"`;
 }
 
 /**
@@ -217,7 +217,7 @@ export function lingerNote(backgroundTaskCount: number, crons: PlannedCron[], no
 export function cancelledCronsNotice(crons: PlannedCron[], reason: string, now: number = Date.now()): string {
   const plural = crons.length > 1;
   return (
-    `⏰ Scheduled wakeup${plural ? "s" : ""} cancelled — ${reason}: ` +
+    `⏰ Scheduled wakeup${plural ? "s" : ""} cancelled (${reason}): ` +
     crons.map((c) => describeCron(c, now)).join("; ") +
     `. ${plural ? "They" : "It"} will not fire; nothing re-invokes this session on ${plural ? "their" : "its"} own.`
   );

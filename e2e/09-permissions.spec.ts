@@ -193,7 +193,7 @@ test("a call Claude Code refuses on its own lands as a decided card on that call
   // The reason, minus the instruction the CLI wrote for the model.
   await expect(card).toContainText("has been denied");
   await expect(card).not.toContainText("IMPORTANT");
-  await expect(card).toContainText("change this task's permission mode");
+  await expect(card).toContainText("Change this task's permission mode");
   // Nothing to press: the decision was made before the transcript ever saw it.
   await expect(card.getByRole("button")).toHaveCount(0);
   // One card, not a card plus a loose notice repeating it.

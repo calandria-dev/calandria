@@ -46,8 +46,8 @@ const log = createLogger("runner");
 // "bypassPermissions", Codex's "workspace-write"), so any one name would be
 // wrong for somebody's schedule.
 export const SCHEDULE_UNATTENDED_DETAIL =
-  "the agent needed approval and nobody was watching, so it was declined automatically — " +
-  "the run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
+  "the agent needed approval and nobody was watching, so it was declined automatically. " +
+  "The run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -966,7 +966,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       const parked = listPendingMessages(id).length;
       if (parked) {
         const when = authFailure ? "once you reconnect" : usageLimitFailure ? "once the limit resets" : "when you send the next message";
-        const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue — ${parked === 1 ? "it runs" : "they run"} ${when}.`;
+        const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue: ${parked === 1 ? "it runs" : "they run"} ${when}.`;
         // Best-effort: the task row can be gone by now (deleted mid-turn), and a
         // FOREIGN KEY throw here would escape the detached run()'s finally.
         try {

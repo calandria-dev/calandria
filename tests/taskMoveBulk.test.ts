@@ -475,7 +475,7 @@ describe("a dirty worktree inside a selection", () => {
     // Three of eleven dirty doesn't refuse the eight: they move, it's reported.
     expect(body.moved).toEqual([ids[0], ids[2]]);
     expect(body.skipped).toEqual([
-      { id: ids[1], reason: expect.stringMatching(/unsaved work — uncommitted changes/) },
+      { id: ids[1], reason: expect.stringMatching(/unsaved work: uncommitted changes/) },
     ]);
     expect(getTask(ids[1])?.project_id).toBe(from.id);
     expect(fs.readFileSync(`${wts[1].path}/feature-1.txt`, "utf8")).toContain("an afternoon of unsaved work");

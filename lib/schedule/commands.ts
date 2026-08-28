@@ -206,7 +206,7 @@ export async function validatePrompt(
   if (isRegistered(command, fresh)) return { ok: true };
   return {
     ok: false,
-    error: `/${command} is not a command this project's sessions have. An unknown command does not fail — the run would report success having done nothing.`,
+    error: `/${command} is not a command this project's sessions have. An unknown command does not fail: the run would report success having done nothing.`,
     suggestions: suggestionsFor(command, fresh),
   };
 }

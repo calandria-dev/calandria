@@ -53,7 +53,7 @@ export function isAuthFailure(msg: string | null | undefined): boolean {
  *  the durable channel: it survives SSE reconnects because the snapshot replays
  *  from SQLite. */
 export const AUTH_EXPIRED_NOTICE =
-  "This agent's connection has stopped working — its login expired or was revoked, " +
+  "This agent's connection has stopped working. Its login expired or was revoked, " +
   "so no turn can run until you reconnect it. Nothing was lost: this session and its " +
   "worktree are untouched, and any queued messages stay queued.";
 

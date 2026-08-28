@@ -67,7 +67,7 @@ const base = {
   permission_mode: "bypassPermissions" as string | null,
   send_context: true,
   priority: "hi" as const,
-  note: "▶ Scheduled — Sweep.",
+  note: "▶ Scheduled: Sweep.",
 };
 
 beforeEach(() => {

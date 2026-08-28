@@ -5,12 +5,12 @@ import { createTask } from "@/lib/store";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/** "Sweep — Aug 20, 14:32" — enough to tell two runs of one recipe apart. */
+/** "Sweep: Aug 20, 14:32" — enough to tell two runs of one recipe apart. */
 function defaultTitle(name: string): string {
   const stamp = new Intl.DateTimeFormat(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).format(new Date());
-  return `${name} — ${stamp}`;
+  return `${name}: ${stamp}`;
 }
 
 /**
@@ -67,7 +67,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     permission_mode: runbook.permission_mode,
     send_context: runbook.send_context !== 0,
     priority: runbook.priority,
-    note: `▶ Runbook — ${runbook.name}.`,
+    note: `▶ Runbook: ${runbook.name}.`,
     runbook_id: runbook.id,
   });
 

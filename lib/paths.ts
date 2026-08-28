@@ -86,6 +86,6 @@ export function rmTree(target: string): void {
  */
 export function heldHandleHint(): string {
   return isWindows()
-    ? " — on Windows a file can't be deleted while it's open; a terminal or editor still has this checkout open"
+    ? ". On Windows a file can't be deleted while it's open; a terminal or editor still has this checkout open"
     : "";
 }

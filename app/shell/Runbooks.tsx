@@ -23,12 +23,12 @@ function withCommand(prompt: string, command: string): string {
   return prompt.replace(/^(\s*)\/[A-Za-z0-9_:-]+/, `$1/${command}`);
 }
 
-/** "Sweep — Aug 20, 14:32". Must match the run route's defaultTitle(). */
+/** "Sweep: Aug 20, 14:32". Must match the run route's defaultTitle(). */
 export function defaultRunTitle(name: string, now = new Date()): string {
   const stamp = new Intl.DateTimeFormat(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).format(now);
-  return `${name} — ${stamp}`;
+  return `${name}: ${stamp}`;
 }
 
 /**
@@ -127,7 +127,7 @@ function RunbookForm({
           onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="field">
-        <label className="lab" htmlFor={`${uid}-desc`}>Description <span className="opt">— what it does</span></label>
+        <label className="lab" htmlFor={`${uid}-desc`}>Description <span className="opt">(what it does)</span></label>
         <input id={`${uid}-desc`} type="text" value={description}
           placeholder="Push everything unpushed, then watch the pipeline."
           onChange={(e) => setDescription(e.target.value)} />
@@ -152,13 +152,13 @@ function RunbookForm({
               </div>
             )}
             <div className="rb-note">
-              Save still works — the check reads one session&rsquo;s command list and can be wrong. If it isn&rsquo;t,
+              Save still works. The check reads one session&rsquo;s command list and can be wrong. If it isn&rsquo;t,
               dispatching will fail rather than report success having done nothing.
             </div>
           </div>
         )}
         {check?.ok && check.unchecked && (
-          <div className="hlp">Couldn&rsquo;t reach this project&rsquo;s command registry to check — saving without verifying.</div>
+          <div className="hlp">Couldn&rsquo;t reach this project&rsquo;s command registry to check. Saving without verifying.</div>
         )}
         {check?.ok && !check.unchecked && prompt.trim().startsWith("/") && (
           <div className="hlp">{Icon.check()} recognized command</div>
@@ -179,7 +179,7 @@ function RunbookForm({
             {/* Same word the task pickers' head uses (INHERIT_LABEL), so "inherit
                 the app default" and Claude's own mode spelled "default" — right
                 below in the provider's list — can't read as the same entry. */}
-            <option value="">{INHERIT_LABEL} — use the app-level default</option>
+            <option value="">{INHERIT_LABEL}: use the app-level default</option>
             {modeCaps.map((m) => <option key={m.value} value={m.value} title={m.sub}>{m.label}</option>)}
           </select>
         ) : (
@@ -265,7 +265,7 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
         <pre className="rb-preview">{runbook.prompt}</pre>
       </div>
       <div className="field">
-        <label className="lab" htmlFor={`${uid}-extra`}>Instructions for this run <span className="opt">— optional</span></label>
+        <label className="lab" htmlFor={`${uid}-extra`}>Instructions for this run <span className="opt">(optional)</span></label>
         <textarea id={`${uid}-extra`} value={extra} placeholder="e.g. focus on CEAP-1234, and skip the flaky suite"
           onChange={(e) => setExtra(e.target.value)} />
         <div className="hlp">Appended to the prompt above. Leave blank to run it exactly as saved.</div>
@@ -313,7 +313,7 @@ function CopySheet({ runbook, projects, onCancel, onCopied }: {
   return (
     <Modal
       title={`Copy "${runbook.name}"`}
-      sub="An independent copy — editing one won't change the other"
+      sub="An independent copy. Editing one won't change the other"
       onClose={onCancel}
       footer={<>
         <span className="spacer" />
@@ -407,7 +407,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
   const confirmDelete = (r: RunbookRow) =>
     window.confirm(
       r.used_by.length
-        ? `Delete "${r.name}"?\n\n${r.used_by.map((s) => s.name).join(", ")} will keep firing this prompt — the recipe is copied back into ${r.used_by.length === 1 ? "it" : "them"} first.`
+        ? `Delete "${r.name}"?\n\n${r.used_by.map((s) => s.name).join(", ")} will keep firing this prompt. The recipe is copied back into ${r.used_by.length === 1 ? "it" : "them"} first.`
         : `Delete "${r.name}"? This can't be undone.`
     );
 
@@ -439,7 +439,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
       )}
       {data.runbooks.length === 0 && !creating ? (
         <div className="rb-note">
-          No runbooks yet — save a task you run often and dispatch it from here or ⌘K.
+          No runbooks yet. Save a task you run often and dispatch it from here or ⌘K.
         </div>
       ) : null}
       {data.runbooks.map((r) => {
@@ -494,7 +494,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
                 that runs with nobody watching. */}
             {r.used_by.length > 0 && (
               <div className="rb-note">
-                {Icon.clock()} Also fired by {r.used_by.map((s) => s.name).join(", ")} — editing this changes what those schedules run.
+                {Icon.clock()} Also fired by {r.used_by.map((s) => s.name).join(", ")}. Editing this changes what those schedules run.
               </div>
             )}
           </div>

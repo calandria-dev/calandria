@@ -173,8 +173,8 @@ export function TerminalDrawer({ cwd, port, taskDir, taskTitle, visible, height,
             className={pinned ? "on" : ""}
             disabled={!taskDir}
             title={taskDir
-              ? `Shell in the selected task's worktree${pinned && pinned.path !== taskDir ? ` (currently pinned to ${pinned.title} — click to switch)` : ""}`
-              : "Select a started task — a task gets its worktree when its first turn runs"}
+              ? `Shell in the selected task's worktree${pinned && pinned.path !== taskDir ? ` (currently pinned to ${pinned.title}, click to switch)` : ""}`
+              : "Select a started task. A task gets its worktree when its first turn runs"}
             onClick={() => { if (taskDir && pinned?.path !== taskDir) setPinned({ path: taskDir, title: taskTitle || "task" }); }}
           >Task</button>
         </div>

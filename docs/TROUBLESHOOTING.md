@@ -352,8 +352,8 @@ not be refreshed`; for Codex, `not logged in`, `please run codex login`, or a ba
 (`lib/authFailure.ts` classifies both). The credential is per-instance, so every task on that
 agent fails the same way; the first one to run just reveals it first. Once detected:
 
-- The titlebar shows a persistent, non-dismissible banner: *"`<Agent>` has stopped working — the
-  sign-in expired... No session can run until it's reconnected."* (`AgentAuthBanner` in
+- The titlebar shows a persistent, non-dismissible banner: *"`<Agent>` has stopped working. The
+  sign-in expired. No session can run until it's reconnected."* (`AgentAuthBanner` in
   `app/shell/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the moment any
   task hits the failure.
 - The failing task's transcript gets a standing notice with a one-click Reconnect button.
