@@ -1,9 +1,11 @@
 "use client";
 
-import { memo, useState } from "react";
-import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
+import { memo, useCallback, useEffect, useState } from "react";
+import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
+import { jget } from "./api";
+import { PriPill } from "./shared";
 import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
@@ -266,6 +268,142 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   );
 }
 
+/**
+ * The three handlers a suggestion card in the transcript needs, and the project
+ * it is being read FROM. All three are the tray's own — a suggestion started
+ * here has to be indistinguishable from one started there (same worktree cut,
+ * same agent resolution, same auto-start-dependents sweep), which is only true
+ * if it goes down the same code path rather than a second copy of it.
+ */
+export interface SuggestionActions {
+  /** The project whose session the transcript belongs to — see SuggestionView. */
+  projectId: string;
+  onStart: (taskId: string) => void | Promise<void>;
+  onAccept: (taskId: string) => void | Promise<void>;
+  onDismiss: (taskId: string) => void | Promise<void>;
+}
+
+// A suggestion filed by a `suggest_task` call, rendered on the call's own row.
+//
+// State is NEVER held here between renders: the transcript is persisted and a
+// reload must not resurrect a Start button for a task that has since been
+// started, accepted, withdrawn or hard-deleted. So the card holds two ids and
+// re-reads the task (GET /api/tasks/[id]/suggestion) on mount and after every
+// action; what it offers is a function of the row it gets back.
+//
+//   still in the tray   → Start · Add · Dismiss
+//   accepted (suggested=0, started=0) → "Added to the task list"
+//   started             → "Session started"
+//   withdrawn (still in the tray, cancelled, with a reason) → struck through,
+//                         Restore in place of Add, the rest unchanged
+//   404                 → "No longer exists" (Dismiss is a hard delete)
+//
+// START AND ANOTHER PROJECT. `suggest_task` can file into ANY project, and
+// starting a task mints its session and selects it — which, for a suggestion
+// filed elsewhere, means being pulled out of the session you are reading and
+// into a project you may not have had on screen. That is a bigger, less
+// recoverable interruption than walking to the other project's tray, and the
+// tray is right there. So Start is offered only for a suggestion filed into the
+// project this transcript belongs to; a cross-project card names where the task
+// went and offers Add and Dismiss, neither of which navigates anywhere.
+function SuggestionView({ data, actions }: { data: ToolData; actions?: SuggestionActions }) {
+  const ref = data.suggestion;
+  const taskId = ref?.taskId;
+  const [card, setCard] = useState<SuggestionCard | null>(null);
+  // Distinguished from "not loaded yet" so the first paint isn't an empty card
+  // and a deleted task isn't mistaken for a slow one.
+  const [state, setState] = useState<"loading" | "ready" | "gone" | "error">("loading");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!taskId) return;
+    try {
+      setCard(await jget<SuggestionCard>(`/api/tasks/${taskId}/suggestion`));
+      setState("ready");
+    } catch (e) {
+      // A hard delete is the expected failure, and it is a real answer; only an
+      // actual fetch failure is worth saying nothing useful about.
+      setState(e instanceof Error && /not found/i.test(e.message) ? "gone" : "error");
+    }
+  }, [taskId]);
+  useEffect(() => { void load(); }, [load]);
+
+  if (!ref || !taskId) return null;
+
+  const act = async (fn: (id: string) => void | Promise<void>) => {
+    setBusy(true);
+    try { await fn(taskId); } finally { setBusy(false); }
+    await load();
+  };
+
+  if (state === "loading") return <div className="sugcard loading">{Icon.spark()} Suggested a task…</div>;
+  if (state === "gone") {
+    return (
+      <div className="sugcard gone">
+        <div className="sugcard-head">{Icon.x()} Suggestion no longer exists</div>
+        <div className="sugcard-note">It was dismissed, or the task was deleted.</div>
+      </div>
+    );
+  }
+  if (state === "error" || !card) {
+    return <div className="sugcard gone"><div className="sugcard-head">{Icon.x()} Couldn&apos;t read this suggestion</div></div>;
+  }
+
+  const withdrawn = card.suggested === 1 && card.status === "cancelled";
+  // Still in the tray = still the user's to decide, withdrawn included: a
+  // retraction is the agent's recommendation to drop it, not a deletion, and
+  // the tray keeps Restore/Start/✕ on those rows. The card offers the same
+  // three so the two surfaces can't disagree about what is still actionable.
+  const actionable = card.suggested === 1;
+  const elsewhere = card.project_id !== actions?.projectId;
+  const what = card.started === 1
+    ? "Session started"
+    : card.suggested === 0
+      ? "Added to the task list"
+      : withdrawn
+        ? `Withdrawn${card.withdrawn_reason ? ` — ${card.withdrawn_reason}` : ""}`
+        : "Suggested a task";
+
+  return (
+    <div className={`sugcard ${actionable && !withdrawn ? "open" : "settled"} ${withdrawn ? "withdrawn" : ""}`}>
+      <div className="sugcard-head">{actionable && !withdrawn ? Icon.spark() : Icon.check()} {what}</div>
+      <div className="sugcard-title">
+        <span className={withdrawn ? "struck" : ""}>{card.title}</span>
+        <PriPill p={card.priority} />
+        {/* Always named, never assumed: a suggestion can be filed anywhere, and
+            "which project did that go into" is the first thing the card has to
+            answer for a cross-project one. */}
+        <span className="sugcard-proj" title={elsewhere ? "Filed into another project" : "Filed into this project"}>
+          {Icon.folder()} {card.project_name}
+        </span>
+      </div>
+      {card.description && <div className="sugcard-why">{card.description}</div>}
+      {!!card.blocked_by.length && (
+        <div className="sugcard-blocked">
+          {Icon.lock()} Blocked by {card.blocked_by.map((b) => b.title).join(", ")}
+        </div>
+      )}
+      {actionable && actions && (
+        <div className="sugcard-acts">
+          {elsewhere ? (
+            <span className="sugcard-note">Open {card.project_name} to start it — starting it here would leave this session.</span>
+          ) : (
+            <button className="btn btn-accent btn-sm" disabled={busy} onClick={() => act(actions.onStart)} title="Cut a worktree and start the session now">
+              {Icon.play()} Start
+            </button>
+          )}
+          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree — restore it to the task list" : "Add to the task list to start later"}>
+            {Icon.plus()} {withdrawn ? "Restore" : "Add"}
+          </button>
+          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss — deletes the task">
+            {Icon.x()} Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Attachment chips parsed out of a user message's markers: image thumbnails
 // (click opens full size) and text-file chips (a big paste diverted to a file;
 // click opens it). Both are served from the task's uploads dir.
@@ -336,7 +474,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -361,7 +499,15 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
-    return <div className="msg msg-tool"><ToolView data={data} onCollaborate={onCollaborate} /></div>;
+    // A suggest_task call that actually filed a task carries its card BELOW the
+    // ordinary tool row rather than replacing it: the call, its input and its
+    // result are still what happened, and the proposal is the artifact it left.
+    return (
+      <div className="msg msg-tool">
+        <ToolView data={data} onCollaborate={onCollaborate} />
+        {data.suggestion && <SuggestionView data={data} actions={suggestionActions} />}
+      </div>
+    );
   }
   if (m.role === "system") {
     // A context-overflow failure: render the warning line plus a one-click path

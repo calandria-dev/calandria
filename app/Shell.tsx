@@ -313,6 +313,7 @@ export default function Shell() {
             onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
             onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
             onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
+            onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
             railW={layout.railW}
             onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}
             onRailReset={() => o.setLayout((l) => ({ ...l, railW: DEFAULT_LAYOUT.railW }))}
@@ -426,6 +427,7 @@ export default function Shell() {
                 onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
                 onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
                 onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
+                onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
                 railW={layout.railW}
                 onRailWidth={(w) => o.setLayout((l) => ({ ...l, railW: w }))}
                 onRailReset={() => o.setLayout((l) => ({ ...l, railW: DEFAULT_LAYOUT.railW }))}

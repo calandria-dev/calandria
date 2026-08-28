@@ -286,6 +286,17 @@ project exactly (by name or id); an unrecognized name is refused. Blocked-by lin
 can't span projects, so they point at tasks in whichever project the new task lands in.
 Project recaps help you pick up context when you return later.
 
+A suggestion also shows up **in the session that made it**, as a card on the tool call that
+filed it: the title, priority, any blockers, the project it landed in, and the same three
+actions the tray has — **Start** (cuts the worktree and launches the session right now),
+**Add** (accepts it onto the task list to start later) and **Dismiss** (deletes it). Nothing
+about the card is frozen into the transcript: it re-reads the task every time it renders, so
+reopening the session later shows what actually became of the suggestion — *Session started*,
+*Added to the task list*, withdrawn with its reason, or gone — rather than a stale button.
+Start is offered only for a suggestion filed into the project you're reading: starting one
+filed elsewhere would drop you out of this session and into another project, so those cards
+name where the task went and leave Start to that project's tray.
+
 Agents can also read the board: list the tasks in a project, see what each one is blocked
 by, and open any task in full, including its original brief. Agents can correct any task on
 the board in any project, including one you've already accepted or started: retitling it,

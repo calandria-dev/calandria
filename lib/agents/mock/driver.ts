@@ -51,6 +51,10 @@ import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/co
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
+// How the mock spells the tool, matching the shape a real driver reports:
+// lib/suggestionCard.ts matches a substring precisely because every driver
+// prefixes it differently.
+const SUGGEST_TOOL = "mcp__calandria__suggest_task";
 const MOCK_PLAN = "Mock";
 
 function loginSuccess(): AgentLoginSession {
@@ -109,6 +113,10 @@ export const mockDriver: AgentDriver = {
     const instructionText = task.session_id
       ? userText
       : [task.title, task.description, userText].filter(Boolean).join("\n");
+
+    // Per-turn, so two suggestions in one turn get distinct tool_use ids and the
+    // runner settles a card onto each.
+    let suggestSeq = 0;
 
     yield { type: "session", sessionId };
     yield { type: "model", model: "mock-1" };
@@ -236,10 +244,17 @@ export const mockDriver: AgentDriver = {
       // not a repo / nothing to commit — fine
     }
 
+    // Emitted as a real tool call (row, result, then the `suggested` event), the
+    // way both real drivers do it — that ordering is what lets the runner settle
+    // the suggestion card onto the call that made it, so the e2e exercises the
+    // transcript card and not just the tray.
     for (const m of instructionText.matchAll(/e2e:suggest=([^\n]+)/g)) {
       const title = m[1].trim();
-      createSuggestedTask(project, { title, description: "Suggested by the mock agent (e2e)." });
-      yield { type: "suggested", title, projectId: project.id };
+      const id = `sug-${suggestSeq++}`;
+      yield { type: "tool", id, name: SUGGEST_TOOL, title: "✦ Suggested a task", detail: title };
+      const { task: made, text } = createSuggestedTask(project, { title, description: "Suggested by the mock agent (e2e)." });
+      yield { type: "tool_result", id, content: text, isError: !made };
+      if (made) yield { type: "suggested", title, projectId: project.id, taskId: made.id };
     }
 
     // Cross-project filing, through the SAME resolver the real tool calls — a
@@ -251,8 +266,11 @@ export const mockDriver: AgentDriver = {
         yield { type: "error", content: target.error };
         continue;
       }
-      createSuggestedTask(target.project, { title, description: "Suggested by the mock agent (e2e)." });
-      yield { type: "suggested", title, projectId: target.project.id };
+      const id = `sug-${suggestSeq++}`;
+      yield { type: "tool", id, name: SUGGEST_TOOL, title: "✦ Suggested a task", detail: `${title} → ${target.project.name}` };
+      const { task: made, text } = createSuggestedTask(target.project, { title, description: "Suggested by the mock agent (e2e)." });
+      yield { type: "tool_result", id, content: text, isError: !made };
+      if (made) yield { type: "suggested", title, projectId: target.project.id, taskId: made.id };
     }
 
     // A turn editing its OWN row — update_task's default target. Nothing is

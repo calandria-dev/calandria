@@ -250,6 +250,33 @@ don't resolve are reported back rather than dropped silently), and the `suggeste
 carries the target's project id so `GET /api/events` can tell a client which tray to
 refresh, since the receiving project is usually not the one on screen.
 
+A filed suggestion is also shown **where it was made**. The `suggested` event carries the id
+of the task it created, and the runner settles it onto the `suggest_task` tool row the call
+already produced — the same move an already-decided permission card makes, so the proposal
+sits with the call rather than floating beside it. The transcript then renders a card with
+the title, priority, blockers, the project it landed in, and the tray's own three actions
+(Start · Add · Dismiss), wired to the same handlers the tray uses so a session started here
+is indistinguishable from one started there. Only two ids are persisted onto the row
+(`ToolData.suggestion`); everything shown is re-read from the task through
+`GET /api/tasks/[id]/suggestion` on every render, which is what keeps a transcript reloaded
+next week honest — an accepted, started, withdrawn or hard-deleted suggestion renders as
+such instead of offering Start a second time or 404ing on click.
+
+**Start is deliberately not offered for a suggestion filed into a DIFFERENT project.**
+Starting one mints its session and selects it, which for a cross-project card means being
+pulled out of the session you are reading and into a project you may not have had on screen
+— a bigger and less recoverable interruption than the tray round trip it saves. Such a card
+names the project the task went to and offers Add and Dismiss, neither of which navigates.
+
+Correlation is by tool name, not by title: the tool StreamEvent (and the persisted
+`ToolData`) carries the agent's own `name` for the call, and `lib/suggestionCard.ts` matches
+`suggest_task` as a substring because every driver prefixes it differently
+(`mcp__calandria__suggest_task` in-process, `calandria__suggest_task` over the bridge). A
+turn running through the runner settles in memory; the stdio bridge's endpoint has no
+tool_use id to correlate with — a Codex session's MCP client calls it out of band — so it
+patches the newest unclaimed `suggest_task` row instead, and the runner re-reads that field
+before stamping a `tool_result` over the top so the two writers can't clobber each other.
+
 Reading and writing existing tasks splits by blast radius. Reads are inert, so they range as
 widely as suggestion filing: `list_tasks` takes the same optional `project` (resolved by the
 same strict `resolveTargetProject`) and flags the caller's own row `current: true`;
