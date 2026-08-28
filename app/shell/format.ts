@@ -355,3 +355,54 @@ export function splitAttachments(content: string): { text: string; attachments: 
   }
   return { text: kept.join("\n").trim(), attachments };
 }
+
+// ---------- pull-request state ----------
+// The wording for tasks.pr_state / pr_checks / pr_review, kept here rather than
+// in the chip because the "needs you" surfaces and the merge button want the
+// same words, and two copies would drift. Every helper takes the raw column
+// value, so "" (never refreshed yet) is a case each one answers deliberately.
+
+/** How a PR's state reads, and the tone it's drawn in. "" = not refreshed yet. */
+export function prStateLabel(state: string): { label: string; tone: "open" | "merged" | "closed" | "unknown" } {
+  switch (state) {
+    case "open": return { label: "Open", tone: "open" };
+    case "merged": return { label: "Merged", tone: "merged" };
+    case "closed": return { label: "Closed", tone: "closed" };
+    default: return { label: "Checking…", tone: "unknown" };
+  }
+}
+
+/**
+ * How the check rollup reads. "none" is deliberately NOT green: a repo with no
+ * CI at all has proved nothing, so it gets no verdict rather than a tick.
+ */
+export function prChecksLabel(checks: string): { label: string; tone: "pass" | "fail" | "pending" } | null {
+  switch (checks) {
+    case "passing": return { label: "checks passing", tone: "pass" };
+    case "failing": return { label: "checks failing", tone: "fail" };
+    case "pending": return { label: "checks running", tone: "pending" };
+    default: return null; // "none" (no CI) and "" (not refreshed yet) say nothing
+  }
+}
+
+/** How gh's reviewDecision reads. "" means review isn't required on this repo. */
+export function prReviewLabel(review: string): { label: string; tone: "pass" | "fail" | "pending" } | null {
+  switch (review) {
+    case "APPROVED": return { label: "approved", tone: "pass" };
+    case "CHANGES_REQUESTED": return { label: "changes requested", tone: "fail" };
+    case "REVIEW_REQUIRED": return { label: "review required", tone: "pending" };
+    default: return null;
+  }
+}
+
+/** The chip's tooltip: everything the columns know, spelled out in one line. */
+export function prTooltip(task: Pick<TaskRow, "pr_url" | "pr_state" | "pr_checks" | "pr_review" | "pr_synced_at">): string {
+  const bits = [prStateLabel(task.pr_state).label];
+  const checks = prChecksLabel(task.pr_checks);
+  if (checks) bits.push(checks.label);
+  else if (task.pr_checks === "none") bits.push("no checks configured");
+  const review = prReviewLabel(task.pr_review);
+  if (review) bits.push(review.label);
+  const synced = task.pr_synced_at ? `checked ${relTime(task.pr_synced_at)}` : "not checked yet";
+  return `${task.pr_url}\n${bits.join(" · ")} · ${synced}`;
+}

@@ -29,7 +29,9 @@ covers it. No API key needed.
 - **Know where you're needed.** A cross-project inbox lists the sessions
   waiting for an answer while the rest keep working.
 - **Review every change.** Read the diff next to the conversation, then
-  merge, resolve conflicts, or open a pull request.
+  merge, resolve conflicts, or open a pull request. Once a PR exists, its
+  state — open, merged or closed, checks green or red, review approved or
+  not — stays live on the task without you opening GitHub.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen

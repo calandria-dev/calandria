@@ -92,6 +92,28 @@ export function init(db: Database.Database) {
       base_branch   TEXT NOT NULL DEFAULT '',
       merged_at     INTEGER NOT NULL DEFAULT 0,
       pr_url        TEXT NOT NULL DEFAULT '',
+      -- Live GitHub PR state, refreshed in the background from "gh pr view"
+      -- (lib/prState.ts). pr_url alone was write-once display data: it says a
+      -- PR exists and nothing more, so the app could never tell whether the
+      -- work was still open, red, approved or already landed.
+      --   pr_number  the number parsed out of pr_url at CREATE time, so nothing
+      --              re-derives it per render (0 = no PR)
+      --   pr_state   'open' | 'merged' | 'closed' ('' = never refreshed)
+      --   pr_checks  the check rollup collapsed to what a human acts on:
+      --              'pending' | 'passing' | 'failing' | 'none' (no CI at all)
+      --   pr_review  gh's reviewDecision verbatim (APPROVED /
+      --              CHANGES_REQUESTED / REVIEW_REQUIRED; '' = not required)
+      --   pr_merged_at  when GitHub says it merged (0 = it hasn't). Distinct
+      --              from merged_at, which is OUR local merge into the base
+      --              branch: a PR merged on github.com never touched this box.
+      --   pr_synced_at  when we last heard from GitHub — the staleness clock
+      --              every refresh trigger reads before spawning gh.
+      pr_number     INTEGER NOT NULL DEFAULT 0,
+      pr_state      TEXT NOT NULL DEFAULT '',
+      pr_checks     TEXT NOT NULL DEFAULT '',
+      pr_review     TEXT NOT NULL DEFAULT '',
+      pr_merged_at  INTEGER NOT NULL DEFAULT 0,
+      pr_synced_at  INTEGER NOT NULL DEFAULT 0,
       generation  INTEGER NOT NULL DEFAULT 1,
       started     INTEGER NOT NULL DEFAULT 0,
       running     INTEGER NOT NULL DEFAULT 0,
@@ -787,6 +809,23 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
   // GitHub PR opened from this task's branch via "Create PR" ("" = none yet).
   if (!taskCols.includes("pr_url")) db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''");
+  // Live PR state (see the CREATE TABLE note). The defaults are the honest
+  // reading for every pre-existing row: we have never asked GitHub about them.
+  if (!taskCols.includes("pr_number")) db.exec("ALTER TABLE tasks ADD COLUMN pr_number INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes("pr_state")) db.exec("ALTER TABLE tasks ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''");
+  if (!taskCols.includes("pr_checks")) db.exec("ALTER TABLE tasks ADD COLUMN pr_checks TEXT NOT NULL DEFAULT ''");
+  if (!taskCols.includes("pr_review")) db.exec("ALTER TABLE tasks ADD COLUMN pr_review TEXT NOT NULL DEFAULT ''");
+  if (!taskCols.includes("pr_merged_at")) db.exec("ALTER TABLE tasks ADD COLUMN pr_merged_at INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes("pr_synced_at")) db.exec("ALTER TABLE tasks ADD COLUMN pr_synced_at INTEGER NOT NULL DEFAULT 0");
+  // pr_number IS derivable from the URL we already stored, so backfill it here
+  // rather than leaving old rows at 0 until someone re-clicks Create PR. Runs
+  // over the handful of rows that have a URL and no number, so it is a no-op on
+  // every boot after the first. The other columns can't be backfilled — only
+  // GitHub knows them — and the refresh triggers fill them on first sight.
+  db.exec(
+    `UPDATE tasks SET pr_number = CAST(substr(pr_url, instr(pr_url, '/pull/') + 6) AS INTEGER)
+     WHERE pr_url LIKE '%/pull/%' AND pr_number = 0`
+  );
   // Per-task "send saved project context" flag (default 1 = the old always-on
   // behavior; seeded from the project's send_context for tasks created later).
   if (!taskCols.includes("send_context")) db.exec("ALTER TABLE tasks ADD COLUMN send_context INTEGER NOT NULL DEFAULT 1");

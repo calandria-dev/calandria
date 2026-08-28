@@ -474,3 +474,146 @@ export async function createTaskPr(input: {
     return { ok: false, error: `could not create the PR: ${cliErrorMessage(e, "gh pr create errored")}` };
   }
 }
+
+// ---------- pull-request state ----------
+
+/**
+ * The PR number in a GitHub PR URL (…/pull/42), or 0 when there isn't one.
+ * Parsed ONCE, at create time, into tasks.pr_number — the UI used to re-derive
+ * it from the URL on every render.
+ */
+export function parsePrNumber(url: string): number {
+  const m = /\/pull\/(\d+)/.exec(url || "");
+  return m ? Number(m[1]) : 0;
+}
+
+/** Where a PR sits. Mirrors gh's `state`, lowercased. */
+export type PrState = "open" | "merged" | "closed";
+/**
+ * The check rollup, collapsed to the three answers a human acts on. "none" is
+ * NOT "passing": a repo with no CI at all must not render a green tick.
+ */
+export type PrChecks = "pending" | "passing" | "failing" | "none";
+
+export interface PrSnapshot {
+  number: number;
+  state: PrState;
+  checks: PrChecks;
+  /** gh's reviewDecision: APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED, "" when review isn't required. */
+  review: string;
+  /** ms epoch the PR merged, 0 when it hasn't. */
+  mergedAt: number;
+  /** gh's mergeStateStatus (CLEAN/BLOCKED/DIRTY/BEHIND/…), "" when unknown. */
+  mergeState: string;
+}
+
+// One entry of gh's statusCheckRollup: a GitHub Actions CheckRun (status +
+// conclusion) or a legacy commit StatusContext (state). Both shapes come back
+// in the same array, which is why each field is optional here.
+interface RollupEntry {
+  __typename?: string;
+  status?: string;
+  conclusion?: string;
+  state?: string;
+}
+
+// A check run only has a verdict once it has COMPLETED; anything else (QUEUED,
+// IN_PROGRESS, WAITING, PENDING, REQUESTED) is still in flight. SKIPPED and
+// NEUTRAL are deliberately "passing" — GitHub itself counts them as green, and
+// a path-filtered workflow that skipped must not read as a stalled PR.
+const CHECK_PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+const CHECK_FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE", "ERROR"]);
+
+/**
+ * Collapse gh's per-check array into one answer. Pure — exported for tests.
+ *
+ * Precedence is failing > pending > passing, which is the order a human cares
+ * about: one red check makes the PR red however many green ones surround it,
+ * and a still-running check can't be called green yet.
+ */
+export function rollupChecks(entries: RollupEntry[] | null | undefined): PrChecks {
+  if (!entries || entries.length === 0) return "none";
+  let pending = false;
+  let failing = false;
+  for (const e of entries) {
+    // CheckRun: the verdict is `conclusion`, and only once `status` is COMPLETED.
+    // StatusContext: `state` is the verdict outright.
+    const verdict = (e.status !== undefined ? (e.status === "COMPLETED" ? e.conclusion : "") : e.state) || "";
+    const v = verdict.toUpperCase();
+    if (!v || v === "PENDING" || v === "EXPECTED") pending = true;
+    else if (CHECK_FAIL.has(v)) failing = true;
+    else if (!CHECK_PASS.has(v)) pending = true; // an unknown verdict is not a pass
+  }
+  if (failing) return "failing";
+  if (pending) return "pending";
+  return "passing";
+}
+
+/** What a refresh came back with: a snapshot, or why it couldn't get one. */
+export type PrStateResult = { ok: true; snapshot: PrSnapshot } | { ok: false; error: string; gone?: boolean };
+
+/**
+ * Read a PR's current state from GitHub via `gh pr view`. One subprocess, no
+ * writes, never throws — the caller is a background job and a dead network, a
+ * logged-out gh or a deleted PR must all come back as a reported failure rather
+ * than an unhandled rejection in a detached task.
+ *
+ * `cwd` should be the PROJECT's repo, not the task's worktree: gh resolves the
+ * repo from the origin remote, and a task's checkout is reclaimable while its
+ * PR is still worth tracking.
+ */
+export async function fetchPrState(cwd: string, number: number): Promise<PrStateResult> {
+  if (!number) return { ok: false, error: "no PR number" };
+  const st = await ghStatus();
+  if (!st.installed) return { ok: false, error: ghMissingMessage() };
+  if (!st.authenticated) return { ok: false, error: "gh is not logged in to GitHub" };
+
+  let stdout: string;
+  try {
+    ({ stdout } = await run(
+      resolveGhBin(),
+      ["pr", "view", String(number), "--json", "state,mergedAt,statusCheckRollup,mergeStateStatus,reviewDecision"],
+      {
+        cwd,
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+      }
+    ));
+  } catch (e) {
+    const msg = cliErrorMessage(e, "gh pr view errored");
+    // A PR that no longer resolves (deleted repo, wrong remote) is reported
+    // separately so the caller can stop asking rather than retry forever.
+    const gone = /could not resolve|no pull requests found|not found/i.test(msg);
+    return { ok: false, error: msg, ...(gone ? { gone: true } : {}) };
+  }
+
+  let raw: {
+    state?: string;
+    mergedAt?: string | null;
+    statusCheckRollup?: RollupEntry[] | null;
+    mergeStateStatus?: string | null;
+    reviewDecision?: string | null;
+  };
+  try {
+    raw = JSON.parse(stdout || "{}");
+  } catch {
+    return { ok: false, error: "gh returned output that isn't JSON" };
+  }
+
+  const state = String(raw.state || "").toLowerCase();
+  const mergedAt = raw.mergedAt ? Date.parse(raw.mergedAt) : 0;
+  return {
+    ok: true,
+    snapshot: {
+      number,
+      // A merged PR reports state MERGED; anything unrecognized is treated as
+      // still open, since "closed" is the claim that would wrongly stop polling.
+      state: state === "merged" ? "merged" : state === "closed" ? "closed" : "open",
+      checks: rollupChecks(raw.statusCheckRollup),
+      review: String(raw.reviewDecision || ""),
+      mergedAt: Number.isFinite(mergedAt) ? mergedAt : 0,
+      mergeState: String(raw.mergeStateStatus || ""),
+    },
+  };
+}

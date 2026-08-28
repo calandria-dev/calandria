@@ -909,6 +909,7 @@ export function moveTasks(
     // thrown away, and the next turn opens a fresh one that reports its own.
     const clearCheckout = db.prepare(
       `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
+        pr_number = 0, pr_state = '', pr_checks = '', pr_review = '', pr_merged_at = 0, pr_synced_at = 0,
         session_id = NULL, context_measured = NULL WHERE id = ?`
     );
     // Project-keyed child rows follow their task. These are the tables that
@@ -1011,9 +1012,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -1031,6 +1032,62 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
  */
 export function clearTaskWorktreePath(id: string): void {
   getDb().prepare("UPDATE tasks SET worktree_path = '' WHERE id = ?").run(id);
+}
+
+/**
+ * Write back what GitHub just said about a task's PR — and NOTHING else, not
+ * even `updated_at`, for exactly the reason clearTaskWorktreePath gives.
+ *
+ * A refresh is a poll nobody asked for: it runs on a timer, on opening a task,
+ * and after a PR is created. updateTask() would stamp `updated_at`, which is
+ * the board's sort key AND retention's clock, so a five-minute CI poll would
+ * float every open-PR task to the top of its column and push its transcript
+ * prune out indefinitely. The chip's freshness must not reorder the board.
+ *
+ * Returns the fresh row so the caller can publish an authoritative snapshot.
+ */
+export function setTaskPrState(
+  id: string,
+  pr: { state: string; checks: string; review: string; merged_at: number; synced_at: number; number?: number }
+): Task | undefined {
+  getDb()
+    .prepare(
+      `UPDATE tasks SET pr_state = ?, pr_checks = ?, pr_review = ?, pr_merged_at = ?, pr_synced_at = ?,
+        pr_number = COALESCE(?, pr_number) WHERE id = ?`
+    )
+    .run(pr.state, pr.checks, pr.review, pr.merged_at, pr.synced_at, pr.number ?? null, id);
+  return getTask(id);
+}
+
+/**
+ * Tasks whose PR is worth asking GitHub about again: one exists, and the last
+ * answer wasn't terminal. A merged or closed PR is never polled again — its
+ * state cannot change back — which is what keeps the ticker's cost bounded by
+ * open work rather than by how many PRs the instance has ever opened.
+ *
+ * `staleBefore` is the pr_synced_at cutoff, so a task refreshed by a click a
+ * moment ago isn't re-fetched by the tick that follows. Oldest sync first, so a
+ * capped batch always makes progress rather than re-serving the same rows.
+ */
+export function stalePrTasks(staleBefore: number, limit: number): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM tasks
+       WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')
+         AND pr_synced_at < ?
+       ORDER BY pr_synced_at ASC LIMIT ?`
+    )
+    .all(staleBefore, limit) as Task[];
+}
+
+/** How many tasks still have a PR that could change — the ticker's stop condition. */
+export function openPrTaskCount(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')`
+    )
+    .get() as { n: number };
+  return row.n;
 }
 
 export function deleteTask(id: string) {

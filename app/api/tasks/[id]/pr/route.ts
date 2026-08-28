@@ -2,10 +2,28 @@ import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask, listSummaries } from "@/lib/store";
 import { commitWorktree, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
-import { createTaskPr, buildPrBody } from "@/lib/github";
+import { createTaskPr, buildPrBody, parsePrNumber } from "@/lib/github";
+import { prView, schedulePrRefresh, startPrPolling } from "@/lib/prState";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
+
+// The task's stored PR state, plus the OPEN-THE-TASK refresh trigger: the chip
+// reads this when a session is selected, and a snapshot older than PR_STALE_MS
+// kicks a background re-read. The GET itself never waits on github.com — it
+// answers from the row and the fresher answer arrives over /api/events as a
+// task_edited, the same way every other lifecycle fact does.
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const task = getTask(id);
+  if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const pr = prView(task);
+  if (pr) {
+    schedulePrRefresh(id);
+    startPrPolling();
+  }
+  return NextResponse.json({ pr });
+}
 
 // The review-on-GitHub complement to merge: push the task's work branch to
 // origin and open a PR against the project's base branch (gh pr create), with
@@ -41,7 +59,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   });
 
   if (result.ok && result.url) {
-    updateTask(id, { pr_url: result.url });
+    // Parse the number ONCE, here, instead of re-deriving it from the URL on
+    // every render. This write is a user action, so it goes through updateTask
+    // and stamps updated_at — unlike the background refreshes, which must not
+    // reorder the board (setTaskPrState).
+    updateTask(id, { pr_url: result.url, pr_number: parsePrNumber(result.url) });
+    // First read of the PR's actual state, detached: the response returns now,
+    // and the chip fills in over /api/events. startPrPolling restarts a sweep
+    // that stopped itself when the last open PR landed.
+    schedulePrRefresh(id, { force: true });
+    startPrPolling();
   }
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });
 }
