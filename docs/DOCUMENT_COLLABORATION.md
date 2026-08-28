@@ -1,3 +1,7 @@
+---
+title: "Document collaboration mode"
+---
+
 # Document collaboration mode
 
 When an agent writes or edits a text file, a **Collaborate** button appears on

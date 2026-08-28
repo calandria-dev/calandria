@@ -1,0 +1,39 @@
+/* The brand's three faces, self-hosted per the handoff ("do not ship the Google
+   Fonts CDN import"). Latin subsets only; licences and provenance in
+   public/fonts/OFL.txt. Shared by the landing page (tokens.css) and the docs
+   (starlight.css) so the declarations exist once. */
+
+@font-face {
+  font-family: "Spectral";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/spectral-500-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Source Sans 3 Variable";
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("/fonts/source-sans-3-variable-latin.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-variable-latin.woff2") format("woff2-variations");
+}
+
+/* The handoff's global motion rule. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

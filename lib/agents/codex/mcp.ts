@@ -23,7 +23,8 @@
 // see the tool). Visible-but-dead tools cost context and turns and teach the
 // model nothing, so the driver disables them by default and says so — see
 // CODEX_INHERIT_MCP in lib/config.ts for the escape hatch, and "Agent MCP
-// inheritance" in CLAUDE.md for the product-level statement.
+// inheritance is asymmetric" in lib/agents/CLAUDE.md for the product-level
+// statement.
 //
 // The binary itself is resolved by ./bin.ts rather than spawned as a bare
 // "codex": that name resolves nowhere on native Windows, where npm installs a

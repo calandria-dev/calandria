@@ -10,7 +10,7 @@ tablet, or phone. Every task gets its own persistent agent session in its
 own git worktree. Your existing Claude Max, Pro, or ChatGPT subscription
 covers it. No API key needed.
 
-[**calandria.dev**](https://calandria.dev) · [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
+[**calandria.dev**](https://calandria.dev) · [**Docs**](https://calandria.dev/docs) · [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](package.json)
@@ -268,6 +268,10 @@ See [COMMUNITY.md](docs/COMMUNITY.md) for where each kind of conversation
 belongs.
 
 ## Documentation
+
+Everything below is also published, rendered and searchable, at
+[**calandria.dev/docs**](https://calandria.dev/docs) — the same files, so
+either reader is current.
 
 - [Installation and local development](docs/INSTALLATION.md)
 - [Features](docs/FEATURES.md)

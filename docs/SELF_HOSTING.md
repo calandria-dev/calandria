@@ -1,3 +1,7 @@
+---
+title: "Self-hosting"
+---
+
 # Self-hosting
 
 Running your own instance: Docker, tunnels, auth, and configuration. The

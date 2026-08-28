@@ -95,6 +95,14 @@ jobs:
       - run: npm ci
         working-directory: website
 
+      # Mermaid diagrams in the docs are rendered at BUILD time, which means a
+      # headless browser (rehype-mermaid -> mermaid-isomorphic -> playwright).
+      # `npm ci` fetches the playwright package but not the browser binary, so
+      # without this step a page containing a ```mermaid fence fails the build.
+      # Only chromium, and only the headless shell it actually launches.
+      - run: npx playwright install --with-deps --only-shell chromium
+        working-directory: website
+
       - run: npm run build
         working-directory: website
 

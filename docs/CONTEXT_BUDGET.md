@@ -1,3 +1,7 @@
+---
+title: "CLAUDE.md's context budget"
+---
+
 # CLAUDE.md's context budget
 
 `CLAUDE.md` is loaded into every session in this repo before any code is read, so its size is
@@ -16,11 +20,41 @@ without, and subtract. Sum all three input buckets; `cache_creation_input_tokens
 undercounts once prompt caching kicks in on a second run.
 
 ```bash
-claude -p "Reply with the single word: ok" --output-format json \
+claude -p "Reply with the single word: ok" --model claude-sonnet-5 --output-format json \
   --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
 | python3 -c "import json,sys; u=json.load(sys.stdin)['usage']; \
 print(u.get('input_tokens',0)+u.get('cache_creation_input_tokens',0)+u.get('cache_read_input_tokens',0))"
 ```
+
+Two things about running it. Pass `--model` explicitly: a machine whose `~/.claude/settings.json`
+pins a model that is out of quota fails every run otherwise, and the failure has nothing to do
+with what is being measured. And the baseline is whatever that machine's own configuration loads
+(a user-level `CLAUDE.md`, plugins, skills), so the absolute numbers below are not comparable
+across machines. Only the with-minus-without diff is.
+
+## Where it stands (2026-08-27, CLI 2.1.240)
+
+The split below was carried out, together with a plain-language rewrite of both agent-instruction
+files. Measured on one machine against an empty-directory baseline of 44,507 tokens:
+
+| File | Before | After | Loaded |
+|-|-|-|-|
+| Root `CLAUDE.md` | 64,337 B / **23,683 tokens** | 48,122 B / **18,524 tokens** (−22%) | every session |
+| `lib/agents/CLAUDE.md` | — | 17,330 B / **6,460 tokens** | on reading anything under `lib/agents/` |
+| `.github/CLAUDE.md` | 2,366 B / 850 tokens | 2,467 B / **891 tokens** | on reading anything under `.github/` |
+
+A session that never opens `lib/agents/` starts 5,159 tokens lighter. One that does pays 24,984,
+about 5% more than the single file cost, which is the price of the pointer paragraphs and of
+saying things in sentences instead of dash-chains.
+
+The rewrite kept every fact, so it is not where the saving came from: the driver material
+compressed by 26% on the way into `lib/agents/CLAUDE.md`, while "Key modules" stayed within 2% of
+its old size no matter how hard it was squeezed. That section is invariants and identifiers with
+almost no filler. **Prose style is not a lever on this file's size. Placement is.**
+
+One fact was dropped rather than restated: `lib/idle.ts` had been deleted (`305a421`) while
+`CLAUDE.md` still described it as the busy-tracking module. Liveness is `lib/abort.ts`'s turn
+registry, exported as `calandria_turns_active` by `lib/metrics.ts`.
 
 ## What it measured (2026-08-20, CLI 2.1.228)
 
@@ -80,6 +114,11 @@ already produced drift; cutting the loaded copy and linking would leave the accu
 where agents don't reliably read it. The duplication finding argues for fixing drift, not for
 trimming.
 
+The 2026-08-27 rewrite closed the first and fourth rows (`skills: []` and both one-shot
+`maxTurns` values are now in `lib/agents/CLAUDE.md`) and corrected a fifth drift the table
+missed: the file claimed a turn's `settingSources` was `["user", "project", "local"]` and the
+SDK's own default, when `SETTING_SOURCES` is `["user", "project"]` and drops `local` on purpose.
+
 ## Decision: split by directory, not by deleting
 
 Leaving the file alone was a live option, but the measurement doesn't support it: 37.8% of
@@ -97,17 +136,20 @@ none of it gets deleted. The line is when you need it:
   modes and Vertex model corrections, one-shot isolation, MCP inheritance asymmetry,
   slash-command discovery, adding a third agent.
 
-Measured result of exactly that split:
+Measured projection for exactly that split, made on 2026-08-20 against the 52,205-byte file:
 
 | | Tokens |
 |-|-|
-| Root `CLAUDE.md` today | 19,250 |
+| Root `CLAUDE.md` then | 19,250 |
 | Candidate root after the split | **10,289** (−47%) |
 | Deferred into `lib/agents/CLAUDE.md` | 9,146 (loads on demand) |
 | Pointer paragraph overhead | +185 |
 
-A session that never touches `lib/agents/` starts ~8,961 tokens lighter. One that does pays the
-same total as today, just later.
+The split landed on 2026-08-27 at 18,478 root tokens rather than 10,289, for two reasons. The
+file grew by 12 KB in the week between the projection and the split, and "Key modules" stayed in
+root, as the keep-list above says it should: it is the orientation material you need *before* you
+know which directory you're heading for, and its modules sit directly in `lib/`, where a nested
+file would load for almost every session anyway.
 
 ### The one gap to handle carefully
 
@@ -120,6 +162,9 @@ stays reachable from the root file. Don't move a paragraph just because it menti
 
 - Adding to root `CLAUDE.md` costs every session in the repo. Prefer the nearest
   directory-scoped file; put it in root only if it's needed before you'd open that directory.
+  Driver-specific material has a home already: `lib/agents/CLAUDE.md`.
 - Don't restate `docs/` prose in `CLAUDE.md`. One of the copies will go stale, and the loaded
   one isn't reliably the fresh one.
-- Re-measure with the command above rather than counting bytes.
+- Re-measure with the command above rather than counting bytes, and record the new numbers here.
+- Don't reach for a style pass to shrink this file. One was done on 2026-08-27 and returned about
+  2% on the sections that stayed put. Move material or cut it; rewording it does neither.
