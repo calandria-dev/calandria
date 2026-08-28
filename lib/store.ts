@@ -7,6 +7,7 @@ import { getDb } from "./db";
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
 import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -197,6 +198,7 @@ export function createProject(input: {
   context?: string;
   repo_path?: string;
   branch?: string;
+  landing_mode?: LandingMode;
 }): Project {
   const now = Date.now();
   const id = nanoid();
@@ -208,10 +210,10 @@ export function createProject(input: {
   const defaultAgent = getSetting("default_agent") || "claude";
   getDb()
     .prepare(
-      `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, default_agent, port, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
@@ -242,10 +244,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const n = { ...cur, ...patch };
   getDb()
     .prepare(
-      `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?,
+      `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
         dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
     )
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
+    // landing_mode is normalized rather than trusted: the column has no CHECK
+    // behind it and this is reached straight from PATCH /api/projects/[id].
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
   return getProject(id);
 }
 

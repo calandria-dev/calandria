@@ -7,6 +7,7 @@ import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
 import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
 import { gitErrorDetail } from "./git";
+import type { LandingMode } from "./types";
 
 const run = promisify(execFile);
 
@@ -383,6 +384,111 @@ function cliErrorMessage(e: unknown, fallback: string): string {
   if (fatal) return fatal.replace(/^(fatal|error):\s*/i, "");
   if (lines.length) return lines[lines.length - 1];
   return e instanceof Error ? e.message : fallback;
+}
+
+// ---------- landing-mode detection ----------
+
+export interface LandingProbe {
+  /** What the repo says. null = we could not tell (no gh, no auth, no remote, API error). */
+  mode: LandingMode | null;
+  /** One line for a human: why this is the answer. Always set. */
+  reason: string;
+  /** Which probe answered — "rules" (a ruleset), "protection" (classic branch protection), "none" (neither). */
+  source?: "rules" | "protection" | "none";
+}
+
+/** Run `gh api <path>` in the repo and parse the JSON, or null on any failure. */
+async function ghApi(repoPath: string, apiPath: string): Promise<unknown | null> {
+  try {
+    const { stdout } = await run(resolveGhBin(), ["api", "-H", "Accept: application/vnd.github+json", apiPath], {
+      cwd: repoPath,
+      timeout: 20_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+    });
+    return JSON.parse(stdout || "null");
+  } catch {
+    // Includes the ordinary 404 from an unprotected branch, which the caller
+    // distinguishes by having got an answer from the other probe.
+    return null;
+  }
+}
+
+/**
+ * Does this repo's base branch require a pull request? The answer preselects a
+ * project's `landing_mode`; it never writes one (see the route and the settings
+ * form — detection proposes, a human saves).
+ *
+ * Two probes, because GitHub has two independent mechanisms and neither one
+ * reports the other:
+ *
+ *  1. `repos/{owner}/{repo}/rules/branches/{base}` — the EFFECTIVE rules for one
+ *     branch. This is the right call rather than listing `rulesets` and matching
+ *     their ref patterns client-side: GitHub already does that matching, across
+ *     org-level parent rulesets too, and a hand-rolled `~ALL`/`refs/heads/*`
+ *     glob matcher would be a second, worse implementation of it. A rule of type
+ *     `pull_request` is the requirement we are looking for.
+ *  2. `repos/{owner}/{repo}/branches/{base}/protection` — classic branch
+ *     protection, which predates rulesets and does NOT appear in (1). Its
+ *     `required_pull_request_reviews` says the same thing. 404 here is the
+ *     ordinary "not protected" answer, which is why a failed call is not an
+ *     error on its own.
+ *
+ * `{owner}/{repo}` are gh's own placeholders, resolved from the repo in `cwd`,
+ * so this needs no remote parsing. Never throws: everything that can go wrong
+ * (gh missing, logged out, private repo, no network, a branch name the API
+ * rejects) comes back as `mode: null` with a reason, and null means "leave the
+ * project's current setting alone".
+ */
+export async function detectLandingMode(repoPath: string, baseBranch: string): Promise<LandingProbe> {
+  const repo = repoPath.trim();
+  if (!repo) return { mode: null, reason: "There is no working directory, so there is no repository to check." };
+
+  // An unnamed branch means "whatever this checkout is on" — the New project
+  // dialog has a folder but no branch field yet, and the branch the person is
+  // standing on is the one they are about to work against.
+  const base =
+    baseBranch.trim() ||
+    (await run("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 15_000 })
+      .then((r) => r.stdout.trim())
+      .catch(() => ""));
+  if (!base || base === "HEAD")
+    return { mode: null, reason: "No base branch to check: name one, or check out the branch this project builds on." };
+
+  const st = await ghStatus();
+  if (!st.installed) return { mode: null, reason: ghMissingMessage() };
+  if (!st.authenticated)
+    return { mode: null, reason: "gh is not logged in to GitHub, so branch rules can't be read. Connect GitHub in Settings, then detect again." };
+
+  const remote = await run("git", ["-C", repo, "remote", "get-url", "origin"], {
+    timeout: 15_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
+    .then((r) => r.stdout.trim())
+    .catch(() => "");
+  if (!remote) return { mode: null, reason: "This repo has no origin remote, so it has no branch rules to read. Merge is the only way it can land." };
+
+  // The branch name is a path segment. Encode everything but "/", which the API
+  // takes literally in a branch path (feature/x is .../branches/feature/x).
+  const ref = base.split("/").map(encodeURIComponent).join("/");
+
+  const rules = await ghApi(repo, `repos/{owner}/{repo}/rules/branches/${ref}`);
+  if (Array.isArray(rules)) {
+    const pr = rules.find((r) => (r as { type?: string })?.type === "pull_request");
+    if (pr) return { mode: "pr", reason: `A branch ruleset on ${base} requires a pull request.`, source: "rules" };
+  }
+
+  const protection = await ghApi(repo, `repos/{owner}/{repo}/branches/${ref}/protection`);
+  if (protection && typeof protection === "object" && "required_pull_request_reviews" in protection)
+    return { mode: "pr", reason: `Branch protection on ${base} requires a pull request.`, source: "protection" };
+
+  // Only claim "merge" when a probe actually answered. Both failing means we
+  // learned nothing — a private repo the token can't read looks exactly like an
+  // unprotected one from here, and reporting "merge" would be a guess dressed
+  // as a finding.
+  if (Array.isArray(rules))
+    return { mode: "merge", reason: `Nothing on ${base} requires a pull request, so work can land by merge.`, source: "none" };
+  return { mode: null, reason: `GitHub did not answer for ${base}. It may be private to this login, or the branch may not exist on the remote.` };
 }
 
 // ---------- pull requests ----------
