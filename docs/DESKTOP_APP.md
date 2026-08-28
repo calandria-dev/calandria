@@ -465,18 +465,39 @@ notification saying the app is still running, since hiding is the one action
 here with no visible result and, on Windows and Linux, a change from what the
 button used to do.
 
-Two things this leaves owing, both recorded rather than fixed. On Linux an
+One thing this leaves owing, recorded rather than fixed. On Linux an
 Electron notification is a libnotify call on the UI thread, and with a session
 bus present but no daemon owning `org.freedesktop.Notifications` each one blocks
 the whole main process for GDBus's 25-second timeout — measured, and the reason
 the e2e suite points `DBUS_SESSION_BUS_ADDRESS` at a dead socket
 ([`DESKTOP_E2E.md`](DESKTOP_E2E.md) §2). Denying the renderer's channel takes
 the page out of that path; it does not take the shell out of it, and a desktop
-with no notification daemon is a configuration nobody here has. And Settings →
-Notifications reads `Notification.permission`, so inside the shell it now
-reports the browser channel as blocked — true, and misleading, since the toasts
-work. Telling the two apart needs the app to know it is inside the shell, which
-is a wire it does not have.
+with no notification daemon is a configuration nobody here has.
+
+**Telling the page it is inside the shell.** Denying the check handler left one
+wart: Settings → Notifications reads the same `Notification.permission`, so it
+reported the browser channel as *blocked* — literally true, and completely
+misleading, since the user is getting OS notifications the whole time from a
+channel the page cannot see. Anyone reading that card would go looking for a
+browser site setting this window has no way to open. So `announceShell()`
+appends `Calandria-Desktop/<version>` to `app.userAgentFallback` before the
+first load, and `isDesktopShell()` in `app/shell/useNotifications.ts` matches it
+(with bare `Electron/` as a fallback, so a packaged build predating the token
+still reads right); the card then says the desktop app handles these itself and
+keeps the test-send button live. The renderer's channel still stands down — the
+classifier reports `desktop_shell`, which is not `granted`, so the hook returns
+before constructing anything. Re-granting the permission to fix the copy is the
+one thing that must not happen: that is the duplicate toast this whole section
+exists to avoid, and on Linux it is also what puts the page back in front of
+that 25-second GDBus block.
+
+The user agent is the wire because the question is about the **client**, not the
+instance. The same server can be open in this window and in an ordinary browser
+tab at the same moment, so `CALANDRIA_DESKTOP_SHELL=1` on the sidecars or a flag
+in the per-instance `window.__FEATURES` bundle would answer one of them with the
+other's truth. UA sniffing normally rots because it reads somebody else's
+string; the token that carries the decision here is ours, and the cost of it
+ever being wrong is a sentence of help text, not a lost notification.
 
 What is **not** yet verified: none of this has run in front of a human or under
 an assertion that a notification actually reached the OS. The headless tests

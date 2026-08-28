@@ -15,6 +15,7 @@
 
 import { statSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { isDesktopShell } from "@/app/shell/useNotifications";
 import { attachShellLog, launchDuplicate, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
@@ -129,7 +130,10 @@ test("the permission handler denies everything, notifications included", async (
   // renderer would have used). Granting the renderer as well would give the
   // user two toasts for every event, so the page's channel is switched off at
   // the source: `notificationPermission()` in app/shell/useNotifications.ts
-  // reports `denied` and the hook returns before constructing anything.
+  // returns something that isn't `granted` and the hook returns before
+  // constructing anything. (It returns `desktop_shell` rather than `denied`,
+  // off the user-agent token asserted below — same standing down, better copy
+  // in Settings. The raw `denied` this test reads is what that is built on.)
   //
   // BOTH readings are asserted because they are answered by different handlers
   // and only the second one is on the path that matters: the hook checks
@@ -178,6 +182,23 @@ test("the permission handler denies everything, notifications included", async (
       .catch((err: DOMException) => err.name)
   );
   expect(camera).not.toBe("granted");
+});
+
+test("the user agent tells the page it is inside the shell", async () => {
+  // The other half of the denial above. Because the check handler makes
+  // `Notification.permission` read "denied" on a perfectly good 127.0.0.1
+  // origin, Settings → Notifications would tell the user they had blocked
+  // notifications for this site — while OS toasts were arriving the whole time
+  // from a channel the page cannot see. `announceShell()` appends this token so
+  // `isDesktopShell()` can say "handled by the desktop app" instead.
+  //
+  // Asserted against the app's own matcher rather than by re-spelling the
+  // regex, so a change to either end fails here rather than drifting apart.
+  const ua = await shell.win.evaluate(() => navigator.userAgent);
+  expect(ua, "announceShell() must run before the first load").toContain("Calandria-Desktop/");
+  expect(isDesktopShell(ua)).toBe(true);
+  // Appended, not replacing: the app may reasonably branch on Chrome's version.
+  expect(ua).toContain("Chrome/");
 });
 
 test("copy and paste reach the system clipboard", async () => {

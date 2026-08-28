@@ -106,6 +106,7 @@ function main() {
 
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(buildMenu());
+    announceShell();
     hardenSession();
     createWindow();
     await boot();
@@ -212,6 +213,25 @@ function isAppUrl(url) {
   }
 }
 
+function announceShell() {
+  // The one thing the page is told about its container, and it is told in the
+  // user agent because that is the only channel that is already per-CLIENT: the
+  // same server can be open in this window and in an ordinary browser tab at
+  // the same moment, so an env var on the sidecars or a flag in the per-instance
+  // `window.__FEATURES` bundle would answer one of them with the other's truth.
+  //
+  // What it buys, today, is one sentence: Settings → Notifications reads
+  // `Notification.permission`, which hardenSession() below makes "denied", and
+  // saying "you've blocked notifications for this site" to somebody who is
+  // getting OS toasts from us the whole time sends them looking for a browser
+  // setting this window does not have. app/shell/useNotifications.ts matches
+  // this token (isDesktopShell) and reports "handled by the desktop app".
+  //
+  // Appended rather than replacing, so the Chrome/Electron versions the app may
+  // reasonably branch on survive; must be set before the first load.
+  app.userAgentFallback = `${app.userAgentFallback} Calandria-Desktop/${app.getVersion()}`;
+}
+
 function hardenSession() {
   // Default-deny, so a future dependency can't quietly acquire the camera.
   //
@@ -223,8 +243,11 @@ function hardenSession() {
   // still fire with the window hidden to the tray or destroyed, can raise the
   // window and select the task on click, and owns the dock/taskbar badge that
   // has to agree with what it just said. The renderer's channel stands down
-  // cleanly on its own: `notificationPermission()` reports `denied` and the
-  // hook returns before constructing anything.
+  // cleanly on its own: `notificationPermission()` returns something that isn't
+  // `granted` and the hook returns before constructing anything. It returns
+  // `desktop_shell`, not the raw `denied`, off the token announceShell() sets
+  // above — so Settings can say the desktop app owns this rather than telling
+  // the user they blocked a site setting this window cannot open.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === "clipboard-sanitized-write");
   });
