@@ -221,7 +221,7 @@ export const CODEX_APPROVAL_POLICY = (() => {
  * Whether Codex tasks inherit the MCP servers configured in the user's
  * ~/.codex/config.toml, alongside Calandria's own bridge. Off by default,
  * and deliberately asymmetric with the Claude driver (which inherits ~/.claude
- * MCP servers) — see "Agent MCP inheritance" in CLAUDE.md.
+ * MCP servers) — see "Agent MCP inheritance is asymmetric" in lib/agents/CLAUDE.md.
  *
  * The short version: `codex exec` has no approver, so an inherited server's
  * tools are visible to the model but every call comes straight back as
