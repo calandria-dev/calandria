@@ -48,10 +48,11 @@ resolved against the live Cloudflare API.
 | Plugin | `cloudflare@cloudflare` installed at user scope; skills `cloudflare:cloudflare` and `cloudflare:wrangler` load. |
 | Account id | `365e44a751a27479fb20a7066ca874f7` ("Penmoid@gmail.com's Account"). Set as the `CLOUDFLARE_ACCOUNT_ID` repo **variable** (see GitHub row). |
 | `calandria.dev` zone | **`active`** — id `64c3202908d17e59c49e0959c789d7cd`, type full, Free plan, activated 2026-08-28T01:54:45Z on `clyde.ns.cloudflare.com` / `mona.ns.cloudflare.com`. Phase 1 console steps 1–3 are **done**; start at step 4. |
-| DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
-| Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
+| DNS records | **The zone started empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" had nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. Phase 1 wrote the two records: proxied `CNAME calandria.dev -> calandria-dev.pages.dev` (`128841acfe5f3487a2bf80948cddc942`) and the same for `www` (`6b35df01fcb54ba10e016af05042caaa`), CNAME-flattened at the apex. **The plan's "Cloudflare writes the flattened CNAMEs itself" is true of the DASHBOARD, not the API** — `POST /pages/projects/{p}/domains` registers the hostname with the project and nothing else, so an API-driven setup leaves the zone empty and the domain stuck `pending` forever. Same asymmetry Cloudflare documents for AI Gateway custom domains. |
+| Pages project | **`calandria-dev`**, created 2026-08-28T02:48Z — id `ad29e998-0664-4098-b03c-86d108922b24`, Direct Upload (no Git source), production branch `main`, `calandria-dev.pages.dev`. Custom domains `calandria.dev` and `www.calandria.dev` attached; Cloudflare issues their certificates itself (HTTP validation). |
 | MCP servers authorized | **All five** as of 2026-08-28: `cloudflare-docs` (public) plus OAuth grants for `cloudflare-api`, `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` — each verified with a live call from a task session. Only `cloudflare-api` (+ docs) is needed for a static Pages deploy. |
 | GitHub credentials | Secret `CLOUDFLARE_API_TOKEN` (2026-08-28T02:04Z) and repo **variable** `CLOUDFLARE_ACCOUNT_ID` (2026-08-28T02:28Z) are both set on `calandria-dev/calandria`; the workflow references `${{ secrets.CLOUDFLARE_API_TOKEN }}` and `${{ vars.CLOUDFLARE_ACCOUNT_ID }}`. The account id is targeting, not auth — wrangler can infer it from a token that sees one account, but a Pages-scoped token often can't list memberships, and in CI that fails as "mandatory to specify an account ID", so it is set explicitly. Token scopes are unverifiable from outside: a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. |
+| SSL/TLS mode | **Full (strict)** — set in phase 1 (it was `full`). |
 | Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses the repo credentials above as planned. |
 
 Authorizing an OAuth MCP server from an agent session on this headless host: run
@@ -120,24 +121,45 @@ optional step: check the registration date first (60-day ICANN lock), and wait
 `.github/workflows/website.yml`, and the hygiene items below. `website/README.md`
 is the working doc for phases 2 and 3.
 
-**Cloudflare side: still steps 4–6 above, unchanged.** The phase-1 session had
-the `cloudflare-api` MCP server and could read the account freely, but every
-WRITE was refused by the Claude Code auto-mode classifier (creating a Pages
-project, attaching a domain, editing a ruleset are all outward-facing changes to
-a live account). Nothing was created. State read from the API at the time, so
-the console steps can be checked against it:
+**Cloudflare side: steps 4–6 done**, through the `cloudflare-api` MCP server.
+Worth recording how, because it will come up again: reads went through freely,
+but every WRITE was refused by the Claude Code auto-mode classifier — creating a
+Pages project, attaching a domain and editing a ruleset are all outward-facing
+changes to a live account. Re-trying changed nothing. What unblocked it was the
+user authorizing the steps explicitly in the session; that is the affordance,
+not a retry.
 
-| Fact | Value |
+| Step | Done |
 |-|-|
-| Pages projects on the account | **none** — `calandria-dev` is still free |
-| `calandria.dev` zone | `active`, Free plan |
-| DNS records in the zone | **zero** — the apex still resolves to nothing |
-| SSL/TLS mode | **`full`, not `full` (strict)** — step 6 is a real change, not a confirmation |
+| 4a. Pages project | `calandria-dev`, id `ad29e998-0664-4098-b03c-86d108922b24`, Direct Upload (no `source`), production branch `main`, `calandria-dev.pages.dev` |
+| 4b. Custom domains | `calandria.dev` and `www.calandria.dev` attached, **plus the two proxied CNAMEs to `calandria-dev.pages.dev` written by hand** — the API does not create them the way the dashboard does (see the DNS row above). `calandria.dev` reached `active` with an `active` certificate ~4 minutes after the CNAME landed (`CN=calandria.dev`, Google Trust Services WE1, 2026-08-28 → 2026-11-26, chain verifies); `www` was still `pending` at the end of the session and should follow on its own |
+| 5. Redirect rule | Zone ruleset `970351bd62ac41659eb3d40dd57b0be4`, phase `http_request_dynamic_redirect`: `http.host eq "www.calandria.dev"` → 301 to `concat("https://calandria.dev", http.request.uri.path)`, query string preserved. A dynamic expression rather than a static `/$1` target, so path AND query survive |
+| 6. SSL/TLS | `full` → **`strict`** |
 
-Because no Pages project exists yet, the **Pages vs Workers static assets**
-decision recorded above is still open — the "revisit it before phase 1 creates
-the project" window has not closed. Switching now costs a `wrangler.jsonc` and
-one line of `website.yml`; switching after costs a migration.
+**The domains were attached BEFORE the first deployment**, which inverts the
+order this plan states. Deliberate, and the reason the ordering rule exists does
+not apply: the rule guards against a `.dev` hostname resolving to something
+without a trusted certificate, and Pages issues the certificate on attach, not
+on deploy. The first deploy can only come from CI on `main` (Direct Upload needs
+the upload-token JWT, which the MCP transport cannot send — no custom headers),
+so waiting would have meant the certificate had not even started provisioning
+when the site went live. What attaching early actually costs is a window where
+`calandria.dev` serves Cloudflare's "nothing here yet" placeholder over valid
+TLS — strictly better than the NXDOMAIN the repo's About link already pointed at.
+
+Verified at the end of phase 1, before any deployment existed: `calandria.dev`
+resolves to Cloudflare's proxy, presents a valid certificate, and answers **522**
+— "no origin", which is exactly what an empty Pages project should say. So the
+`.dev` certificate hazard this whole phase is ordered around is closed, and the
+only thing between here and a live site is the first `pages deploy` from CI on
+`main`. (Two ways to be misled while checking this: a resolver that negative-cached
+the apex before the record existed keeps returning NXDOMAIN — query `@1.1.1.1`
+directly — and `curl` reporting `000` is that cache, not a TLS failure.)
+
+The **Pages vs Workers static assets** decision recorded above is now **closed by
+default**: the project exists, so a switch is a migration
+(`wrangler.jsonc` with `assets.directory`, `pages deploy` → `wrangler deploy`,
+and the custom domains moved) rather than a config choice.
 
 What phase 1 learned, beyond the plan:
 
