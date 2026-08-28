@@ -51,7 +51,8 @@ resolved against the live Cloudflare API.
 | DNS records | **The zone is empty** — zero records on the Cloudflare side, and the outgoing DreamHost zone served nothing but SOA/NS (no A, MX, TXT, CAA, no `www`). So step 1's "note every existing record first" has nothing to preserve, and step 1's CAA hazard does not apply: there is no CAA record to block Cloudflare's issuance. `calandria.dev` currently resolves to nothing until Pages attaches the custom domain. |
 | Pages project name | **`calandria-dev` is free** — the account has no Pages projects at all. |
 | MCP servers authorized | `cloudflare-docs` (public, no OAuth) and `cloudflare-api` (OAuth, 2026-08-27). `cloudflare-bindings`, `cloudflare-builds`, `cloudflare-observability` are still unauthorized; none of them is needed for a static Pages deploy, so Phase 1 is not blocked on them. |
-| Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` repo secrets as planned. |
+| GitHub secrets | `CLOUDFLARE_API_TOKEN` is set on `calandria-dev/calandria` (2026-08-28T02:04Z); its scopes are unverifiable from outside, so a 403 on the first `pages deploy` means Account → Cloudflare Pages → Edit is missing. **`CLOUDFLARE_ACCOUNT_ID` is not set yet** — it is not a secret, so a repo variable is fine, but the workflow must reference whichever one is used. |
+| Local `wrangler` | Not installed on this host, so there are no local Cloudflare credentials to fall back on; the GitHub Actions deploy uses the repo credentials above as planned. |
 
 Authorizing an OAuth MCP server from an agent session on this headless host: run
 `script -qefc "claude mcp login '<server>'" /tmp/x.log` (the PTY is what the CLI
