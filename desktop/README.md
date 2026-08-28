@@ -62,7 +62,7 @@ inherited unchanged.
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
 | `test-supervisor.js` | 34 assertions over `supervisor.js` and `notifier.js` (plus two source checks on `main.js`'s wiring), against stub sidecars and a stub event stream. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
-| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
+| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). Three more files (`09`–`11`) run only under `CALANDRIA_DESKTOP_BENCH=1` on a machine with a real desktop session, and read their answers off the session bus and the window manager rather than out of Electron — see "On the bench" below and [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
 
 ## Tests
@@ -105,6 +105,9 @@ the second run mean something, and the suite enforces both:
 `e2e/06-packaged.spec.ts` is the only packaged-only spec — it asserts the
 payload the app booted from, the bundled Node the sidecars ran under, and how
 `chrome-sandbox` is packaged. It skips itself when `CALANDRIA_TEST_BIN` is unset.
+
+The `.deb`-install line below is the **bench lane's**, not CI's: what makes the
+sandbox work is the package's postinst, and only an install runs it.
 
 ```bash
 # unpacked: what CI does (electron-builder --dir has no SUID chrome-sandbox,
@@ -155,6 +158,51 @@ kernel without user namespaces. What both mechanisms produce — and
 `--no-sandbox` cannot — is a descendant process in its own user namespace, which
 is what the spec reads out of `/proc`. That difference only reproduces on a
 machine where the package was actually installed (docs/DESKTOP_E2E.md §4).
+
+### On the bench (native integration)
+
+Three more spec files run only with `CALANDRIA_DESKTOP_BENCH=1`, and only mean
+anything on a machine with a real logged-in desktop session — the Linux bench
+VM (docs/DESKTOP_E2E.md §5). Each reads what the app did from **outside** it:
+the session bus (`dbus-monitor`, `gdbus`) and the window manager's own EWMH
+properties (`xprop`). None of it is observable under `xvfb-run`, where there is
+no window manager, no notification daemon and no status area — and where every
+Electron-side read still answers cheerfully.
+
+| Spec | What only a real session can answer |
+|-|-|
+| `e2e/09-bench-notifications.spec.ts` | a parked turn's notification reaches a notification daemon, which accepts it and hands back an id |
+| `e2e/10-bench-tray.spec.ts` | the tray icon is registered with the panel, and its menu — read over `com.canonical.dbusmenu`, since `Tray` has no getter — carries the "N need you" count |
+| `e2e/11-bench-window.spec.ts` | minimize/restore, close-hides-without-quitting, and a second launch focusing the existing window, each paired with the WM's own `_NET_*` properties |
+
+```bash
+# on the bench, in the real session — note the absence of xvfb-run
+DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run test:desktop:window
+```
+
+Two things `e2e/bench.ts` does that are easy to get wrong by hand. It runs
+`desktop-bench-check` in every spec's `beforeAll` — asking only for the checks
+that file uses, so a dead status area does not fail the notification and window
+specs — because a session that lost a daemon would otherwise fail these as
+though the *shell* had regressed. And it
+takes the bus address from `~/.vnc/session-bus` and **ignores the inherited
+`DBUS_SESSION_BUS_ADDRESS`**, which over SSH points at the systemd user bus —
+a real bus with none of the session's daemons on it.
+
+`.github/workflows/desktop-bench.yml` is the lane: `workflow_dispatch` plus a
+nightly cron and, deliberately, no `pull_request` trigger at all — a self-hosted
+runner on a home network must not be reachable from a fork. It also installs the
+`.deb` and re-runs the whole window suite against `/opt/Calandria`, which is the
+un-flagged sandbox run `06-packaged.spec.ts` above is written for.
+
+**Known red as of 2026-08-28, for a session reason rather than a shell one.**
+xfce4-panel 4.18.4's built-in `systray` plugin crashes when Electron registers a
+status icon, taking `org.kde.StatusNotifierWatcher` off the bus with it — so the
+tray file cannot find the icon it is looking for. Measured with both tray
+assets, so it is not the image, and with a nine-line Electron app that does
+nothing but `new Tray(...)`, so it is not this shell. `registeredTrayItems()`
+recognises the empty name and says all of that in the failure message instead of
+letting it read as a missing tray.
 
 Traces are off for this suite (`playwright.desktop.config.ts`): Playwright's
 trace/video capture against a packaged Electron app is unreliable

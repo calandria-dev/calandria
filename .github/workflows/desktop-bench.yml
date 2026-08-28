@@ -1,0 +1,174 @@
+# The desktop lane's native-integration half, on the self-hosted bench VM.
+#
+# WHAT THIS RUNS THAT test.yml's `desktop` JOB CANNOT. That job is
+# GitHub-hosted `ubuntu-24.04` under `xvfb-run`, which is a bare X server: no
+# window manager, no notification daemon, no status-notifier host, and no way to
+# install a package. So four things the shell does natively are unassertable
+# there, and they are exactly what this lane adds — the same suite, the same
+# `desktop/e2e/fixtures.ts`, three extra spec files gated on
+# CALANDRIA_DESKTOP_BENCH, and a `.deb` that is really installed:
+#
+#   09-bench-notifications  a turn parking on a card reaches a notification daemon,
+#                           captured on the session bus with the daemon's reply
+#   10-bench-tray           the tray icon is registered with the panel, and its
+#                           menu (read over com.canonical.dbusmenu) tracks the
+#                           "N need you" count
+#   11-bench-window         minimize/restore, close-hides-not-quits, and a second
+#                           launch focusing the existing window — each paired with
+#                           the window manager's own EWMH properties
+#   the whole window suite  again, against /opt/Calandria from an installed .deb,
+#                           with CALANDRIA_DESKTOP_SANDBOX=1 so 06-packaged.spec.ts
+#                           asserts a live sandbox rather than admitting it is off
+#
+# WHY ITS OWN FILE RATHER THAN A JOB IN test.yml. A self-hosted runner on a home
+# network is a security decision, not a convenience: a workflow that triggers on
+# `pull_request` lets a fork execute arbitrary code on it, and the only
+# structural defence is a file that has no `pull_request` trigger AT ALL. An
+# `if:` on a job in test.yml would be one careless edit away from that, and
+# would also have to be kept in step with four other gate expressions. Here the
+# trigger list is two lines and the property is obvious on sight.
+# docs/DESKTOP_E2E.md §4 records the rest of the non-negotiables (ephemeral
+# registration, snapshot rollback, its own credentials, excluded from backups).
+#
+# WHAT THE RUNNER MUST PROVIDE, beyond the labels: a logged-in graphical session
+# on DISPLAY=:1 with the daemons `desktop-bench-check` asserts, and passwordless
+# `sudo dpkg` for the install step. Both come from the `desktop_bench` role in
+# ansible-orion — fix drift by re-running the playbook, not by hand.
+#
+# EXPECT `10-bench-tray` TO BE RED ON THE FIRST RUN, and read it before blaming
+# the shell. xfce4-panel 4.18.4's `systray` plugin crashes when Electron
+# registers a status icon (measured 2026-08-28, reproduced with a nine-line
+# Electron app), so the bench's status area disappears mid-launch and the tray
+# specs cannot find the icon. The spec says exactly that in its failure message.
+# The bench-side fix is tracked in infra-claude alongside registering this
+# runner; docs/DESKTOP_E2E.md §4 has the measurement.
+#
+# `04-db-lock` is red too as of 2026-08-28, and that one is NOT a bench fact —
+# it fails identically under `xvfb-run` on the hosted `desktop` job. A sidecar
+# that dies during boot shows two error dialogs where the spec expects one
+# (`main.js`'s `onExit` and `boot()`'s catch both fire, with no interlock).
+# Tracked separately.
+name: Desktop bench (native integration)
+
+on:
+  schedule:
+    # 03:37 UTC nightly. Off the top of the hour (GitHub queues scheduled
+    # workflows there) and clear of publish-image.yml's 09:23, so the two never
+    # contend. Nightly rather than weekly because this is the one lane whose
+    # substrate — a VM, a desktop session, a panel — can rot without anybody
+    # touching the repo.
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One VM, one session, one set of ports. A second run would fight the first over
+# the display, the tray and the instance ports it pins.
+concurrency:
+  group: desktop-bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: Desktop bench (Electron, real session)
+    # Belt and braces on top of the trigger list: a fork that leaves scheduled
+    # workflows enabled would otherwise queue this nightly against runner labels
+    # it does not have, and every run would sit pending rather than fail.
+    if: github.repository == 'calandria-dev/calandria'
+    runs-on: [self-hosted, linux, x64, desktop-bench]
+    # Two full passes of the window suite (dev shell, then the installed .deb)
+    # plus a `deb` build, on 4 vCPU of llvmpipe. Generous rather than tight: the
+    # runner is ours, so a timeout here buys nothing but a truncated log.
+    timeout-minutes: 90
+    env:
+      # The session the bench role starts, not a virtual one — no `xvfb-run`
+      # anywhere in this file, which is the single clearest difference from the
+      # `desktop` job in test.yml.
+      DISPLAY: ":1"
+      # Turns the three bench spec files on. Opt-in rather than probed: a lane
+      # that self-disables when the tray is missing could never catch a missing
+      # tray.
+      CALANDRIA_DESKTOP_BENCH: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No `cache: npm`. The runner is ephemeral with a snapshot rollback
+      # between jobs, so there is nothing for a cache key to hit and the cache
+      # would only be uploaded and thrown away.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+
+      # FIRST, before anything expensive. Every spec below assumes a real
+      # session; if the panel or dunst did not come up, they would fail as
+      # though the SHELL had regressed. This is the same check
+      # desktop/e2e/bench.ts runs in each spec's beforeAll — here it also puts
+      # the session's own account of itself (WM, GL renderer, node) at the top
+      # of the log.
+      - name: Assert the bench session is real
+        run: desktop-bench-check
+
+      - run: npm ci
+
+      # No `playwright install-deps` and no xvfb install, unlike the hosted
+      # desktop job: Chromium's shared libraries are part of the bench image
+      # (docs/DESKTOP_E2E.md §5), and a CI job on a machine Ansible owns should
+      # not be apt-installing behind the playbook's back.
+      - name: Build the app the shell serves
+        run: npm run build
+
+      - name: Install Electron
+        run: npm run desktop:install
+
+      # PASS ONE — the dev shell, on a real session. The same three scripts the
+      # hosted lane runs, minus `xvfb-run`, plus the bench specs.
+      - name: Run the desktop suite on the session
+        run: npm run test:desktop
+
+      # --- and now the artifact a user actually installs -------------------
+      #
+      # `deb` as well as `dir`, which the hosted lane deliberately stops short
+      # of: what makes the sandbox work is the package's postinst (an AppArmor
+      # profile, or the SUID bit on a kernel without user namespaces), and only
+      # an INSTALL runs it.
+      - name: Package the desktop app
+        working-directory: desktop
+        run: |
+          npm run payload -- --no-build
+          npx electron-builder --linux dir deb
+
+      - name: Install the .deb as a user would
+        run: sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
+
+      # PASS TWO — /opt/Calandria, with no CALANDRIA_REPO_ROOT (fixtures.ts
+      # deletes it) and no --no-sandbox. CALANDRIA_DESKTOP_SANDBOX=1 is what
+      # flips 06-packaged.spec.ts from "this lane admits the sandbox is off" to
+      # asserting a descendant really is in its own user namespace — the one
+      # assertion in this repo that needs an installed package.
+      #
+      # The supervisor and boot scripts are not repeated: they test process
+      # supervision, which the install does not change.
+      - name: Run the window suite against the installed package
+        env:
+          CALANDRIA_TEST_BIN: /opt/Calandria/calandria-desktop
+          CALANDRIA_DESKTOP_SANDBOX: "1"
+        run: npm run test:desktop:window
+
+      # Unconditional: a snapshot rollback makes this redundant on a healthy
+      # runner and load-bearing on one that is being debugged by hand, where a
+      # left-behind /opt/Calandria is a second Calandria on the box.
+      - name: Remove the package
+        if: always()
+        run: sudo dpkg -r calandria-desktop || true
+
+      - name: Upload desktop artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-bench-artifacts-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
