@@ -53,7 +53,7 @@ bridge, while a bridge would hand any XSS in the transcript renderer the whole
 Node API. External links open in the user's real browser.
 
 `supervisor.js` contains no `require("electron")`. That is not tidiness: it makes
-the risky half testable on a headless box (18 assertions, `node
+the risky half testable on a headless box (21 assertions, `node
 test-supervisor.js`, ~9 s, no display), and it means a later swap to Tauri or a
 tray-only launcher reuses it whole.
 
@@ -96,11 +96,11 @@ Electron's runtime flags.
 
 ## 4. What the prototype does — and what is unverified
 
-Working and tested (`desktop/test-supervisor.js`, 18 assertions; `desktop/test-real-boot.js`, 8):
+Working and tested (`desktop/test-supervisor.js`, 21 assertions; `desktop/test-real-boot.js`, 8):
 
 - Node resolution — `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH, with an actionable error naming everything it tried.
 - macOS launchd-PATH detection and repair from the login shell, fenced against rc-file chatter, `null` rather than a throw on failure.
-- Port selection that steps past a running instance and never hands both sidecars the same port.
+- Port selection that steps past a running instance and never hands both sidecars the same port, seeded from `PORT`/`PTY_PORT` when they are set (a preference — a busy one is still stepped past).
 - Readiness polling that insists on the app's own `/api/version` shape.
 - Quit → SIGTERM → the server's own `/api/instance/drain` → exit, with SIGKILL only as a backstop and a bounded wait so nothing outlives the window holding the db lock.
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported as "another Calandria is already running", not as a crash.

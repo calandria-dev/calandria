@@ -88,6 +88,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   "tests/importGraph.test.ts": [LEGACY_ENV], // one comment naming lib/env.mjs's job
   "lib/resolveHostname.js": [LEGACY_ENV], // hand-rolls the alias (plain-Node, can't import .mjs freely)
   "desktop/supervisor.js": [LEGACY_ENV], // ditto, for the desktop wrapper
+  "desktop/README.md": [LEGACY_ENV], //   documents that alias reaching the sidecars by inheritance
   "docs/SELF_HOSTING.md": [LEGACY_ENV, LEGACY_STORAGE, /orch-u-|-p orch-|\/home\/orch\b/],
   "docs/SERVICES.md": [/ORCH_PUBLIC_HOST/], // injected into services forever; not deprecated
   "lib/services.ts": [/ORCH_PUBLIC_HOST/], // the injection site
