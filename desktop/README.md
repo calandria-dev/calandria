@@ -22,8 +22,8 @@ npm start
 ```
 
 The window shows a boot log until the server answers `/api/version`, then loads
-the app. Quitting drains in-flight turns before exiting (SIGTERM →
-`/api/instance/drain`), the same way stopping the server from a terminal does.
+the app. Quitting drains in-flight turns before exiting (`/api/instance/drain` →
+SIGTERM), the same way stopping the server from a terminal does.
 
 Env it understands:
 
@@ -45,10 +45,10 @@ inherited unchanged.
 | `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling, drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
 | `main.js` | Electron main: one window, an application menu, external links to the real browser, and quit-drains-first. No preload, no IPC, no `nodeIntegration`. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 21 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
+| `test-supervisor.js` | 24 assertions over `supervisor.js` (plus one source check on `main.js`'s port wiring), against stub sidecars. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, quit-drains-in-flight-work, and one smoke path through the app inside the window. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). See [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
-| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
+| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
 
 ## Tests
 
@@ -93,11 +93,13 @@ helper to be missing, so the flag would only weaken what those lanes test.
 `e2e/05-windows-quit.spec.ts` is win32-only and skips itself elsewhere. It
 covers what happens when something *outside* the app ends it — a plain
 `taskkill` runs `before-quit` and the sidecars go with the shell; `taskkill /F`
-without `/T` is a `TerminateProcess` that orphans them. What no test here covers
-is a real Windows shutdown or logout, where `before-quit`/`will-quit` are not
-emitted at all. Relatedly, `03-quit-drain.spec.ts`'s database assertion is
-marked `test.fail()` on Windows: there is no deliverable SIGTERM, so
-`supervisor.stop()` terminates `server.js` before it can drain.
+without `/T` is a `TerminateProcess` that orphans them. `03-quit-drain.spec.ts`'s
+database assertion no longer needs a Windows exception: `supervisor.stop()`
+POSTs `/api/instance/drain` itself and waits for it before it ever sends the
+kill, so the turn is settled whether or not the platform can deliver a signal,
+and the assertion holds everywhere. What no test here covers is a real Windows
+shutdown or logout, where `before-quit`/`will-quit` are not emitted at all — a
+`session-end` listener does not exist yet, and nothing drains until it does.
 
 One environment gotcha it handles for you, worth knowing if you run the shell by
 hand on a headless box: `Notification.permission` is `granted` in Electron

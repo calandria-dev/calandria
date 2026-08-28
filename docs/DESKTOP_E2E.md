@@ -72,7 +72,7 @@ The harness was `desktop/test-window.js`; it is now the suite in
 | **A packaged build passes the same assertions** (not re-run on landing) | `electron-builder --linux dir` (282 MB out) → `CALANDRIA_TEST_BIN=…/calandria-desktop`: identical run, app URL at **1353 ms**. The harness takes the artifact or the dev shell through one switch. |
 | **Electron's own `--headless` is not a substitute for Xvfb** | Same app without a display and `--headless`: the process dies with **SIGTRAP** before the CDP socket settles. Xvfb (or a real session) is mandatory, not a preference. |
 | **Native notifications are assertable headlessly** (not re-run on landing) | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. |
-| **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** *(170 ms on the 2026-08-27 re-run)* and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → SIGTERM → drain, asserted end to end. |
+| **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** *(170 ms on the 2026-08-27 re-run)* and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → drain → SIGTERM, asserted end to end. |
 | **The single-instance lock is observable** | A second `electron.launch()` against the same app failed to launch in **64–73 ms** *(109 ms on the re-run)* rather than starting a second server — `requestSingleInstanceLock()` doing its job, visible to the harness as a rejected launch. |
 | **The hermetic instance transfers unchanged** | `supervisor.js`'s `sidecarEnv()` forwards its own environment to both sidecars, so `e2e/env.ts`'s `SERVER_ENV` shape (temp `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`, pinned gitconfig, `CALANDRIA_E2E_MOCK_AGENT=1`) works as-is through `electron.launch({ env })`. No agent CLI, login or network is involved, exactly as in the browser suite. |
 | **`chrome-sandbox` needs `--no-sandbox` from an unpacked dir** | As `DESKTOP_APP.md` §5 predicted. A packaged `.deb`/AppImage installs the SUID bit; the `--dir` output does not, so the harness passes `--no-sandbox` and a **packaged-install** test must not. |
@@ -164,18 +164,20 @@ What the landed lane pins, beyond re-running the shared specs:
 `desktop/e2e/05-windows-quit.spec.ts` (win32-only) asserts that a plain
 `taskkill` runs `before-quit` and takes the sidecars with it, and that
 `taskkill /F` without `/T` orphans them — which is why the suite's own teardown
-backstop uses `/T`. `03-quit-drain.spec.ts`'s database assertion is marked
-`test.fail()` on Windows rather than skipped: the drain really does not happen
-there, and an expected failure that starts passing turns the lane red the day
-the shell learns to POST `/api/instance/drain` before killing, forcing the
-annotation off in the same change. `desktop/test-supervisor.js` branches rather
-than skips on the same three POSIX-semantics cases (`stop()`'s drain, the
-SIGKILL escalation, `needsPathRepair`), and adds the two Windows behaviours
-worth naming: `sidecarEnv()` filling in a `SHELL` from `COMSPEC` (falling back
-to `powershell.exe`, never overwriting an inherited one), and the sidecars being
-a bare `node <script>` spawn carrying `NODE_ENV` in the env object — no
-`NODE_ENV=x` prefix for `cmd.exe` to read as a program name, no shell in
-between.
+backstop uses `/T`. `03-quit-drain.spec.ts`'s database assertion no longer
+carries the `test.fail()` annotation it used to on Windows: the supervisor now
+POSTs `/api/instance/drain` and waits for it before it ever sends the kill, so
+the drain happens whether or not the platform can deliver a signal, and the
+assertion holds on every runner in the matrix. `desktop/test-supervisor.js`
+branches rather than skips on the same three POSIX-semantics cases (`stop()`'s
+drain, the SIGKILL escalation, `needsPathRepair`), and adds the two Windows
+behaviours worth naming: `sidecarEnv()` filling in a `SHELL` from `COMSPEC`
+(falling back to `powershell.exe`, never overwriting an inherited one), and the
+sidecars being a bare `node <script>` spawn carrying `NODE_ENV` in the env
+object — no `NODE_ENV=x` prefix for `cmd.exe` to read as a program name, no
+shell in between. Neither spec can cover the one case that matters most on
+Windows: a real shutdown or logout emits neither `before-quit` nor `will-quit`
+at all, so nothing drains, and no `session-end` listener exists yet to catch it.
 
 **Self-hosted runners on a public repo are a security decision, not a
 convenience.** A fork PR can execute arbitrary code on a self-hosted runner, and
@@ -232,6 +234,12 @@ would install it, SUID sandbox and all.
 3. Provision the bench VM and register the gated ephemeral runner.
 4. Add `electron-builder` packaging, then point the same suite at the artifact.
 5. ~~Windows lane.~~ **Done** — the `windows-desktop` job, GitHub-hosted, with
-   `05-windows-quit.spec.ts` for the `taskkill` paths. The drain gap it pins is
-   its own task ("Desktop shell: drain in-flight turns on quit under Windows").
+   `05-windows-quit.spec.ts` for the `taskkill` paths. ~~The drain gap it pins is
+   its own task ("Desktop shell: drain in-flight turns on quit under Windows").~~
+   That task landed too: `supervisor.stop()` POSTs the drain over HTTP before it
+   kills, so it no longer depends on a deliverable SIGTERM, and
+   `03-quit-drain.spec.ts`'s `test.fail()` came off with it. What neither spec
+   covers, and has no task yet, is the OS session-end path
+   (`WM_QUERYENDSESSION`/`WM_ENDSESSION`), where Electron emits no quit event at
+   all.
 6. macOS lane. Waits for packaging.
