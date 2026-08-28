@@ -152,6 +152,34 @@ the real OS-shutdown path. And GitHub-hosted minutes are free for a public repo
 $0.062 on a 3-vCPU M1) — so the argument for a self-hosted runner here is
 capability and watchability, never cost.
 
+**The lanes do not agree on how big the window is, and a product assertion can
+turn on it.** The browser suite pins a viewport; this one cannot, because a real
+OS window is half of what it exists to prove — so the renderer lays out at
+whatever the runner's display allows. The hosted macOS and Windows runners have
+a 1024x768 virtual display and clamp `main.js`'s requested 1440x900 down to fit
+it; `xvfb-run`'s screen is larger and there is no window manager to clamp
+anything, so the ubuntu lane really does get 1440x900. That gap cost a full
+debugging round on PR #54: at 1024 the app's three fixed columns (236 + 352 +
+430) left the transcript ~4px, so 02-smoke's streamed message was laid out at
+zero width — present in the DOM and in the accessibility snapshot, `hidden` to
+`toBeVisible`, and identically red on both real-window-manager lanes. The
+product side is fixed (the rail now yields to a floor under the transcript,
+`SESS_MAIN_MIN`) and pinned Linux-side by a 1024x768 case in
+`e2e/03-views.spec.ts`, so the desktop lane is no longer the only thing standing
+between that layout rule and a release. There was a **second** narrow-window
+defect behind it, which CI could not have shown: this file runs `serial`, so the
+terminal spec after the transcript one was skipped rather than run, and the
+1024x768 window is short as well as narrow — with the drawer taking 300 of 716
+rows, `.tc-scroll`'s incompressible 40px `padding-bottom` overhung the drawer's
+button bar and swallowed the clicks on it. Reproduce both locally rather than by
+pushing: `xvfb-run -a -s "-screen 0 1024x768x24"` with `openbox` running inside
+it clamps the window to 1022x716 exactly as a hosted runner's WM does, and
+without a window manager Xvfb clamps nothing, which is precisely why the ubuntu
+lane cannot see any of this. What remains is a reading habit: a
+desktop spec that fails on the windowed lanes and passes under Xvfb is a size
+question until something rules it out, which is why `attachShellLog` now appends
+the window's content bounds and the display's size to every failure it attaches.
+
 **Why the Windows lane is hosted rather than the homelab's VM 9911.** The
 deciding question is what a real logged-in session buys, and on Windows the
 answer is nothing this suite asserts. A hosted `windows-latest` runner has a
