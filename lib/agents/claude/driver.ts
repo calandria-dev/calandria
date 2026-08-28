@@ -240,7 +240,7 @@ const TEXT_ONE_SHOT = {
 function calandriaServer(
   project: Project,
   task: Task,
-  onSuggest: (s: { title: string; projectId: string }) => void,
+  onSuggest: (s: { title: string; projectId: string; taskId: string }) => void,
   onExpose: (info: { name: string; url: string }) => void,
   // Injected, never imported: see TurnHooks in lib/agents/types.ts for why this
   // file must not name lib/autoStart.ts. Absent = nothing to notify (a driver
@@ -313,7 +313,7 @@ function calandriaServer(
           // A null task = the project was deleted mid-turn; `text` already says so.
           if (created) {
             rememberSuggestedTitle(createdByTitle, target.project.id, args.title, created.id);
-            onSuggest({ title: args.title, projectId: target.project.id });
+            onSuggest({ title: args.title, projectId: target.project.id, taskId: created.id });
           }
           return { content: [{ type: "text", text }] };
         }
@@ -943,7 +943,7 @@ async function* runTurn(
           // suggestion is already committed, and holding it until the turn ends
           // would keep the receiving tray stale for as long as the turn runs —
           // hours, if it parks on a question.
-          ({ title, projectId }) => queue.push({ type: "suggested", title, projectId }),
+          ({ title, projectId, taskId }) => queue.push({ type: "suggested", title, projectId, taskId }),
           ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
           hooks
         ),
@@ -1156,7 +1156,10 @@ async function* runTurn(
               if (block.name === "AskUserQuestion") continue;
               const { title, detail, peek, diff, resultKind, file } = describeToolUse(block.name, block.input as Record<string, unknown>);
               if (resultKind) resultKinds.set(block.id, resultKind);
-              queue.push({ type: "tool", id: block.id, title, detail, peek, diff, file });
+              // The tool's own name travels with the row: the runner matches
+              // on it to settle a suggestion card onto a suggest_task call, and
+              // the title it would otherwise have to match is human prose.
+              queue.push({ type: "tool", id: block.id, name: block.name, title, detail, peek, diff, file });
             }
           }
         } else if (message.type === "user") {

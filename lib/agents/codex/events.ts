@@ -162,11 +162,11 @@ function mapItem(phase: ItemPhase, item: ThreadItem, state: CodexMapState): Stre
 function toolOnce(
   state: CodexMapState,
   id: string,
-  fields: { title: string; detail: string; peek?: ToolPeek; file?: string }
+  fields: { name?: string; title: string; detail: string; peek?: ToolPeek; file?: string }
 ): StreamEvent {
   if (state.emittedTool.has(id)) return EMPTY;
   state.emittedTool.add(id);
-  return { type: "tool", id, title: fields.title, detail: fields.detail, peek: fields.peek, file: fields.file };
+  return { type: "tool", id, name: fields.name, title: fields.title, detail: fields.detail, peek: fields.peek, file: fields.file };
 }
 
 // A "no event" marker used by toolOnce; filtered by nonEmpty(). Kept as a typed
@@ -234,7 +234,11 @@ function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): 
   // driver skipping AskUserQuestion tool_use blocks).
   if (item.server === "calandria" && item.tool === "ask_user") return [];
   const out: StreamEvent[] = [];
-  const tool = toolOnce(state, item.id, { title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
+  // `server__tool` is this driver's spelling of the tool's own name — the
+  // Claude driver's in-process mount spells the same call
+  // `mcp__calandria__suggest_task`. What matches on it (lib/suggestionCard.ts)
+  // matches a substring for exactly that reason.
+  const tool = toolOnce(state, item.id, { name: `${item.server}__${item.tool}`, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed") {
     const isError = item.status === "failed" || !!item.error;
