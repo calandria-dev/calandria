@@ -17,7 +17,7 @@ row must be fast and must not undo anything.
 
 ```bash
 #!/usr/bin/env bash
-# scripts/bootstrap.sh — make a bare checkout runnable. Safe to re-run.
+# scripts/bootstrap.sh: make a bare checkout runnable. Safe to re-run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,7 +27,7 @@ fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "created .env from .env.example — fill in the secrets it marks"
+  echo "created .env from .env.example, fill in the secrets it marks"
 fi
 
 # Cheap when already satisfied: npm ci is not, `npm ls` first is.
@@ -55,7 +55,7 @@ the instruction file, stated as a precondition rather than a suggestion:
 ## First run in a fresh checkout
 
 This repo is developed in parallel git worktrees, so a checkout starts with
-tracked files only — no `node_modules`, no `.env`. Run `npm run bootstrap`
+tracked files only: no `node_modules`, no `.env`. Run `npm run bootstrap`
 before anything else; it is idempotent, so run it if you are unsure.
 ```
 
@@ -64,7 +64,7 @@ other's. If the repo has one and might see the other agent, add a stub:
 
 ```markdown
 <!-- AGENTS.md -->
-See [CLAUDE.md](./CLAUDE.md) — the instructions there apply to any agent.
+See [CLAUDE.md](./CLAUDE.md) for the instructions; they apply to any agent.
 ```
 
 Keep the real content in one file and point the other at it. Two copies of the
@@ -85,7 +85,7 @@ port = int(os.environ.get("PORT", 8000))
 
 Then record it in `.env.example` (`PORT=3000`) so the default is discoverable
 without reading source. If the repo runs several listeners, give each its own
-variable (`API_PORT`, `WEB_PORT`) rather than deriving offsets from one — an
+variable (`API_PORT`, `WEB_PORT`) rather than deriving offsets from one. An
 offset scheme collides again as soon as two worktrees pick nearby bases.
 
 Under Calandria an agent that starts a server itself gets no injected `PORT`,
@@ -130,7 +130,7 @@ services:
       - "${WEB_PORT:-3000}:3000"     # host side variable, container side fixed
 ```
 
-Named volumes need no change once the project name differs — Compose prefixes
+Named volumes need no change once the project name differs. Compose prefixes
 them with it.
 
 If the repo's stack includes something heavy and genuinely shareable (a
@@ -163,12 +163,12 @@ Any script, hook or tool config that touches git internals:
 
 ```bash
 git rev-parse --git-dir          # this worktree's private git dir
-git rev-parse --git-common-dir   # the shared one — refs, objects, config
+git rev-parse --git-common-dir   # the shared one: refs, objects, config
 git rev-parse --git-path hooks   # let git resolve a specific path
 ```
 
-Pick deliberately: `--git-common-dir` for anything that should be one value for
-the whole repo (a project identity, a cache key, shared hooks),
+Decide which one you need: `--git-common-dir` for anything that should be one
+value for the whole repo (a project identity, a cache key, shared hooks),
 `--git-dir` for anything private to this checkout. Literal `.git/...` is wrong
 in a worktree either way, and inside a container it can't resolve at all.
 
@@ -184,7 +184,7 @@ global hooks in their main repo.
 The failure is an example that was complete once. Make it checkable:
 
 ```bash
-# scripts/check-env-example.sh — fails if code reads a var the example omits
+# scripts/check-env-example.sh: fails if code reads a var the example omits
 missing=$(git grep -hoE 'process\.env\.[A-Z0-9_]+' -- 'src/**' \
   | sed 's/process\.env\.//' | sort -u \
   | while read -r v; do grep -qE "^#? *$v=" .env.example || echo "$v"; done)
@@ -192,5 +192,5 @@ missing=$(git grep -hoE 'process\.env\.[A-Z0-9_]+' -- 'src/**' \
 ```
 
 Wire it into CI and it stays true. Without something like this the example
-drifts, and the drift only shows up on someone's first day — or on a fresh
-worktree's first turn, which is now the same thing several times a day.
+drifts, and the drift only shows up on someone's first day, or on a fresh
+worktree's first turn, which now happens several times a day.

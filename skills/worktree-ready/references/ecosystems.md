@@ -24,7 +24,7 @@ do, and one hand-rolled technique exists for a third.
 | Manager | Per-worktree cost | Safe sharing |
 |-|-|-|
 | npm / yarn | Full `node_modules` install, commonly 300MB–1GB | None supported |
-| pnpm | Near-zero with a global virtual store | Yes — supported and documented |
+| pnpm | Near-zero with a global virtual store | Yes, supported and documented |
 | bun | Full install, fast | None specific |
 
 pnpm's global virtual store is the one first-class answer in this whole
@@ -36,8 +36,8 @@ virtualStoreType: global
 
 (`enableGlobalVirtualStore: true` on pnpm before 11.23.) Each worktree still
 gets its own real `node_modules` directory, so different branches can hold
-different dependency versions — the contents are just links into one
-content-addressable store. Migrating npm → pnpm for this reason alone is a
+different dependency versions; the contents are just links into one
+content-addressable store. Migrating npm to pnpm for this reason alone is a
 legitimate recommendation for a repo that expects many worktrees, but it's a
 real migration and it's the user's call.
 
@@ -53,14 +53,14 @@ an install run inside the worktree walks up, finds the parent workspace, and
 re-points symlinks in the *parent's* `node_modules` into the worktree's store.
 Delete the worktree later and the main checkout's build breaks with resolver
 errors that have nothing to do with what you changed; the only fix is a full
-`rm -rf node_modules && install`. Keep worktrees outside the repo — Calandria
-already does.
+`rm -rf node_modules && install`. Keep worktrees outside the repo, as
+Calandria already does.
 
 ## Python
 
 | Manager | Per-worktree cost | Safe sharing |
 |-|-|-|
-| uv | Seconds — content-addressed cache, hardlinks into `.venv` | Automatic |
+| uv | Seconds; content-addressed cache, hardlinks into `.venv` | Automatic |
 | pip + venv | Full download+build per worktree | None |
 | poetry | Venv per project path under `~/.cache/pypoetry` | Per-path, so no reuse but no conflict either |
 | pipenv | Similar to poetry | Same |
@@ -74,11 +74,10 @@ time.
 Nothing to do. `GOMODCACHE` (module downloads) and `GOCACHE` (build cache) are
 both content-addressed, global by default, and safe across worktrees.
 
-One caveat worth knowing: tools layered *on* the build cache can leak absolute
-paths from whichever checkout populated an entry — golangci-lint has an open
-issue where cached findings come back pointing at a stale worktree path. If
-lint results look impossible, clear that tool's own cache before believing
-them.
+One caveat: tools layered *on* the build cache can leak absolute paths from
+whichever checkout populated an entry. golangci-lint has an open issue where
+cached findings come back pointing at a stale worktree path. If lint results
+look impossible, clear that tool's own cache before believing them.
 
 ## Rust
 
@@ -87,8 +86,8 @@ gigabytes.
 
 Two obvious fixes both fail:
 
-- A shared `CARGO_TARGET_DIR` runs into Cargo's build lock — only one build at
-  a time across every worktree sharing it, so a background agent's build blocks
+- A shared `CARGO_TARGET_DIR` runs into Cargo's build lock: only one build at a
+  time across every worktree sharing it, so a background agent's build blocks
   a human's.
 - `sccache` includes the working directory in its cache key, so worktrees miss
   each other by construction. `--remap-path-prefix` doesn't rescue it, since
@@ -96,8 +95,8 @@ Two obvious fixes both fail:
 
 What has been made to work is hardlinking the *immutable dependency* artifacts
 (not workspace-crate output) plus their `.fingerprint` entries between
-worktrees — a hand-rolled script, not a Cargo feature. Worth mentioning as an
-option; don't present it as a standard practice.
+worktrees, using a hand-rolled script rather than a Cargo feature. Mention it
+as an option; don't present it as standard practice.
 
 ## JVM
 
@@ -112,12 +111,12 @@ Nothing to change in most repos.
 
 Default RubyGems home is global and versioned, so it's safe to share. If the
 repo sets `bundle config path vendor/bundle`, every worktree pays a full
-install — check whether that setting is still earning its keep.
+install. Check whether that setting is still earning its keep.
 
 ## PHP
 
 `vendor/` is per-worktree with no sharing mechanism. Composer additionally
-**cannot detect the root package version from a linked worktree** — `.git` is a
+**cannot detect the root package version from a linked worktree**: `.git` is a
 file, so version detection falls back to `1.0.0`, which quietly changes
 constraint resolution. Setting `COMPOSER_ROOT_VERSION`, or a `version` field in
 `composer.json`, is the standard escape hatch for that class of failure; verify
@@ -126,7 +125,7 @@ it on the repo rather than assuming.
 ## .NET
 
 `~/.nuget/packages` is global and safe. `bin/` and `obj/` are per-worktree and
-path-sensitive — that's inherent to MSBuild. SDK and toolchain installs are the
+path-sensitive; that's inherent to MSBuild. SDK and toolchain installs are the
 genuinely unsolved part: on large projects they're shared but unversioned, so
 two worktrees needing different toolchain versions clobber each other, and a
 `make clean` in one can delete what another is using. There's no shipped fix;
@@ -134,7 +133,7 @@ name it as a risk rather than proposing a workaround.
 
 ## Docker
 
-Every worktree's compose stack collides by default — project name, container
+Every worktree's compose stack collides by default: project name, container
 names, published ports, and named volumes. One variable fixes most of it:
 
 ```bash
@@ -158,7 +157,7 @@ Tool-specific, and the one area with no general rule:
 
 - **Turborepo** now detects worktrees and shares the main worktree's cache
   automatically. If a cached artifact embeds an absolute path, that's wrong
-  across worktrees — setting an explicit `cacheDir` in `turbo.json` opts out
+  across worktrees; setting an explicit `cacheDir` in `turbo.json` opts out
   and isolates them. Older versions had the opposite behavior (cache misses
   purely from the differing path), so check the installed version rather than
   assuming either.
@@ -167,4 +166,4 @@ Tool-specific, and the one area with no general rule:
 - Anything keying a cache on **project identity** should key on
   `git rev-parse --git-common-dir`, which is identical across every worktree of
   one repo. Keying on `--git-dir`, or on the checkout path, fragments state per
-  worktree — a real bug shipped in at least one coding agent.
+  worktree; this is a real bug that shipped in at least one coding agent.
