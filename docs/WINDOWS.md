@@ -23,6 +23,17 @@ that `better-sqlite3` installed from its **prebuilt** win32 binary rather than c
 with the runner's MSVC — a node-gyp fallback would pass green here while failing for
 every user who doesn't have Visual Studio build tools, so it fails the job instead.
 
+That assertion is bounded by the Node it runs on, and every lane takes its version from
+`.nvmrc` (22). So CI proves a prebuild exists **for the Node this repo pins**, and cannot
+prove one exists for whatever a user installed — which is the failure a real desktop found
+first: Node 26 from `nodejs.org`, no `better-sqlite3` binary for its ABI, and the silent
+node-gyp fallback dying in MSVC. Widening the matrix to every live Node line is not free
+(each is a second full Windows install and suite run), so the answer is
+[the troubleshooting entry](TROUBLESHOOTING.md#native-windows) plus keeping `better-sqlite3`
+current enough that its own `engines` range covers the Node people actually have — under this
+repo's `engine-strict=true`, that range is what refuses an unsupported Node up front, with a
+one-line error instead of a compiler wall.
+
 A second `windows-latest` job runs the **end-to-end suite** — the same Playwright specs the
 Ubuntu lane runs, gated by the same expression rather than a schedule of its own, so it
 fires on main, on manual dispatch, and on a pull request carrying the `e2e` label. Its own
