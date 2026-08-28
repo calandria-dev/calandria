@@ -83,6 +83,13 @@ for (const v of [
   delete process.env[v];
 }
 
+// Hermetic idle behavior: CALANDRIA_TURN_IDLE_NUDGE is read at import time by
+// lib/config.ts and decides whether an idle turn is TOLD it went quiet, which
+// injects a message and writes a transcript line. A developer who set it in
+// their shell would otherwise flip tests/turnIdle.test.ts's default-off case.
+// The test that needs it on mocks the config module rather than setting it here.
+delete process.env.CALANDRIA_TURN_IDLE_NUDGE;
+
 // Hermetic agent config: CODEX_INHERIT_MCP is read at import time by
 // lib/config.ts and flips whether the Codex driver unmounts the user's own MCP
 // servers, so a developer who set it in their shell would otherwise invert
