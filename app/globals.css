@@ -443,6 +443,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task .tdesc{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.42;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .task-foot{display:flex;align-items:center;gap:8px;margin-top:9px;}
 .task-foot .activity{font-family:var(--mono);font-size:10px;color:var(--ink-3);display:flex;align-items:center;gap:5px;}
+.task-foot .activity.idle{color:var(--amber);}
 .task-foot .spacer{flex:1;}
 
 /* Board-card / task-row diff footer: worktree branch, +N/-N, sparkline. Shared
@@ -704,6 +705,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-act{font-family:var(--mono);font-size:9.5px;color:var(--ink-4);letter-spacing:.02em;display:flex;align-items:center;gap:5px;}
 .bc-act.on{color:var(--accent);}
 .bc-act.need{color:var(--rev);}
+/* A live turn that has produced nothing for a long while (lib/turnActivity.ts).
+   Amber, not red: nothing is wrong yet and nothing has been stopped — it is a
+   "go and look" cue that must not outshout the "needs you" state above it. */
+.bc-act.idle{color:var(--amber);}
+.idle-note{color:var(--amber);font-style:italic;}
 /* indeterminate "working" scanner under a live card's meta row */
 .bc-bar{height:2px;border-radius:2px;background:var(--line-2);margin-top:9px;overflow:hidden;}
 .bc-bar i{display:block;height:100%;width:40%;border-radius:2px;background:var(--accent);animation:bscan 2.2s ease-in-out infinite;}

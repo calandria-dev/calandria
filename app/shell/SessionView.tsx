@@ -14,6 +14,7 @@ import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { isQueuedStart, resetClock } from "./queuedStart";
+import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
@@ -350,6 +351,12 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;
   const awaiting = isAwaiting(task);
+  // Live but silent for a long stretch (./idleTurn.ts). The transcript is the
+  // one surface that can say WHY nobody should be surprised — the turn is open,
+  // the model just isn't producing — so the age goes beside the typing dots and
+  // the held-open notice rather than into a banner of its own.
+  const idleTurn = isIdleTurn(task, running) && !awaiting;
+  useIdleClock(idleTurn);
   const stableAnswer = useStableHandler(onAnswer);
   const stableDecidePermission = useStableHandler(onDecidePermission);
   const stableCancelQueued = useStableHandler(onCancelQueued);
@@ -534,9 +541,15 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             // the session is held open for run_in_background work — say so, or
             // the dots promise imminent output that may be minutes away.
             task.background_pending ? (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It continues on its own when that settles.` : "Working in background: the session stays open and continues when the task finishes."}</span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It continues on its own when that settles.` : "Working in background: the session stays open and continues when the task finishes."}</span>{idleTurn && <span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span>}</div></div>
             ) : (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span className="typing"><i /><i /><i /></span></div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body">{idleTurn
+                // The dots keep promising output. After this long they are the
+                // wrong promise on their own, so the gap goes next to them —
+                // without removing them, because the turn genuinely is still
+                // live and may simply be inside a long tool call.
+                ? <><span className="typing"><i /><i /><i /></span><span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span></>
+                : <span className="typing"><i /><i /><i /></span>}</div></div>
             )
           )}
           {/* Follow-ups queued mid-turn, pinned below the live turn — they

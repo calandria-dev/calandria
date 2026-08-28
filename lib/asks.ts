@@ -89,6 +89,19 @@ export function submitAnswer(taskId: string, id: string, answers: AskAnswers): b
 }
 
 /**
+ * Whether anything is parked on the user for this task right now — a question
+ * card or a tool-permission prompt, both of which park here. `awaiting_input`
+ * on the task row says the same thing and is what every UI reads, but this is
+ * the registry the waiter actually lives in, so it is true for the instant
+ * between a gate parking and the runner persisting the flag. The idle sweep
+ * (lib/turnActivity.ts) checks both, because a waiting-on-you turn produces no
+ * transcript activity either and must never be marked idle for it.
+ */
+export function hasOpenAsk(taskId: string): boolean {
+  return (registry().get(taskId)?.size ?? 0) > 0;
+}
+
+/**
  * Settle a parked ask WITHOUT an answer — the waiter's promise rejects with
  * `reason` and the entry is removed, so a late submitAnswer reports nothing
  * waiting. Used by the permission gate to expire a prompt nobody answered

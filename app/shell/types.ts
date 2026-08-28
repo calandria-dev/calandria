@@ -54,6 +54,7 @@ export interface TaskRow {
   awaiting_input: number;
   background_pending: number; // 1 while a live turn lingers on run_in_background work — "working in background", never "needs you"
   background_note: string; // what the linger is waiting on ("waiting to wake at 12:00"); '' when not lingering
+  idle_since?: number; // a live turn that has produced nothing since this instant (ms epoch; absent/0 = fine) — see ./idleTurn.ts
   position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the tag strip numbers its steps by it
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task

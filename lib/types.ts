@@ -585,7 +585,7 @@ export type AgentAuthEvent = {
 // and the "N need you" pill live for tasks whose transcript stream isn't open.
 export type GlobalTaskEvent = {
   type: "task";
-  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end" | "background";
+  event: "turn_started" | "awaiting_input" | "ask_answered" | "suggested" | "turn_end" | "background" | "turn_idle";
   taskId: string;
   projectId: string;
   running: boolean;
@@ -602,6 +602,14 @@ export type GlobalTaskEvent = {
    * only learned running/awaiting_input would draw the row as still working.
    */
   unread_run_at: number;
+  /**
+   * When this task's live turn last produced anything, once it has been quiet
+   * long enough to be worth reporting (ms epoch; 0 = not idle, or not running).
+   * A mark, never a deadline — see lib/turnActivity.ts. It is an INSTANT rather
+   * than an age so the client can grow the label against its own clock without
+   * the server re-publishing every minute.
+   */
+  idle_since: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
   /**

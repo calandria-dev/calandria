@@ -1,4 +1,5 @@
 import { getTask, countAwaiting } from "@/lib/store";
+import { turnIdleSince } from "@/lib/turnActivity";
 import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
 
@@ -45,6 +46,13 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
     // tool. The payload below can't carry those, so the client refetches on it.
     case "task_edited":
       return "task_edited";
+    // A live turn went quiet, or started talking again after having done so
+    // (lib/turnActivity.ts). Coarse for the same reason the linger boundary is:
+    // the payload is a snapshot, `idle_since` on it says which side this is, and
+    // the transcript detail that would otherwise tell a client the turn is alive
+    // deliberately never reaches this stream.
+    case "turn_idle":
+      return "turn_idle";
     default:
       return null;
   }
@@ -156,6 +164,14 @@ export async function GET(req: Request) {
           // on the turn_end it already receives, instead of leaving it under
           // "In progress" until something refetches the list.
           unread_run_at: t.unread_run_at ?? 0,
+          // When this task's live turn last produced anything, once it has been
+          // quiet long enough to be worth saying (0 otherwise). Read off the
+          // in-memory registry rather than the row: it is turn state, not task
+          // state, and persisting it would move `updated_at` — the board's sort
+          // key — every time a task went QUIET, floating the silent ones to the
+          // top. Carried on every task payload, not just the turn_idle one, so
+          // any event a client receives re-settles the mark.
+          idle_since: turnIdleSince(taskId),
           awaiting_count: countAwaiting(t.project_id),
           // A suggestion can be filed into a project other than the one the
           // turn runs in, and then every field above describes the WRONG

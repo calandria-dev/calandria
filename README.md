@@ -66,6 +66,17 @@ reports every pending wakeup as cancelled at the end of the turn. A message
 you send while a session is lingering goes straight in and starts the next
 turn instead of waiting in the queue.
 
+Because that wait has no deadline, a session can also sit live and silent
+waiting on something that already finished — a poll against a service that
+died, a watcher loop that never exits. After 20 minutes with no output and no
+tool call, the task card and the session say "no activity for 34m" beside the
+running indicator. Nothing is stopped: the server can't tell a wedged wait
+from a slow one, and cutting a real 40-minute test run would be worse. It's
+also not a "needs you" item, since there's nothing to answer — open the task
+and decide, or press Stop. `CALANDRIA_TURN_IDLE_MS` moves the window, or 0
+turns the note off. A turn parked on a question or a permission card is never
+marked; that wait is meant to be open-ended.
+
 ## What you get
 
 - **Parallel, isolated tasks:** work across several repositories without
