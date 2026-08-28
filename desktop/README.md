@@ -54,12 +54,18 @@ ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js   # same,
 node test-real-boot.js                                    # needs a repo-root build
 xvfb-run -a node test-window.js                           # needs a build + a virtual display
 CALANDRIA_TEST_BIN=dist/linux-unpacked/calandria-desktop \
-  xvfb-run -a node test-window.js                         # same assertions, packaged build
+  xvfb-run -a node test-window.js       # same assertions, once packaging exists
 ```
 
 `test-window.js` resolves `playwright` from the repo root's `node_modules` (it is
 already a dev dependency for the browser suite) and needs `xvfb` plus Chromium's
 usual library set on a headless box.
+
+Electron is a `devDependency`, so an `npm install` run with `NODE_ENV=production`
+in the environment reports "up to date" and installs nothing — including in an
+agent session, which exports it. Use `NODE_ENV=development npm install`, and if
+`node_modules/electron/dist/` is still missing afterwards, `node
+node_modules/electron/install.js` fetches the binary.
 
 ## The one rule
 

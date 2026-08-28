@@ -51,14 +51,18 @@ const check = (name, fn) => {
   const env = {
     ...process.env,
     CALANDRIA_REPO_ROOT: REPO_ROOT,
+    // Set, but NOT honoured: main.js never passes port/ptyPort to Supervisor, so
+    // it starts from 3000/3001 and steps to the first free pair. That is the bug
+    // recorded in docs/DESKTOP_E2E.md §1; the assertions below therefore read the
+    // port the window actually loaded rather than trusting these.
     PORT: "4830",
     PTY_PORT: "4831",
-    ORCH_DB_DIR: path.join(root, "db"),
-    ORCH_WORKTREES_DIR: path.join(root, "worktrees"),
-    ORCH_PROJECTS_DIR: path.join(root, "projects"),
-    ORCH_SERVICE_PORT_BASE: "4930",
-    ORCH_E2E_MOCK_AGENT: "1",
-    ORCH_SCHEDULER: "off",
+    CALANDRIA_DB_DIR: path.join(root, "db"),
+    CALANDRIA_WORKTREES_DIR: path.join(root, "worktrees"),
+    CALANDRIA_PROJECTS_DIR: path.join(root, "projects"),
+    CALANDRIA_SERVICE_PORT_BASE: "4930",
+    CALANDRIA_E2E_MOCK_AGENT: "1",
+    CALANDRIA_SCHEDULER: "off",
     CLAUDE_CONFIG_DIR: path.join(root, "claude-config"),
     GIT_CONFIG_GLOBAL: path.join(root, "gitconfig"),
     GIT_CONFIG_SYSTEM: "/dev/null",
@@ -76,6 +80,10 @@ const check = (name, fn) => {
   await win.waitForURL(/127\.0\.0\.1:\d+/, { timeout: 120_000 });
   const bootMs = Date.now() - t0;
   console.log(`app URL loaded in ${bootMs}ms: ${win.url()}`);
+  // The origin the shell really bound — captured while the window is alive, so
+  // the post-quit probe below hits the live server instead of a port nothing
+  // ever listened on.
+  const appOrigin = new URL(win.url()).origin;
 
   check("window loaded the app's own origin, not the boot screen", () =>
     assert.match(win.url(), /^http:\/\/127\.0\.0\.1:\d+/));
@@ -131,7 +139,7 @@ const check = (name, fn) => {
   await app.waitForEvent("close", { timeout: 30_000 }).catch(() => {});
   console.log(`quit settled in ${Date.now() - t2}ms`);
 
-  const stillUp = await fetch("http://127.0.0.1:4830/api/version").then(() => true).catch(() => false);
+  const stillUp = await fetch(`${appOrigin}/api/version`).then(() => true).catch(() => false);
   check("server sidecar is gone after quit", () => assert.equal(stillUp, false));
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

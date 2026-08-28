@@ -1,5 +1,15 @@
 # Automated testing for desktop builds — spike
 
+> **Status.** Researched 2026-08-25 (task `vbFrtiPclor_GKEWPFerK`), landed
+> 2026-08-27. On landing, the harness was re-run against the current tree on the
+> same box and the same versions: all seven assertions still pass and the
+> `PORT`/`PTY_PORT` bug in §1 is still there, so the per-row re-measurements are
+> noted inline. Two rows were **not** re-run and should be re-measured by the
+> task that reaches them — the packaged-build row (`desktop/package.json` still
+> has no `electron-builder`, so there is no artifact to point at) and the D-Bus
+> notification row. Recommendation 3 has been rewritten since: Windows is no
+> longer blocked.
+
 **Question:** the Electron shell in [`desktop/`](../desktop) has an entirely
 unverified window layer ([`DESKTOP_APP.md`](DESKTOP_APP.md) §4: "everything that
 needs a display"). How do we test it — and eventually a packaged build —
@@ -26,10 +36,14 @@ today.
    half — notifications, tray, window manager behaviour, packaged `.deb`/
    AppImage install — and doubles as the machine where "first run on a machine
    with a display" actually happens.
-3. **Defer Windows.** The shell runs there, but the *server* has the blockers in
-   [`WINDOWS.md`](WINDOWS.md); a Windows desktop lane before that group lands
-   tests a known-broken server. The template exists (`windows-11-template`,
-   VMID 9911) and can wait.
+3. **Windows is unblocked** (revised — it said "defer" when this was written).
+   The server's Windows blockers were open then; they have since landed.
+   [`WINDOWS.md`](WINDOWS.md) exists and `.github/workflows/test.yml` carries
+   both a `windows` and a `windows-e2e` job, so a desktop lane on GitHub-hosted
+   `windows-latest` now tests a server that works — and should **copy those two
+   jobs' runner setup rather than re-derive it**. The Proxmox template
+   (`windows-11-template`, VMID 9911) stays the fallback for anything a hosted
+   runner cannot reach.
 4. **macOS is not a homelab problem.** No Apple hardware, and Proxmox cannot
    legally run macOS. Use GitHub-hosted `macos-latest` (free for this public
    repo) when packaging work starts, and accept that until then macOS is
@@ -46,15 +60,15 @@ The harness is [`desktop/test-window.js`](../desktop/test-window.js).
 | Finding | Measurement |
 |-|-|
 | **Playwright drives Electron 44 headlessly** | `_electron.launch()` against a minimal app: first window in **435 ms**, `evaluate()` in the main process returned Electron 44.0.0 / Chrome 152.0.7977.54 / Node 24.18.1, screenshot written. |
-| **The real shell boots the real app under Xvfb** | `xvfb-run node desktop/test-window.js`: first window **272 ms**, app URL loaded at **2316 ms**, the onboarding wizard rendered at 1440×900, 157 KB PNG. The window layer that had never rendered now renders in CI-shaped conditions. |
-| **A packaged build passes the same assertions** | `electron-builder --linux dir` (282 MB out) → `CALANDRIA_TEST_BIN=…/calandria-desktop`: identical run, app URL at **1353 ms**. The harness takes the artifact or the dev shell through one switch. |
+| **The real shell boots the real app under Xvfb** | `xvfb-run node desktop/test-window.js`: first window **272 ms**, app URL loaded at **2316 ms**, the onboarding wizard rendered at 1440×900, 157 KB PNG. The window layer that had never rendered now renders in CI-shaped conditions. *(Re-run 2026-08-27 against the current tree: 531 ms / 1873 ms, 143 KB PNG, all seven assertions green.)* |
+| **A packaged build passes the same assertions** (not re-run on landing) | `electron-builder --linux dir` (282 MB out) → `CALANDRIA_TEST_BIN=…/calandria-desktop`: identical run, app URL at **1353 ms**. The harness takes the artifact or the dev shell through one switch. |
 | **Electron's own `--headless` is not a substitute for Xvfb** | Same app without a display and `--headless`: the process dies with **SIGTRAP** before the CDP socket settles. Xvfb (or a real session) is mandatory, not a preference. |
-| **Native notifications are assertable headlessly** | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. |
-| **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → SIGTERM → drain, asserted end to end. |
-| **The single-instance lock is observable** | A second `electron.launch()` against the same app failed to launch in **64–73 ms** rather than starting a second server — `requestSingleInstanceLock()` doing its job, visible to the harness as a rejected launch. |
-| **The hermetic instance transfers unchanged** | `supervisor.js`'s `sidecarEnv()` forwards its own environment to both sidecars, so `e2e/env.ts`'s `SERVER_ENV` shape (temp `ORCH_DB_DIR`/`ORCH_WORKTREES_DIR`, pinned gitconfig, `ORCH_E2E_MOCK_AGENT=1`) works as-is through `electron.launch({ env })`. No agent CLI, login or network is involved, exactly as in the browser suite. |
+| **Native notifications are assertable headlessly** (not re-run on landing) | `xvfb-run dbus-run-session -- (dunst &; dbus-monitor &; electron …)`: `Notification.isSupported() === true`, the `show` event fired, and `dbus-monitor` captured the real `org.freedesktop.Notifications.Notify` method call carrying the app name. This is the highest-value desktop-only feature and it does **not** need a human. |
+| **Main-process reach is what a browser suite cannot do** | `app.evaluate()` read the application menu back as `["File","Edit","View","Window"]` (the roles macOS's Cmd+C/V depend on) and invoked `app.quit()`; the quit settled in **222 ms** *(170 ms on the 2026-08-27 re-run)* and `/api/version` stopped answering — i.e. `before-quit` → `supervisor.stop()` → SIGTERM → drain, asserted end to end. |
+| **The single-instance lock is observable** | A second `electron.launch()` against the same app failed to launch in **64–73 ms** *(109 ms on the re-run)* rather than starting a second server — `requestSingleInstanceLock()` doing its job, visible to the harness as a rejected launch. |
+| **The hermetic instance transfers unchanged** | `supervisor.js`'s `sidecarEnv()` forwards its own environment to both sidecars, so `e2e/env.ts`'s `SERVER_ENV` shape (temp `CALANDRIA_DB_DIR`/`CALANDRIA_WORKTREES_DIR`, pinned gitconfig, `CALANDRIA_E2E_MOCK_AGENT=1`) works as-is through `electron.launch({ env })`. No agent CLI, login or network is involved, exactly as in the browser suite. |
 | **`chrome-sandbox` needs `--no-sandbox` from an unpacked dir** | As `DESKTOP_APP.md` §5 predicted. A packaged `.deb`/AppImage installs the SUID bit; the `--dir` output does not, so the harness passes `--no-sandbox` and a **packaged-install** test must not. |
-| **Bug found by the harness: the shell ignores `PORT`/`PTY_PORT`** | `desktop/README.md` documents both. `main.js` constructs `new Supervisor({ repoRoot, resourcesPath, onLog, onExit })` and never passes `port`/`ptyPort`, so the class falls back to 3000/3001 and steps from there: launching with `PORT=4830` bound **3002**. Documented behaviour that does not exist — found in the first hour of having a window test. |
+| **Bug found by the harness: the shell ignores `PORT`/`PTY_PORT`** | `desktop/README.md` documents both. `main.js` constructs `new Supervisor({ repoRoot, resourcesPath, onLog, onExit })` and never passes `port`/`ptyPort`, so the class falls back to 3000/3001 and steps from there: launching with `PORT=4830` bound **3002**. Documented behaviour that does not exist — found in the first hour of having a window test, and re-confirmed unchanged on 2026-08-27. The harness therefore reads the port back off the loaded window URL rather than trusting the one it set. |
 | **No GPU exists anywhere on the Proxmox fleet** | orion1–4 expose only ASPEED BMC video; carina1–3 only Intel Iris Xe. No passthrough is configured. SwiftShader/llvmpipe is therefore the only rendering path — which the measurements above already use, so this costs nothing. |
 
 Setup cost of all of the above on a bare headless box: `apt install xvfb
@@ -80,7 +94,7 @@ a bare X server, but not a reason to move the CI lane off Xvfb.
 
 ## 3. What a desktop suite should and should not cover
 
-The browser suite (`e2e/`, 21 specs) already drives the product through
+The browser suite (`e2e/`, 23 specs) already drives the product through
 Chromium. Re-running it inside Electron would double the wall clock to re-prove
 the same things — same Chromium, same server, same DOM. The desktop lane exists
 for what only the shell can break:
@@ -107,7 +121,7 @@ anything requiring a signed installer until installers exist.
 |-|-|-|-|
 | **desktop-linux** | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite, `electron-builder --dir` + the same suite against the artifact | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
 | **desktop-bench** | Proxmox VM, real session | Native-integration extras: notification daemon, tray, WM behaviour, `.deb`/AppImage install-and-run with the SUID sandbox intact, VNC for a human or an agent session to watch | `workflow_dispatch` + nightly; never on fork PRs |
-| **desktop-windows** | Proxmox Windows VM (template 9911) or GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `COMSPEC` shell, packaged NSIS run | After the Windows-support group lands |
+| **desktop-windows** | GitHub-hosted `windows-latest` (Proxmox template 9911 as the fallback) | The shell's Windows half: `TerminateProcess` vs graceful drain, `COMSPEC` shell, packaged NSIS run | Unblocked — the Windows-support group landed; reuse the existing `windows`/`windows-e2e` jobs' setup |
 | **desktop-macos** | GitHub-hosted `macos-latest` | launchd PATH repair against a real GUI PATH, `hiddenInset` title bar, notarization smoke | When packaging starts |
 
 Two facts that shape the later lanes. On Windows, `before-quit`/`will-quit` are
@@ -156,10 +170,10 @@ would install it, SUID sandbox and all.
 | Item | Cost |
 |-|-|
 | The `desktop-linux` CI lane | ~2–4 min per run on top of an existing job matrix; free (public repo) |
-| The `_electron` suite | Net-new test code; `desktop/test-window.js` is the seed and already asserts nine things |
+| The `_electron` suite | Net-new test code; `desktop/test-window.js` is the seed and already asserts seven things |
 | Bench VM | 4 vCPU / 8 GiB / 60 GiB on orion3 + one Ansible inventory entry; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
-| Windows lane | Blocked on the Windows-support group; also an undocumented Windows licensing/activation story |
+| Windows lane | Free minutes on GitHub-hosted `windows-latest`, and no longer blocked; the licensing/activation story only bites if it moves onto the Proxmox template |
 | macOS lane | Free minutes; the real cost is signing/notarization, already priced in `DESKTOP_APP.md` §6 |
 
 ## 7. Next steps
@@ -170,4 +184,5 @@ would install it, SUID sandbox and all.
    deterministic port so it cannot collide with a live instance.
 3. Provision the bench VM and register the gated ephemeral runner.
 4. Add `electron-builder` packaging, then point the same suite at the artifact.
-5. Windows and macOS lanes, in that order, when their prerequisites land.
+5. Windows and macOS lanes. Windows is no longer waiting on anything; macOS
+   waits for packaging.
