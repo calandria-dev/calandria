@@ -53,7 +53,11 @@ Prerequisites:
 - **Git for Windows, on `PATH`.** Calandria shells out to `git` for every worktree, diff
   and merge. Claude Code needs it too — `claude.exe` runs its Bash tool through Git Bash
   even when you launch it from PowerShell.
-- **Node.js 20.9 or newer.**
+- **Node.js 20.9 or newer — an LTS line for preference.** `.nvmrc` pins 22, which is what
+  CI runs. A newer *Current* release usually works, but it is the one prerequisite that can
+  fail loudly and confusingly: `better-sqlite3` publishes prebuilt binaries per Node ABI, and
+  on a Node it has no binary for, npm silently falls back to compiling it with MSVC. See
+  [Native Windows](TROUBLESHOOTING.md#native-windows) for what that looks like.
 
 Set git's long-path support once for the machine before you start:
 

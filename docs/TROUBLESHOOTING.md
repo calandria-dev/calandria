@@ -8,7 +8,7 @@ is setup and architecture; this file is what to do when something's already wron
 | App won't start, `[config]`/`[server]`/`[db-lock]` warnings, or a boot refusal | [Common boot failures](#common-boot-failures) |
 | `SQLITE_CORRUPT`, `database disk image is malformed`, garbled tasks after a crash | [Database corruption](#database-corruption) |
 | Disk filling up, container out of space | [Disk usage and sizing](#disk-usage-and-sizing) |
-| Running natively on Windows: "Filename too long", a worktree that won't delete, a hard stop | [Native Windows](#native-windows) |
+| Running natively on Windows: `npm install` compiling `better-sqlite3`, "Filename too long", a worktree that won't delete, a hard stop | [Native Windows](#native-windows) |
 | Running under WSL2: locking errors, "not logged in" agents, slow git, service hostnames | [WSL2 on Windows](#wsl2-on-windows) |
 | A turn fails with "Failed to authenticate" / the titlebar shows a broken-connection banner | [Headless re-authentication](#headless-re-authentication) |
 | Upgrading, or need to roll back a version | [Upgrade rollback](#upgrade-rollback) |
@@ -146,8 +146,33 @@ equivalent — a real wildcard DNS record is the only way to avoid one entry per
 ## Native Windows
 
 Native Windows is supported ([setup](INSTALLATION.md#native-windows),
-[platform notes](WINDOWS.md)). Three of its behaviours look like Calandria breaking when they
-are Windows doing what it always does — two from NTFS, one from how a process is stopped.
+[platform notes](WINDOWS.md)). Four of its behaviours look like Calandria breaking when they
+are Windows doing what it always does — one from the Node version you installed, two from
+NTFS, one from how a process is stopped.
+
+**`npm install` fails compiling `better-sqlite3`.** Hundreds of lines of MSVC output ending in
+`gyp ERR! build error`, with `C2039: 'GetPrototype': is not a member of 'v8::Object'` or
+`LNK1117: syntax error in option 'opt:lldltojobs=2'` among them, and one line above the wall
+that is the actual cause:
+
+```
+prebuild-install warn install No prebuilt binaries found (target=26.7.0 runtime=node arch=x64 libc= platform=win32)
+```
+
+`better-sqlite3`'s install is `prebuild-install || node-gyp rebuild` — it downloads a binary
+built for your Node's ABI, and *silently compiles one from source* when there isn't one. There
+is no prebuild for a Node release newer than the `better-sqlite3` version in your checkout knows
+about, so the fallback runs, and it fails twice over: the addon uses V8 APIs that newer Node
+removed, and the LTO flags baked into Node's own `common.gypi` are clang spellings that MSVC's
+linker rejects. Neither is fixable by installing Visual Studio build tools — the source build
+cannot succeed on that Node at all.
+
+This is not really a Windows bug (the same Node would fail on Linux), but Windows is where it
+bites: `nodejs.org` offers *Current* as prominently as LTS, and the fallback compiler produces a
+wall of output that reads like a toolchain problem. Fix it from either end — install the Node
+`.nvmrc` pins (22, which is what CI runs), or update Calandria to a version whose
+`better-sqlite3` covers your Node. `npm ci` is not the workaround; the lockfile pins the same
+version.
 
 **`MAX_PATH` — "Filename too long" on a task launch or an agent's `npm install`.** Git for
 Windows refuses paths over 260 characters unless `core.longpaths` is on, and a task's checkout
