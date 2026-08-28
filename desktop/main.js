@@ -16,7 +16,18 @@ const { app, BrowserWindow, Menu, shell, dialog, session } = require("electron")
 const path = require("node:path");
 const { Supervisor, preferredPorts } = require("./supervisor");
 
-const REPO_ROOT = process.env.CALANDRIA_REPO_ROOT || path.resolve(__dirname, "..");
+// Where the server payload lives — the thing supervisor.js runs `node server.js`
+// out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
+// it: it holds native addons that dlopen from a real path and it is spawned as
+// a child process, neither of which can see into an archive (staged by
+// scripts/build-payload.js, mapped to resources/app-payload by the
+// electron-builder config in package.json). Unpackaged, it is the checkout this
+// file sits in, so `cd desktop && npm start` against a repo stays the developer
+// flow. CALANDRIA_REPO_ROOT overrides both, which is how a packaged binary gets
+// pointed at a working tree.
+const REPO_ROOT =
+  process.env.CALANDRIA_REPO_ROOT ||
+  (app.isPackaged ? path.join(process.resourcesPath, "app-payload") : path.resolve(__dirname, ".."));
 const LOADING_PAGE = `file://${path.join(__dirname, "loading.html")}`;
 
 let win = null;

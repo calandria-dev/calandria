@@ -5,6 +5,10 @@
 # the desktop shell spike installs its own Electron (~280 MB) — see desktop/README.md
 /desktop/node_modules
 /desktop/dist
+# packaging intermediates: the staged server payload and the vendored Node
+# runtime (scripts/build-payload.js) — both regenerated, both large
+/desktop/payload
+/desktop/vendor
 /.pnp
 .pnp.*
 .yarn/*
