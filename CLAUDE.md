@@ -173,6 +173,20 @@ like a grant.
 Refusals the CLI makes without ever calling `canUseTool` are handled by the Claude driver and land
 as an already-decided card on the transcript row (see `lib/agents/CLAUDE.md`).
 
+**The gate also runs BEFORE the turn does** (`lib/settingsDrift.ts`, issue #43). The files a
+driver names in `watchedSettingsFiles` — `<worktree>/.claude/settings.json` for Claude — are
+re-read from disk every turn and are executable config (`hooks` run shell commands outside
+`canUseTool` entirely; `permissions.allow` approves calls with no gate call at all), while living
+where the agent's own writes land. So turn N could write what turn N+1 obeys, and so could the
+base-branch catch-up. The runner hashes each one before calling `runTurn`, and a hash that moved
+since this task last ran parks it on an ordinary `PermissionRequest` (`kind: "settings"`) — same
+registry, same `/answer` route, same transcript row, because a second answering path is a second
+thing to get wrong. Approving adopts the new version as the baseline (`task_settings_snapshots`),
+so a repo that legitimately changes its settings asks once; declining ends the turn before the
+agent starts, parks the queue and leaves the task flagged. A first sighting is recorded silently —
+a task inherits its repo's settings the way it inherits its repo's code — and an unattended or
+scheduled run refuses outright, because nobody objecting is not the same as somebody agreeing.
+
 ### Agent tools (`lib/agentTools.ts`)
 
 `suggest_task` takes an optional `project` (id or exact name, from `list_projects`) and can file

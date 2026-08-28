@@ -90,6 +90,21 @@ stopped, showing what the agent tried to run, who refused it, and why. There are
 because the decision is already made. If it should have been allowed, change the task's
 permission mode.
 
+A task session's settings can change **between** turns, so those are gated too. Claude Code
+re-reads `<worktree>/.claude/settings.json` at the start of every turn, and that file is
+executable configuration: its `hooks` run shell commands on tool and session events without
+ever reaching the permission gate, `permissions.allow` approves calls without a prompt, and
+`env` reaches every subprocess a tool spawns. It also sits in the task's worktree, which is
+where the agent's own edits land — so one turn could write the file the next turn obeys, and
+so could a commit the worktree picks up when it catches up to its base branch. Calandria
+hashes the file before each turn and compares it with the version that task last ran under.
+Unchanged, nothing happens. Changed, the turn is held before the agent starts, on a card
+showing the diff: approve it and the turn runs and that version becomes the new baseline;
+decline and the turn ends without the agent ever loading it. The first turn of a task takes
+whatever the repository ships as its baseline, silently — that came with the code. Scheduled
+and unattended runs never approve one: they refuse and the run is recorded as failed, because
+nobody being there is not the same as somebody agreeing.
+
 The SDK also has a `dontAsk` mode ("deny anything not pre-approved, don't prompt"), which
 Calandria doesn't offer. Under `dontAsk` the CLI decides everything itself and never asks
 Calandria, so none of the above applies: not the read-only allowlist, not your remembered

@@ -89,6 +89,13 @@ marked; that wait is meant to be open-ended.
   registration, cuts the checkout again, and re-sends the message. Causes you
   have to fix yourself (a full disk, a detached HEAD) are named just as
   plainly, including on unattended scheduled runs.
+- **Agent settings can't change behind your back:** Claude Code re-reads a
+  task's `.claude/settings.json` at the start of every turn, and its hooks run
+  shell commands with no permission prompt. That file lives in the task's own
+  worktree, so a turn could write what the next turn obeys. Calandria checks it
+  before each turn and, if it changed since the turn that ran last, holds the
+  turn on a card showing the diff. Approve it and the turn runs; decline and it
+  ends before the agent starts. Unattended and scheduled runs always decline.
 - **Web-based and self-hostable:** run Calandria on your own machine or
   server and reach the same workspace from desktop or mobile.
 - **One "Needs you" inbox:** jump to any session waiting for an answer.

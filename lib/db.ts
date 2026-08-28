@@ -280,6 +280,30 @@ export function init(db: Database.Database) {
       acknowledged_at INTEGER NOT NULL DEFAULT 0
     );
 
+    -- What a task's agent-configuration files looked like the last time a turn
+    -- was allowed to run under them (issue #43). One row per (task, file), where
+    -- 'file' is worktree-relative and comes from the driver's own
+    -- watchedSettingsFiles — today '.claude/settings.json', which the Claude CLI
+    -- re-reads on every turn and whose 'hooks' run shell commands outside the
+    -- permission gate entirely. The runner hashes the file before each turn and
+    -- holds the turn on a card when the hash moved (lib/settingsDrift.ts).
+    --
+    -- Its own table rather than a column on tasks: 'content' is the acknowledged
+    -- copy, kept so the card can show a real diff rather than "something
+    -- changed", and listTasks selects t.* straight onto the wire — a settings
+    -- file per task card is not something the board should be shipping. hash is
+    -- over the FULL file even when content was too big to keep, so an oversize
+    -- file still compares correctly; content is '' in that case.
+    -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
+    CREATE TABLE IF NOT EXISTS task_settings_snapshots (
+      task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file       TEXT NOT NULL,
+      hash       TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, file)
+    );
+
     -- Remembered "always allow" answers to a tool-permission prompt (the
     -- canUseTool gate under acceptEdits / plan — see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not

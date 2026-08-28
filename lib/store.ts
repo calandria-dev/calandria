@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
@@ -918,8 +918,17 @@ export function moveTasks(
     const repoint = ["sessions", "task_usage", "task_merges"].map((t) =>
       db.prepare(`UPDATE ${t} SET project_id = ? WHERE task_id = ?`)
     );
+    // The acknowledged copy of a watched setting file (lib/settingsDrift.ts) is
+    // about a file in the repo this task has just LEFT. The next turn cuts a
+    // fresh worktree from the destination's base, so keeping the old baseline
+    // would raise a settings card on the first turn after every move — a
+    // warning that the file "changed in this task's worktree" when what changed
+    // is the repo. Dropped instead, so the destination's settings are taken as
+    // the baseline the same way a brand-new task takes its repo's.
+    const dropSettings = db.prepare("DELETE FROM task_settings_snapshots WHERE task_id = ?");
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
+      dropSettings.run(r.id);
       if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
       for (const tagId of leftBehind.get(r.id) ?? []) untag.run(r.id, tagId);
       for (const stmt of repoint) stmt.run(projectId, r.id);
@@ -1381,6 +1390,36 @@ export function addPermissionRule(input: {
 
 export function deletePermissionRule(id: string): void {
   getDb().prepare("DELETE FROM permission_rules WHERE id = ?").run(id);
+}
+
+// ---------- watched setting files (lib/settingsDrift.ts, issue #43) ----------
+
+/**
+ * What this task's watched setting file looked like the last time a turn was
+ * allowed to run under it. null = never recorded, which the gate reads as "no
+ * turn has run under any version of this file yet" and takes as its baseline
+ * rather than as a change.
+ */
+export function getSettingsSnapshot(taskId: string, file: string): SettingsSnapshot | null {
+  return (getDb()
+    .prepare("SELECT * FROM task_settings_snapshots WHERE task_id = ? AND file = ?")
+    .get(taskId, file) as SettingsSnapshot | undefined) ?? null;
+}
+
+/**
+ * Adopt what is on disk now as what this task runs under. Called for a file
+ * nobody has seen before (silently, at the first turn) and when the user
+ * approves a change — the two moments a new version becomes the baseline the
+ * NEXT turn is compared against.
+ */
+export function recordSettingsSnapshot(taskId: string, file: string, hash: string, content: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO task_settings_snapshots (task_id, file, hash, content, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, file) DO UPDATE SET hash = excluded.hash, content = excluded.content, updated_at = excluded.updated_at`
+    )
+    .run(taskId, file, hash, content, Date.now());
 }
 
 // ---------- settings (app-level key/value, readable server-side) ----------
