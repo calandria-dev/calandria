@@ -137,9 +137,11 @@ carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
   known to work under Electron's own network stack.
 
 **Still unverified:** everything that needs a *real* session rather than a
-virtual display — the macOS `hiddenInset` title bar, a window manager that
-reparents, a tray with an AppIndicator host, and a notification that actually
-reaches a daemon. (The suite has to point libnotify at a dead bus to run at all:
+virtual display — a window manager that reparents, a tray with an AppIndicator
+host, and a notification that actually reaches a daemon. (The macOS
+`hiddenInset` title bar was on this list until the `macos-desktop` lane; a
+hosted macOS runner has a real WindowServer, so nothing there needs a virtual
+display in the first place — see §5.) (The suite has to point libnotify at a dead bus to run at all:
 without a notification daemon each native notification blocks Electron's main
 process for 25 s. See `DESKTOP_E2E.md` §1.) First run on a desktop machine is
 still a step worth taking, and is likely to find small things.
@@ -150,10 +152,28 @@ you" count, window-bounds persistence, auto-update.
 
 ## 5. Per-platform gaps
 
-**macOS** — the PATH repair above is mandatory, not polish. Signing +
-notarization are required for anything distributed (Gatekeeper blocks unsigned
-apps by default). `hiddenInset` overlaps the app's own titlebar row; needs a look
-on a real screen.
+**macOS** — the PATH repair above is mandatory, not polish, and it is no longer
+taken on faith: the `macos-desktop` lane (`docs/DESKTOP_E2E.md` §4) `open`s the
+packaged `.app` through LaunchServices, exactly as a double-click does, and
+asserts that the supervisor was handed launchd's stub PATH and recovered a real
+one from the login shell. That is a claim no other spec can make — every
+`_electron` launch is a child of the test process and inherits its PATH, which
+is the environment where the repair does nothing. `hiddenInset` is settled the
+same way: the window's content box and its frame are asserted to be the same
+rectangle (under `default` macOS steals a strip for the title bar, so they are
+not), the traffic lights are asserted to survive, and the lane uploads a
+screenshot on a green run so the one thing an assertion cannot judge — the
+buttons sitting over the app's own titlebar row — is in front of a human rather
+than in this paragraph. Menu roles run under a real menubar there too, which
+matters more here than anywhere else: on macOS `{ role: "editMenu" }` *is*
+Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
+
+What remains open is distribution, not behaviour. Signing + notarization are
+required for anything downloaded (Gatekeeper blocks unsigned apps by default),
+and that stays §6's decision. The lane ad-hoc signs its artifact
+(`codesign --sign -`) for one narrow reason with no bearing on that: arm64 macOS
+will not exec a Mach-O carrying no signature at all, and electron-builder
+invalidates the one Electron's prebuilt arrived with.
 
 **Windows** — the server's own gaps are closed ([`WINDOWS.md`](WINDOWS.md)):
 the pty sidecar probes a real Windows shell, managed services are killed as a
@@ -192,10 +212,19 @@ The prototype now produces a real artifact, not just a `desktop/` checkout:
 cd desktop && npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
+npm run dist:mac      # → dist/mac-arm64/Calandria.app  (macOS host only)
 ```
 
 Signing, notarization and auto-update are deliberately **not** wired into this —
-that is still phase 2 (§7).
+that is still phase 2 (§7). `dist:mac` is `--dir` for the same reason the CI
+lanes are: an unpacked bundle is everything a test can launch, and the installer
+targets are where the signing decision would have to be made rather than
+deferred. The one signature it does need is not that decision: arm64 macOS
+refuses to exec a Mach-O with no signature at all, and electron-builder
+invalidates the one Electron's prebuilt binary arrived with, so an artifact
+built this way must be ad-hoc signed (`codesign --force --deep --sign - Calandria.app`)
+before it will start. That carries no identity and satisfies no Gatekeeper
+policy — it is what makes the file runnable on the machine that built it.
 
 **Layout of the packaged app:**
 

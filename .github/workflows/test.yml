@@ -1,7 +1,7 @@
 # Run the test suites. This is the repo's correctness gate; publish-image.yml
 # calls it (see `workflow_call` below) so a red suite can never reach ghcr.io.
 #
-# Eight jobs, deliberately on different schedules:
+# Nine jobs, deliberately on different schedules:
 #
 #   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
@@ -47,6 +47,22 @@
 #           them; and `sidecarEnv()` has to invent a `SHELL` the pty sidecar can
 #           spawn because $SHELL is a POSIX convention. The Ubuntu lane runs the
 #           same specs and can say nothing about any of it.
+#   macos-desktop — the `desktop` suite on macos-latest, dev shell and packaged
+#           .app, plus the two behaviours that exist nowhere else: the launchd
+#           PATH repair (a .app opened through LaunchServices inherits
+#           /usr/bin:/bin:/usr/sbin:/sbin, not the user's shell PATH, so `codex`,
+#           `gh` and an nvm `node` are invisible to a double-clicked Calandria
+#           until supervisor.js re-reads the PATH from the login shell) and
+#           `titleBarStyle: "hiddenInset"`, whose traffic lights land inside the
+#           page's own coordinate space over the app's titlebar row. Also the
+#           only lane where the menu roles run under a real menubar, which on
+#           macOS is where Cmd+C/V/A come from at all.
+#           WEEKLY, not on push — the one job here that is not free-shaped.
+#           macOS is the priciest runner GitHub rents (2026: $0.062/min on a
+#           3-vCPU M1, ~10x Linux), and while a public repo pays nothing today,
+#           a lane that costs ten times its neighbours should not be the one
+#           that runs most often. The `schedule` trigger below exists for this
+#           job alone, which is why the four always-on jobs opt out of it.
 #   windows-e2e — `npm run test:e2e` on windows-latest. Same suite as `e2e`,
 #           and gated by the SAME expression, on the same reasoning doubled:
 #           a full `next build` plus a browser download plus a browser-driven
@@ -87,6 +103,17 @@ on:
     # label change re-runs `unit`; the concurrency group below cancels the
     # superseded run, so it is one wasted job at worst.
     types: [opened, synchronize, reopened, labeled]
+  # For `macos-desktop` and nothing else. Every other job in this file opts out
+  # with `github.event_name != 'schedule'` (the four always-on ones) or by not
+  # listing `schedule` in its gate (the four slow ones), so a weekly run is one
+  # macOS job rather than a second full CI pass nobody asked for.
+  #
+  # Monday 05:23 UTC. The odd minute is GitHub's own advice — scheduled
+  # workflows queue on the hour and a job on a scarce runner pool is the wrong
+  # one to put in that queue — and the day means a red macOS lane is waiting at
+  # the start of a week rather than discovered on a Friday.
+  schedule:
+    - cron: "23 5 * * 1"
   workflow_dispatch:
     inputs:
       e2e:
@@ -117,6 +144,13 @@ permissions:
 jobs:
   audit:
     name: Audit (npm)
+    # The `schedule` trigger above exists for `macos-desktop` alone. Without
+    # this line every always-on job would also run weekly against a commit they
+    # already passed on push — a second full CI pass that reports nothing new
+    # and, on the two Windows lanes, bills at 2x to do it. The four slow jobs
+    # need no such guard: their gate lists the events they accept and
+    # `schedule` is not among them.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -137,6 +171,8 @@ jobs:
 
   typecheck:
     name: Types (tsc)
+    # Not on the weekly macOS schedule — see `audit`.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -177,6 +213,8 @@ jobs:
 
   unit:
     name: Unit (vitest)
+    # Not on the weekly macOS schedule — see `audit`.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -200,6 +238,9 @@ jobs:
 
   windows:
     name: Windows (types + unit)
+    # Not on the weekly macOS schedule — see `audit`. Doubly so here: this
+    # runner bills at 2x.
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     # Generous next to `unit`'s 15: process spawning is far more expensive on
     # Windows and this suite shells out to git thousands of times.
@@ -603,6 +644,138 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-artifacts-windows-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  macos-desktop:
+    name: Desktop shell (Electron, macOS)
+    # NOT the shared `e2e` expression the other three slow lanes use, and that
+    # is the one deliberate asymmetry in this file. Those three are gated to
+    # keep CI fast; this one is also gated to keep it CHEAP — a macOS runner
+    # bills at roughly ten times a Linux one, and hanging it off the `e2e`
+    # label would mean every PR that wanted a browser run silently bought a Mac
+    # run too. So: the weekly cron, a manual dispatch, and a PR that asks for it
+    # by name with the `macos` label.
+    #
+    # GITHUB-HOSTED, AND NOT NEGOTIABLE HERE. The homelab has no Apple hardware
+    # and macOS cannot be virtualised on Proxmox/KVM with any legal path, so
+    # unlike the Linux bench VM and the Windows lane this one had no
+    # alternative to weigh. docs/DESKTOP_E2E.md §4 records that.
+    if: >-
+      ${{ github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+          || contains(github.event.pull_request.labels.*.name, 'macos') }}
+    runs-on: macos-latest
+    # Between the Ubuntu desktop lane's 45 and the Windows one's 60. Same two
+    # passes as Ubuntu (dev shell, then the packaged artifact) on a runner that
+    # is faster per-core than windows-latest, plus one extra GUI launch.
+    timeout-minutes: 60
+    steps:
+      # No `core.autocrlf`/`core.longpaths` pinning, unlike the Windows jobs:
+      # macOS checks out with LF and has no MAX_PATH. The filesystem IS
+      # case-insensitive like Windows', which lib/paths.ts case-folds for — and
+      # that is already covered by `unit`, which this lane does not repeat.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # desktop/supervisor.js refuses to start without a production build at
+      # .next/, and both test-real-boot.js and the window suite boot the real
+      # server.js.
+      - name: Build the app the shell serves
+        run: npm run build
+
+      # See the Ubuntu `desktop` job: Electron lives in desktop/'s own private
+      # package, and the install script passes --include=dev then runs
+      # electron/install.js explicitly because a NODE_ENV=production environment
+      # makes npm report "up to date" and fetch nothing.
+      - name: Install Electron
+        run: npm run desktop:install
+
+      # No display setup and no `--no-sandbox`, the same as the Windows lane and
+      # unlike the Ubuntu one: a hosted macOS runner has a real WindowServer, so
+      # Electron opens a genuine window on a genuine desktop with a genuine
+      # menubar. desktop/e2e/fixtures.ts gates the sandbox flag on
+      # `process.platform === "linux"`, so this lane is not quietly running an
+      # unsandboxed Chromium either.
+      #
+      # 07-macos.spec.ts joins the shared specs here; 08-macos-launchd.spec.ts
+      # skips itself for want of a bundle and runs in the packaged pass below.
+      - name: Run the desktop suite
+        run: npm run test:desktop
+
+      # --- and now the same suite against what a user would download ---------
+      #
+      # `--mac dir` only, and unsigned in the Developer ID sense: Gatekeeper,
+      # notarization and installers are a separate decision
+      # (docs/DESKTOP_APP.md §6). An unpacked .app is everything the suite needs
+      # to launch, and it is the only form the launchd spec can `open`.
+      - name: Package the desktop app
+        working-directory: desktop
+        env:
+          # electron-builder otherwise scans the keychain for a Developer ID and
+          # narrates its absence; `mac.identity: null` in package.json already
+          # says not to sign, and this stops it looking.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm run payload -- --no-build
+          npx electron-builder --mac dir
+
+      - name: Move the artifact out of the checkout
+        # Same reason as the Ubuntu lane: an installed app is never inside a
+        # source tree, and desktop/e2e/fixtures.ts refuses to launch a binary
+        # under this checkout so that nothing can resolve upward into it.
+        # The output directory is named for the arch (mac-arm64 on the current
+        # hosted image, mac on an x64 one), so it is discovered rather than
+        # spelled — as is the executable inside, which takes its name from
+        # electron-builder's productName.
+        run: |
+          set -euo pipefail
+          app=$(find desktop/dist -maxdepth 2 -name '*.app' -type d | head -n 1)
+          test -n "$app" || { echo "::error::electron-builder produced no .app under desktop/dist"; exit 1; }
+          mv "$app" "$RUNNER_TEMP/Calandria.app"
+          bin=$(find "$RUNNER_TEMP/Calandria.app/Contents/MacOS" -maxdepth 1 -type f | head -n 1)
+          echo "CALANDRIA_TEST_BIN=$bin" >> "$GITHUB_ENV"
+          echo "CALANDRIA_TEST_APP_BUNDLE=$RUNNER_TEMP/Calandria.app" >> "$GITHUB_ENV"
+
+      # An ad-hoc signature is not code signing in the sense §6 is about — it
+      # carries no identity, satisfies no Gatekeeper policy and notarizes
+      # nothing. It is here because arm64 macOS will not exec a Mach-O with NO
+      # signature at all: the kernel kills it. electron-builder rewrites the
+      # binary and its resources, which invalidates whatever Electron's prebuilt
+      # arrived with, so without this step the packaged pass below would die on
+      # launch with a signal rather than a test failure.
+      - name: Ad-hoc sign the bundle so arm64 will exec it
+        run: codesign --force --deep --sign - "$RUNNER_TEMP/Calandria.app"
+
+      # Both variables are already in the environment from the move step:
+      # CALANDRIA_TEST_BIN swaps every shared spec onto the artifact (with no
+      # CALANDRIA_REPO_ROOT — see 06-packaged.spec.ts), and
+      # CALANDRIA_TEST_APP_BUNDLE un-skips 08-macos-launchd.spec.ts, which
+      # `open`s the bundle through LaunchServices to get the one environment no
+      # child-process launch can produce: launchd's stub PATH.
+      - name: Run the desktop suite against the package
+        run: npm run test:desktop:window
+
+      # `always()`, not `failure()`, unlike every other lane here.
+      # 07-macos.spec.ts attaches a screenshot of the hiddenInset title bar and
+      # the element stack underneath the traffic lights, and the whole point of
+      # those is that a human looks at them once on a GREEN run —
+      # docs/DESKTOP_APP.md §5 has carried "needs a look on a real screen" since
+      # the spike, and a failure-only upload would never deliver it.
+      - name: Upload desktop artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-artifacts-macos-${{ github.run_attempt }}
           path: |
             test-results/
             playwright-report/
