@@ -99,6 +99,7 @@ export default defineConfig({
         { label: "Insights", slug: "docs/insights" },
         { label: "Document collaboration", slug: "docs/document-collaboration" },
         { label: "Desktop app", slug: "docs/desktop-app" },
+        { label: "Desktop testing", slug: "docs/desktop-e2e" },
         { label: "Windows", slug: "docs/windows" },
         { label: "Troubleshooting", slug: "docs/troubleshooting" },
         { label: "Architecture", slug: "docs/architecture" },

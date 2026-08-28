@@ -1,4 +1,8 @@
-# Automated testing for desktop builds — spike
+---
+title: "Automated testing for desktop builds (spike)"
+---
+
+# Automated testing for desktop builds (spike)
 
 > **Status.** Researched 2026-08-25 (task `vbFrtiPclor_GKEWPFerK`), landed
 > 2026-08-27. **Recommendation 1 is now done**: the proof-of-concept harness has
