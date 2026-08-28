@@ -213,7 +213,13 @@ async function quitEventRecorder(shell: Shell): Promise<string> {
   // Awaited: the listeners have to be installed before anything kills the
   // process, and a floating evaluate would race the taskkill below.
   await shell.app.evaluate(async ({ app }, target) => {
-    const nodeFs = require("node:fs") as typeof import("node:fs");
+    // `require` is NOT in scope here. Playwright serialises this function and
+    // evaluates its body in the main process, where it gets no CommonJS module
+    // wrapper, and `require` is a per-module parameter Node injects rather than
+    // a global. The main process entry IS CommonJS, so its own module's require
+    // is reachable through `process.mainModule` — the same escape hatch
+    // 03-quit-drain.spec.ts uses.
+    const nodeFs = process.mainModule!.require("node:fs") as typeof import("node:fs");
     app.on("before-quit", () => nodeFs.appendFileSync(target, "before-quit\n"));
     app.on("will-quit", () => nodeFs.appendFileSync(target, "will-quit\n"));
   }, file);
