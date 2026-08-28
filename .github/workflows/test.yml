@@ -631,11 +631,12 @@ jobs:
       # quietly testing an unsandboxed Chromium.
       #
       # The Windows-only specs live in desktop/e2e/05-windows-quit.spec.ts and
-      # skip themselves everywhere else; 03-quit-drain's database assertion is
-      # marked `test.fail()` here, because the drain genuinely does not happen
-      # on Windows yet. That annotation is load-bearing: when the shell learns
-      # to POST /api/instance/drain before killing, this lane goes RED on the
-      # unexpected pass and the annotation has to come off with the fix.
+      # skip themselves everywhere else. 03-quit-drain's database assertion used
+      # to carry a `test.fail(win32)` annotation, because the drain genuinely did
+      # not happen here; the annotation came off when supervisor.stop() learned to
+      # POST /api/instance/drain over loopback instead of relying on a signal
+      # Windows cannot deliver, and the assertion is now expected to pass on
+      # every platform.
       - name: Run the desktop suite
         run: npm run test:desktop
 

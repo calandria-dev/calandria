@@ -181,10 +181,12 @@ What it found, in order of how much it mattered:
   unpacked by npm has a `chrome-sandbox` owned by the user, and Chromium refuses
   to run rather than run unsandboxed: `FATAL: The SUID sandbox helper binary was
   found, but is not configured correctly`, then SIGTRAP. Either pass the flag or
-  `sudo chown root:root` + `chmod 4755` that file. Not a shell bug and not
-  present in a packaged install (the `.deb` sets it), but it is step one of the
-  developer flow, so `desktop/README.md` now says so. The suite never hit it
-  because `_electron.launch()` passes `--no-sandbox` on Linux itself.
+  `sudo chown root:root` + `chmod 4755` that file. Not a shell bug, and a
+  packaged install does not have it — though not because the `.deb` sets that
+  bit: electron-builder 26 leaves the helper 0755 and ships an AppArmor profile
+  so the *namespace* sandbox works instead (§5, Linux). It is step one of the
+  developer flow either way, so `desktop/README.md` now says so. The suite never
+  hit it because `_electron.launch()` passes `--no-sandbox` on Linux itself.
 - **Everything else in the window worked on first sight.** The boot screen with
   its streaming log, the handoff, a live turn arriving over SSE, the diff with
   its hunk, the terminal panel talking to the pty sidecar, external links
@@ -205,14 +207,24 @@ What it found, in order of how much it mattered:
   `autoHideMenuBar`, since on those platforms the menu is the only discoverable
   home for Reload app, Open in browser and the zoom items. This is the same
   question `titleBarStyle: "hiddenInset"` answers on macOS, decided the other
-  way because the surfaces are not the same.
+  way because the surfaces are not the same. The Windows pass reached it from
+  the other side and left the lever named for this task (§5): there it is
+  *three* rows, since Windows keeps a native frame above the menu bar that
+  macOS collapses — one row worse, same answer.
 
 **Still unverified:** a tray icon with an AppIndicator host (there is no tray
 yet), a real compositor — Wayland, a GPU, a login session, a dock — and the
 install paths that put a `.desktop` entry and an icon in front of a user. The
-macOS `hiddenInset` title bar is the `macos-desktop` lane's (a hosted runner has
-a real WindowServer, so nothing there needs a virtual display — see §5), and
-first run on Windows has its own task.
+macOS `hiddenInset` title bar is the `macos-desktop` lane's: a hosted runner has
+a real WindowServer, so nothing there needs a virtual display (§5).
+
+Windows had its own first run, on real hardware, and it found two more things
+(§5): a `SHELL` the shell used to invent for the pty sidecar, which had turned
+from a mitigation into a downgrade pinning every terminal tab to PowerShell 5.1,
+and a `waitForReady` that sits out its full 90 s timeout on a sidecar that
+already exited. What no first run on any platform covers is a real shutdown or
+logout, where Electron emits neither `before-quit` nor `will-quit` — so the
+drain this section is largely about does not run at all (§5).
 
 Packaging (`electron-builder`) is no longer on this list — see §6. Still not
 attempted: tray/menubar, deep links (`calandria://`), dock badge for the "N need
@@ -243,25 +255,87 @@ and that stays §6's decision. The lane ad-hoc signs its artifact
 will not exec a Mach-O carrying no signature at all, and electron-builder
 invalidates the one Electron's prebuilt arrived with.
 
-**Windows** — the server's own gaps are closed ([`WINDOWS.md`](WINDOWS.md)):
-the pty sidecar probes a real Windows shell, managed services are killed as a
-`taskkill /T` tree, and path identity is case-folded. The gap that was the
-supervisor's, not the app's — `.kill()` on Windows is `TerminateProcess`, so a
-quit from the shell had no signal to carry a graceful shutdown — is closed:
-`stop()` POSTs `/api/instance/drain` itself and waits for it, bounded by
-`CALANDRIA_SHUTDOWN_GRACE_MS`, before it ever sends the kill. The signal path is
-now the backstop rather than the mechanism, so it degrades the same way on every
-platform instead of only where SIGTERM is deliverable. `npm start` solves the
-same problem for the console with `scripts/start.mjs`, which relies on the
-console broadcasting Ctrl+C — a path a GUI supervisor doesn't have, which is why
-the drain still has to be requested rather than signalled. (`npm start` used to
-carry a POSIX-only inline `NODE_ENV=production` prefix; it now goes through
-`cross-env`, and the supervisor spawns `node` directly with an env regardless.)
-One gap remains, and no test covers it: on a real shutdown or logout Electron
-emits neither `before-quit` nor `will-quit` (the session ends through
-`WM_QUERYENDSESSION`/`WM_ENDSESSION` instead), so nothing drains — a
-`session-end` listener does not exist yet. `desktop/e2e/05-windows-quit.spec.ts`'s
-header is the existing statement of that gap.
+**Windows** — **verified on real hardware**, not just on a runner: Windows 11 Pro
+26200, a logged-in console session, Defender real-time protection on. Native is the
+supported configuration and the one to start from.
+
+What the box did, in order. `desktop/test-supervisor.js` passes whole (25/25) — including
+the two cases that only ever execute here, `needsPathRepair` returning false and the
+`sidecarEnv` shell handling below. `desktop/test-real-boot.js` passes whole: the real
+`server.js` and `pty-server.js` come up under a plain `node <script>` spawn in 1.4s on
+3000/3001, and `stop()` reaps both without reaching the `SIGKILL` backstop. `resolveNode`
+finds `node.exe` on `PATH`, and takes a `CALANDRIA_NODE` pointed either at nvm-windows'
+`C:\nvm4w\nodejs\node.exe` symlink or at a versioned root directly — nvm-windows swaps a
+directory symlink rather than interposing a shim executable, so there is nothing here for
+the `execFileSync(bin, ["--version"])` probe to trip over. `pickPorts` steps 3000/3001 →
+3002/3003 with the defaults held, and 3003/3004 with 3002 held too. Launched from the
+console session, Electron opens a real framed window titled by the app itself, the
+single-instance lock refuses a second launch (exit 0 in ~1s, one window still on screen),
+and closing that window tears the whole thing down in 384ms with zero stray `node.exe` —
+`[shell] drained in-flight turns (status 200)` in the log, so the HTTP drain is doing the
+work a signal cannot do here. The terminal panel gets a genuine interactive PowerShell
+7.6.5 in the requested cwd. Nothing was blocked: npm's extraction leaves no
+`Zone.Identifier` stream on `electron.exe`, so SmartScreen never fires for a run out of a
+directory, and Defender logged no detection. (Signing is still required for anything
+*distributed* — see §6 — but it is not what stands between a developer and a first run.)
+
+Two things the shell had wrong, one fixed here and one left as a finding.
+
+- `sidecarEnv()` used to invent a `SHELL` on win32, from back when `pty-server.js`'s
+  unset-`$SHELL` default was a hardcoded `/bin/zsh`. That default is now a probe
+  (`CALANDRIA_PTY_SHELL` → `$SHELL` → `pwsh.exe` → `powershell.exe` → `COMSPEC`), and
+  `$SHELL` is consulted *before* it — so the mitigation had become a downgrade. Worse than
+  it reads: the fallback was `out.COMSPEC || "powershell.exe"`, and `out` is a plain object
+  copied out of `process.env`, which drops Windows' case-insensitive env lookup — the real
+  key is spelled `ComSpec`, so `out.COMSPEC` was always `undefined` and every desktop
+  terminal tab would have been pinned to Windows PowerShell 5.1. Measured: with the
+  injection gone, the pty sidecar spawns pwsh 7.6.5. The injection is removed; an inherited
+  `SHELL` is still passed through untouched.
+- `waitForReady` does not short-circuit on a sidecar that has already exited. Two
+  supervisors against one `CALANDRIA_DB_DIR` reproduce it: the second one's `app` child
+  exits 1 immediately with the db-lock message, `onExit` fires correctly with
+  `dbLockHeld: true`, and then `start()` sits out the full 90s readiness timeout before
+  rejecting with a misleading `fetch failed`. `main.js` hides this — it shows the "another
+  Calandria is already running" box from `onExit` and calls `app.exit(1)` at once — so it
+  is latent rather than user-visible, but any non-Electron caller of `Supervisor` waits 90
+  seconds for a failure that was known in the first second.
+
+**Windows + WSL2** — `docs/WINDOWS.md` supports the server either way and this does not
+change that; what it settles is that the *shell* wraps the native server only. Running the
+server under WSL2 is a browser-and-`localhost` arrangement, not a wrapped one. The
+mechanics were measured, and the plumbing is genuinely fine — a listener inside the distro
+is reachable from the Windows host on arbitrary stepped-past ports, bound to either
+`0.0.0.0` or `127.0.0.1`, and a WebSocket upgrade completes and delivers frames across the
+relay, so `/pty` would work. `wslpath` translates both directions, and a `child.kill()` on
+a `wsl.exe` wrapper really does take the Linux process down with it. What makes it the
+wrong job for `supervisor.js` is everything above that line:
+
+- `resolveNode` would resolve `node.exe` and hand a Windows binary to a Linux script. It
+  would need a distro-side probe answering an entirely different question.
+- `pickPorts` probes from the Windows side, so it sees the relay's ports and not the
+  distro's. A port already held *inside* WSL is invisible to it.
+- `repoRoot`, `CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` all become Linux paths, and
+  the last two carry a correctness rule the shell would have to enforce rather than
+  document: `/` is ext4 but `/mnt/c` is 9p, and SQLite WAL over 9p corrupts.
+- A packaged Windows app has no `wsl.exe -d <distro>` to choose, and picking one is
+  configuration the shell has no UI for.
+
+So: the shell is native-only, and that is a stated scope rather than a gap. A WSL2 user
+runs `npm start` in the distro and opens `http://127.0.0.1:3000` in a Windows browser,
+which the relay makes work unchanged. Option 3 — Electron inside WSLg as a Linux app — is
+the Linux entry below, with the Linux caveats, and needs nothing from this file.
+
+One cosmetic note, raised here for the display task and answered there (§4): on Windows the
+window stacks three rows of chrome — the native frame, Electron's `File/Edit/View/Window`
+menu bar, and the app's own titlebar row. macOS collapses the first two; Windows does not,
+and `autoHideMenuBar` is the obvious lever. It was left unpulled: on Windows and Linux the
+menu is the only discoverable home the app has for Reload app, Open in browser and zoom.
+
+One gap remains, and no test covers it: on a real shutdown or logout Electron emits
+neither `before-quit` nor `will-quit` (the session ends through
+`WM_QUERYENDSESSION`/`WM_ENDSESSION` instead), so nothing drains — a `session-end` listener
+does not exist yet. `desktop/e2e/05-windows-quit.spec.ts`'s header is the existing
+statement of that gap.
 
 **Linux** — works as-is under X11/Wayland. Running from a plain directory means
 no sandbox unless `chrome-sandbox` is root-owned/4755; packaged builds handle it,
