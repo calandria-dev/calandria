@@ -30,7 +30,8 @@ today.
 
 1. ~~**A `desktop` lane in `.github/workflows/test.yml`, on the ubuntu runner we
    already use.**~~ **Landed.** `xvfb-run` + the Playwright `_electron` suite in
-   `desktop/e2e/` (11 specs), plus the two supervisor scripts that already
+   `desktop/e2e/` (24 specs across eight files, nine of them platform-gated),
+   plus the two supervisor scripts that already
    existed and ran nowhere (21 + 8 assertions). Zero infra, ~1.2 minutes of
    window suite on top of a build the lane needs anyway, and it covers the
    window lifecycle, the menu, single-instance, external links, the permission
@@ -284,7 +285,7 @@ would install it, SUID sandbox and all.
 | Item | Cost |
 |-|-|
 | The `desktop-linux` CI lane | ~2–4 min for the dev-shell half, plus the packaged half: **25 s** to stage the payload and **20 s** for `electron-builder --dir` (bench, warm — a cold runner also pays a production-only `npm ci` and one ~30 MB Node download), then the window suite again at ~80 s. Free (public repo); the job's ceiling is 45 min |
-| The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (11 specs over four files) with `desktop/test-window.js` retired into it |
+| The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (24 specs over eight files, nine of them Windows- or macOS-gated) with `desktop/test-window.js` retired into it |
 | Bench VM | 4 vCPU / 8 GiB / 60 GiB on orion3 + one Ansible inventory entry; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
 | Windows lane | Landed: free minutes on GitHub-hosted `windows-latest`, ~2x the Ubuntu lane's wall clock. Deliberately not the Proxmox template — see §4 |
