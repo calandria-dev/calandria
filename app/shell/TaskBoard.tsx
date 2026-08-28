@@ -8,6 +8,7 @@ import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
+import { IdleStopChip } from "./IdleStop";
 import { SnoozeButton } from "./SnoozeMenu";
 import { SEARCH_MIN, SNOOZE_LABEL, RAN_LABEL, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
@@ -149,12 +150,12 @@ function dayBucket(ts: number): string {
   return "Earlier";
 }
 
-function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, onAckRun, actions, sparkline, tagsById, onSelectTag, projectBranch }: {
+function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging, canDrag, onSelect, onDragStart, onDragOverCard, onDropOnCard, onDragEnd, onSnooze, onUnsnooze, onAckRun, onStopTurn, actions, sparkline, tagsById, onSelectTag, projectBranch }: {
   task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string;
   mini?: boolean; dragging: boolean; canDrag: boolean;
   onSelect: () => void; onDragStart: () => void; onDragOverCard: (e: React.DragEvent) => void;
   onDropOnCard: (e: React.DragEvent) => void; onDragEnd: () => void;
-  onSnooze: (until: number) => void; onUnsnooze: () => void; onAckRun: () => void; actions?: ReactNode; sparkline?: number[];
+  onSnooze: (until: number) => void; onUnsnooze: () => void; onAckRun: () => void; onStopTurn: () => void; actions?: ReactNode; sparkline?: number[];
 }) {
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting, the way it does in the list: a parked task must
@@ -227,6 +228,11 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           {Icon.check()} Mark done
         </button>
       )}
+      {/* The gone-quiet mark's one affordance, on the surface that otherwise
+          makes you select the task to reach Stop. Off the mini rows for the
+          same reason Mark done is: they are one line each. Why it confirms, and
+          why the session gets nothing, is in ./IdleStop.tsx. */}
+      {idle && !mini && <IdleStopChip variant="board" onStop={onStopTurn} />}
       {/* The reason IS the card's content once it's withdrawn — a struck-through
           title with no explanation gives the user nothing to judge. */}
       {withdrawn && task.withdrawn_reason && (
@@ -273,7 +279,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   );
 }
 
-export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, projectBranch, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze, onAckRun }: {
+export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blockedBy, sparklines, tagsById, onSelectTag, projectBranch, onSelect, onEditTask, onMove, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnooze, onUnsnooze, onAckRun, onStopTurn }: {
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
@@ -284,6 +290,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
   /** Acknowledge a clean unattended run — a status write that files it under Done. */
   onAckRun: (id: string) => void;
+  onStopTurn: (id: string) => void;
 }) {
   // Dragging is a pointer gesture, so it's off on a touch device (the card's
   // own controls own those gestures). Nothing else gates it: a drop re-statuses
@@ -387,7 +394,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       onDragEnd={reset}
                       onSnooze={(until) => onSnooze(t.id, until)}
                       onUnsnooze={() => onUnsnooze(t.id)}
-                      onAckRun={() => onAckRun(t.id)}
+                      onAckRun={() => onAckRun(t.id)} onStopTurn={() => onStopTurn(t.id)}
                       sparkline={sparklines[t.id]}
                       tagsById={tagsById}
                       onSelectTag={onSelectTag}
@@ -429,7 +436,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
 // Full-workspace board shell (desktop): owns everything right of the projects
 // sidebar — header with the List/Board toggle, the board, and (via `children`)
 // the slide-over session panel + drawers the composition root mounts on top.
-export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, children }: {
+export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, onStopTurn, children }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; tags: TagRow[]; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;
   onSetView: (v: TaskView) => void;
@@ -439,6 +446,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTas
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
   onAckRun: (id: string) => void;
+  onStopTurn: (id: string) => void;
   children?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -494,7 +502,7 @@ export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTas
           tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch}
           onSelect={onSelectTask} onEditTask={onEditTask} onMove={onMoveTask}
           onStartSuggestion={onStartSuggestion} onAcceptSuggestion={onAcceptSuggestion} onDismissSuggestion={onDismissSuggestion}
-          onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun}
+          onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn}
         />
       )}
       {children}

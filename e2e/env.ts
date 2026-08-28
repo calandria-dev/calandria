@@ -94,6 +94,13 @@ export const SERVER_ENV: Record<string, string> = {
   // Registers the deterministic mock agent (lib/agents/mock/driver.ts) so
   // onboarding and turns run without any real agent CLI or login.
   CALANDRIA_E2E_MOCK_AGENT: "1",
+  // The idle mark inside a test's patience (lib/turnActivity.ts; 20 minutes in
+  // production). 8s clears the longest INCIDENTAL silence any other spec
+  // creates — 15-collab-doc's `e2e:sleep=4000` — so no spec but 23's grows an
+  // idle chip it didn't ask for; the two specs that do hold a turn open for 60s
+  // (04, 20) assert over the API and on the composer, never on card chips.
+  CALANDRIA_TURN_IDLE_MS: "8000",
+  CALANDRIA_TURN_IDLE_SWEEP_MS: "1000",
   // Hermetic Claude config, same reasoning as tests/setup.ts: the server reads
   // this dir for the developer's real settings.json (model catalog/provider)
   // and .credentials.json — which the plan-usage meter would otherwise use to

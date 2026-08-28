@@ -553,6 +553,23 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-chip.ran{margin-top:7px;align-self:flex-start;color:var(--green);border-color:var(--green);background:var(--green-soft);cursor:pointer;}
 .bc-chip.ran:hover{background:color-mix(in oklab, var(--green) 26%, transparent);}
 
+/* A live turn that has gone quiet, and the only thing this card can do about it
+   (app/shell/IdleStop.tsx). Amber like the activity line it sits under, and
+   shaped like that row's other chips rather than like a button, because it is a
+   state of the card first. The AGE is not repeated here — the activity line
+   above already carries it — so the chip is the affordance and, once armed, the
+   caveat. Armed it wraps: the caveat is a sentence and truncating it to an
+   ellipsis would hide the only reason to hesitate. */
+.idle-chip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px;padding:2px 4px 2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;text-align:left;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);max-width:100%;cursor:pointer;}
+.idle-chip.armed{cursor:default;}
+.idle-chip:not(.armed):hover{background:color-mix(in oklab, var(--amber) 26%, transparent);}
+.idle-chip svg{width:11px;height:11px;flex:0 0 auto;}
+.bc-chip.idle{margin-top:7px;align-self:flex-start;color:var(--amber);border-color:var(--amber);background:var(--amber-soft);cursor:pointer;}
+.bc-chip.idle.armed{white-space:normal;flex-wrap:wrap;overflow:visible;cursor:default;}
+.bc-chip.idle:not(.armed):hover{background:color-mix(in oklab, var(--amber) 26%, transparent);}
+.idle-btn{background:transparent;border:1px solid var(--amber);border-radius:999px;padding:1px 8px;font:inherit;font-size:inherit;font-weight:inherit;color:var(--amber);cursor:pointer;}
+.idle-btn:hover{background:color-mix(in oklab, var(--amber) 26%, transparent);}
+
 /* Board: the corner affordance, out of the card's content flow. */
 .bc-snz{position:absolute;top:8px;right:8px;}
 .bcard.snoozed .bc-act{color:var(--ink-3);}

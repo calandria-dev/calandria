@@ -14,7 +14,8 @@
 // unmark one that started talking again.
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 
-import { createProject, createTask, updateTask } from "@/lib/store";
+import { createProject, createTask, listMessages, updateTask } from "@/lib/store";
+import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "@/lib/turnInput";
 import { registerTurn, unregisterTurn } from "@/lib/abort";
 import { waitForAnswer, submitAnswer } from "@/lib/asks";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
@@ -161,6 +162,28 @@ describe("idle turn mark", () => {
 
     expect(turnIdleSince(task.id)).toBe(at);
     expect(idleEvents()).toHaveLength(1);
+  });
+
+  it("says nothing to the session itself unless the instance asked for it", () => {
+    // The mark is the whole feature on a default instance. Telling the MODEL
+    // costs a turn's tokens on a wait that may be perfectly legitimate, so it
+    // is opt-in (CALANDRIA_TURN_IDLE_NUDGE, off) — tests/idleNudge.test.ts
+    // pins what happens when an instance does opt in.
+    const task = makeTask();
+    liveTurn(task.id);
+    const sent: string[] = [];
+    const handle: TurnInputHandle = { send: (text) => (sent.push(text), true) };
+    registerTurnInput(task.id, handle);
+    try {
+      markTurnActivity(task.id);
+      sweepIdleTurns(wellPast());
+
+      expect(turnIdleSince(task.id)).toBeGreaterThan(0);
+      expect(sent).toEqual([]);
+      expect(listMessages(task.id)).toHaveLength(0);
+    } finally {
+      unregisterTurnInput(task.id, handle);
+    }
   });
 
   it("never marks a task with no live turn, and forgets it", () => {
