@@ -7,7 +7,7 @@ import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
-  modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W,
+  modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
   type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
@@ -834,7 +834,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               <ColRail label="Diff & Context" right onExpand={onRailExpand} />
             </div>
           ) : (
-            <div className="sess-split" style={{ gridTemplateColumns: `minmax(0,1fr) 0px ${railW}px` }}>
+            <div className="sess-split" style={{ gridTemplateColumns: `minmax(0,1fr) 0px min(${railW}px, max(0px, 100% - min(${SESS_MAIN_MIN}px, 50%)))` }}>
               <div className="sess-main">{chatPane}</div>
               <ColResize
                 side="right" min={RAIL_W.min} max={RAIL_W.max}

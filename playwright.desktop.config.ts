@@ -37,11 +37,15 @@ export default defineConfig({
   reporter: [["list"], ["./e2e/cleanup-reporter.ts"]],
   use: {
     // No baseURL/browser fixtures: every page in this suite comes from
-    // `electron.launch()`, not from a Playwright browser.
-    screenshot: "only-on-failure",
+    // `electron.launch()`, not from a Playwright browser. Which is also why
+    // `screenshot` is NOT set here — that option captures the `page` fixture,
+    // which this suite never uses, so it would silently do nothing. The
+    // screenshot is taken by `attachShellLog` in desktop/e2e/fixtures.ts
+    // instead, off the window the shell actually opened.
+    //
     // Traces are unreliable against a packaged Electron app
     // (microsoft/playwright#13180) and the packaged lane runs this same config,
-    // so the suite standardises on screenshots + the captured shell log.
+    // so the suite standardises on that screenshot + the captured shell log.
     trace: "off",
   },
 });

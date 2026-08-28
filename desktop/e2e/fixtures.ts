@@ -451,8 +451,77 @@ export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | u
   // worktrees it explains, and attaching by path keeps the whole thing rather
   // than the two lines a console reporter would print.
   const file = path.join(shell.root, "shell.log");
-  fs.writeFileSync(file, shell.log.join("\n"));
+  fs.writeFileSync(file, [...shell.log, await geometryLine(shell)].join("\n"));
   await testInfo.attach("shell.log", { path: file, contentType: "text/plain" });
+  await attachScreenshot(testInfo, shell);
+}
+
+/**
+ * A picture of the window a spec failed against.
+ *
+ * `use.screenshot: "only-on-failure"` does NOT cover this suite: Playwright
+ * captures the `page` FIXTURE, and every page here comes from
+ * `electron.launch()` instead — so the config's setting is inert and a red
+ * desktop run uploaded no image at all. That absence read as evidence on PR #54
+ * (a window producing no frames), when it only ever meant nobody had asked for
+ * one; the actual failure was a layout collapsed to zero width, which one
+ * screenshot would have shown at a glance. So the suite takes its own.
+ *
+ * Same best-effort contract as `geometryLine`: the window may already be
+ * destroyed, and failing to photograph a failure must not replace it.
+ */
+async function attachScreenshot(testInfo: TestInfo, shell: Shell): Promise<void> {
+  const file = path.join(shell.root, "failure.png");
+  try {
+    await shell.win.screenshot({ path: file, timeout: 5_000 });
+  } catch {
+    return;
+  }
+  await testInfo.attach("failure.png", { path: file, contentType: "image/png" });
+}
+
+/**
+ * The window's measurements, appended to the log a FAILED spec attaches.
+ *
+ * This suite pins no viewport — the whole point is a real OS window — so the
+ * size the renderer lays out at is the runner's, and the runners disagree: a
+ * hosted macOS or Windows runner's virtual display is 1024x768 and the OS
+ * clamps `main.js`'s requested 1440x900 down to fit it, while the ubuntu lane's
+ * Xvfb screen is larger and has no window manager to clamp anything. A layout
+ * assertion that fails on two lanes and passes on the third is a size question
+ * until something rules it out, and nothing in a Playwright failure says so.
+ *
+ * Best effort by construction. In `afterEach` the app may already be gone —
+ * 03-quit-drain and 04-db-lock end it on purpose — and a hung `evaluate`
+ * against a dying process must not replace the failure it was meant to explain,
+ * hence the race.
+ */
+async function geometryLine(shell: Shell): Promise<string> {
+  let timer: NodeJS.Timeout | undefined;
+  // The rejection is handled HERE rather than by a try/catch around the race:
+  // a dead app can reject after the timeout has already won, and that would
+  // land as an unhandled rejection in the reporter long after the spec that
+  // caused it finished.
+  const read = shell.app
+    .evaluate(({ BrowserWindow, screen }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      const c = w ? w.getContentBounds() : null;
+      const d = screen.getPrimaryDisplay();
+      return (
+        `content=${c ? `${c.width}x${c.height}` : "(no window)"} ` +
+        `display=${d.size.width}x${d.size.height} ` +
+        `workArea=${d.workArea.width}x${d.workArea.height} scale=${d.scaleFactor}`
+      );
+    })
+    .catch(() => "unavailable (the app was no longer running)");
+  const timeout = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve("unavailable (the app did not answer in 5s)"), 5_000);
+  });
+  try {
+    return `[e2e] window ${await Promise.race([read, timeout])}`;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

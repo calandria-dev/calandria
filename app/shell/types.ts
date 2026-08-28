@@ -477,6 +477,17 @@ export const DEFAULT_LAYOUT: Layout = { projW: 236, taskW: 352, railW: 430, proj
 export const PROJ_W = { min: 170, max: 460 };
 export const TASK_W = { min: 240, max: 620 };
 export const RAIL_W = { min: 320, max: 760 };
+// The floor under the transcript column when the rail is open. `railW` is a
+// FIXED grid track and the three columns beside it are fixed too, so on a pane
+// narrower than 236 + 352 + railW the transcript is what absorbs the shortfall —
+// all the way to zero. At a 1024px-wide window and the default rail that left it
+// ~4px: every message still in the DOM and in the accessibility tree, laid out
+// at width 0, which is *invisible* to a user and to Playwright alike (a zero-area
+// box fails `toBeVisible`). Hence a render-time clamp, not a state clamp: the
+// user's chosen `railW` is kept and re-applied the moment the window has room
+// for it again. Half the pane is the second half of the rule, for panes too
+// narrow for even this floor — the shell can be resized down to 720px wide.
+export const SESS_MAIN_MIN = 360;
 
 // ---------- scheduled tasks (project landing "Schedules" card) ----------
 // Mirrors lib/store.ts's schedule + schedule_run rows as served by

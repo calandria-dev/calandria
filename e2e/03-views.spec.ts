@@ -147,6 +147,84 @@ test.describe("full-width text", () => {
   });
 });
 
+// The other end of the same measure. Every other spec here runs at a viewport
+// wider than the three fixed columns put together (236 + 352 + 430 = 1018), so
+// none of them could see what happens just below it: the rail is a fixed grid
+// track, so the transcript — the only flexible one — absorbed the whole
+// shortfall and laid out at ~0px. The messages stayed in the DOM and in the
+// accessibility tree the entire time, which is what made it so hard to read:
+// the session pane was simply blank, and Playwright called every message
+// "hidden" (a zero-area box is not visible) rather than missing.
+//
+// 1024x768 is the exact size that caught it — the GitHub-hosted macOS and
+// Windows runners' virtual display, which is what the Electron shell's window
+// gets clamped to. The desktop e2e lane has no viewport of its own (it drives a
+// real OS window), so its transcript assertion failed there and nowhere else;
+// this is the cheap Linux-side pin for the layout rule underneath it.
+test.describe("narrow desktop window", () => {
+  test.use({ viewport: { width: 1024, height: 768 } });
+
+  const NARROW_TASK = "Narrow task";
+
+  test.beforeAll(async ({ request }) => {
+    const projects = await (await request.get("/api/projects")).json();
+    const proj = projects.find((p: { name: string }) => p.name === PROJECT);
+    const task = await createTask(request, { projectId: proj.id, title: NARROW_TASK });
+    await sendMessage(request, task.id);
+    await waitForIdle(request, task.id);
+  });
+
+  test("the rail yields rather than squeezing the transcript to nothing", async ({ page }) => {
+    await gotoApp(page);
+    await page.getByText(PROJECT).first().click();
+    await listRow(page, NARROW_TASK).click();
+
+    // The assertion the desktop lane makes, at the width that broke it: a
+    // streamed message is genuinely on screen, not merely in the document.
+    await expect(page.getByText("Mock turn complete").first()).toBeVisible();
+
+    // And the rail did not simply disappear to make room — both panes are real.
+    const panes = await page.evaluate(() => ({
+      main: document.querySelector(".sess-main")!.getBoundingClientRect().width,
+      rail: document.querySelector(".sess-rail")!.getBoundingClientRect().width,
+      tw: document.querySelector(".transcript .tw")!.getBoundingClientRect().width,
+    }));
+    expect(panes.main).toBeGreaterThan(100);
+    expect(panes.rail).toBeGreaterThan(100);
+    // The transcript's own measure, inside its 28px gutters, is what a message
+    // is laid out into. Zero here is the bug however wide .sess-main reads.
+    expect(panes.tw).toBeGreaterThan(0);
+  });
+
+  // The same window is also SHORT, and the rail's scroll box had a 40px
+  // `padding-bottom` — incompressible, so `min-height:0` could not shrink it
+  // past 40px and, being `position:relative`, it painted over its next sibling
+  // instead of scrolling. With the terminal drawer taking 300px off a 768px
+  // display that overhang landed across the drawer's own button bar and ate the
+  // clicks on it. Clicking Hide through the drawer is the assertion: an
+  // intercepted click times out rather than failing on the toggle.
+  test("the diff rail does not overhang the terminal drawer's buttons", async ({ page }) => {
+    await gotoApp(page);
+    await page.getByText(PROJECT).first().click();
+    await listRow(page, NARROW_TASK).click();
+    await expect(page.locator(".tc-scroll")).toBeVisible();
+
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    const drawer = page.locator(".term-drawer");
+    await expect(drawer).toBeVisible();
+    // Nothing above may reach into the drawer: it is the last thing in the
+    // column and every pane before it is supposed to have stopped.
+    const overhang = await page.evaluate(() => {
+      const top = document.querySelector(".term-drawer")!.getBoundingClientRect().top;
+      return document.querySelector(".tc-scroll")!.getBoundingClientRect().bottom - top;
+    });
+    expect(overhang).toBeLessThanOrEqual(0);
+
+    await page.getByTitle("Hide terminal (the shell keeps running)").click();
+    await expect(drawer).toHaveClass(/\bcollapsed\b/);
+  });
+});
+
 async function idOf(page: import("@playwright/test").Page, title: string): Promise<string> {
   const projects = await (await page.request.get("/api/projects")).json();
   const proj = projects.find((p: { name: string }) => p.name === PROJECT);
