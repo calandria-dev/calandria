@@ -18,7 +18,7 @@ import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 import { POST as testNotification } from "@/app/api/notifications/test/route";
-import { classifyNotificationSupport, shouldDisplay } from "@/app/shell/useNotifications";
+import { classifyNotificationSupport, isDesktopShell, shouldDisplay } from "@/app/shell/useNotifications";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -501,21 +501,56 @@ describe("the browser channel's support classifier", () => {
     // The bug this pins: on plain-http LAN origins Chrome reports permission
     // "denied" without ever prompting. That "denied" must not surface as
     // "you blocked notifications — unblock in site settings", which can't work.
-    expect(classifyNotificationSupport({ secureContext: false, hasNotificationApi: true, permission: "denied" }))
+    expect(classifyNotificationSupport({ desktopShell: false, secureContext: false, hasNotificationApi: true, permission: "denied" }))
       .toBe("insecure");
     // Some browsers hide the API entirely on insecure origins; same diagnosis.
-    expect(classifyNotificationSupport({ secureContext: false, hasNotificationApi: false, permission: null }))
+    expect(classifyNotificationSupport({ desktopShell: false, secureContext: false, hasNotificationApi: false, permission: null }))
       .toBe("insecure");
   });
 
   it("reads a missing API on a SECURE origin as genuinely unsupported", () => {
-    expect(classifyNotificationSupport({ secureContext: true, hasNotificationApi: false, permission: null }))
+    expect(classifyNotificationSupport({ desktopShell: false, secureContext: true, hasNotificationApi: false, permission: null }))
       .toBe("unsupported");
   });
 
   it("passes the browser's real permission through on a secure origin", () => {
     for (const p of ["granted", "denied", "default"] as const) {
-      expect(classifyNotificationSupport({ secureContext: true, hasNotificationApi: true, permission: p })).toBe(p);
+      expect(classifyNotificationSupport({ desktopShell: false, secureContext: true, hasNotificationApi: true, permission: p })).toBe(p);
     }
+  });
+
+  it("reads the desktop shell's denial as the desktop app owning the channel", () => {
+    // The exact state desktop/main.js produces: setPermissionCheckHandler
+    // answers `notifications` false, so the page reads "denied" on a perfectly
+    // secure 127.0.0.1 origin while the Electron main process is raising the
+    // toasts. Reported as "denied", Settings tells the user to unblock the site
+    // in a browser settings page the shell has no way to open.
+    expect(classifyNotificationSupport({ desktopShell: true, secureContext: true, hasNotificationApi: true, permission: "denied" }))
+      .toBe("desktop_shell");
+    // It outranks every other signal, including "insecure": whatever the page's
+    // own channel could or couldn't do, it is not the one the user hears.
+    expect(classifyNotificationSupport({ desktopShell: true, secureContext: false, hasNotificationApi: false, permission: null }))
+      .toBe("desktop_shell");
+  });
+});
+
+describe("spotting the desktop shell from the user agent", () => {
+  const CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+  it("matches the token the shell appends, and Electron's own", () => {
+    // What desktop/main.js announceShell() actually produces.
+    expect(isDesktopShell(`${CHROME} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(true);
+    // A packaged build predating the token still gets the right copy.
+    expect(isDesktopShell(`${CHROME} Electron/44.0.0`)).toBe(true);
+    // And the token alone, if Electron's own ever stops being part of it.
+    expect(isDesktopShell(`${CHROME} Calandria-Desktop/0.3.0`)).toBe(true);
+  });
+
+  it("does not match an ordinary browser", () => {
+    expect(isDesktopShell(CHROME)).toBe(false);
+    expect(isDesktopShell("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1")).toBe(false);
+    // The word boundary matters: a UA carrying an unrelated product whose name
+    // merely ENDS in one of ours is not the shell.
+    expect(isDesktopShell(`${CHROME} NotElectron/1.0 MyCalandria-Desktop/1.0`)).toBe(false);
   });
 });

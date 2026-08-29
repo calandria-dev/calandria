@@ -262,6 +262,62 @@ test.describe("auto-collapse on a narrow window", () => {
     await expect(page.getByTitle("Show projects panel")).toBeVisible();
     await expect(page.getByTitle("Show tasks panel")).toBeVisible();
   });
+
+  // The same window is also SHORT, which the shedding policy above says nothing
+  // about — it is a width policy. The rail's scroll box carried a 40px
+  // `padding-bottom`, incompressible, so `min-height:0` could not shrink it past
+  // 40px and, being `position:relative`, it painted over its next sibling
+  // instead of scrolling. With the terminal drawer taking 300px off a 768px
+  // display that overhang landed across the drawer's own button bar and ate the
+  // clicks on it, which is how it surfaced: as a 30s `locator.click` timeout on
+  // the desktop lanes, whose windows the runners clamp to exactly this size.
+  // Clicking Hide THROUGH the drawer is the assertion — an intercepted click
+  // times out rather than failing on the toggle.
+  test("the diff rail does not overhang the terminal drawer's buttons", async ({ page }) => {
+    // Selected at the full width, since at 1024 both side columns are spines.
+    await gotoApp(page);
+    await page.getByText(PROJECT).first().click();
+    await listRow(page, NARROW_TASK).click();
+    await expect(page.locator(".tc-scroll")).toBeVisible();
+
+    // 600 tall, not 768: at 768 the wrapped toolbar still just fits above the
+    // drawer, so the case would pass with the clip removed. This is the height
+    // the overhang is 107px at.
+    await page.setViewportSize({ width: 1024, height: 600 });
+    // Both spines expanded back out, which the policy above allows and which is
+    // the WORST case for this pane rather than an exotic one: 236 + 352 leaves
+    // the rail on SESS_MAIN_MIN's floor at ~74px, where `.tc-bar`'s
+    // `flex-wrap:wrap` turns one toolbar row into five and the rail's own
+    // children stop fitting its height. Reached from the shell's own controls,
+    // so nothing here depends on a layout the user cannot actually produce.
+    await page.getByTitle("Show projects panel").click();
+    await page.getByTitle("Show tasks panel").click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    const drawer = page.locator(".term-drawer");
+    await expect(drawer).toBeVisible();
+
+    // Nothing above may reach into the drawer: it is the last thing in the
+    // column and every pane before it is supposed to have stopped.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const top = document.querySelector(".term-drawer")!.getBoundingClientRect().top;
+          // Every box in the rail, not just the scroll one: the element that
+          // actually ate the click on the desktop lanes was `.tc-bar`, the
+          // toolbar ABOVE it, which `flex:0 0 auto` makes incompressible.
+          return Math.max(
+            ...[...document.querySelectorAll(".sess-rail, .tc-root, .tc-bar, .tc-scroll")]
+              .map((el) => el.getBoundingClientRect().bottom - top),
+          );
+        }),
+      { message: "the diff rail never stopped overhanging .term-drawer" })
+      .toBeLessThanOrEqual(0);
+
+    await page.getByTitle("Hide terminal (the shell keeps running)").click();
+    await expect(drawer).toHaveClass(/\bcollapsed\b/);
+  });
 });
 
 async function idOf(page: import("@playwright/test").Page, title: string): Promise<string> {

@@ -110,6 +110,7 @@ const ALLOWED: Record<string, RegExp[]> = {
   "tests/importGraph.test.ts": [LEGACY_ENV], // one comment naming lib/env.mjs's job
   "lib/resolveHostname.js": [LEGACY_ENV], // hand-rolls the alias (plain-Node, can't import .mjs freely)
   "desktop/supervisor.js": [LEGACY_ENV], // ditto, for the desktop wrapper
+  "desktop/README.md": [LEGACY_ENV], //   documents that alias reaching the sidecars by inheritance
   "docs/SELF_HOSTING.md": [LEGACY_ENV, LEGACY_STORAGE, /orch-u-|-p orch-|\/home\/orch\b/],
   "docs/SERVICES.md": [/ORCH_PUBLIC_HOST/], // injected into services forever; not deprecated
   "lib/services.ts": [/ORCH_PUBLIC_HOST/], // the injection site
@@ -131,6 +132,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   "lib/db-lock.mjs": [LEGACY_STORAGE],
   "lib/config.ts": [LEGACY_STORAGE],
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE],
+  // (c) too: the desktop suite reads the database file straight off disk after
+  // the shell has exited, so it has to resolve the name the way the app does
+  // rather than hardcode the current one.
+  "desktop/e2e/03-quit-drain.spec.ts": [LEGACY_STORAGE],
   // The backup script follows lib/storage.mjs rather than assuming a filename,
   // so both it and its test name the pre-rename database they have to archive.
   "scripts/backup.mjs": [LEGACY_STORAGE],

@@ -41,6 +41,30 @@ function portFree(port) {
 }
 
 /**
+ * `PORT`/`PTY_PORT` off an environment, as the Supervisor's `port`/`ptyPort`
+ * options. A *preference*, not a demand — `pickPorts` still steps past a busy
+ * one, which is what makes a second Calandria on a dev box survivable.
+ *
+ * Lives here rather than in `main.js` so it can be tested without a display,
+ * and so the shell's one line of wiring stays a spread with nothing to get
+ * subtly wrong. Junk (non-numeric, 0, out of range) is dropped rather than
+ * passed on: `pickPorts` would probe from it and `sidecarEnv` treats 0 as
+ * "unset", so a typo'd PORT would silently land the app back on 3000.
+ */
+function preferredPorts(env = process.env) {
+  const out = {};
+  const num = (raw) => {
+    const n = Number(String(raw ?? "").trim());
+    return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+  };
+  const port = num(env.PORT);
+  const ptyPort = num(env.PTY_PORT);
+  if (port) out.port = port;
+  if (ptyPort) out.ptyPort = ptyPort;
+  return out;
+}
+
+/**
  * Prefer the documented defaults (3000/3001) so a user's bookmarks, their
  * `PUBLIC_BASE_URL`, and any project's managed services keep working — but
  * never fail to launch because something else holds them. A developer running
@@ -142,9 +166,15 @@ function nodeVersion(bin, env = process.env) {
  * invoke into a headless node, and ELECTRON_IS_DEV / _RUN_AS_NODE showing up in
  * a user's terminal is confusing at best.
  *
- * SET — ports, NODE_ENV, and on Windows a SHELL, because pty-server.js falls
- * back to "/bin/zsh" when SHELL is unset (docs/WINDOWS.md). Setting it here is
- * a shell-side mitigation that needs no app change.
+ * SET — ports and NODE_ENV, and nothing else. There used to be a win32 SHELL
+ * fallback here, from when pty-server.js's unset-$SHELL default was "/bin/zsh";
+ * the Windows-support work replaced that with a real probe (CALANDRIA_PTY_SHELL
+ * -> $SHELL -> pwsh.exe -> powershell.exe -> COMSPEC, docs/WINDOWS.md), which
+ * turned the mitigation into a DOWNGRADE: $SHELL is checked before the probe, so
+ * injecting COMSPEC handed every desktop terminal tab cmd.exe on a box where the
+ * server on its own would have picked PowerShell. Measured on Windows 11 with
+ * pwsh 7 installed. An inherited SHELL is still passed through untouched, which
+ * is the case the removal does not change.
  */
 function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {} } = {}) {
   const out = {};
@@ -157,9 +187,6 @@ function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {}
   if (ptyPort) out.PTY_PORT = String(ptyPort);
   out.PTY_HOST = env.PTY_HOST || "127.0.0.1";
   if (dbDir) out.CALANDRIA_DB_DIR = dbDir;
-  if (process.platform === "win32" && !out.SHELL) {
-    out.SHELL = out.COMSPEC || "powershell.exe";
-  }
   return { ...out, ...extra };
 }
 
@@ -217,6 +244,10 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
         headers: process.env.SERVICE_TOKEN ? { "x-service-token": process.env.SERVICE_TOKEN } : {},
+        // Also on the fetch, not just the loop head: an abort arriving while a
+        // probe is in flight should end the wait now rather than after this
+        // request and the next sleep.
+        signal,
       });
       if (res.ok) {
         // Insist on the shape, not just a 200: pty-server.js answers every path
@@ -234,6 +265,37 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(`server did not become ready on port ${port} within ${timeoutMs}ms (${lastErr?.message || "no response"})`);
+}
+
+/**
+ * The rejection `start()` owes its caller when a sidecar dies before the app
+ * answers.
+ *
+ * `waitForReady` polls a port and knows nothing about the process it is waiting
+ * for, so on its own a sidecar that exited one second in still costs the whole
+ * CALANDRIA_READY_TIMEOUT_MS (90s) and then reports the timeout — "server did
+ * not become ready … (fetch failed)" — which names the symptom and hides the
+ * cause. The child already said why it left; this puts THAT on the error.
+ *
+ * The reason is lifted out of the tail rather than re-derived, because the log
+ * is where a sidecar's own words are: `[app] [server] another Calandria process
+ * already holds this database (pid 4242 on devBox)`. Only lines from the child
+ * that died are eligible — the other sidecar's boot chatter is the last thing
+ * printed about half the time and would read as the explanation.
+ */
+function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
+  const prefix = `[${name}] `;
+  const said = String(tail)
+    .split("\n")
+    .filter((l) => l.startsWith(prefix))
+    .map((l) => l.slice(prefix.length).trim())
+    .filter(Boolean)
+    .pop();
+  const how = signal ? `on ${signal}` : `with code ${code}`;
+  const err = new Error(`the ${name} sidecar exited ${how} before the server became ready${said ? `: ${said}` : ""}`);
+  err.code = "ESIDECAREXIT";
+  err.child = { name, exitCode: code ?? null, signal: signal ?? null, dbLockHeld: !!dbLockHeld };
+  return err;
 }
 
 /**
@@ -264,6 +326,8 @@ class Supervisor {
     this.ptyPort = null;
     this.stopping = false;
     this.tail = [];
+    // Set only while start() is waiting for readiness; see the race there.
+    this.notifyBootExit = null;
   }
 
   /** Last N log lines, for the "it failed to start" screen. */
@@ -281,6 +345,14 @@ class Supervisor {
   }
 
   async start() {
+    // Which tree the sidecars are about to run out of. Packaged that is
+    // resources/app-payload, unpackaged the checkout, and CALANDRIA_REPO_ROOT
+    // overrides both — one line that distinguishes a self-contained install
+    // from one still leaning on somebody's working copy, which is exactly the
+    // thing a packaged test run has to be able to see (desktop/e2e/06-packaged
+    // .spec.ts). It goes to the boot screen too, so a launch that dies below
+    // says where it looked rather than only what it did not find.
+    this.log(`[shell] payload: ${this.repoRoot}`);
     if (!fs.existsSync(this.serverScript)) {
       throw new Error(`server entrypoint not found: ${this.serverScript}`);
     }
@@ -301,6 +373,13 @@ class Supervisor {
       } else {
         this.log(`[shell] WARN: PATH looks minimal and the login-shell probe failed; git/gh/codex may not resolve`);
       }
+    } else {
+      // The quiet branch used to log nothing at all, which made "the app can't
+      // find codex" undiagnosable from a log — and left
+      // desktop/e2e/08-macos-launchd.spec.ts unable to tell "the repair is
+      // broken" from "this machine was never handed the stub". One line, on the
+      // branch that is about to decide whether every agent CLI resolves.
+      this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.env.PATH}`);
     }
 
     const node = resolveNode({ env: this.effectiveEnv, resourcesPath: this.resourcesPath });
@@ -315,18 +394,50 @@ class Supervisor {
     }
     const env = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
 
+    // The readiness wait races against this: it resolves the moment either
+    // sidecar exits, which is a boot that has already failed no matter how long
+    // the deadline still had to run. Live only for the duration of start() —
+    // afterwards an exit is the shell's business (`onExit`), not the launch's.
+    const bootExit = new Promise((resolve) => {
+      this.notifyBootExit = resolve;
+    });
+
     // pty first: server.js proxies /pty and logs its target at boot, so having
     // the sidecar already listening keeps the first terminal open from racing.
     this.spawnChild("pty", this.ptyScript, env);
     this.spawnChild("app", this.serverScript, env);
 
+    // The timeout stays the backstop for the OTHER failure — a sidecar that is
+    // alive and simply never answers (a wedged Next build, a half-migrated db).
+    // Nothing about that case can be learned from a process that is still
+    // running, so there the deadline is the only evidence there is.
+    const abort = new AbortController();
+    const ready = waitForReady(this.port, {
+      timeoutMs: Number(this.env.CALANDRIA_READY_TIMEOUT_MS || 90_000),
+      signal: abort.signal,
+    }).then(
+      (version) => ({ version }),
+      (error) => ({ error })
+    );
+    const died = bootExit.then((rec) => {
+      // Stop polling a port whose server is gone: without this the loser of the
+      // race keeps fetching for the rest of the 90s, and under a caller that
+      // retries the launch those probes outlive the Supervisor that made them.
+      abort.abort();
+      return { error: bootExitError(rec, this.recentLog(80)) };
+    });
+
     try {
-      const version = await waitForReady(this.port, { timeoutMs: Number(this.env.CALANDRIA_READY_TIMEOUT_MS || 90_000) });
+      const { version, error } = await Promise.race([ready, died]);
+      if (error) throw error;
       this.log(`[shell] ready on http://127.0.0.1:${this.port} (version ${version?.version ?? "?"})`);
       return { url: `http://127.0.0.1:${this.port}`, port: this.port, ptyPort: this.ptyPort, version };
     } catch (err) {
       await this.stop();
       throw err;
+    } finally {
+      this.notifyBootExit = null;
+      abort.abort();
     }
   }
 
@@ -350,7 +461,14 @@ class Supervisor {
         // DbLockHeldError, prints the holder, and exit(1)s. Surfacing the code
         // lets the shell say "another Calandria is already running" instead of
         // "the app crashed".
-        this.onExit({ name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) });
+        const rec = { name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) };
+        // Before `onExit`, which is somebody else's callback: main.js's ends in
+        // `app.exit(1)` and never returns. Resolving here only queues a
+        // microtask, so the shell's handler still runs first either way — this
+        // ordering just means a start() in flight can't be stranded on the 90s
+        // timeout by a host callback that throws or never comes back.
+        this.notifyBootExit?.(rec);
+        this.onExit(rec);
       }
     });
     this.children.push({ name, child, exited: null });
@@ -358,15 +476,57 @@ class Supervisor {
   }
 
   /**
-   * SIGTERM, then wait. server.js's own handler POSTs /api/instance/drain and
-   * exits when in-flight turns have settled (CALANDRIA_SHUTDOWN_GRACE_MS), so the
-   * shell's job is only to not out-run it. SIGKILL is the backstop.
-   * On Windows there is no SIGTERM: the .kill() lands as TerminateProcess, so
-   * the drain is skipped — a known gap, listed in the spike doc.
+   * POST /api/instance/drain and wait for it, bounded.
+   *
+   * Best-effort by contract, like the boot pings on the other side of the
+   * lifecycle: a refused connection (the app died before we got here), a 404
+   * (an older build without the route) and a hang are all "stop anyway" — a
+   * quit that never completes is worse than one that skipped a settlement.
+   * The bound mirrors server.js's own: CALANDRIA_SHUTDOWN_GRACE_MS, which is
+   * what the route waits for server-side, plus headroom for the round trip, so
+   * we never abandon a drain we asked for a moment before it finishes.
+   *
+   * Reads SERVICE_TOKEN off the env the SIDECARS were given rather than this
+   * process's, since that is the one the server is checking against.
    */
-  async stop({ graceMs } = {}) {
+  async drainApp(drainMs) {
+    const app = this.children.find((c) => c.name === "app");
+    if (!this.port || !app || app.exited) return;
+    const env = this.effectiveEnv || this.env;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), drainMs ?? this.shutdownGraceMs + 3000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}/api/instance/drain`, {
+        method: "POST",
+        headers: env.SERVICE_TOKEN ? { "x-service-token": env.SERVICE_TOKEN } : {},
+        signal: controller.signal,
+      });
+      this.log(`[shell] drained in-flight turns (status ${res.status})`);
+    } catch (err) {
+      this.log(`[shell] drain request failed, stopping anyway: ${err?.message || err}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Drain, then SIGTERM, then wait, with SIGKILL as the backstop.
+   *
+   * The drain is an HTTP POST THIS process makes rather than a signal
+   * server.js catches, because Windows has no deliverable SIGTERM: there
+   * `child.kill("SIGTERM")` is a TerminateProcess, server.js's own handler
+   * never runs, and quitting mid-turn cut the turn off with nothing durable
+   * recorded. Asking over loopback works the same on every platform, and
+   * leaves the signal path as the backstop rather than the mechanism — on
+   * POSIX server.js still POSTs the same route on SIGTERM, which by then finds
+   * nothing in flight and returns immediately. The same order is what a
+   * systemd/service wrapper would want, which is why it lives here and not in
+   * main.js.
+   */
+  async stop({ graceMs, drainMs } = {}) {
     if (this.stopping) return;
     this.stopping = true;
+    await this.drainApp(drainMs);
     const wait = graceMs ?? this.shutdownGraceMs + 4000;
     const live = this.children.filter((c) => !c.exited);
     for (const { child } of live) {
@@ -397,6 +557,7 @@ class Supervisor {
 module.exports = {
   Supervisor,
   pickPorts,
+  preferredPorts,
   portFree,
   resolveNode,
   sidecarEnv,

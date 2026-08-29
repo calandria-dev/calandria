@@ -86,6 +86,20 @@ is the only job that boots Calandria on Windows: `npm start` runs `scripts/start
 ties `server.js` and the pty sidecar together (there's no process group to kill), so the
 shipped launcher runs in CI rather than only being read.
 
+A third `windows-latest` job runs the **desktop shell's** suite — the Electron
+wrapper in `desktop/`, under the same gate again. It is hosted rather than run on a
+homelab VM for a reason worth stating: a hosted Windows runner has a real window
+station, so Electron opens a genuine window on it and the job needs no display server
+installed at all, which is the one thing the Ubuntu desktop lane cannot say (it runs
+under `xvfb`). The lane exists because this is where the shell's behaviour actually
+diverges — `child.kill()` is a `TerminateProcess`, so a quit has no signal to carry a
+graceful shutdown, and the node sidecars are in no job object, so a `taskkill` without
+`/T` orphans them. `supervisor.stop()` answers the first by POSTing
+`/api/instance/drain` over loopback before it kills anything, which works identically on
+every platform; `desktop/e2e/05-windows-quit.spec.ts` pins the `taskkill` half. What none
+of it covers is a real shutdown or logout: Electron emits neither `before-quit` nor
+`will-quit` for `WM_QUERYENDSESSION`, and no test here claims otherwise.
+
 A separate workflow, `.github/workflows/node-current.yml`, installs on the latest Node
 **Current** rather than `.nvmrc`'s 22, on `ubuntu-24.04` and `windows-latest`, and does
 nothing else: `npm ci`, then load `better-sqlite3` and open a database, then open a real pty
@@ -195,18 +209,38 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
 - **Codex's native Windows sandbox** (restricted tokens, dedicated sandbox users) has a
   heavier first-run setup than Landlock or Seatbelt and may need elevation Calandria never
   prompts for; `sandboxMode` maps through the SDK either way.
+- **The desktop shell wraps the native server only, never one inside WSL2.** Both server
+  configurations stay supported; the Electron wrapper in `desktop/` is not a way to run
+  the WSL2 one. A WSL2 user runs `npm start` in the distro and opens
+  `http://127.0.0.1:3000` in a Windows browser, which WSL2's localhost forwarding makes
+  work unchanged — verified, including the `/pty` WebSocket upgrade, on arbitrary ports.
+  Reasons the shell does not cross the boundary are in
+  [DESKTOP_APP.md](DESKTOP_APP.md#5-per-platform-gaps) §5. Note the rule that outlives
+  the shell question: `CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` must live on the
+  distro's ext4, never under `/mnt/c` — that is 9p, and SQLite WAL over it corrupts.
+- **The desktop shell does not drain on a Windows shutdown or logout.** Quit and window
+  close both do (`supervisor.stop()` POSTs `/api/instance/drain` and waits before it
+  kills — verified on real hardware, teardown in 384ms with no orphaned sidecars), but
+  Electron emits neither `before-quit` nor `will-quit` for `WM_QUERYENDSESSION`, so a
+  session ending underneath the app drains nothing. No `session-end` listener exists yet.
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS story as on any
   platform; `localhost` subdomains don't resolve without a `hosts` entry.
 
 ## Still owed a real machine
 
-CI covers typecheck, the unit suite and the e2e suite: 1462 tests and 92 specs, green on a
-real Windows runner. What's left is the shutdown path, which all three lanes miss
-structurally. `child.kill()` is a `TerminateProcess` on Windows, so no stub can observe which
-signal a process was sent; `tests/startLauncher.test.ts` skips its SIGINT case there for that
-reason. The e2e lane does boot `scripts/start.mjs`, but Playwright tears its `webServer` down
-with a process-tree kill, so it only proves the launcher starts both processes, not whether
-either drains. Five minutes on a Windows box would settle both:
+CI covers typecheck, the unit suite, the e2e suite and the desktop shell's suite: 1462 tests
+and 92 specs, green on a real Windows runner. The desktop shell half has since been run on an
+actual Windows 11 box as well (§5 of [DESKTOP_APP.md](DESKTOP_APP.md#5-per-platform-gaps)
+records what it did, including the quit drain, the terminal panel and the WSL2 decision), so
+what's left here is the console shutdown path, which all four lanes miss structurally.
+`child.kill()` is a `TerminateProcess` on Windows, so no stub can observe which signal a
+process was sent; `tests/startLauncher.test.ts` skips its SIGINT case there for that reason.
+The e2e lane does boot `scripts/start.mjs`, but Playwright tears its `webServer` down with a
+process-tree kill, so it only proves the launcher starts both processes, not whether either
+drains. (The desktop lane covers the shell's own quit paths — `app.quit()` and `taskkill` —
+but that is a different process tree with a different killer; it says nothing about a console
+Ctrl+C, and neither covers a real shutdown or logout.) Five minutes on a Windows box would
+settle both:
 
 1. Under `npm start`, begin a long turn, press Ctrl+C, and confirm the transcript carries the
    interrupted-state notice rather than the next boot's crash recovery clearing a raw running

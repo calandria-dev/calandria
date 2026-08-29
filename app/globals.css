@@ -889,7 +889,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .empty.void .e-t{font-size:20px;}
 
 /* ============================== session ============================== */
-.session-body{flex:1;min-height:0;display:flex;}
+/* `overflow:hidden` is load-bearing, not tidiness. Both panes in here are flex
+   columns of `flex:0 0 auto` chrome around one scroller, so a body shorter than
+   that chrome cannot shrink it — it OVERFLOWS, and being a plain block that
+   paints outside its box, it lands on top of whatever comes next in the shell
+   column. What comes next is the terminal drawer, and the first thing the
+   overflow covers is the drawer's button bar: the desktop lanes failed as a 30s
+   `locator.click` timeout on Hide with `.tc-bar` named as the interceptor, at
+   the 1022x716 window the hosted runners clamp the shell to. Clipping is what
+   makes "a pane stops where its box stops" true; `.tc-bar` further down is what
+   keeps the clipped part reachable. */
+.session-body{flex:1;min-height:0;display:flex;overflow:hidden;}
 .session{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0;position:relative;}
 /* Wrapper exists so the nav cluster anchors to the transcript's bottom edge —
    i.e. always just above the composer, however tall the composer grows. */
@@ -902,8 +912,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* ===== workspace split: transcript beside the DIFF/PREVIEW/CONTEXT rail ===== */
 /* Track order: transcript · 0px drag seam · DIFF/CONTEXT rail. The rail width is
    driven by an inline gridTemplateColumns from layout state (resizable); the
-   --col-rail value here is only the SSR/fallback default. */
-.sess-split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 0px var(--col-rail);}
+   --col-rail value here is only the SSR/fallback default.
+   The min()/max() clamp is NOT decoration: the rail is a fixed track, and so are
+   the projects (236px) and tasks (352px) columns beside it, so a pane narrower
+   than their sum has only the transcript left to take the shortfall — down to
+   zero width, which reads as an empty session pane. It bit a 1024x768 desktop
+   window, where 236 + 352 + 430 left the transcript ~4px. Keep the 360px in step
+   with SESS_MAIN_MIN in app/shell/types.ts, which the inline style uses. */
+.sess-split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 0px min(var(--col-rail),max(0px,100% - min(360px,50%)));}
 .sess-main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);}
 .sess-rail{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg-2);}
 .rail-tabs{flex:0 0 auto;display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--line);}
@@ -1021,7 +1037,12 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-root{display:flex;flex-direction:column;flex:1;min-height:0;}
 .tc-note{padding:18px 16px;color:var(--ink-2);font-size:13px;}
 .tc-note.err{color:var(--red);}
-.tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 0 auto;}
+/* `flex:0 1 auto` + its own scroll, not `0 0 auto`: this bar WRAPS, so on a rail
+   squeezed to SESS_MAIN_MIN's floor one toolbar row becomes five and 200px of
+   incompressible chrome sits above a scroll box that has already given up all
+   of its own height. Shrinking here means the clip on `.session-body` truncates
+   nothing the user cannot scroll back to. */
+.tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 1 auto;min-height:0;overflow:auto;}
 .tc-branch{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px;color:var(--ink);}
 .tc-arrow{font-size:12px;color:var(--ink-3);}
 /* "own base": this task is based on a branch that isn't the project's default
@@ -1056,7 +1077,16 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-conflict-actions{display:flex;gap:8px;margin-top:8px;}
 .tc-manual{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);color:var(--ink-2);line-height:1.5;}
 .tc-manual code{font-family:var(--mono);background:var(--surface-2);padding:1px 4px;border-radius:3px;}
-.tc-scroll{flex:1;min-height:0;overflow:auto;position:relative;padding-bottom:40px;}
+/* The trailing 40px is a SPACER, not padding. `min-height:0` lets a flex child
+   shrink, but padding is not compressible, so `padding-bottom:40px` on a
+   border-box element is a 40px floor under its used height — and this box is
+   `position:relative`, so once the rail was shorter than that it painted over
+   whatever came next in the pane rather than scrolling. On a 1024x768 desktop
+   window with the terminal drawer open that was a 15px overhang across the
+   drawer's button bar, which swallowed the clicks on it. A block ::after
+   reserves the same room at the end of the scroll extent and shrinks away. */
+.tc-scroll{flex:1;min-height:0;overflow:auto;position:relative;}
+.tc-scroll::after{content:"";display:block;height:40px;}
 .tc-list{margin:12px 16px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;}
 .tc-list-h{padding:7px 12px;font-size:12px;font-weight:700;color:var(--ink-2);background:var(--panel);border-bottom:1px solid var(--line);}
 .tc-frow{display:flex;align-items:center;gap:9px;width:100%;padding:6px 12px;border:none;border-bottom:1px solid var(--line);background:transparent;cursor:pointer;font-family:var(--mono);font-size:12px;text-align:left;color:var(--ink);}
