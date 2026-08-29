@@ -130,6 +130,22 @@ Everything else that splits on a newline in the suite reads an in-process string
 exposition text, SSE frames, a tag-context block), a NUL-delimited `git ls-files -z`, or a
 JSONL fixture whose `JSON.parse` treats a trailing `\r` as whitespace.
 
+That last clause raised the sibling question, and it has a different answer. A `\r` can also
+arrive from **disk** rather than from a pipe, and the repo had no `.gitattributes` at all, so
+what landed in a Windows working tree was decided by that machine's `core.autocrlf` — a
+per-machine setting the repo can't see and CI doesn't share. Nothing was broken: the JSONL
+fixtures tolerate the CR for the reason above, and `tests/naming.test.ts` walks every tracked
+file but carries no `$`-anchored pattern. The exposure was the *next* test — a snapshot, an
+anchored regex, a fixture compared byte-for-byte — which would pass for whoever wrote it and
+fail only on Windows, and only for the subset of Windows developers with conversion on. So the
+repo now pins `* text=auto eol=lf`. It cost nothing to land: `git ls-files --eol` reported
+`i/lf` for all 596 text files beforehand, so `git add --renormalize .` staged zero changes and
+no in-flight branch inherited a whole-tree conflict. `text=auto` rather than a bare `text` is
+the load-bearing half — it leaves git's content detection in place, so the 27 tracked PNGs,
+WEBPs and WOFF2s stay `-text` and are never converted. `tests/gitattributes.test.ts` pins all
+three facts, the last of them (nothing committed CRLF) independently of the mechanism that
+produces it.
+
 That run also re-found the lane's very first bug, in a file written after the sweep that
 fixed it: `tests/backup.test.ts` closed its mid-WAL SQLite handle at the END of each case, so
 each CRLF failure produced a second red from the `afterEach` — `EBUSY: resource busy or
@@ -164,6 +180,7 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
 | No deliverable `SIGTERM`, and `concurrently` kills its children with `taskkill /T /F` | `scripts/start.mjs`, a dependency-free launcher for `npm start` that ties the two entrypoints' lifetimes together without force-killing, so a console Ctrl+C reaches the shutdown drain |
 | POSIX spellings and semantics in the suite | `tests/platform.ts`: `IS_WIN`, `onPosix`, `NULL_DEVICE`, `TEST_SHELL`, `DETACHED`, `killChildTree`. A test that merely *uses* a POSIX construct gets a portable spelling; a test *about* POSIX semantics is skipped on win32 |
 | A native binary's stdout is CRLF-terminated | `outputLines` in the same file, splitting on `/\r?\n/`. Every test that reads a subprocess's output line by line goes through it, so the next one doesn't re-derive the split and get it wrong (issue #53) |
+| What a Windows checkout writes to disk depends on that machine's `core.autocrlf` | `.gitattributes`: one blanket `* text=auto eol=lf`, so the working tree is LF everywhere and git's own content detection still keeps the images and fonts out of it. `tests/gitattributes.test.ts` pins the attribute, the binary exclusion, and that nothing is committed CRLF |
 | SQLite's single-process mutex | No change needed. `BEGIN IMMEDIATE`'s RESERVED lock is a `LockFileEx` byte-range lock on Windows, released by the OS on process death, including `TerminateProcess` (`lib/db-lock.mjs`) |
 
 ## Known limits

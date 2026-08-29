@@ -1,0 +1,29 @@
+# Line endings are LF in the index and LF in every working tree, on every
+# platform. Without this file the repo has NO attributes at all, so what lands
+# in a Windows checkout is decided by that machine's `core.autocrlf` — a
+# per-machine setting the repo can't see and CI doesn't share.
+#
+# Nothing was broken when this was added (issue #53's sweep): the index is 100%
+# LF, the recorded Codex JSONL fixtures survive a trailing `\r` because JSON's
+# grammar treats CR as whitespace, and no assertion in the suite is `$`-anchored
+# or byte-for-byte against a file read off disk. The exposure is the NEXT test —
+# a snapshot, an anchored regex, a fixture compared as bytes — which would fail
+# only on Windows and only for whoever has `core.autocrlf=true`. That is a
+# checkout-configuration problem, which is why `outputLines` in
+# `tests/platform.ts` deliberately does not cover it: that helper is about what
+# a native Windows binary writes to a PIPE, not what git writes to DISK.
+#
+# `text=auto` rather than a bare `text`, so git's own binary detection still
+# runs and the tracked PNGs, WEBPs and WOFF2s stay untouched. `eol=lf` then
+# fixes the checkout side for everything detection called text. No path wants
+# CRLF: the repo ships no `.bat`, `.cmd` or `.ps1`, and the Windows entrypoints
+# are `.mjs` and `.js`, which Node reads either way.
+#
+# Adding this cost nothing to land: `git ls-files --eol` reported `i/lf` for all
+# 596 text files beforehand, so `git add --renormalize .` staged zero changes
+# and no in-flight branch inherited a whole-tree conflict.
+#
+# `tests/gitattributes.test.ts` pins all three facts: that the attribute is
+# still in effect, that binary detection still excludes the images and fonts,
+# and — independently of either — that nothing is committed with CRLF.
+* text=auto eol=lf
