@@ -697,10 +697,11 @@ jobs:
     # live shell, notification centre, window manager) are their own lane on the
     # bench, and remain so.
     runs-on: windows-latest
-    # Twice the Ubuntu `desktop` job's 30, matching `windows-e2e`: same
-    # production build, plus Electron's ~100 MB download and a runner where
-    # every process spawn costs more.
-    timeout-minutes: 60
+    # Twice the Ubuntu `desktop` job's 45: the same two passes that job makes
+    # (dev shell, then the packaged artifact, with a payload stage in between)
+    # on a runner where every process spawn costs more, plus Electron's ~100 MB
+    # download.
+    timeout-minutes: 90
     steps:
       # Same pair, same reasons, as the `windows` job — see there. They govern
       # the checkout, so they come before it.
@@ -747,6 +748,47 @@ jobs:
       # every platform.
       - name: Run the desktop suite
         run: npm run test:desktop
+
+      # --- and now the same window suite against what a user downloads -----
+      #
+      # The Ubuntu lane's reasoning applies here unchanged: everything above
+      # tests the shell running out of this checkout, which is the developer's
+      # path and not anybody's install. The payload staging, the asar, the
+      # vendored Node and the extraResources layout are untested by it.
+      #
+      # `--dir`, not the `nsis` and `zip` targets `dist:win` builds. The
+      # unpacked tree is what the suite can launch, and it is also the payload
+      # NSIS wraps, so this pass covers everything an installed Calandria
+      # actually runs. What NSIS adds on top — a per-user install directory,
+      # shortcuts, an uninstaller — is not what these specs assert, and the one
+      # Windows-specific thing that IS worth knowing about the installer cannot
+      # be observed from a runner at all: SmartScreen fires on the
+      # `Zone.Identifier` stream a DOWNLOAD attaches, so an unsigned installer
+      # built locally never trips the interstitial a user gets. That cost is
+      # documented (docs/WINDOWS.md, docs/DESKTOP_APP.md §7) rather than tested.
+      - name: Package the desktop app
+        working-directory: desktop
+        run: |
+          npm run payload -- --no-build
+          npx electron-builder --win dir
+
+      # An installed app is never inside a source tree. Leaving the artifact at
+      # desktop/dist/ would let anything that resolves upward — a module, a
+      # lockfile, a relative path — find this repo and pass on a machine that
+      # has one, which is precisely the false green being guarded against.
+      # desktop/e2e/fixtures.ts refuses to launch a binary under the checkout,
+      # so this move is a requirement rather than tidiness.
+      - name: Move the artifact out of the checkout
+        run: Move-Item desktop/dist/win-unpacked "$env:RUNNER_TEMP/calandria-app"
+
+      # The executable takes its name from electron-builder's productName, and
+      # there is no sandbox flag to think about on this side: fixtures.ts gates
+      # `--no-sandbox` on `process.platform === "linux"`, so the packaged pass
+      # here runs sandboxed exactly as the dev pass above did.
+      - name: Run the desktop suite against the package
+        env:
+          CALANDRIA_TEST_BIN: ${{ runner.temp }}\calandria-app\Calandria.exe
+        run: npm run test:desktop:window
 
       - name: Upload desktop artifacts
         if: failure()

@@ -10,7 +10,8 @@
     "payload": "node scripts/build-payload.js",
     "dist:dir": "npm run payload && electron-builder --linux dir",
     "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage",
-    "dist:mac": "npm run payload && electron-builder --mac dir"
+    "dist:mac": "npm run payload && electron-builder --mac dir",
+    "dist:win": "npm run payload && electron-builder --win nsis zip"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -71,6 +72,18 @@
       "maintainer": "Calandria contributors <calandria@example.invalid>",
       "icon": "../public/icons/icon-512.png",
       "syncDesktopName": true
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "../public/icons/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "author": "Calandria contributors",

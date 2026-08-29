@@ -100,6 +100,16 @@ every platform; `desktop/e2e/05-windows-quit.spec.ts` pins the `taskkill` half. 
 of it covers is a real shutdown or logout: Electron emits neither `before-quit` nor
 `will-quit` for `WM_QUERYENDSESSION`, and no test here claims otherwise.
 
+That lane packages too, the same way the Ubuntu one does: `electron-builder --win dir`,
+the artifact moved out of the checkout, and the window suite run again against it with no
+`CALANDRIA_REPO_ROOT`, so what is exercised is the payload the build laid down rather than
+the repo it was built in. (`desktop/e2e/fixtures.ts` refuses to launch a binary under the
+source tree — anything resolving upward would find this checkout and pass on a machine
+that has one, which is the false green being guarded against.) It builds `--dir` rather
+than the `nsis` installer `npm run dist:win` produces, because the unpacked tree is both
+what the suite can launch and what NSIS wraps, while the one thing the installer adds that
+a user will certainly notice is invisible to CI by construction — see below.
+
 A separate workflow, `.github/workflows/node-current.yml`, installs on the latest Node
 **Current** rather than `.nvmrc`'s 22, on `ubuntu-24.04` and `windows-latest`, and does
 nothing else: `npm ci`, then load `better-sqlite3` and open a database, then open a real pty
@@ -223,6 +233,20 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
   kills — verified on real hardware, teardown in 384ms with no orphaned sidecars), but
   Electron emits neither `before-quit` nor `will-quit` for `WM_QUERYENDSESSION`, so a
   session ending underneath the app drains nothing. No `session-end` listener exists yet.
+- **The desktop app's Windows artifacts are unsigned, so SmartScreen warns on every
+  download.** `npm run dist:win` builds an NSIS installer (a wizard, installed per-user, so
+  no UAC prompt) and a zip, and neither carries a code-signing certificate. Windows marks
+  anything a browser downloads with a `Zone.Identifier` stream, and running a marked
+  executable with no recognized signature raises *"Windows protected your PC"*, whose only
+  obvious button is **Don't run** — **More info** → **Run anyway** is the way through. The
+  zip does not dodge it, since Explorer propagates the mark to what it extracts. Two things
+  make this recurring rather than a one-off: with no publisher identity, SmartScreen
+  reputation attaches to each file, so every release re-earns the warning from zero; and a
+  file that was never downloaded has no mark, so neither a local `dist:win` nor the CI lane
+  above can see it. Signing is the fix and is priced, not bought:
+  [DESKTOP_APP.md](DESKTOP_APP.md#7-cost-of-going-further-phase-2) §7 — Azure Trusted
+  Signing at $9.99/month or an OV certificate at roughly $129/yr, and explicitly not EV,
+  which stopped buying instant reputation in March 2024.
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS story as on any
   platform; `localhost` subdomains don't resolve without a `hosts` entry.
 
