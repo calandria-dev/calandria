@@ -240,6 +240,63 @@ export function buildConflictPrompt(baseBranch: string, conflicts: string[]): st
   ].join("\n");
 }
 
+/** One red check as the Fix-CI prompt wants it: named, linked, and (usually) logged. */
+export interface CiFailure {
+  name: string;
+  url: string;
+  workflow: string;
+  /** The tail of the job's failed steps, "" when GitHub couldn't give us one. */
+  log: string;
+  /** Why there is no log, when there isn't one. */
+  logError: string;
+}
+
+/**
+ * Prompt for a "Fix CI" turn. The task's own session, in its own worktree, told
+ * which job on its PR went red and shown the tail of that job's failed steps.
+ *
+ * The shape mirrors buildConflictPrompt deliberately: an ordinary user message
+ * on the existing session (the client sends it through POST /messages), not a
+ * special turn kind. The agent already has the branch checked out, so it needs
+ * the FAILURE, not the context.
+ *
+ * A missing log is stated rather than hidden. `gh run view --log-failed` can
+ * come back empty for an expired run, a legacy status context or a check
+ * published by something other than Actions, and an agent told "here is the
+ * log" followed by nothing will invent one; told the log is unavailable, it
+ * reproduces the job locally instead, which is the right move anyway.
+ */
+export function buildCiFixPrompt(prNumber: number, failures: CiFailure[]): string {
+  const label = (f: CiFailure) => (f.workflow && f.workflow !== f.name ? `${f.workflow} / ${f.name}` : f.name);
+  const lines: string[] = [
+    `CI is failing on this task's pull request${prNumber ? ` (#${prNumber})` : ""}. Please fix it.`,
+    ``,
+    failures.length === 1 ? `Failing check:` : `Failing checks (${failures.length}):`,
+    ...failures.map((f) => `  - ${label(f)}${f.url ? ` — ${f.url}` : ""}`),
+  ];
+  for (const f of failures) {
+    lines.push(``, `## ${label(f)}`);
+    if (f.log) {
+      lines.push(``, "```", f.log, "```");
+    } else {
+      lines.push(
+        ``,
+        `No log available${f.logError ? ` (${f.logError})` : ""}. Reproduce this job locally instead of`,
+        `guessing — read the workflow file that defines it and run the same command.`
+      );
+    }
+  }
+  lines.push(
+    ``,
+    `Work in this worktree, on this task's branch. Diagnose the real cause rather than`,
+    `silencing the check: a test that fails in CI and passes locally is usually an`,
+    `environment or ordering difference, not a flaky test to retry.`,
+    ``,
+    `Commit the fix when you're done. I'll push it and watch the re-run.`
+  );
+  return lines.join("\n");
+}
+
 export function clip(s: unknown, n = 4000): string {
   const str = typeof s === "string" ? s : JSON.stringify(s, null, 2);
   return str.length > n ? str.slice(0, n) + `\n… (${str.length - n} more chars)` : str;

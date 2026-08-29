@@ -7,7 +7,7 @@
 // Subscribing to the wildcard channel needs no edits to the runner at all, and
 // it is the same seam the webhook channel will attach to. All three sites are
 // covered here — `ask`, `permission` and `turn_end` — and the ROW decides in
-// every case, because the emitter re-reads it through taskNeedsYou().
+// every case, because the emitter re-reads it through taskAwaitingInput().
 //
 // Started from GET /api/events (idempotent, so every tab calls it) AND from the
 // scheduler's boot ping (app/api/instance/scheduler/route.ts). The second one
@@ -37,7 +37,7 @@ function handle(taskId: string, ev: BusEvent): void {
     // runner's finally sets awaiting_input on ANY turn that opened a session
     // and ended mid-task — "finished on its own or was Stopped — your move".
     // This does NOT make it a "turn finished" notification, which the design
-    // ruled out: emitAwaitingInput screens through taskNeedsYou(), so a
+    // ruled out: emitAwaitingInput screens through taskAwaitingInput(), so a
     // scheduled success (left at 0 deliberately), a settled task, a snoozed one
     // and an archived project's are all filtered out, and the dedupe window
     // collapses the card-then-end pair a parked turn produces into one.

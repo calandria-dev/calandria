@@ -34,6 +34,10 @@ covers it. No API key needed.
   not — stays live on the task without you opening GitHub, and one button
   squash-merges it from there. Where the repo allows auto-merge, that click
   queues it and GitHub lands the PR the moment its checks pass.
+- **Catch a red build.** A PR whose checks go red raises its task into the
+  same "Needs you" inbox a parked question does, names the job that broke,
+  and offers a one-click Fix CI that starts a turn seeded with the failing
+  job's log — even when the task was already marked done.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen

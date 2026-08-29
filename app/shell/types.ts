@@ -63,6 +63,7 @@ export interface TaskRow {
   pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
   pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
   pr_synced_at: number; // when the server last heard from GitHub (0 = never)
+  pr_failing: string; // JSON PrFailingCheck[] naming the red checks ("" when nothing is red) — read via prFailingChecks()
   generation: number;
   started: number;
   running: number;
@@ -136,6 +137,13 @@ export interface NeedsYouRow {
   project_color: string;
   project_icon: string;
   waiting_since: number;
+  // Which arm of the server's NEEDS_YOU predicate put this row in the list:
+  // "input" = a turn parked on a question, "ci" = an open PR whose checks are
+  // failing. They get different sublines — a red PR has no "waiting for" age,
+  // only a PR to name (lib/store.ts listNeedsYou).
+  reason: "input" | "ci";
+  pr_number: number;
+  pr_url: string;
 }
 // A row in the ⌘K palette's session search: any real task across the active
 // projects plus enough of its project to label it. Mirrors lib/store.ts
@@ -330,6 +338,10 @@ export type AgentLoginT = ClaudeLoginT & { code?: string | null };
 export const SCLS: Record<Status, "r" | "a" | "g" | "h" | "x"> = { not_started: "r", in_progress: "a", on_hold: "h", done: "g", cancelled: "x" };
 export const SLABEL: Record<Status, string> = { not_started: "Not started", in_progress: "In progress", on_hold: "On hold", done: "Done", cancelled: "Cancelled" };
 export const AWAIT_LABEL = "Needs your input";
+// The other reason a task lands in the needs-you group: its open pull request's
+// checks are failing (./format.ts isPrRed). Deliberately NOT "Needs your input"
+// — nothing asked the user anything; CI did, and the row should say so.
+export const CI_LABEL = "CI failing";
 // The derived category a snoozed task is drawn in — one constant so the list
 // group, the board column and any copy referring to it can't drift apart. NOT
 // a Status: a snooze leaves the status alone, which is what the task goes back

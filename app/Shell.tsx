@@ -308,6 +308,7 @@ export default function Shell() {
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
             onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
             onResolveWithAI={o.resolveConflictsWithAI}
+            onFixCi={o.fixCi}
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
             onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
@@ -422,6 +423,7 @@ export default function Shell() {
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
                 onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
                 onResolveWithAI={o.resolveConflictsWithAI}
+                onFixCi={o.fixCi}
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}
                 onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}

@@ -92,6 +92,7 @@ export interface Task {
   pr_synced_at: number; // when we last heard from GitHub (0 = never); the staleness clock every trigger reads
   pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
   pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
+  pr_failing: string; // JSON PrFailingCheck[] — the red entries behind pr_checks='failing' ("" when nothing is red)
   generation: number; // increments on each /clear
   position: number; // manual order within the project (list groups + board columns, ascending)
   started: number; // 1 once the initial prompt has been sent

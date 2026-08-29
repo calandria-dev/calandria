@@ -127,6 +127,11 @@ export function init(db: Database.Database) {
       --              DIRTY / BEHIND / UNSTABLE / UNKNOWN; '' = unknown). DIRTY
       --              is the one that means conflicts, which no amount of
       --              waiting for CI will fix.
+      --   pr_failing  JSON array of the RED entries behind pr_checks='failing'
+      --              ({name,url,workflow,verdict}), '' otherwise. "checks
+      --              failing" is a verdict nobody can act on; this is what
+      --              names the broken job and links its run, and what seeds the
+      --              "Fix CI" turn.
       pr_number     INTEGER NOT NULL DEFAULT 0,
       pr_state      TEXT NOT NULL DEFAULT '',
       pr_checks     TEXT NOT NULL DEFAULT '',
@@ -135,6 +140,7 @@ export function init(db: Database.Database) {
       pr_synced_at  INTEGER NOT NULL DEFAULT 0,
       pr_draft      INTEGER NOT NULL DEFAULT 0,
       pr_merge_state TEXT NOT NULL DEFAULT '',
+      pr_failing    TEXT NOT NULL DEFAULT '',
       generation  INTEGER NOT NULL DEFAULT 1,
       started     INTEGER NOT NULL DEFAULT 0,
       running     INTEGER NOT NULL DEFAULT 0,
@@ -849,6 +855,10 @@ export function migrate(db: Database.Database) {
   if (!taskCols.includes("pr_synced_at")) db.exec("ALTER TABLE tasks ADD COLUMN pr_synced_at INTEGER NOT NULL DEFAULT 0");
   if (!taskCols.includes("pr_draft")) db.exec("ALTER TABLE tasks ADD COLUMN pr_draft INTEGER NOT NULL DEFAULT 0");
   if (!taskCols.includes("pr_merge_state")) db.exec("ALTER TABLE tasks ADD COLUMN pr_merge_state TEXT NOT NULL DEFAULT ''");
+  // Which checks are red (see the CREATE TABLE note). '' on every existing row
+  // is honest for the same reason the others' defaults are: the rollup we
+  // stored a verdict from was never kept, so the next refresh fills it in.
+  if (!taskCols.includes("pr_failing")) db.exec("ALTER TABLE tasks ADD COLUMN pr_failing TEXT NOT NULL DEFAULT ''");
   // pr_number IS derivable from the URL we already stored, so backfill it here
   // rather than leaving old rows at 0 until someone re-clicks Create PR. Runs
   // over the handful of rows that have a URL and no number, so it is a no-op on

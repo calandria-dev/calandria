@@ -395,6 +395,17 @@ export const PR_POLL_MS = ms(readEnv("CALANDRIA_PR_POLL_MS"), 5 * 60_000);
 export const PR_POLL_BATCH = num("CALANDRIA_PR_POLL_BATCH", readEnv("CALANDRIA_PR_POLL_BATCH"), 5);
 
 /**
+ * How many lines of a failed job's log the "Fix CI" button seeds its turn with.
+ * `gh run view --log-failed` already drops the green steps, but a failing test
+ * suite still prints thousands of lines and only the END of them says what
+ * broke — so this is a TAIL, and it is a knob because the right depth is a
+ * property of the repo's CI, not of the app: a linter needs ten lines, a
+ * matrix build's stack trace needs a few hundred. Every failing check
+ * contributes its own tail, so the prompt grows with the number of red jobs.
+ */
+export const CI_LOG_TAIL_LINES = num("CALANDRIA_CI_LOG_TAIL_LINES", readEnv("CALANDRIA_CI_LOG_TAIL_LINES"), 200);
+
+/**
  * The public origin the app is served from (e.g. https://calandria.example.com when
  * behind a tunnel/reverse proxy). Used by the client to build absolute
  * ws(s):// URLs. Empty = same-origin via window.location, which is correct for

@@ -61,6 +61,24 @@ re-read, and a sweep is skipped entirely when no tab is open, so the cost is bou
 work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
 turns the timer off and leaves the other three triggers.
 
+**A red PR is treated as work that needs you.** When the check rollup on a task's open PR
+goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
+question lands in — the titlebar pill, the dropdown, the project badge, the board's
+Needs-input column — even though no turn is parked and the task may already be marked done.
+That last case is the one this exists for: a session verifies locally, ends, GitHub disagrees
+half an hour later, and nothing on screen says so. A snooze silences it like anything else in
+that inbox, and a PR that merges or closes drops out of it.
+
+The session says which check broke and links its run, so the answer isn't a trip to the
+Actions tab. Beside that is **Fix CI**, the CI twin of the conflict resolver's *Fix with AI*:
+it re-checks GitHub (so a check somebody already fixed doesn't cost a turn), reads the tail of
+the failing job's log with `gh run view --log-failed`, and starts a turn in that task's own
+session seeded with both. The fix streams into the transcript like any other work.
+`CALANDRIA_CI_LOG_TAIL_LINES` sets how much log it carries.
+
+Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
+work requires an explicit permanent-discard confirmation.
+
 #### Squash & merge from the rail
 
 Once the PR is open, green and approved, landing it is one button on the diff rail:
