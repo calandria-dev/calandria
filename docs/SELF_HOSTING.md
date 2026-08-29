@@ -409,6 +409,10 @@ Verify the copy (the database and `projects/` are there) before
 | `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned since Next's server may run with a trimmed `PATH`). On Windows: `%USERPROFILE%\.local\bin\claude.exe`, then `PATH` (point at a real `.exe`, not an npm `.cmd` shim) |
 | `CALANDRIA_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty means bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`; Windows: winget Links, `%ProgramFiles%\GitHub CLI`, scoop shims). The server never reads a shell profile, so set this if the probe misses your `gh` |
+| `CALANDRIA_PR_STALE_MS` | `60000` | How long a task's PR state counts as fresh. Opening a task, the chip's Refresh button and the create-PR trigger all skip `gh pr view` inside this window |
+| `CALANDRIA_PR_POLL_MS` | `300000` | How often the background sweep re-reads tasks whose PR is still open. `0` disables the sweep, leaving the on-open and explicit-Refresh triggers. The sweep stops itself when no PR is open and skips a pass when no browser tab is watching |
+| `CALANDRIA_PR_POLL_BATCH` | `5` | Most PRs refreshed per sweep (one `gh pr view` each, oldest-synced first) |
+| `CALANDRIA_CI_LOG_TAIL_LINES` | `200` | Lines of a failed job's log the **Fix CI** button seeds its turn with, per failing check. `gh run view --log-failed` already drops the green steps, but only the end of a failing suite says what broke |
 
 Example: relocate an instance entirely via env.
 
@@ -861,6 +865,15 @@ waits on that walk once, right after a restart.
   removing checkouts on the first tick after an upgrade nobody asked for.
   The manual path (Settings → Storage, which can also discard unmerged work
   after you acknowledge it) works either way.
+  **Landing is the other trigger, and it isn't on this clock at all.** When a
+  task's PR reports merged, or its branch is merged locally, the session
+  header's **Reclaim** button (or the project's `auto_reclaim` setting, off by
+  default) catches the local base branch up with origin, removes the checkout,
+  deletes the *local* branch and marks the task done. Unlike the sweep it does
+  delete a branch — the diff it carried is in the base branch by then — and
+  like the sweep it never discards uncommitted edits, or commits the remote
+  never received, without an explicit acknowledgement nobody can give
+  unattended. See [Features](FEATURES.md).
   **The disk warning** runs whether or not the sweep does: when the
   worktrees directory crosses `CALANDRIA_WORKTREES_DISK_WARN_GB` (default 20,
   `0` disables), a line goes to the server log each pass while it's over, the

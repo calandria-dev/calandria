@@ -259,6 +259,38 @@ export function duration(start: number, end: number | null): string {
 export const isAwaiting = (t: TaskRow) =>
   t.status === "in_progress" && !!t.awaiting_input;
 
+// A task whose open PR is red. The OTHER way a task needs a human, and the one
+// nothing was parked for: the turn ended, the agent verified locally, and CI
+// disagreed. `pr_state === "open"` matters — a merged or closed PR is never
+// re-polled, so its last-seen "failing" could never clear itself — and the
+// status screen keeps a held or cancelled task quiet, since somebody has
+// already decided not to pursue it.
+//
+// Mirrors the server's PR_RED_ARM in lib/store.ts, which is what the pill
+// counts for every OTHER project; the two must agree or the selected project's
+// count would jump as you switch to it.
+export const isPrRed = (t: TaskRow) =>
+  t.pr_state === "open" && t.pr_checks === "failing" && (t.status === "in_progress" || t.status === "done");
+
+// The union: what "N need you" means. Every attention surface (the pill count,
+// the list's Needs-you group, the board's Needs-input column) partitions on
+// THIS, not on isAwaiting — and every status group excludes it, or a done task
+// with a red PR would be drawn twice.
+export const needsYou = (t: TaskRow) => isAwaiting(t) || isPrRed(t);
+
+// The red checks stored on the row, parsed. Defensive for the same reason the
+// server's parseFailingChecks is: a column an older build never wrote must cost
+// a chip its detail, not throw inside a task list.
+export function prFailingChecks(t: Pick<TaskRow, "pr_failing">): { name: string; url: string; workflow: string }[] {
+  if (!t.pr_failing) return [];
+  try {
+    const v = JSON.parse(t.pr_failing);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 // A task whose last UNATTENDED run finished cleanly and which nobody has looked
 // at yet — the resting state of a scheduled success (lib/runner.ts). It is
 // deliberately not "needs you": nothing is waiting on an answer, so it stays
@@ -354,4 +386,62 @@ export function splitAttachments(content: string): { text: string; attachments: 
     }
   }
   return { text: kept.join("\n").trim(), attachments };
+}
+
+// ---------- pull-request state ----------
+// The wording for tasks.pr_state / pr_checks / pr_review, kept here rather than
+// in the chip because the "needs you" surfaces and the merge button want the
+// same words, and two copies would drift. Every helper takes the raw column
+// value, so "" (never refreshed yet) is a case each one answers deliberately.
+
+/** How a PR's state reads, and the tone it's drawn in. "" = not refreshed yet. */
+export function prStateLabel(state: string): { label: string; tone: "open" | "merged" | "closed" | "unknown" } {
+  switch (state) {
+    case "open": return { label: "Open", tone: "open" };
+    case "merged": return { label: "Merged", tone: "merged" };
+    case "closed": return { label: "Closed", tone: "closed" };
+    default: return { label: "Checking…", tone: "unknown" };
+  }
+}
+
+/**
+ * How the check rollup reads. "none" is deliberately NOT green: a repo with no
+ * CI at all has proved nothing, so it gets no verdict rather than a tick.
+ */
+export function prChecksLabel(checks: string): { label: string; tone: "pass" | "fail" | "pending" } | null {
+  switch (checks) {
+    case "passing": return { label: "checks passing", tone: "pass" };
+    case "failing": return { label: "checks failing", tone: "fail" };
+    case "pending": return { label: "checks running", tone: "pending" };
+    default: return null; // "none" (no CI) and "" (not refreshed yet) say nothing
+  }
+}
+
+/** How gh's reviewDecision reads. "" means review isn't required on this repo. */
+export function prReviewLabel(review: string): { label: string; tone: "pass" | "fail" | "pending" } | null {
+  switch (review) {
+    case "APPROVED": return { label: "approved", tone: "pass" };
+    case "CHANGES_REQUESTED": return { label: "changes requested", tone: "fail" };
+    case "REVIEW_REQUIRED": return { label: "review required", tone: "pending" };
+    default: return null;
+  }
+}
+
+/** The chip's tooltip: everything the columns know, spelled out in one line. */
+export function prTooltip(
+  task: Pick<TaskRow, "pr_url" | "pr_state" | "pr_checks" | "pr_review" | "pr_synced_at" | "pr_failing">
+): string {
+  const bits = [prStateLabel(task.pr_state).label];
+  const checks = prChecksLabel(task.pr_checks);
+  if (checks) bits.push(checks.label);
+  else if (task.pr_checks === "none") bits.push("no checks configured");
+  const review = prReviewLabel(task.pr_review);
+  if (review) bits.push(review.label);
+  const synced = task.pr_synced_at ? `checked ${relTime(task.pr_synced_at)}` : "not checked yet";
+  // Name the red jobs in the hover too, not only in the chip: the chip has room
+  // for one or two before it has to say "+3 more", and the tooltip has room for
+  // all of them.
+  const red = prFailingChecks(task);
+  const named = red.length ? `\nfailing: ${red.map((c) => c.name).join(", ")}` : "";
+  return `${task.pr_url}\n${bits.join(" · ")} · ${synced}${named}`;
 }

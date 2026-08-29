@@ -1,0 +1,134 @@
+# Fail a pull request whose TITLE is not a Conventional Commit.
+#
+# Why this is a gate and not a style note. `main` is squash-merge-only — the
+# `main-require-pr` ruleset lists `squash` as the sole allowed merge method —
+# so landing a branch writes exactly ONE commit to main, and GitHub takes that
+# commit's subject from the pull request. That subject is the entire input to
+# release-please: `release-please.yml` re-reads the commits since the last tag
+# on every push to main and derives both the next version and CHANGELOG.md from
+# their types. A subject it cannot parse does not warn — it is silently absent.
+# "Fix the thing" bumps nothing and appears nowhere, so a bug fix ships in a
+# release whose notes never mention it, and there is no later point at which
+# anyone notices.
+#
+# The title is not always what gets used. The repository's
+# `squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`, which takes the PR title
+# for a multi-commit branch and the single commit's own subject for a
+# one-commit branch. This job can only see the title, so it enforces the half
+# it can reach; CONTRIBUTING.md asks for conventional commit subjects too,
+# which is what covers the other half. Setting the repository to `PR_TITLE`
+# makes the title authoritative in both cases and makes this job the whole
+# guarantee.
+#
+# Its own workflow rather than a job in test.yml, for two reasons:
+#
+#   - test.yml carries `paths-ignore: website/**`, so a website-only PR runs
+#     nothing there. It still squashes a subject onto main and release-please
+#     still reads it, so this check must not inherit that filter.
+#   - It needs `types: [edited]`, because retitling the PR is the entire remedy
+#     and has to re-run the check. Adding `edited` to test.yml would re-run the
+#     unit and typecheck jobs every time somebody fixed a typo in a description.
+#
+# No checkout and no `npm ci`: the title arrives in the event payload, so the
+# job is a few seconds of shell against no working tree. That is what makes it
+# cheap enough to run on every pull request event, which is in turn what a
+# required status check needs.
+name: PR title
+
+on:
+  pull_request:
+    # `edited` fires on a retitle, which is the fix for a red run here.
+    # `synchronize` is not about the title at all: a required status check has
+    # to have a conclusion for the CURRENT head SHA, and a push moves it.
+    types: [opened, edited, reopened, synchronize]
+
+# Nothing here reads the repository. The one input is untrusted text from the
+# event payload, so the job gets no token scopes at all.
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional:
+    name: PR title (Conventional Commits)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the title parses as a Conventional Commit
+        # Through `env`, never `${{ ... }}` inline in the script. A pull request
+        # title is attacker-controlled text from anyone who can open a PR, and
+        # interpolating it into the shell is the textbook Actions script
+        # injection; as a quoted environment variable it is only ever data.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # NOT the Conventional Commits spec's type rule, which allows any
+          # noun. This is exactly the set release-please understands: the
+          # default table of conventional-changelog-conventionalcommits, which
+          # is what runs because release-please-config.json sets no
+          # `changelog-sections`. A type outside it parses as a commit and is
+          # then dropped by the changelog writer, which is the same silent loss
+          # as having no type at all — so accepting it here would defeat the
+          # point of the job.
+          #
+          #   feat     -> minor bump, "Features"
+          #   fix      -> patch bump, "Bug Fixes"
+          #   perf     -> "Performance Improvements"
+          #   revert   -> "Reverts"
+          #   docs style chore refactor test build ci
+          #            -> recorded, hidden from CHANGELOG.md
+          #
+          # (`feature` is the preset's accepted alias for `feat`; prefer `feat`.)
+          #
+          # <type>[(scope)][!]: <description>. `!` is the breaking-change
+          # marker — under `bump-minor-pre-major` it moves 0.x's MINOR, not the
+          # major. The description must open with a non-space, so both `feat:`
+          # and `feat:   ` are refused rather than landing an empty subject.
+          re='^(feat|feature|fix|perf|revert|docs|style|chore|refactor|test|build|ci)(\([^()]+\))?!?: [^[:space:]]'
+
+          if [[ "$TITLE" =~ $re ]]; then
+            echo "PR title parses as a Conventional Commit: $TITLE"
+            exit 0
+          fi
+
+          cat <<'EOF'
+          This pull request's title is not a Conventional Commit.
+
+          main is squash-merge-only, so this title becomes the subject of the
+          single commit that lands — and release-please reads exactly those
+          subjects to pick the next version and write CHANGELOG.md. A subject
+          it cannot parse is dropped silently: no version bump, no changelog
+          entry, no error anywhere.
+
+          Format:  <type>[(scope)][!]: <description>
+
+          Types that bump the version
+            feat:    a user-visible capability            -> minor (0.x)
+            fix:     a bug fix                            -> patch
+
+          Types that are recorded but do not bump
+            perf revert docs style chore refactor test build ci
+
+          `!` before the colon marks a breaking change; while this repo is
+          pre-1.0 that moves the minor, not the major.
+
+          Examples
+            feat: surface a red PR in the "Needs you" inbox
+            fix(runner): keep a queued follow-up in its own worktree
+            docs: document the Conventional Commit PR title requirement
+            chore(deps): bump better-sqlite3 to 13.1.0
+            feat!: drop the control-plane interop routes
+
+          A revert needs the `revert:` type; GitHub's default `Revert "..."`
+          title does not parse.
+
+          Edit the title and this check re-runs on its own. CONTRIBUTING.md has
+          the full policy.
+          EOF
+
+          echo "::error::PR title is not a Conventional Commit: ${TITLE}"
+          exit 1

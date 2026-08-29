@@ -28,6 +28,7 @@ import { createSuggestedTask } from "@/lib/agentTools";
 import { createProject, createTask, getTask, updateTask } from "@/lib/store";
 import { UPDATE_TASK, WITHDRAW_SUGGESTION } from "@/lib/agentToolDefs.mjs";
 import type { Project, Task } from "@/lib/types";
+import type { TurnHooks } from "@/lib/agents/types";
 
 type ToolStub = { name: string; handler: (args: Record<string, unknown>) => Promise<unknown> };
 
@@ -41,8 +42,10 @@ beforeEach(() => {
  * Calandria tools the driver mounted for it. The tools close over the task and
  * project the turn was started with, exactly as they do in production.
  */
-async function toolsFor(task: Task, project: Project, hooks?: { onTaskCleared: (id: string) => void }): Promise<Map<string, ToolStub>> {
-  for await (const _ev of claudeDriver.runTurn(task, project, "hello", undefined, hooks)) void _ev;
+async function toolsFor(task: Task, project: Project, hooks?: Partial<TurnHooks>): Promise<Map<string, ToolStub>> {
+  // Partial + no-op defaults so each case names only the hook it is about.
+  const full: TurnHooks | undefined = hooks && { onTaskCleared: () => {}, onPrOpened: () => {}, ...hooks };
+  for await (const _ev of claudeDriver.runTurn(task, project, "hello", undefined, full)) void _ev;
   const options = (queryMock.mock.calls[0]?.[0] as { options?: Record<string, unknown> })?.options ?? {};
   const server = (options.mcpServers as { calandria?: { tools?: ToolStub[] } })?.calandria;
   return new Map((server?.tools ?? []).map((t) => [t.name, t]));

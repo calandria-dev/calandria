@@ -17,6 +17,28 @@ import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 export const INITIAL_TASK_PROMPT = "Start working on the task described in the task context.";
 
 /**
+ * The truthful second half of the "Base branch:" line, per the project's
+ * landing mode. Exported so tests can pin both wordings without rebuilding a
+ * whole context string.
+ *
+ * Under `pr` the session is told three separate things, because knowing only the
+ * first two still ends with it clicking Merge: the branch is protected, Merge
+ * will be REJECTED, and what finishing actually means instead. The `merge`
+ * wording is the historic sentence, unchanged.
+ */
+export function landingSentence(project: Pick<Project, "landing_mode">, base: string): string {
+  if (project.landing_mode === "pr")
+    return (
+      `this worktree was cut from it and Sync catches up to it, but it does NOT land by merge. ` +
+      `${base} is protected: this project lands work by pull request, so Merge is rejected. ` +
+      `Finishing this task means opening a PR against ${base} and leaving it for review, not merging. ` +
+      `Use the \`create_pr\` tool for that: it pushes and opens the PR server-side, where a shell \`git push\` is usually ` +
+      `refused. Merging it afterwards is the user's call, and there is no tool for it.`
+    );
+  return "this worktree was cut from it, Sync catches up to it, and Merge lands into it.";
+}
+
+/**
  * Build the context string that is prepended to every task's session via the
  * agent's system prompt. This is the "write project context once" feature:
  * project description + conventions + the task framing + any prior-session
@@ -34,14 +56,21 @@ export function buildProjectContext(project: Project, task: Task): string {
   lines.push(`You are working inside the project "${project.name}".`);
   if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
   // The base branch, not "the project's branch": what this worktree was cut
-  // from is also what Sync catches it up to and what Merge lands it into, and a
-  // task on a feature branch has to know that before it reasons about any of the
-  // three. The parenthetical only when the task has a base of its own — on every
-  // other task it would just restate the line above it.
+  // from is also what Sync catches it up to and what it LANDS on, and a task on
+  // a feature branch has to know that before it reasons about any of the three.
+  // The parenthetical only when the task has a base of its own — on every other
+  // task it would just restate the line above it.
+  //
+  // How it lands is the project's landing_mode, and the difference is not a
+  // preference the model can ignore: on a repo whose base branch carries a
+  // ruleset requiring a pull request, Merge is rejected by the server, so the
+  // old unconditional "Merge lands into it" sent every such session off to press
+  // a button that cannot work. Say which one is true here (lib/types.ts
+  // LandingMode, set per project in the settings form).
   const base = resolveBaseBranch(task, project);
   if (base)
     lines.push(
-      `\nBase branch: ${base} — this worktree was cut from it, Sync catches up to it, and Merge lands into it.` +
+      `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
   lines.push(`\n---\nThe current task is: "${task.title}"`);
@@ -253,6 +282,63 @@ export function buildConflictPrompt(baseBranch: string, conflicts: string[]): st
     `Do NOT run \`git commit\`, \`git merge --continue\`, or \`git add\` — just edit the files to a clean,`,
     `marker-free state. I'll review your resolution and land the merge myself.`,
   ].join("\n");
+}
+
+/** One red check as the Fix-CI prompt wants it: named, linked, and (usually) logged. */
+export interface CiFailure {
+  name: string;
+  url: string;
+  workflow: string;
+  /** The tail of the job's failed steps, "" when GitHub couldn't give us one. */
+  log: string;
+  /** Why there is no log, when there isn't one. */
+  logError: string;
+}
+
+/**
+ * Prompt for a "Fix CI" turn. The task's own session, in its own worktree, told
+ * which job on its PR went red and shown the tail of that job's failed steps.
+ *
+ * The shape mirrors buildConflictPrompt deliberately: an ordinary user message
+ * on the existing session (the client sends it through POST /messages), not a
+ * special turn kind. The agent already has the branch checked out, so it needs
+ * the FAILURE, not the context.
+ *
+ * A missing log is stated rather than hidden. `gh run view --log-failed` can
+ * come back empty for an expired run, a legacy status context or a check
+ * published by something other than Actions, and an agent told "here is the
+ * log" followed by nothing will invent one; told the log is unavailable, it
+ * reproduces the job locally instead, which is the right move anyway.
+ */
+export function buildCiFixPrompt(prNumber: number, failures: CiFailure[]): string {
+  const label = (f: CiFailure) => (f.workflow && f.workflow !== f.name ? `${f.workflow} / ${f.name}` : f.name);
+  const lines: string[] = [
+    `CI is failing on this task's pull request${prNumber ? ` (#${prNumber})` : ""}. Please fix it.`,
+    ``,
+    failures.length === 1 ? `Failing check:` : `Failing checks (${failures.length}):`,
+    ...failures.map((f) => `  - ${label(f)}${f.url ? ` — ${f.url}` : ""}`),
+  ];
+  for (const f of failures) {
+    lines.push(``, `## ${label(f)}`);
+    if (f.log) {
+      lines.push(``, "```", f.log, "```");
+    } else {
+      lines.push(
+        ``,
+        `No log available${f.logError ? ` (${f.logError})` : ""}. Reproduce this job locally instead of`,
+        `guessing — read the workflow file that defines it and run the same command.`
+      );
+    }
+  }
+  lines.push(
+    ``,
+    `Work in this worktree, on this task's branch. Diagnose the real cause rather than`,
+    `silencing the check: a test that fails in CI and passes locally is usually an`,
+    `environment or ordering difference, not a flaky test to retry.`,
+    ``,
+    `Commit the fix when you're done. I'll push it and watch the re-run.`
+  );
+  return lines.join("\n");
 }
 
 export function clip(s: unknown, n = 4000): string {

@@ -3,6 +3,7 @@ import { getTask, getProject, updateTask } from "@/lib/store";
 import { prepareWorktreeMerge, completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { buildConflictPrompt } from "@/lib/agents/shared";
+import { maybeAutoReclaim } from "@/lib/reclaim";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
@@ -56,6 +57,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           merged_at: Date.now(),
           ...(result.mergedSha ? { base_sha: result.mergedSha } : {}),
         });
+        // The mirror of a merged PR: this task's work is now in the base branch,
+        // so its checkout is disposable. A no-op unless the project opted in, and
+        // never awaited — the reclaim fetches origin (lib/reclaim.ts).
+        maybeAutoReclaim(id);
       }
       return NextResponse.json({ ...prep, merged: result }, { status: result.ok ? 200 : 409 });
     }

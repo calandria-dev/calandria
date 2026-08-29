@@ -11,7 +11,7 @@
 import { publishGlobal } from "@/lib/events";
 import { pushNotificationDetached } from "@/lib/push/send";
 import { interactionDenied } from "@/lib/runContext";
-import { getProject, getSetting, getTask, taskNeedsYou } from "@/lib/store";
+import { getProject, getSetting, getTask, taskAwaitingInput } from "@/lib/store";
 import type { NotificationKind, NotificationPayload } from "./types";
 
 // Per-kind opt-outs. All default ON — a notification feature that ships off is
@@ -135,8 +135,8 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
   // only the toast is skipped.
   if (recentlyDelivered(`turn_failed:${taskId}`, Date.now())) return null;
   const task = getTask(taskId);
-  // The ROW decides, not the event: see taskNeedsYou in lib/store.ts.
-  if (!task || !taskNeedsYou(taskId)) return null;
+  // The ROW decides, not the event: see taskAwaitingInput in lib/store.ts.
+  if (!task || !taskAwaitingInput(taskId)) return null;
   return deliver({
     id: `awaiting_input:${taskId}`,
     kind: "awaiting_input",
@@ -156,11 +156,11 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
  * as the only silent ones.
  *
  * Screens `suggested` (an inert tray row nobody committed to) and NOT
- * taskNeedsYou(), so a snooze does not silence it. That asymmetry with
+ * taskAwaitingInput(), so a snooze does not silence it. That asymmetry with
  * emitAwaitingInput is deliberate: snoozing a question means "remind me later
  * about this decision", never "hide it from me if the session then crashes". A
  * crash is new information, not the thing that was put off. Same for the
- * archived-project screen inside taskNeedsYou — an archived project shouldn't
+ * archived-project screen inside taskAwaitingInput — an archived project shouldn't
  * be nagging about a pending decision, but if its work is still running and
  * falls over, that is worth knowing. emitScheduleFailed goes further and
  * screens nothing at all, because the run it reports may have failed before it

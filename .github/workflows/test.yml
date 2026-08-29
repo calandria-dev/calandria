@@ -110,6 +110,9 @@ permissions:
 
 jobs:
   audit:
+    # Keep this name. security-scan.yml runs the identical command weekly and
+    # used to answer to "Audit (npm)" as well; it is now "Audit (npm, weekly)"
+    # precisely so this one can be named unambiguously as a required check.
     name: Audit (npm)
     runs-on: ubuntu-latest
     timeout-minutes: 10

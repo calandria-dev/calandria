@@ -64,6 +64,8 @@ beforeAll(async () => {
         res.end(JSON.stringify({ ok: true, id: body.tag, name: body.name, base_branch: body.base_branch, text: `Updated tag "${body.tag}".` }));
       } else if (req.url?.endsWith("/withdraw-suggestion")) {
         res.end(JSON.stringify({ ok: true, id: body.task, status: "cancelled", text: `Withdrew "${body.task}".` }));
+      } else if (req.url?.endsWith("/create-pr")) {
+        res.end(JSON.stringify({ ok: true, url: "https://github.com/o/r/pull/7", text: "Pushed and opened a pull request: https://github.com/o/r/pull/7" }));
       } else if (req.url?.endsWith("/create-runbook")) {
         res.end(JSON.stringify({ ok: true, id: "rb-1", name: body.name, project_id: "proj-abc", text: `Saved runbook "${body.name}".` }));
       } else if (req.url?.endsWith("/list-runbooks")) {
@@ -90,7 +92,10 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-async function connectBridge() {
+// `extra` is the per-turn env the Codex driver varies — today only
+// CALANDRIA_LANDING_MODE, which decides whether create_pr is registered at all.
+// Omitted means the default a merge project gets.
+async function connectBridge(extra: Record<string, string> = {}) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SCRIPT],
@@ -100,6 +105,7 @@ async function connectBridge() {
       CALANDRIA_BASE_URL: baseUrl,
       SERVICE_TOKEN: "smoke-token",
       PATH: process.env.PATH || "",
+      ...extra,
     },
   });
   const client = new Client({ name: "test", version: "1.0.0" });
@@ -132,6 +138,11 @@ describe("calandria-mcp stdio bridge", () => {
       // is hard delete with no undo here, so retiring a recipe stays the user's
       // call. See lib/runbookTools.ts.
       expect(tools.map((t) => t.name)).not.toContain("delete_runbook");
+      // No create_pr either, and that IS the landing gate: this connection has
+      // no CALANDRIA_LANDING_MODE, so the bridge sees a merge project, where
+      // there is no PR to open. The tool is absent rather than present-and-
+      // refusing — an offered tool reads as a sanctioned move.
+      expect(tools.map((t) => t.name)).not.toContain("create_pr");
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
     } finally {
@@ -469,6 +480,45 @@ describe("calandria-mcp stdio bridge", () => {
       const call = calls.find((c) => c.path.endsWith("/expose-service"))!;
       expect(call.body).toMatchObject({ projectId: "proj-abc", name: "dev", port: 4300 });
       expect(call.token).toBe("smoke-token");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("create_pr is gated on the project's landing mode", () => {
+  // The tool pushes and runs `gh pr create`, which the sandbox blocks from
+  // inside a session — that is why it exists at all. It is only meaningful on a
+  // project that lands by pull request, so the bridge registers it only when the
+  // driver says so (CALANDRIA_LANDING_MODE, off projects.landing_mode).
+  it("is registered on a pr project and calls the internal endpoint", async () => {
+    const { client, close } = await connectBridge({ CALANDRIA_LANDING_MODE: "pr" });
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toContain("create_pr");
+      // Own row only: there is no `task` parameter for the model to point
+      // somewhere else, the way suggest_task's `project` can be pointed.
+      const schema = tools.find((t) => t.name === "create_pr")!.inputSchema as { properties?: Record<string, unknown> };
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["body", "title"]);
+      expect(Object.keys(schema.properties ?? {})).not.toContain("taskId");
+
+      const before = calls.length;
+      const res = await client.callTool({ name: "create_pr", arguments: { title: "feat: land it" } });
+      const call = calls.slice(before).find((c) => c.path.endsWith("/create-pr"))!;
+      expect(call).toBeTruthy();
+      // The caller identity is the SERVER's, from env — never a tool argument.
+      expect(call.body.taskId).toBe("task-xyz");
+      expect(call.body.title).toBe("feat: land it");
+      expect(JSON.stringify(res.content)).toContain("pull/7");
+    } finally {
+      await close();
+    }
+  });
+
+  it("is absent on a merge project", async () => {
+    const { client, close } = await connectBridge({ CALANDRIA_LANDING_MODE: "merge" });
+    try {
+      expect((await client.listTools()).tools.map((t) => t.name)).not.toContain("create_pr");
     } finally {
       await close();
     }

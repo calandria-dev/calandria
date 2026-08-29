@@ -45,13 +45,89 @@ Calandria puts the task conversation and git diff side by side. From there you c
 - review every changed file before it reaches the base branch;
 - sync a stale task branch;
 - merge with one click;
-- ask the agent to resolve conflicts; or
-- create a GitHub pull request.
+- ask the agent to resolve conflicts;
+- create a GitHub pull request; or
+- squash-merge that pull request without leaving the app.
 
 ![Diff review beside the agent session](images/changes.png)
 
+Once a task has a PR, its session header carries a live chip: the PR number, whether it is
+open, merged or closed, how its checks are doing, and the review decision. Calandria keeps
+that current by re-reading the PR from GitHub (`gh pr view`) in the background — when the PR
+is created, when you open the task, when you press the chip's Refresh button, and on a timer
+while the PR is still open. Nothing polls from the browser: a change reaches every open tab
+over the same event stream every other lifecycle fact uses. A merged or closed PR is never
+re-read, and a sweep is skipped entirely when no tab is open, so the cost is bounded by open
+work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
+turns the timer off and leaves the other three triggers.
+
+**A red PR is treated as work that needs you.** When the check rollup on a task's open PR
+goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
+question lands in — the titlebar pill, the dropdown, the project badge, the board's
+Needs-input column — even though no turn is parked and the task may already be marked done.
+That last case is the one this exists for: a session verifies locally, ends, GitHub disagrees
+half an hour later, and nothing on screen says so. A snooze silences it like anything else in
+that inbox, and a PR that merges or closes drops out of it.
+
+The session says which check broke and links its run, so the answer isn't a trip to the
+Actions tab. Beside that is **Fix CI**, the CI twin of the conflict resolver's *Fix with AI*:
+it re-checks GitHub (so a check somebody already fixed doesn't cost a turn), reads the tail of
+the failing job's log with `gh run view --log-failed`, and starts a turn in that task's own
+session seeded with both. The fix streams into the transcript like any other work.
+`CALANDRIA_CI_LOG_TAIL_LINES` sets how much log it carries.
+
 Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
 work requires an explicit permanent-discard confirmation.
+
+#### Squash & merge from the rail
+
+Once the PR is open, green and approved, landing it is one button on the diff rail:
+`gh pr merge --squash --auto --delete-branch`, run through the same `gh` the Create PR button
+uses. `--auto` is the point. Where the repo has auto-merge enabled and required checks
+configured, the click **queues** the merge and GitHub lands it the moment CI goes green, so
+there is no tab to babysit. A repo with auto-merge switched off — or a PR with nothing left
+to wait for — falls back to a plain `--squash`, and the result says which of the two you got:
+"GitHub will squash-merge this as soon as its requirements are met" is a different promise
+from "squash-merged".
+
+The button is enabled off GitHub's own answer, not optimistically. It is disabled, and says
+why, when the PR is a draft, already merged, closed, conflicting with its base, or has
+failing checks; a merge waiting on a required review or a still-running check is exactly what
+`--auto` is for, so those stay clickable. The route re-runs the same check against a fresh
+`gh pr view` before it acts, so a build that went red while the rail was on screen is refused
+rather than merged, and it refuses outright while the task has a turn running — the agent may
+be pushing more commits into the branch the PR is built from. Only the local branch is kept:
+`--delete-branch` removes the branch on GitHub, while the task's own branch stays, because a
+checkout is regenerable and a branch is the task's diff.
+
+It is a **user** action and only a user action. There is no agent tool for it and no
+scheduled path, deliberately: `.github/CLAUDE.md` holds this repo's own agents to merging
+only on an explicit human answer, and a POST an agent could reach would be that gate's back
+door. After a successful merge the route does no cleanup of its own — it forces the PR-state
+refresh that records the merge and leaves the worktree to the reclaim path.
+
+#### Reclaiming the worktree when the work lands
+
+A merged PR is a definitive signal that a task's checkout is disposable, so the session header
+grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
+or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
+base branch from origin, remove the worktree, delete the **local** branch (the remote one is
+GitHub's job, via the repository's `delete_branch_on_merge`) and mark the task done.
+
+Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
+server do it by itself. It is off by default and per project, because an unattended reclaim
+deletes a local branch.
+
+Nothing is ever discarded silently. Uncommitted edits in the checkout stop both paths, and so
+do commits the remote never received — those were not in what GitHub merged, whatever the
+merge strategy did to the rest. The automatic path reports and leaves the checkout alone
+(nobody is there to acknowledge anything); the button offers the same permanent-discard
+confirmation a task move does, naming exactly what would be destroyed. A branch that is merely
+"ahead" after a squash merge is not treated as unsaved work — every squash-merged branch looks
+that way, and refusing on it would mean the feature never fires.
+
+Worktrees for merged or finished tasks can also be reclaimed in bulk from Settings → Storage.
+Discarding unmerged work there requires the same explicit permanent-discard confirmation.
 
 ### Collaborating on a document
 
@@ -105,6 +181,55 @@ strip names it. Resolution order: the task's own base, then the first of its tag
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
 
+### How work lands: merge or pull request
+
+A project also records **how** its work is meant to reach that branch, in the project
+settings dialog under **How work lands**:
+
+- **Merge** — Calandria merges the finished task branch into the base branch itself. This is
+  the default, and what every project did before this setting existed.
+- **Pull request** — the base branch is protected, so a merge is rejected by GitHub.
+  Finishing a task means opening a PR against it and leaving it for review.
+
+The setting is not cosmetic: it is the sentence every session in the project is told. Under
+`merge` the agent reads "Merge lands into it"; under `pr` it is told the branch is protected,
+that Merge will be rejected, and that finishing means opening a PR. On a repo with a branch
+ruleset, the old unconditional wording sent every session off to press a button that could
+not work.
+
+The buttons follow the setting, for the same reason. Under `pr` the Changes tab makes **Create
+PR** the primary action; **Merge** stays available but demoted to **Merge locally…**, whose
+first click opens a note rather than merging — a local merge really does work, it just moves
+the copy of the base branch in your own checkout and can never be pushed afterwards, which is
+how you end up with a local `main` diverged from origin and nothing to do about it but reset.
+So the **Push to origin** offer that follows an ordinary merge is replaced under `pr` by a
+line saying the merge was local only. The push route refuses it server-side too, in the same
+words — a stale tab shouldn't be able to try. That refusal is not only about the setting: a
+protected-branch rejection from the remote is recognized wherever the policy says otherwise,
+and reported as "`main` requires a pull request — open a PR instead", with GitHub's own
+`GH006` text kept underneath rather than shown as the headline.
+
+Under `pr` the session also gets the verb to go with the sentence: **`create_pr(title?,
+body?)`** commits the worktree, pushes the work branch and runs `gh pr create` — the same
+machinery the PR button runs, so a session's PR and a human's are the same operation.
+Calling it again after more work updates the same PR rather than opening a second one. It
+exists because a session's own `git push` and `gh pr create` are normally refused — the
+server is where the network git lives — so without it a finished task had no way to say so
+in git and landing was entirely a human click. It is registered only on a `pr` project: on a
+`merge` project there is nothing for it to open, so it is absent rather than
+present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
+merging is deciding, and that stays yours.
+
+**Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
+`pull_request` rule, and classic branch protection, neither of which reports the other. It
+runs on its own when you open the settings dialog and when you point a new project at a
+folder or clone one. Detection only ever *proposes*: at project creation it preselects the
+answer, and on an existing project it shows what GitHub said beside a one-click **Use pull
+request** rather than overwriting a choice you made. A repo that requires PRs while you
+deliberately merge into a staging branch locally is a real configuration, and only you know
+about it. When GitHub can't be reached, or the repo is private to a login `gh` doesn't have,
+the probe says so instead of guessing "merge".
+
 Agents can retarget tasks too. `set_base_branch(branch, task?)` defaults to the session's own
 task mid-turn, or can name any other task in the same project, running the same retarget as
 the edit dialog, refusals included. It's a separate tool from `update_task` because it moves
@@ -124,7 +249,8 @@ real remote tip instead of a local `main` that's gone stale.
 Your own checkout is never moved without your say-so. When local `main` is behind, the
 project header offers a one-click fast-forward. When it's ahead, it offers a push. When the
 two have diverged, it says so and leaves the resolution to you. After a merge lands, the same
-push is offered inline. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
+push is offered inline — except under a pull-request landing policy, where it can only be
+rejected. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
 
 When the base branch advances, an in-flight task's pending merge can go from a plain
 fast-forward to needing a sync first; the sync banner explains that the base moved. When the
@@ -134,6 +260,13 @@ the banner switches to "conflicts resolved" with **Accept & merge** (the same as
 tab's Merge button) and **Review** to open that tab first, where **Discard** returns the
 worktree to where it was. Only Accept or Discard clears the banner. If the agent leaves some
 files still conflicted, the banner counts them and offers another pass.
+
+Resolving conflicts is the same work under either landing policy — it merges the base *into*
+the task branch, which is exactly what an out-of-date PR needs — so the demotion above leaves
+it alone. Only the last step changes: under `pr` the button reads **Accept resolution** and
+stops once the merge is committed to the task branch, because the second half (landing that
+branch on the base) is the move the remote would refuse. The task isn't marked merged, and
+pushing the branch — Create PR / Update PR — is what makes the work land.
 
 A merge into the branch your own checkout has open runs inside that checkout, and git only
 allows that on a clean tree. If it isn't clean, the merge is refused and the card shows

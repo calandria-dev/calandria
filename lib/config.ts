@@ -382,6 +382,51 @@ export const GIT_FETCH_COOLDOWN_MS = num(
   15_000,
 );
 
+/*
+ * PR state (lib/prState.ts). The same shape as the fetch cooldown above and for
+ * the same reason: every trigger is cheap only because a recent answer is
+ * reused rather than re-fetched. `gh pr view` is a network round trip per call,
+ * so the cost of "keep the chip live" has to be bounded by open PRs and by a
+ * clock, never by how often a client asks.
+ */
+
+/**
+ * How long a PR snapshot counts as fresh. Opening a task, its Refresh button
+ * and the create-PR trigger all skip gh entirely inside this window, so
+ * clicking through five tasks with PRs costs at most five fetches however many
+ * times the panels remount.
+ */
+export const PR_STALE_MS = ms(readEnv("CALANDRIA_PR_STALE_MS"), 60_000);
+
+/**
+ * How often the background sweep re-reads OPEN PRs (0 disables it, leaving the
+ * on-open and explicit-Refresh triggers). This is the "is CI green yet" clock:
+ * long enough not to be a polling storm, short enough that a red build shows up
+ * while you're still looking at the task. The ticker stops itself when no task
+ * has an open PR, and skips a pass entirely when no browser tab is watching —
+ * nobody can see a chip nothing is rendering, and an idle instance shouldn't
+ * spawn gh forever.
+ */
+export const PR_POLL_MS = ms(readEnv("CALANDRIA_PR_POLL_MS"), 5 * 60_000);
+
+/**
+ * Most PRs refreshed per sweep. One `gh pr view` per task is a subprocess and a
+ * network call, so a board with forty open PRs spreads them over several passes
+ * (oldest sync first) instead of forking forty processes at once.
+ */
+export const PR_POLL_BATCH = num("CALANDRIA_PR_POLL_BATCH", readEnv("CALANDRIA_PR_POLL_BATCH"), 5);
+
+/**
+ * How many lines of a failed job's log the "Fix CI" button seeds its turn with.
+ * `gh run view --log-failed` already drops the green steps, but a failing test
+ * suite still prints thousands of lines and only the END of them says what
+ * broke — so this is a TAIL, and it is a knob because the right depth is a
+ * property of the repo's CI, not of the app: a linter needs ten lines, a
+ * matrix build's stack trace needs a few hundred. Every failing check
+ * contributes its own tail, so the prompt grows with the number of red jobs.
+ */
+export const CI_LOG_TAIL_LINES = num("CALANDRIA_CI_LOG_TAIL_LINES", readEnv("CALANDRIA_CI_LOG_TAIL_LINES"), 200);
+
 /**
  * The public origin the app is served from (e.g. https://calandria.example.com when
  * behind a tunnel/reverse proxy). Used by the client to build absolute

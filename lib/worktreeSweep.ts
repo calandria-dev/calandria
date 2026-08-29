@@ -31,8 +31,11 @@
 //
 // The branch is always KEPT (`keepBranch: true`, as the Storage sweep's safe
 // path does). A worktree can be re-cut; a deleted branch takes the task's diff
-// with it, and there is no knob to delete one unattended — that decision has a
-// button, and it belongs to a human.
+// with it, and this sweep fires on a CLOCK — "cold for fourteen days" is not
+// evidence that the diff is anywhere else. lib/reclaim.ts is the case where it
+// is: a merged PR (or a local merge) says the work is in the base branch, and
+// that reclaim does delete the local branch, optionally unattended. Same
+// teardown, different licence, and the licence is the landing.
 //
 // Off by default, unlike the table prune. The table prune's defaults (180/400
 // days) are longer than most instances have existed, so switching it on for

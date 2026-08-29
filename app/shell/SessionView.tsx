@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W,
@@ -23,6 +23,8 @@ import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } f
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
+import { PrChip } from "./PrChip";
+import { ReclaimButton } from "./ReclaimButton";
 import { ColResize, ColRail } from "./Layout";
 import { jget, jsend } from "./api";
 
@@ -39,8 +41,14 @@ import { jget, jsend } from "./api";
 // because `behind` drops to 0; landing writes a merge commit the branch doesn't
 // carry, so it stays behind by one) or discarded (back to tier 3, which is
 // honest — main still moved on).
-function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
+// Under a PR landing policy the last tier changes shape: accepting the
+// resolution commits the base→branch merge and STOPS. Landing it into the local
+// base is exactly the move that can't be pushed afterwards, and the PR is what
+// moves the base. The earlier tiers (Sync, Fix with AI) are the same work in
+// either mode — they only ever touch the task's own branch — so they don't move.
+function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
   taskId: string; running: boolean;
+  prMode: boolean; // the project lands through pull requests (projects.landing_mode === "pr")
   // Bumped by the parent when Changes mutates the merge state (accept, discard,
   // land) — the banner otherwise re-reads only when a turn ends.
   refresh: number;
@@ -134,14 +142,19 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // base — exactly what TaskChanges.doComplete does, so the banner's button and
   // the tab's button can't drift. On success `behind` reads 0 and the banner
   // goes away on its own reload; a failure stays on screen with the reason.
+  // Under a PR policy it stops at the commit (`resolveOnly`), so nothing landed
+  // and `onMerged` — which marks the task merged — must not fire.
   const doAccept = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, { method: "POST" });
-      const res: { ok?: boolean; error?: string } = await r.json().catch(() => ({ ok: false, error: `merge request failed (HTTP ${r.status})` }));
-      if (res.ok) onMerged?.();
-      else setErr(res.error || "could not complete the merge");
+      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+        method: "POST",
+        ...(prMode ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ resolveOnly: true }) } : {}),
+      });
+      const res: { ok?: boolean; error?: string; resolveOnly?: boolean } = await r.json().catch(() => ({ ok: false, error: `merge request failed (HTTP ${r.status})` }));
+      if (res.ok && !res.resolveOnly) onMerged?.();
+      else if (!res.ok) setErr(res.error || "could not complete the merge");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); load(); onChanged(); }
@@ -153,11 +166,13 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
   // side moved is the difference between "something is wrong with my task" and
   // "main moved on", so the message names it.
   const why = resolved
-    ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
+    ? prMode
+      ? `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (commits it to this task's branch, which is what makes the PR mergeable) or discard it (restores the worktree). ${st.baseBranch} takes pull requests only, so nothing lands on it from here.`
+      : `The resolution turn edited the conflicted files but did not commit. The merge with ${st.baseBranch} stays paused until you accept it (lands this task) or discard it (restores the worktree).`
     : `${st.baseBranch} has moved on since this task branched. Nothing is wrong with the task. It just needs the newer commits before its own work can land.`;
 
   const msg = resolved
-    ? `Conflicts with ${st.baseBranch} resolved: review the result, then Accept & merge or Discard`
+    ? `Conflicts with ${st.baseBranch} resolved: review the result, then ${prMode ? "Accept resolution" : "Accept & merge"} or Discard`
     : paused
       ? `${st.baseBranch} moved on: ${conflicts} file${conflicts === 1 ? "" : "s"} still conflicted after the resolution`
       : conflicts > 0
@@ -172,13 +187,75 @@ function SyncBanner({ taskId, running, refresh, onResolveWithAI, onSwitchToChat,
       {resolved ? (
         <>
           <button className="tc-btn" onClick={onReview} disabled={busy || running}>Review</button>
-          <button className="tc-btn primary" onClick={doAccept} disabled={busy || running}>{busy ? "Merging…" : "Accept & merge"}</button>
+          <button className="tc-btn primary" onClick={doAccept} disabled={busy || running}>
+            {busy ? (prMode ? "Committing…" : "Merging…") : prMode ? "Accept resolution" : "Accept & merge"}
+          </button>
         </>
       ) : conflicts > 0 ? (
         <button className="tc-btn primary" onClick={doFix} disabled={busy || running}>{busy ? "…" : "Fix with AI"}</button>
       ) : (
         <button className="tc-btn primary" onClick={doSync} disabled={busy || running}>{busy ? "Syncing…" : "Sync"}</button>
       )}
+    </div>
+  );
+}
+
+// The red-PR twin of SyncBanner: this task's pull request is open and its check
+// rollup is failing, so the work needs a human even though no turn is parked on
+// anything. It is the SESSION's half of the same fact the titlebar pill and the
+// board badge carry (lib/store.ts's NEEDS_YOU predicate) — the place the user
+// lands when they click through, and therefore the place that has to say which
+// job broke and offer to do something about it.
+//
+// Everything it draws comes off the task row, kept fresh by lib/prState.ts over
+// /api/events. Nothing here polls, and nothing here re-derives a verdict: the
+// server already collapsed the rollup and named the red entries.
+function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
+  task: TaskRow; running: boolean;
+  onFixCi: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
+  onSwitchToChat: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const failing = prFailingChecks(task);
+
+  const doFix = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await onFixCi(task.id);
+      // The turn is fire-and-forget, so switching to the chat is what makes the
+      // click feel like it did something: the diagnosis streams in live.
+      if (res.ok) onSwitchToChat();
+      else setErr(res.error || "could not start the fix");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="sync-banner ci-failing" data-ci-state="failing">
+      <span className="sync-msg">
+        CI failing on PR #{task.pr_number}
+        {failing.length > 0 && ": "}
+        {failing.map((c, i) => (
+          <Fragment key={`${c.name}-${i}`}>
+            {i > 0 && ", "}
+            {c.url
+              ? <a className="ci-check" href={c.url} target="_blank" rel="noreferrer" title={c.workflow ? `${c.workflow} — open the run on GitHub` : "Open the run on GitHub"}>{c.name}</a>
+              : <span className="ci-check">{c.name}</span>}
+          </Fragment>
+        ))}
+      </span>
+      {err && <span className="sync-err" title={err}>{err}</span>}
+      <span className="sync-spacer" />
+      <a className="tc-btn" href={task.pr_url} target="_blank" rel="noreferrer">Open PR</a>
+      <button
+        className="tc-btn primary"
+        onClick={doFix}
+        disabled={busy || running}
+        title="Start a turn in this session, seeded with the failing job and the tail of its log"
+      >
+        {busy ? "Reading logs…" : "Fix CI"}
+      </button>
     </div>
   );
 }
@@ -297,7 +374,7 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -312,6 +389,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // Queue / un-queue a start at the usage-window reset (PATCH start_at; see ./queuedStart.ts).
   onQueueStart: (at: number) => void; onCancelQueuedStart: () => void;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
+  onFixCi: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onAnswer: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void;
@@ -456,8 +534,6 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const usage = usageSplit(task);
   const cost = costDisplay(findAgent(agents, task.agent));
   const multiAgent = agents.agents.length > 1;
-  // PR number for the header chip, parsed from the stored URL (…/pull/42).
-  const prNum = task.pr_url?.match(/\/pull\/(\d+)/)?.[1];
   // True while a question card is still unanswered — hides the "thinking" dots,
   // since Claude is parked on the user, not working.
   const awaitingAnswer = useMemo(() => messages.some((m) => {
@@ -600,15 +676,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     </>
   );
 
-  // Read-only header chips — rendered at the head of the tools rail on
-  // desktop, demoted to its tail on mobile (see the rail's comment).
+  // Header chips — rendered at the head of the tools rail on desktop, demoted
+  // to its tail on mobile (see the rail's comment). Read-only but for Reclaim,
+  // which sits with the PR chip because that is where "this landed" is shown.
   const infoChips = (
     <>
-      {task.pr_url && (
-        <a className="pr-chip" href={task.pr_url} target="_blank" rel="noreferrer" title={`Open this task's pull request: ${task.pr_url}`}>
-          {Icon.github()} PR{prNum ? ` #${prNum}` : ""} {Icon.external()}
-        </a>
-      )}
+      {/* Live PR state — number, state, check rollup, review decision — read off
+          the task row and kept fresh by lib/prState.ts. */}
+      <PrChip task={task} />
+      {/* The one exception to "read-only" here, and it belongs beside the chip
+          that reports the fact it acts on: once this task's work has LANDED, one
+          click frees the checkout, deletes the local branch and marks it done
+          (lib/reclaim.ts). Renders nothing until then. */}
+      <ReclaimButton task={task} />
       {/* Which feature(s) this session is a step of — a task can carry several.
           Clicking one lights that tag's chip in the list/board, the way the
           row badges do. */}
@@ -807,7 +887,14 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         </div>
 
         {hasSession && (
-          <SyncBanner taskId={task.id} running={running} refresh={syncTick} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
+          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
+        )}
+
+        {/* Red PR. Under the sync banner rather than over it: a task that is
+            both behind its base AND red should be caught up first, since the
+            catch-up is what its next CI run will actually test. */}
+        {isPrRed(task) && (
+          <CiBanner task={task} running={running} onFixCi={onFixCi} onSwitchToChat={() => setView("chat")} />
         )}
 
         {clearConfirming && (
@@ -848,7 +935,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             </div>
           )
         ) : view === "changes" ? (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             // Resolution turn was kicked off (conflicts, not a clean merge) —
             // jump back to Chat so the user sees the message stream in. With

@@ -129,9 +129,10 @@ The app talks to coding agents only through the `AgentDriver` interface.
 `runTurn()` runs a turn via the Claude Agent SDK, resuming or starting fresh, with project
 context appended to the Claude Code system prompt. It exposes the Calandria MCP tools
 (`suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `update_tag`, `list_projects`, `expose_service`), `summarizeTranscript()`
-for `/clear`, and `draftProjectContext()`, a read-only agent loop that explores the repo to
-refresh a project's saved context. Auth delegates to `lib/claude-auth.ts`.
+`set_base_branch`, `create_pr`, `update_tag`, `list_projects`, `expose_service`),
+`summarizeTranscript()` for `/clear`, and `draftProjectContext()`, a read-only agent loop
+that explores the repo to refresh a project's saved context. Auth delegates to
+`lib/claude-auth.ts`.
 
 A turn pins `settingSources: ["user", "project", "local"]`. That is the SDK's own default
 when the option is omitted; it's written out explicitly so an SDK bump can't silently strip
@@ -266,8 +267,8 @@ controls show their run count and API-price-equivalent cost without polling.
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
 `suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `list_tags`, `update_tag`, `list_projects`, `expose_service`, and
-`ask_user` are the same Calandria tools every driver exposes. The Claude driver mounts all
+`set_base_branch`, `create_pr`, `list_tags`, `update_tag`, `list_projects`, `expose_service`,
+and `ask_user` are the same Calandria tools every driver exposes. The Claude driver mounts all
 but `ask_user` as an in-process SDK MCP server (`createSdkMcpServer`) and gets asks natively
 through its AskUserQuestion hook. The portable equivalent is **`scripts/calandria-mcp.mjs`**,
 a plain-Node stdio MCP server (`@modelcontextprotocol/sdk`) that non-Claude drivers spawn
