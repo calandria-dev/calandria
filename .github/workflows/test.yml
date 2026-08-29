@@ -47,10 +47,13 @@
 #           them; and `sidecarEnv()` has to invent a `SHELL` the pty sidecar can
 #           spawn because $SHELL is a POSIX convention. The Ubuntu lane runs the
 #           same specs and can say nothing about any of it.
-#   macos-desktop — the `desktop` suite on macos-latest, dev shell and packaged
-#           .app, plus the two behaviours that exist nowhere else: the launchd
-#           PATH repair (a .app opened through LaunchServices inherits
-#           /usr/bin:/bin:/usr/sbin:/sbin, not the user's shell PATH, so `codex`,
+#   macos-desktop — the `desktop` suite on macos-latest against the dev shell
+#           and then the packaged .app, plus a launch of the .app unpacked from
+#           the .dmg that same build produced (docs/DESKTOP_APP.md §6.1).
+#           Plus the two behaviours
+#           that exist nowhere else: the launchd PATH repair (a .app opened
+#           through LaunchServices inherits /usr/bin:/bin:/usr/sbin:/sbin, not
+#           the user's shell PATH, so `codex`,
 #           `gh` and an nvm `node` are invisible to a double-clicked Calandria
 #           until supervisor.js re-reads the PATH from the login shell) and
 #           `titleBarStyle: "hiddenInset"`, whose traffic lights land inside the
@@ -782,10 +785,15 @@ jobs:
               || github.event_name == 'workflow_dispatch'
               || contains(github.event.pull_request.labels.*.name, 'macos')) }}
     runs-on: macos-latest
-    # Between the Ubuntu desktop lane's 45 and the Windows one's 60. Same two
-    # passes as Ubuntu (dev shell, then the packaged artifact) on a runner that
-    # is faster per-core than windows-latest, plus one extra GUI launch.
-    timeout-minutes: 60
+    # Above the Ubuntu desktop lane's 45 and the Windows one's 60. Ubuntu's two
+    # passes (dev shell, then the packaged artifact) plus one extra GUI launch,
+    # and then two more specs against the app unpacked from the .dmg. Packaging
+    # also builds three targets here rather than one, and zipping a bundle this
+    # size is not free. That last pass is the whole point of building an
+    # installer target: a .dmg that packages green and refuses to open is the
+    # failure this lane exists to catch, and only launching what is inside it
+    # proves otherwise.
+    timeout-minutes: 70
     steps:
       # No `core.autocrlf`/`core.longpaths` pinning, unlike the Windows jobs:
       # macOS checks out with LF and has no MAX_PATH. The filesystem IS
@@ -827,20 +835,38 @@ jobs:
 
       # --- and now the same suite against what a user would download ---------
       #
-      # `--mac dir` only, and unsigned in the Developer ID sense: Gatekeeper,
-      # notarization and installers are a separate decision
-      # (docs/DESKTOP_APP.md §6). An unpacked .app is everything the suite needs
-      # to launch, and it is the only form the launchd spec can `open`.
+      # All three of `mac.target`, and still unsigned in the Developer ID sense:
+      # Gatekeeper and notarization stay a separate decision
+      # (docs/DESKTOP_APP.md §6). `dir` is what the packaged pass below launches
+      # and the only form the launchd spec can `open`; `dmg` and `zip` are what
+      # a person would actually download, and building them here is the only way
+      # to find out whether they open.
       - name: Package the desktop app
         working-directory: desktop
         env:
           # electron-builder otherwise scans the keychain for a Developer ID and
-          # narrates its absence; `mac.identity: null` in package.json already
-          # says not to sign, and this stops it looking.
+          # narrates its absence. `mac.identity: "-"` asks for an ad-hoc
+          # signature rather than a real one, so there is nothing to discover.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # WITHOUT THIS THE .dmg SHIPS AN APP THAT CANNOT EXEC. electron-builder
+          # skips macOS signing outright on any pull-request build
+          # (`isSignAllowed` in app-builder-lib, which reads a set
+          # GITHUB_BASE_REF as "this is a PR"), so on the labelled-PR trigger
+          # that is most of this lane's runs the ad-hoc signature would silently
+          # not happen — and arm64 macOS kills an unsigned Mach-O on launch.
+          #
+          # The warning that flag carries is about exposing a real signing
+          # CERTIFICATE to fork PRs. There is no certificate here: an ad-hoc
+          # signature carries no identity and this job has no CSC_LINK secret.
+          # The lane also only fires on a maintainer-applied `macos` label,
+          # which a fork cannot set on its own PR.
+          #
+          # THE SIGNING TASK MUST REMOVE THIS when a real Developer ID lands, at
+          # which point the concern stops being inapplicable.
+          CSC_FOR_PULL_REQUEST: "true"
         run: |
           npm run payload -- --no-build
-          npx electron-builder --mac dir
+          npx electron-builder --mac dir dmg zip
 
       - name: Move the artifact out of the checkout
         # Same reason as the Ubuntu lane: an installed app is never inside a
@@ -859,15 +885,30 @@ jobs:
           echo "CALANDRIA_TEST_BIN=$bin" >> "$GITHUB_ENV"
           echo "CALANDRIA_TEST_APP_BUNDLE=$RUNNER_TEMP/Calandria.app" >> "$GITHUB_ENV"
 
-      # An ad-hoc signature is not code signing in the sense §6 is about — it
-      # carries no identity, satisfies no Gatekeeper policy and notarizes
-      # nothing. It is here because arm64 macOS will not exec a Mach-O with NO
-      # signature at all: the kernel kills it. electron-builder rewrites the
-      # binary and its resources, which invalidates whatever Electron's prebuilt
-      # arrived with, so without this step the packaged pass below would die on
-      # launch with a signal rather than a test failure.
-      - name: Ad-hoc sign the bundle so arm64 will exec it
-        run: codesign --force --deep --sign - "$RUNNER_TEMP/Calandria.app"
+      # This step used to BE the ad-hoc signing (`codesign --force --deep --sign
+      # -`). It moved into the build — `mac.identity: "-"` in
+      # desktop/package.json — and what is left here is the assertion that it
+      # happened. docs/DESKTOP_APP.md §6 records why; the short version is that
+      # signing here is too late for an installer. electron-builder cuts the
+      # .dmg and the .zip from the .app during the packaging step above, so a
+      # signature applied afterwards, to a bundle already moved out of
+      # desktop/dist, reaches the copy this lane tests and NOT the copies a user
+      # would download. Both would ship an app the kernel kills.
+      #
+      # An ad-hoc signature is still not code signing in the sense §6 is about:
+      # it carries no identity, satisfies no Gatekeeper policy and notarizes
+      # nothing. It is only what makes the file runnable at all, because arm64
+      # macOS will not exec a Mach-O with NO signature and electron-builder
+      # invalidates the one Electron's prebuilt arrived with.
+      #
+      # Verifying rather than re-signing is deliberate: a second signing path
+      # would paper over a build that quietly stopped signing (a dropped
+      # CSC_FOR_PULL_REQUEST, say) and leave the .dmg broken with every pass
+      # green. Failing here names the cause; failing later is a signal kill.
+      - name: Check the build ad-hoc signed the bundle
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/Calandria.app"
 
       # Both variables are already in the environment from the move step:
       # CALANDRIA_TEST_BIN swaps every shared spec onto the artifact (with no
@@ -881,6 +922,99 @@ jobs:
       # See the spec header and docs/DESKTOP_APP.md §5.
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window
+
+      # --- and now against what a user would actually download ---------------
+      #
+      # Everything above tests `dir` output — a bundle electron-builder left
+      # lying in its own output directory. The .dmg is a different artifact: it
+      # is cut from that bundle by hdiutil, and the question this lane cannot
+      # answer any other way is whether the thing inside it still opens.
+      #
+      # The app is copied OFF the mounted image before anything launches it. The
+      # mount is read-only, the app writes to its own bundle on first run, and
+      # $RUNNER_TEMP is where the `dir` bundle already went — desktop/e2e/
+      # fixtures.ts refuses to launch a binary from inside this checkout.
+      - name: Unpack the app from the dmg
+        run: |
+          set -euo pipefail
+          dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
+          test -n "$dmg" || { echo "::error::electron-builder produced no .dmg under desktop/dist"; exit 1; }
+          echo "dmg: $dmg ($(du -h "$dmg" | cut -f1))"
+
+          # -nobrowse keeps Finder out of it; the explicit mountpoint avoids
+          # guessing at the volume name electron-builder derived from
+          # productName.
+          mnt="$RUNNER_TEMP/dmg-mount"
+          mkdir -p "$mnt"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
+
+          app=$(find "$mnt" -maxdepth 1 -name '*.app' -type d | head -n 1)
+          if [ -z "$app" ]; then
+            echo "::error::the dmg mounted but contains no .app"
+            hdiutil detach "$mnt" -force || true
+            exit 1
+          fi
+
+          # The signature has to survive the round trip through hdiutil. If it
+          # did not, the copy below is a bundle the kernel will refuse to exec,
+          # and this says so here rather than as a signal in the suite.
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          dest="$RUNNER_TEMP/dmg-app"
+          rm -rf "$dest"; mkdir -p "$dest"
+          # ditto, not cp: it preserves the signature and the bundle's symlinks.
+          ditto "$app" "$dest/$(basename "$app")"
+          hdiutil detach "$mnt" -force
+
+          bin=$(find "$dest"/*.app/Contents/MacOS -maxdepth 1 -type f | head -n 1)
+          echo "CALANDRIA_TEST_BIN=$bin" >> "$GITHUB_ENV"
+          echo "CALANDRIA_TEST_APP_BUNDLE=$(find "$dest" -maxdepth 1 -name '*.app' -type d | head -n 1)" >> "$GITHUB_ENV"
+
+          # Informational, and expected to FAIL. `spctl` is the Gatekeeper
+          # assessment a downloaded copy gets, and an ad-hoc signature does not
+          # pass it — that is the honest state of macOS distribution until the
+          # signing task buys a Developer ID and notarizes. Printing the refusal
+          # keeps §6's install instructions grounded in something observed
+          # rather than assumed, so `|| true`: this is a report, not a gate.
+          echo "--- spctl assessment (a refusal here is the documented state) ---"
+          spctl --assess --type execute --verbose=4 "$dest"/*.app || true
+
+      # Two specs, not the whole suite, and the reason is that the rest would
+      # measure nothing. The app inside the .dmg is a `ditto` copy of the very
+      # bundle the packaged pass just finished exercising — identical bytes. The
+      # only things the round trip through hdiutil can break are the signature
+      # (checked above) and whether the result still launches, so re-running
+      # twenty UI specs against the same bytes buys coverage that has already
+      # been paid for, on the priciest runner in this file.
+      #
+      # 06-packaged asserts the artifact boots and serves; 08-macos-launchd
+      # `open`s the bundle through LaunchServices, which is as close to a
+      # double-click of a freshly mounted .dmg as CI gets. Both env vars were
+      # re-pointed at the dmg copy by the step above.
+      - name: Launch the app from the dmg
+        run: npx playwright test --config playwright.desktop.config.ts 06-packaged 08-macos-launchd
+
+      # The .zip is the load-bearing macOS artifact even though nothing consumes
+      # it yet: Squirrel.Mac, which electron-updater uses on macOS, updates from
+      # the .zip and not the .dmg, and a dmg-only build emits no latest-mac.yml
+      # at all. Checking it exists and holds an intact bundle is cheap; the feed
+      # itself arrives with the publish block in the auto-update task.
+      - name: Check the zip carries an intact bundle
+        run: |
+          set -euo pipefail
+          zip=$(find desktop/dist -maxdepth 1 -name '*.zip' -type f | head -n 1)
+          test -n "$zip" || { echo "::error::electron-builder produced no .zip under desktop/dist"; exit 1; }
+          echo "zip: $zip ($(du -h "$zip" | cut -f1))"
+
+          dest="$RUNNER_TEMP/zip-app"
+          rm -rf "$dest"; mkdir -p "$dest"
+          # ditto -x -k is the reader for the `ditto -c -k` archive
+          # electron-builder writes; `unzip` drops the signature's extended
+          # attributes and would fail the check below for the wrong reason.
+          ditto -x -k "$zip" "$dest"
+          app=$(find "$dest" -maxdepth 1 -name '*.app' -type d | head -n 1)
+          test -n "$app" || { echo "::error::the zip contains no .app"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
 
       # `always()`, not `failure()`, unlike every other lane here.
       # 07-macos.spec.ts attaches a screenshot of the hiddenInset title bar and
