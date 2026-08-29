@@ -45,7 +45,8 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
 import { waitForAnswer } from "../../asks";
@@ -454,6 +455,31 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
+      // Only on a project that lands by pull request. On a merge project there
+      // is nothing for it to open, so it is absent rather than present-and-
+      // refusing: an offered tool reads as a sanctioned move, and the session
+      // has already been told (landingSentence) that this project merges.
+      // The bridge gates the same way, off CALANDRIA_LANDING_MODE.
+      ...(project.landing_mode === "pr"
+        ? [
+            tool(
+              CREATE_PR.name,
+              CREATE_PR.description,
+              {
+                title: z.string().optional().describe(CREATE_PR.params.title),
+                body: z.string().optional().describe(CREATE_PR.params.body),
+              },
+              async (args: { title?: string; body?: string }) => {
+                // Own row only — no target parameter, so nothing here is the
+                // model's word for WHICH task. The closed-over `task` is the
+                // caller, and lib/prTools.ts re-reads it: this turn's snapshot
+                // predates its own worktree cut.
+                const { url, text } = await createPrForAgent(task, args, (id) => hooks?.onPrOpened(id));
+                return { content: [{ type: "text", text }], ...(url ? {} : { isError: true }) };
+              }
+            ),
+          ]
+        : []),
       tool(
         UPDATE_TAG.name,
         UPDATE_TAG.description,

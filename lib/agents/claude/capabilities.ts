@@ -120,6 +120,10 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // buildProjectContext re-warns the model that backgrounded commands die at
   // turn end.
   backgroundTasksLinger: BACKGROUND_LINGER_ENABLED,
+  // The Agent tool, with the user's own subagent types on top of the built-in
+  // ones (settingSources pulls ~/.claude/agents in). buildProjectContext tells
+  // the session to collect context through it.
+  dispatchesSubagents: true,
   reportsCostUsd: true,
   costIsEstimated: false,
   // Every assistant message carries its API request's usage; the driver

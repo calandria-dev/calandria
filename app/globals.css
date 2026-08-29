@@ -972,10 +972,41 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sess-head .sh-title{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sess-head .sh-tools{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
 
-/* clickable link to the GitHub PR opened from this task's branch */
+/* Live PR chip: a link to the GitHub PR opened from this task's branch, plus
+   the state the server keeps fresh (lib/prState.ts) — state word, check rollup
+   and review decision — and a Refresh button, which sits OUTSIDE the anchor
+   because a button inside a link is neither valid nor clickable. */
+.pr-chip-wrap{display:inline-flex;align-items:center;gap:0;flex:0 0 auto;}
 .pr-chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface-2);font-size:12px;font-weight:600;color:var(--ink-2);text-decoration:none;white-space:nowrap;flex:0 0 auto;}
 .pr-chip:hover{border-color:var(--line-strong);color:var(--ink);}
 .pr-chip svg{width:13px;height:13px;}
+.pr-chip-wrap .pr-chip{border-top-right-radius:0;border-bottom-right-radius:0;border-right:0;padding-right:9px;}
+/* The state dot carries the same three answers as the word beside it, so the
+   chip is scannable at a glance and still readable without color. */
+.pr-dot{width:6px;height:6px;border-radius:50%;background:var(--ink-4);flex:0 0 auto;}
+.pr-chip--open .pr-dot{background:var(--green);}
+.pr-chip--merged .pr-dot{background:var(--violet);}
+.pr-chip--closed .pr-dot{background:var(--red);}
+.pr-chip--merged{color:var(--ink-3);}
+.pr-chip--closed{color:var(--ink-3);}
+.pr-state{font-weight:600;}
+.pr-flag{font-weight:600;font-size:11px;padding:1px 6px;border-radius:99px;color:var(--ink-3);}
+.pr-flag--pass{background:var(--green-soft);color:var(--green);}
+.pr-flag--fail{background:var(--red-soft);color:var(--red);}
+.pr-flag--pending{background:var(--amber-soft);color:var(--amber);}
+.pr-refresh{display:inline-flex;align-items:center;justify-content:center;height:30px;width:28px;padding:0;border:1px solid var(--line);border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:99px;border-bottom-right-radius:99px;background:var(--surface-2);color:var(--ink-3);cursor:pointer;flex:0 0 auto;}
+.pr-refresh:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink);}
+.pr-refresh:disabled{opacity:.5;cursor:default;}
+.pr-refresh svg{width:12px;height:12px;}
+
+/* "Reclaim" — the landed-to-reclaimed action beside the PR chip (app/shell/ReclaimButton.tsx). */
+.reclaim-wrap{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;}
+.reclaim-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:99px;background:var(--surface-2);color:var(--ink-2);font-size:12px;cursor:pointer;flex:0 0 auto;}
+.reclaim-btn:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink);}
+.reclaim-btn:disabled{opacity:.5;cursor:default;}
+.reclaim-btn svg{width:12px;height:12px;}
+.reclaim-btn.danger{border-color:var(--red);color:var(--red);}
+.reclaim-warn,.reclaim-err{font-size:11px;color:var(--red);max-width:340px;}
 
 /* cumulative token/cost spend for the task */
 .usage-chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface-2);font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-3);white-space:nowrap;flex:0 0 auto;cursor:default;}
@@ -1014,6 +1045,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-btn.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent);}
 /* the PR link rendered as an <a> in the same toolbar row */
 a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height:1.4;}
+/* Squash & merge PR. Deliberately not .primary: the local "Merge to <base>"
+   button next to it already owns that slot, and two accent-filled buttons side
+   by side make the toolbar ask twice. This reads as the GitHub-side action. */
+.tc-prmerge:not(:disabled){border-color:var(--green);color:var(--green);}
+.tc-prmerge:hover:not(:disabled){background:var(--green-soft);}
 .tc-merged{font-size:12px;font-weight:600;color:var(--green);}
 .tc-merged.faint{color:var(--ink-3);font-weight:500;}
 .tc-mergebar{margin:10px 16px 0;padding:8px 10px;border-radius:var(--r-sm);font-size:12px;}
@@ -1389,6 +1425,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
 .sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
 .sync-banner.resolved{color:var(--green);background:var(--green-soft);border-color:var(--green);}
+/* Red PR (SessionView's CiBanner). Its own tone rather than .conflict's amber:
+   a merge conflict is work in front of you, a failing check is something
+   already broken. The check names inside it are links to the run. */
+.sync-banner.ci-failing{color:var(--red);background:var(--red-soft);border-color:var(--red);}
+.sync-banner.ci-failing .ci-check{color:inherit;text-decoration:underline;text-underline-offset:2px;}
+.sync-banner.ci-failing .ci-check:hover{text-decoration:none;}
+.sync-banner.ci-failing .tc-btn.primary{border-color:var(--red);background:var(--red);color:var(--on-accent);}
+.ny-row .ny-ci{color:var(--red);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
 .sync-err{color:var(--err);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -1843,7 +1887,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .rb-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:11.5px;color:var(--ink-3);}
 .rb-head .spacer{flex:1;}
 
-/* responsive guard for narrow desktops / tablets — just tighten the columns */
+/* Narrow desktops / tablets. The shell already hands both side columns their
+   30px spine well above this width (AUTO_COLLAPSE_BELOW in app/shell/types.ts),
+   so this only applies to a column the user re-opened from its spine anyway —
+   which is exactly when the tightening is worth the most. */
 @media (min-width:761px) and (max-width:900px){
   .col-projects{flex-basis:200px;}
   .col-tasks{flex-basis:300px;}

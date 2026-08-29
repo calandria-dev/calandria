@@ -147,23 +147,64 @@ on:
 # concurrency is evaluated in the CALLER's context, so `${{ github.workflow }}`
 # here resolves to "Publish image" when that workflow calls us — sharing the
 # group would have the called job queue behind the run that is waiting on it.
+#
+# `github.event_name` is in the group because only `pull_request` runs cancel,
+# and without it one could cancel a push run (issue #48). `github.ref` was
+# assumed to keep them apart — `refs/pull/N/merge` versus `refs/heads/main` —
+# but release-please labels the ALREADY-MERGED release PR `autorelease: tagged`
+# seconds after the merge, and the `labeled` run that fires for a closed PR
+# collided with the push-to-main group and cancelled it. That happened on
+# v0.3.0 and again on v0.4.0: the one run publish-image.yml's release gate
+# waits for is the one that died, so no release has ever published its image
+# from its own tag. Keying on the event makes the collision unrepresentable
+# whatever a closed PR's ref resolves to, rather than resting on it resolving
+# to something distinct.
 concurrency:
-  group: test-${{ github.workflow }}-${{ github.ref }}
+  group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
+# Every job carries `if: ${{ !env.SKIP }}` in the form spelled out below —
+# repeated rather than hoisted into a `needs:` guard job, because a required
+# check that reports `skipped` instead of `success` is a merge people have to
+# argue with, and there is no workflow-level `if`.
+#
+# What it screens out: a `pull_request` run for a CLOSED pull request. The
+# `labeled` trigger is here so adding `e2e` to an open PR starts a run without
+# waiting for a push, but it fires for a merged PR too, and release-please
+# labels the release PR `autorelease: tagged` right after it merges. Running
+# the full suite — two e2e lanes and a production build — against a PR nobody
+# can merge is pure waste, and it was also the run that cancelled main's
+# (issue #48; the concurrency group above now stops the cancelling half).
+#
+# Deliberately narrower than "only the `e2e` label counts": an OPEN PR behaves
+# exactly as before, whatever label moved, so no required check on anything
+# awaiting a merge can start reporting `skipped`. A closed PR is awaiting
+# nothing, which is what makes skipping it safe.
 jobs:
   audit:
+    # Keep this name. security-scan.yml runs the identical command weekly and
+    # used to answer to "Audit (npm)" as well; it is now "Audit (npm, weekly)"
+    # precisely so this one can be named unambiguously as a required check.
     name: Audit (npm)
+    # Two independent exclusions, both of which have to hold.
+    #
     # The `schedule` trigger above exists for `macos-desktop` alone. Without
-    # this line every always-on job would also run weekly against a commit they
-    # already passed on push — a second full CI pass that reports nothing new
-    # and, on the two Windows lanes, bills at 2x to do it. The four slow jobs
-    # need no such guard: their gate lists the events they accept and
+    # the first clause every always-on job would also run weekly against a
+    # commit they already passed on push — a second full CI pass that reports
+    # nothing new and, on the two Windows lanes, bills at 2x to do it. The four
+    # slow jobs need no such guard: their gate lists the events they accept and
     # `schedule` is not among them.
-    if: github.event_name != 'schedule'
+    #
+    # The second is the closed-PR clause shared with the slow lanes: the
+    # `labeled` trigger fires for a merged PR too, and release-please labels
+    # the release PR right after it merges.
+    if: >-
+      ${{ github.event_name != 'schedule'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.state == 'open') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -184,8 +225,11 @@ jobs:
 
   typecheck:
     name: Types (tsc)
-    # Not on the weekly macOS schedule — see `audit`.
-    if: github.event_name != 'schedule'
+    # Neither the weekly macOS schedule nor a closed PR — see `audit`.
+    if: >-
+      ${{ github.event_name != 'schedule'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.state == 'open') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -226,8 +270,11 @@ jobs:
 
   unit:
     name: Unit (vitest)
-    # Not on the weekly macOS schedule — see `audit`.
-    if: github.event_name != 'schedule'
+    # Neither the weekly macOS schedule nor a closed PR — see `audit`.
+    if: >-
+      ${{ github.event_name != 'schedule'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.state == 'open') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -251,9 +298,12 @@ jobs:
 
   windows:
     name: Windows (types + unit)
-    # Not on the weekly macOS schedule — see `audit`. Doubly so here: this
-    # runner bills at 2x.
-    if: github.event_name != 'schedule'
+    # Neither the weekly macOS schedule nor a closed PR — see `audit`. Doubly so
+    # for the schedule half: this runner bills at 2x.
+    if: >-
+      ${{ github.event_name != 'schedule'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.state == 'open') }}
     runs-on: windows-latest
     # Generous next to `unit`'s 15: process spawning is far more expensive on
     # Windows and this suite shells out to git thousands of times.
@@ -365,12 +415,17 @@ jobs:
     name: End-to-end (Playwright)
     # inputs is null on push/pull_request, so the `!= 'off'` branch is the
     # default path there; only an explicit 'off' from a caller suppresses it.
+    # The closed-PR clause is the one the other four jobs carry; a merged PR
+    # would not normally hold the `e2e` label, but this is the pair of jobs
+    # whose waste is measured in half-hours, so it does not rely on that.
     if: >-
-      ${{ inputs.e2e == 'on'
-          || (inputs.e2e != 'off'
-              && (github.event_name == 'push'
-                  || github.event_name == 'workflow_dispatch'
-                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.state == 'open')
+          && (inputs.e2e == 'on'
+              || (inputs.e2e != 'off'
+                  && (github.event_name == 'push'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -418,11 +473,13 @@ jobs:
     # the desktop shell serves the same build `e2e` exercises in a browser, so
     # there is no reason for its schedule to answer a different question.
     if: >-
-      ${{ inputs.e2e == 'on'
-          || (inputs.e2e != 'off'
-              && (github.event_name == 'push'
-                  || github.event_name == 'workflow_dispatch'
-                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.state == 'open')
+          && (inputs.e2e == 'on'
+              || (inputs.e2e != 'off'
+                  && (github.event_name == 'push'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
     runs-on: ubuntu-24.04
     # 45, not `e2e`'s 30: this job runs the window suite TWICE — once against
     # the dev shell, once against the packaged artifact — and pays for
@@ -545,11 +602,13 @@ jobs:
     # regression would surface on a different push than the Linux one it shares
     # a cause with. Keep the two in lockstep when either changes.
     if: >-
-      ${{ inputs.e2e == 'on'
-          || (inputs.e2e != 'off'
-              && (github.event_name == 'push'
-                  || github.event_name == 'workflow_dispatch'
-                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.state == 'open')
+          && (inputs.e2e == 'on'
+              || (inputs.e2e != 'off'
+                  && (github.event_name == 'push'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
     runs-on: windows-latest
     # Twice `e2e`'s 30. Same suite, but every process spawn, file write and
     # module load costs more here, and it pays for a production build on top.
@@ -604,11 +663,13 @@ jobs:
     # The same expression again — see `windows-e2e` below for why all four slow
     # lanes share one gate rather than each having a schedule of its own.
     if: >-
-      ${{ inputs.e2e == 'on'
-          || (inputs.e2e != 'off'
-              && (github.event_name == 'push'
-                  || github.event_name == 'workflow_dispatch'
-                  || contains(github.event.pull_request.labels.*.name, 'e2e'))) }}
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.state == 'open')
+          && (inputs.e2e == 'on'
+              || (inputs.e2e != 'off'
+                  && (github.event_name == 'push'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
     #
     # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).
     # docs/DESKTOP_E2E.md §4 left that open; this lane closes it, and the
@@ -712,10 +773,14 @@ jobs:
     # and macOS cannot be virtualised on Proxmox/KVM with any legal path, so
     # unlike the Linux bench VM and the Windows lane this one had no
     # alternative to weigh. docs/DESKTOP_E2E.md §4 records that.
+    # The closed-PR clause is the other three lanes'; on the priciest runner in
+    # the file it matters most, since a merged PR is awaiting nothing.
     if: >-
-      ${{ github.event_name == 'schedule'
-          || github.event_name == 'workflow_dispatch'
-          || contains(github.event.pull_request.labels.*.name, 'macos') }}
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.state == 'open')
+          && (github.event_name == 'schedule'
+              || github.event_name == 'workflow_dispatch'
+              || contains(github.event.pull_request.labels.*.name, 'macos')) }}
     runs-on: macos-latest
     # Between the Ubuntu desktop lane's 45 and the Windows one's 60. Same two
     # passes as Ubuntu (dev shell, then the packaged artifact) on a runner that

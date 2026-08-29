@@ -29,7 +29,15 @@ covers it. No API key needed.
 - **Know where you're needed.** A cross-project inbox lists the sessions
   waiting for an answer while the rest keep working.
 - **Review every change.** Read the diff next to the conversation, then
-  merge, resolve conflicts, or open a pull request.
+  merge, resolve conflicts, or open a pull request. Once a PR exists, its
+  state — open, merged or closed, checks green or red, review approved or
+  not — stays live on the task without you opening GitHub, and one button
+  squash-merges it from there. Where the repo allows auto-merge, that click
+  queues it and GitHub lands the PR the moment its checks pass.
+- **Catch a red build.** A PR whose checks go red raises its task into the
+  same "Needs you" inbox a parked question does, names the job that broke,
+  and offers a one-click Fix CI that starts a turn seeded with the failing
+  job's log — even when the task was already marked done.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen
@@ -38,6 +46,12 @@ covers it. No API key needed.
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
   rest keep shipping to `main`.
+- **Say how work lands.** A project lands by merge or by pull request, and
+  every session in it is told which. On a repo whose base branch requires a
+  PR, agents stop reaching for a Merge that GitHub will reject — and so does
+  the diff rail: Create PR becomes the primary button, and the local merge
+  says up front that it can't be pushed. Calandria can read the branch's rules
+  from GitHub and preselect the answer.
 
 ## How it works
 
@@ -53,6 +67,16 @@ Project context is written once and sent into each task. Turns run on the
 server and transcripts are saved, so a browser reload or a sleeping laptop
 doesn't interrupt anything. `/clear` starts a fresh context window and keeps
 the task's history as a summary.
+
+A session is also told to push bulk context collection into subagents: past two
+read-only commands in a row, the third goes to a subagent that reports its
+conclusions and `file:line`s rather than pouring file contents into the
+session's own window. That is a deliberate override of the CLI's own defaults,
+which ask for work to go through the shell and for subagents to be left alone
+unless the user asked — measured across 198 sessions on one instance, first
+turns spent 79% of their tool calls on the shell and, in the 25 most expensive,
+none at all on a subagent (`docs/DELEGATION.md`).
+`CALANDRIA_DELEGATE_COLLECTION=off` leaves sessions on those defaults.
 
 When a Claude turn starts background shell work or schedules a wakeup
 (`ScheduleWakeup`, `CronCreate`, `/loop`), the session stays open after the
@@ -262,10 +286,18 @@ checkpoints the WAL so the space is reclaimed. Live tasks are never touched.
 Per-task worktrees are the bigger disk cost (a full checkout each) and have
 their own switch. Calandria warns in the log and in Settings → Storage once
 the worktrees directory passes `CALANDRIA_WORKTREES_DISK_WARN_GB` (default
-20). Reclaiming them is manual unless you set
+20). Reclaiming them in bulk is manual unless you set
 `CALANDRIA_WORKTREE_RETENTION=on`, which removes the checkouts of finished
 tasks after 14 days. It never deletes the branch, and it skips (and names)
 any checkout holding uncommitted edits or unmerged commits.
+
+The prompt case is separate and doesn't wait on a clock. When a task's work
+**lands** — its pull request reports merged, or Calandria merged the branch
+locally — the session header offers **Reclaim**: fast-forward the local base
+branch from origin, remove the worktree, delete the local branch and mark the
+task done, in one click. Project settings can have the server do that by
+itself (off by default). Neither path discards uncommitted edits, or commits
+the remote never saw, without you saying so.
 
 ### Backups and upgrades
 

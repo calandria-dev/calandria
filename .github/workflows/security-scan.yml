@@ -4,7 +4,9 @@
 # can't see.
 #
 #   npm-audit   — same command as the `audit` job in test.yml, repeated on a
-#                 schedule so a fresh advisory is caught between pushes.
+#                 schedule so a fresh advisory is caught between pushes. Its
+#                 display name carries a ", weekly" suffix so the two are
+#                 distinguishable as status checks; see the job.
 #   image-scan  — trivy scan of the published :edge image, failing on
 #                 fixable HIGH/CRITICAL findings. Nothing else in the
 #                 pipeline scans the built artifact.
@@ -25,7 +27,14 @@ permissions:
 
 jobs:
   npm-audit:
-    name: Audit (npm)
+    # NOT "Audit (npm)". That is test.yml's job, and a job name is what a
+    # required status check, a branch-protection rule and `gh run` all address a
+    # check by. Two workflows answering to one name is ambiguous even now, when
+    # they cannot run on the same commit — this one is schedule- and
+    # dispatch-only — because requiring "Audit (npm)" would silently be
+    # satisfiable by whichever of the two reported. The suffix says which lane
+    # it is rather than which command it runs; the command is the same one.
+    name: Audit (npm, weekly)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

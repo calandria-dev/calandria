@@ -27,6 +27,13 @@ export default defineConfig({
   reporter: [["list"], ["./e2e/cleanup-reporter.ts"]],
   use: {
     baseURL: E2E_BASE_URL,
+    // Pinned, not Playwright's 1280x720 default: 1280 is below
+    // AUTO_COLLAPSE_BELOW.proj (app/shell/types.ts), so the whole suite would
+    // silently run against the auto-collapsed shell — every spec that clicks a
+    // project in the sidebar would be clicking a 30px spine instead. 1440x900
+    // is above all three shed thresholds, so the default is the full
+    // three-column layout; the narrow cases opt in with their own `test.use`.
+    viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

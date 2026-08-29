@@ -18,6 +18,7 @@ export const MOCK_CAPABILITIES: AgentCapabilities = {
   inheritsUserMcpServers: false,
   userMcpServersNote: null,
   backgroundTasksLinger: false,
+  dispatchesSubagents: false,
   reportsCostUsd: false,
   costIsEstimated: false,
   reportsContext: true,

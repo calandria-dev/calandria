@@ -4,6 +4,23 @@ export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
 export type Status = "not_started" | "in_progress" | "on_hold" | "done" | "cancelled";
 export type MsgRole = "user" | "assistant" | "tool" | "system" | "session_break";
 
+/**
+ * How a project's work is meant to LAND: a local merge of the task branch into
+ * the base branch, or a pull request against it.
+ *
+ * This is a fact about the REPOSITORY, not a preference: on a repo whose base
+ * branch carries a ruleset requiring a pull request, Merge cannot land anything,
+ * so a session told "Merge lands into it" is being lied to. `buildProjectContext`
+ * (lib/agents/shared.ts) writes a different sentence for each mode.
+ *
+ * No CHECK constraint backs the column, so `isLandingMode` is the gate — every
+ * writer runs a value through it, and anything else falls back to "merge", the
+ * behavior every pre-existing project already had.
+ */
+export type LandingMode = "merge" | "pr";
+export const LANDING_MODES: LandingMode[] = ["merge", "pr"];
+export const isLandingMode = (v: unknown): v is LandingMode => v === "merge" || v === "pr";
+
 export interface Project {
   id: string;
   name: string;
@@ -15,6 +32,8 @@ export interface Project {
   conventions: string; // legacy — kept for back-compat, folded into context
   repo_path: string; // working dir for Claude Code
   branch: string; // the project's DEFAULT base branch: what a task is cut from, syncs to and merges into unless the task names its own (lib/baseBranch.ts)
+  landing_mode: LandingMode; // how work lands on the base branch: "merge" (local merge) or "pr" (base is protected, finish by opening a PR)
+  auto_reclaim: number; // 1 = reclaim a task's checkout + local branch by itself once its work lands (lib/reclaim.ts)
   dev_command: string; // long-running dev server command supervised by lib/services.ts ("" = none)
   setup_command: string; // optional one-shot setup command (install/migrate/etc.)
   test_command: string; // optional one-shot test command
@@ -62,6 +81,18 @@ export interface Task {
   base_branch: string;
   merged_at: number; // when this task's branch was merged back (0 = not merged)
   pr_url: string; // GitHub PR opened from this task's branch via "Create PR" ("" = none)
+  // Live PR state, refreshed from `gh pr view` by lib/prState.ts. See the
+  // schema comment in lib/db.ts for what each one means and why pr_merged_at is
+  // not merged_at.
+  pr_number: number; // the number parsed out of pr_url when the PR was created (0 = none)
+  pr_state: string; // "open" | "merged" | "closed" ("" = never refreshed)
+  pr_checks: string; // "pending" | "passing" | "failing" | "none" ("" = never refreshed)
+  pr_review: string; // gh's reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED; "" = not required)
+  pr_merged_at: number; // when GITHUB merged it (0 = not merged there) — distinct from merged_at, our local merge
+  pr_synced_at: number; // when we last heard from GitHub (0 = never); the staleness clock every trigger reads
+  pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
+  pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
+  pr_failing: string; // JSON PrFailingCheck[] — the red entries behind pr_checks='failing' ("" when nothing is red)
   generation: number; // increments on each /clear
   position: number; // manual order within the project (list groups + board columns, ascending)
   started: number; // 1 once the initial prompt has been sent

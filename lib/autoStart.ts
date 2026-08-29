@@ -68,6 +68,7 @@ import { resolveBaseBranch } from "@/lib/baseBranch";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import { DEPENDENCY_RUN_CONTEXT } from "@/lib/runContext";
 import type { TurnHooks } from "@/lib/agents/types";
+import { schedulePrRefresh, startPrPolling } from "@/lib/prState";
 import type { Task } from "@/lib/types";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
@@ -131,6 +132,13 @@ export function maybeAutoStartDependents(clearedTaskId: string): void {
  */
 export const AUTO_START_HOOKS: TurnHooks = {
   onTaskCleared: (taskId) => maybeAutoStartDependents(taskId),
+  // The other thing a driver can't import for itself: lib/prState.ts sits
+  // above a launcher now (it hands a merged PR to lib/reclaim.ts), so the
+  // create_pr tool reaches it from here instead of through lib/prTools.ts.
+  onPrOpened: (taskId) => {
+    schedulePrRefresh(taskId, { force: true });
+    startPrPolling();
+  },
 };
 
 /**

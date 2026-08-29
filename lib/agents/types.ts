@@ -77,6 +77,13 @@ export interface AgentCapabilities {
    * never comes.
    */
   backgroundTasksLinger: boolean;
+  /**
+   * The agent can dispatch subagents of its own, so buildProjectContext
+   * (lib/agents/shared.ts) may tell a session to push bulk context collection
+   * into them. False = the block is omitted rather than describing a tool the
+   * session doesn't have; Codex has no subagent verb at all.
+   */
+  dispatchesSubagents: boolean;
   /** Usage events carry a real dollar cost (not just token counts). */
   reportsCostUsd: boolean;
   /**
@@ -221,6 +228,18 @@ export interface TurnHooks {
    * failures — a tool result must never depend on a launch succeeding.
    */
   onTaskCleared(taskId: string): void;
+  /**
+   * `taskId` just had a PR opened (or updated) by one of this turn's tool
+   * calls, so its GitHub state is worth reading and the sweep worth starting.
+   *
+   * Injected for the same reason as `onTaskCleared`, and it became necessary
+   * the moment reclaiming a landed PR was added: lib/prState.ts now reaches
+   * lib/reclaim.ts, which reaches a launcher, so lib/prTools.ts — which the
+   * driver imports for `create_pr` — importing prState would close exactly the
+   * registry → driver → … → runner → registry cycle that killed auto-start.
+   * Fire-and-forget, same contract: not awaited, swallows its own failures.
+   */
+  onPrOpened(taskId: string): void;
 }
 
 /**

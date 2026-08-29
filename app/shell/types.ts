@@ -1,8 +1,9 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
-import type { Priority, Status, Tag } from "@/lib/types";
+import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
+export type { LandingMode };
 /** A tag as the project GET embeds it — lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
@@ -18,6 +19,8 @@ export interface ProjectRow {
   context: string;
   repo_path: string;
   branch: string;
+  landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected — finish by opening a PR)
+  auto_reclaim: number; // 1 = once a task's work lands, reclaim its checkout and delete its local branch without being asked (lib/reclaim.ts)
   dev_command: string;
   setup_command: string;
   test_command: string;
@@ -47,7 +50,20 @@ export interface TaskRow {
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
   session_id: string | null;
   worktree_path: string; // isolated git worktree this task runs in ("" = not created yet — appears on the first turn)
+  merged_at: number; // when this task's branch was merged into the base branch LOCALLY (0 = never); pairs with pr_state for "has this landed?"
   pr_url: string; // GitHub PR opened from this task's branch ("" = none yet)
+  // Live PR state, refreshed from GitHub in the background (lib/prState.ts) and
+  // arriving here on task_edited. All five are "" / 0 until the first refresh
+  // answers, which is what the chip draws as "checking…" rather than guessing.
+  pr_number: number; // parsed from pr_url when the PR was created — never re-derived per render
+  pr_state: string; // "open" | "merged" | "closed"
+  pr_checks: string; // "pending" | "passing" | "failing" | "none" (no CI configured)
+  pr_review: string; // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED ("" = review not required)
+  pr_merged_at: number; // when GITHUB merged it (0 = not merged there); not merged_at, which is our local merge
+  pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
+  pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
+  pr_synced_at: number; // when the server last heard from GitHub (0 = never)
+  pr_failing: string; // JSON PrFailingCheck[] naming the red checks ("" when nothing is red) — read via prFailingChecks()
   generation: number;
   started: number;
   running: number;
@@ -121,6 +137,13 @@ export interface NeedsYouRow {
   project_color: string;
   project_icon: string;
   waiting_since: number;
+  // Which arm of the server's NEEDS_YOU predicate put this row in the list:
+  // "input" = a turn parked on a question, "ci" = an open PR whose checks are
+  // failing. They get different sublines — a red PR has no "waiting for" age,
+  // only a PR to name (lib/store.ts listNeedsYou).
+  reason: "input" | "ci";
+  pr_number: number;
+  pr_url: string;
 }
 // A row in the ⌘K palette's session search: any real task across the active
 // projects plus enough of its project to label it. Mirrors lib/store.ts
@@ -315,6 +338,10 @@ export type AgentLoginT = ClaudeLoginT & { code?: string | null };
 export const SCLS: Record<Status, "r" | "a" | "g" | "h" | "x"> = { not_started: "r", in_progress: "a", on_hold: "h", done: "g", cancelled: "x" };
 export const SLABEL: Record<Status, string> = { not_started: "Not started", in_progress: "In progress", on_hold: "On hold", done: "Done", cancelled: "Cancelled" };
 export const AWAIT_LABEL = "Needs your input";
+// The other reason a task lands in the needs-you group: its open pull request's
+// checks are failing (./format.ts isPrRed). Deliberately NOT "Needs your input"
+// — nothing asked the user anything; CI did, and the row should say so.
+export const CI_LABEL = "CI failing";
 // The derived category a snoozed task is drawn in — one constant so the list
 // group, the board column and any copy referring to it can't drift apart. NOT
 // a Status: a snooze leaves the status alone, which is what the task goes back
@@ -488,6 +515,36 @@ export const RAIL_W = { min: 320, max: 760 };
 // for it again. Half the pane is the second half of the rule, for panes too
 // narrow for even this floor — the shell can be resized down to 720px wide.
 export const SESS_MAIN_MIN = 360;
+
+// The widths at which the shell sheds a SIDE column rather than the transcript.
+//
+// The three tracks beside the transcript are all fixed — projects 236 + tasks
+// 352 + rail 430 = 1018 at the defaults — and only the transcript flexes, so
+// every pixel a window is short of that comes out of the one pane the user is
+// actually reading: 262px of transcript at a 1280px window, 6px at 1024. Below
+// 760px the phone layout takes over and the question disappears; between those
+// two there was no adaptation at all.
+//
+// So below each width here the shell hands that column its 30px spine instead,
+// cheapest loss first: projects (a short list, and the spine restores it in one
+// click), then tasks, then the diff rail. Each threshold is the point where the
+// transcript would otherwise drop under SESS_MAIN_TARGET on the tier above it,
+// rounded down to a round number:
+//
+//   1400 ≈ 236 + 352 + 430 + 400   → below it, projects → spine
+//   1200 ≈  30 + 352 + 430 + 400   → below it, tasks    → spine
+//    880 ≈  30 +  30 + 430 + 400   → below it, the rail → spine
+//
+// which leaves the transcript 382px at 1400, 388px at 1200, 390px at 880 and
+// 534px at 1024 — a flat floor across the range instead of a cliff.
+//
+// Applied at RENDER, never written into Layout (same reason the rail's own
+// clamp is): a window the user narrows and re-widens gives their own columns
+// straight back. `useAutoCollapse` in app/Shell.tsx owns that, and the escape
+// hatch that keeps each spine's button honest at a width the policy is
+// collapsing at.
+export const SESS_MAIN_TARGET = 400;
+export const AUTO_COLLAPSE_BELOW = { proj: 1400, task: 1200, rail: 880 } as const;
 
 // ---------- scheduled tasks (project landing "Schedules" card) ----------
 // Mirrors lib/store.ts's schedule + schedule_run rows as served by

@@ -74,6 +74,9 @@ export function calandriaMcpConfig(
         env: {
           CALANDRIA_TASK_ID: task.id,
           CALANDRIA_PROJECT_ID: project.id,
+          // Whether the bridge registers create_pr at all (scripts/calandria-mcp.mjs).
+          // The Claude driver makes the same call in-process off the same column.
+          CALANDRIA_LANDING_MODE: project.landing_mode,
           CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
         },

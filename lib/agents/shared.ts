@@ -9,12 +9,34 @@ import { listSummaries } from "../store";
 import { tagContextBlock } from "../tagContext";
 import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
 import { getCapabilities } from "./capabilities";
-import { BACKGROUND_LINGER_MS } from "../config";
+import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
 // already supplied by buildProjectContext(). Keep this prompt deliberately
 // generic so the title and details have one canonical representation.
 export const INITIAL_TASK_PROMPT = "Start working on the task described in the task context.";
+
+/**
+ * The truthful second half of the "Base branch:" line, per the project's
+ * landing mode. Exported so tests can pin both wordings without rebuilding a
+ * whole context string.
+ *
+ * Under `pr` the session is told three separate things, because knowing only the
+ * first two still ends with it clicking Merge: the branch is protected, Merge
+ * will be REJECTED, and what finishing actually means instead. The `merge`
+ * wording is the historic sentence, unchanged.
+ */
+export function landingSentence(project: Pick<Project, "landing_mode">, base: string): string {
+  if (project.landing_mode === "pr")
+    return (
+      `this worktree was cut from it and Sync catches up to it, but it does NOT land by merge. ` +
+      `${base} is protected: this project lands work by pull request, so Merge is rejected. ` +
+      `Finishing this task means opening a PR against ${base} and leaving it for review, not merging. ` +
+      `Use the \`create_pr\` tool for that: it pushes and opens the PR server-side, where a shell \`git push\` is usually ` +
+      `refused. Merging it afterwards is the user's call, and there is no tool for it.`
+    );
+  return "this worktree was cut from it, Sync catches up to it, and Merge lands into it.";
+}
 
 /**
  * Build the context string that is prepended to every task's session via the
@@ -34,14 +56,21 @@ export function buildProjectContext(project: Project, task: Task): string {
   lines.push(`You are working inside the project "${project.name}".`);
   if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
   // The base branch, not "the project's branch": what this worktree was cut
-  // from is also what Sync catches it up to and what Merge lands it into, and a
-  // task on a feature branch has to know that before it reasons about any of the
-  // three. The parenthetical only when the task has a base of its own — on every
-  // other task it would just restate the line above it.
+  // from is also what Sync catches it up to and what it LANDS on, and a task on
+  // a feature branch has to know that before it reasons about any of the three.
+  // The parenthetical only when the task has a base of its own — on every other
+  // task it would just restate the line above it.
+  //
+  // How it lands is the project's landing_mode, and the difference is not a
+  // preference the model can ignore: on a repo whose base branch carries a
+  // ruleset requiring a pull request, Merge is rejected by the server, so the
+  // old unconditional "Merge lands into it" sent every such session off to press
+  // a button that cannot work. Say which one is true here (lib/types.ts
+  // LandingMode, set per project in the settings form).
   const base = resolveBaseBranch(task, project);
   if (base)
     lines.push(
-      `\nBase branch: ${base} — this worktree was cut from it, Sync catches up to it, and Merge lands into it.` +
+      `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
   lines.push(`\n---\nThe current task is: "${task.title}"`);
@@ -183,6 +212,50 @@ export function buildProjectContext(project: Project, task: Task): string {
       `CRA/webpack-dev-server is pre-cleared via env. CALANDRIA_PUBLIC_HOST is injected into services ` +
       `Calandria starts.`
   );
+
+  // Bulk collection goes to subagents. Last on purpose: this block countermands
+  // instructions the CLI puts in the same window (auto mode's "do your work
+  // through the Bash tool", and — on Opus — "do not call the AgentTool unless
+  // the user requested it"), and the append lands after both.
+  //
+  // It is here rather than in a CLAUDE.md file because that was tried and
+  // measured losing: same rule, same repo, same prompts, it delegated only
+  // after a median of two read-only commands and ran 10.3 Bash calls to this
+  // version's 3.6 (docs/DELEGATION.md). A project's own instructions are read as context; the
+  // CLI's are read as the rules of the harness, and a general principle does
+  // not beat a specific instruction. The trigger is stated as a COUNT for the
+  // same reason — the CLAUDE.md version said "a third read-only command in a
+  // row against the same question", and a model that judges each command a
+  // different question never fires it by its own reckoning.
+  if (DELEGATE_COLLECTION && getCapabilities(task.agent).dispatchesSubagents) {
+    lines.push(
+      `\n---\nCollecting context: the bulk reads go to a subagent.\n\n` +
+        `Dispatching a subagent to COLLECT CONTEXT is requested work here — read this as the ` +
+        `request. It overrides both the standing caution against unprompted subagents and auto ` +
+        `mode's instruction to do the work through Bash, which are defaults for a session nobody ` +
+        `has told otherwise. It covers gathering only, never deciding.\n\n` +
+        `The trigger is a count, not a judgement. Once you have run two read-only commands ` +
+        `(\`cat\`, \`sed -n\`, \`head\`, \`grep\`, \`find\`, \`ls\`, \`git log\`, \`git show\`) since ` +
+        `your last edit or decision, the third one goes to a subagent instead — whatever it is ` +
+        `about.\n\n` +
+        `- \`Agent(subagent_type: "Explore", model: "haiku", run_in_background: false)\` when the ` +
+        `answer is a list: call sites, \`file:line\`, what exists, what a config says.\n` +
+        `- \`Agent(subagent_type: "general-purpose", model: "sonnet", run_in_background: false)\` ` +
+        `when the answer needs judgement about what it found.\n\n` +
+        `\`run_in_background: false\` is required and is not the default. A backgrounded agent ` +
+        `reports by notification, which does not arrive inside the turn that launched it: the ` +
+        `call returns an id, you carry on without the answer, and the sweep you delegated is ` +
+        `silently lost. Send independent sweeps in ONE message — dispatched one at a time they ` +
+        `cost one agent's latency each. Ask for the conclusion and the \`file:line\`s, never for ` +
+        `file contents.\n\n` +
+        `A task that is entirely research is not exempt; it splits by facet (client side / server ` +
+        `side / the tests) and the facets go out together.\n\n` +
+        `Keep in your own loop: the edits themselves; test, typecheck and build runs whose output ` +
+        `drives your next change; \`git diff\` of your own work; and anything whose full output ` +
+        `you need to decide. And never substitute a cheaper proxy for a measurement — if the ` +
+        `answer is a count, a duration or a pass/fail, run the thing and read the number.`
+    );
+  }
   return lines.join("\n");
 }
 
@@ -209,6 +282,63 @@ export function buildConflictPrompt(baseBranch: string, conflicts: string[]): st
     `Do NOT run \`git commit\`, \`git merge --continue\`, or \`git add\` — just edit the files to a clean,`,
     `marker-free state. I'll review your resolution and land the merge myself.`,
   ].join("\n");
+}
+
+/** One red check as the Fix-CI prompt wants it: named, linked, and (usually) logged. */
+export interface CiFailure {
+  name: string;
+  url: string;
+  workflow: string;
+  /** The tail of the job's failed steps, "" when GitHub couldn't give us one. */
+  log: string;
+  /** Why there is no log, when there isn't one. */
+  logError: string;
+}
+
+/**
+ * Prompt for a "Fix CI" turn. The task's own session, in its own worktree, told
+ * which job on its PR went red and shown the tail of that job's failed steps.
+ *
+ * The shape mirrors buildConflictPrompt deliberately: an ordinary user message
+ * on the existing session (the client sends it through POST /messages), not a
+ * special turn kind. The agent already has the branch checked out, so it needs
+ * the FAILURE, not the context.
+ *
+ * A missing log is stated rather than hidden. `gh run view --log-failed` can
+ * come back empty for an expired run, a legacy status context or a check
+ * published by something other than Actions, and an agent told "here is the
+ * log" followed by nothing will invent one; told the log is unavailable, it
+ * reproduces the job locally instead, which is the right move anyway.
+ */
+export function buildCiFixPrompt(prNumber: number, failures: CiFailure[]): string {
+  const label = (f: CiFailure) => (f.workflow && f.workflow !== f.name ? `${f.workflow} / ${f.name}` : f.name);
+  const lines: string[] = [
+    `CI is failing on this task's pull request${prNumber ? ` (#${prNumber})` : ""}. Please fix it.`,
+    ``,
+    failures.length === 1 ? `Failing check:` : `Failing checks (${failures.length}):`,
+    ...failures.map((f) => `  - ${label(f)}${f.url ? ` — ${f.url}` : ""}`),
+  ];
+  for (const f of failures) {
+    lines.push(``, `## ${label(f)}`);
+    if (f.log) {
+      lines.push(``, "```", f.log, "```");
+    } else {
+      lines.push(
+        ``,
+        `No log available${f.logError ? ` (${f.logError})` : ""}. Reproduce this job locally instead of`,
+        `guessing — read the workflow file that defines it and run the same command.`
+      );
+    }
+  }
+  lines.push(
+    ``,
+    `Work in this worktree, on this task's branch. Diagnose the real cause rather than`,
+    `silencing the check: a test that fails in CI and passes locally is usually an`,
+    `environment or ordering difference, not a flaky test to retry.`,
+    ``,
+    `Commit the fix when you're done. I'll push it and watch the re-run.`
+  );
+  return lines.join("\n");
 }
 
 export function clip(s: unknown, n = 4000): string {

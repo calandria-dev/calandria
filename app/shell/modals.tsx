@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Priority } from "@/lib/types";
+import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost } from "./format";
@@ -971,12 +971,62 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
 // "Refresh with AI" job state the modal polls.
 type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number; estimate?: InternalUsageEstimate | null };
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+// ---------- landing mode (merge vs PR) ----------
+
+/** What POST /api/github/landing-mode answers with. `mode: null` = couldn't tell. */
+interface LandingProbeResult { mode: LandingMode | null; reason: string; source?: "rules" | "protection" | "none" }
+
+/**
+ * Ask the server whether this repo's base branch requires a pull request.
+ * Resolves to a null-mode result on any transport failure, because a probe is
+ * an aid: it must never be able to block saving a project.
+ */
+function probeLanding(repo: string, branch: string): Promise<LandingProbeResult> {
+  return jsend<LandingProbeResult>("/api/github/landing-mode", "POST", { repo_path: repo, branch })
+    .catch((e) => ({ mode: null, reason: e instanceof Error ? e.message : "Could not reach GitHub." }));
+}
+
+/**
+ * How a project's work is meant to reach its base branch. This is not cosmetic:
+ * it's the sentence every session in the project is told (buildProjectContext),
+ * so on a PR-required repo it's the difference between an agent that opens a PR
+ * and one that spends its last turn pressing a Merge the server will reject.
+ */
+function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange: (m: LandingMode) => void; branch: string }) {
+  const b = branch.trim() || "the base branch";
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <div className="lab">{Icon.git()} How work lands <span className="opt">(on {b})</span></div>
+      <div className="seg">
+        <button className={value === "merge" ? "on" : ""} onClick={() => onChange("merge")}>Merge</button>
+        <button className={value === "pr" ? "on" : ""} onClick={() => onChange("pr")}>Pull request</button>
+      </div>
+      <div className="hlp">
+        {value === "pr"
+          ? `${b} is protected, so Merge is rejected. Sessions are told to finish by opening a PR against it.`
+          : `Calandria merges a finished task's branch into ${b} itself. Sessions are told so.`}
+      </div>
+    </div>
+  );
+}
+
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [repo, setRepo] = useState(project.repo_path);
   const [branch, setBranch] = useState(project.branch);
+  // How this project's work lands, plus what GitHub says about it. The probe
+  // runs once when the dialog opens and is REPORTED, never applied: overwriting
+  // a saved choice because a repo happens to have a ruleset would take the
+  // decision away from the one person who knows about the exception (a project
+  // pointed at a staging branch that merges locally under a PR-required repo is
+  // a real configuration). Applying it is one click, spelled out below.
+  const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
+  const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
+  const [probe, setProbe] = useState<LandingProbeResult | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
   const [devCmd, setDevCmd] = useState(project.dev_command);
   const [setupCmd, setSetupCmd] = useState(project.setup_command);
   const [testCmd, setTestCmd] = useState(project.test_command);
@@ -1007,6 +1057,26 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const ackRefresh = useCallback(() => {
     jsend(`/api/projects/${project.id}/refresh-context`, "DELETE").catch(() => {});
   }, [project.id]);
+
+  // One probe when the dialog opens, against the SAVED repo/branch: the fields
+  // are editable and re-probing per keystroke would fire a gh subprocess at a
+  // half-typed path. Re-running it after an edit is what Detect is for.
+  const repoRef = useRef(repo);
+  repoRef.current = repo;
+  const branchRef = useRef(branch);
+  branchRef.current = branch;
+  const detect = useCallback(async (opts: { asked?: boolean } = {}) => {
+    if (opts.asked) setProbeAsked(true);
+    setProbing(true);
+    try {
+      setProbe(await probeLanding(repoRef.current, branchRef.current));
+    } finally {
+      setProbing(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (project.repo_path && project.branch) void detect();
+  }, [detect, project.repo_path, project.branch]);
 
   // Fold a polled job state into the UI. Idempotent: applies a finished draft at
   // most once, then acks it so it doesn't resurface on the next modal open.
@@ -1076,7 +1146,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1152,6 +1222,44 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           <input type="text" className="ctx-mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
         </div>
       </div>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginTop: 14 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <LandingSeg value={landing} onChange={setLanding} branch={branch} />
+        </div>
+        <div style={{ flex: "0 0 auto", paddingTop: 22 }}>
+          <button className="btn btn-line btn-sm" onClick={() => detect({ asked: true })} disabled={probing || !repo || !branch}
+            title={repo && branch ? "Ask GitHub whether this branch requires a pull request" : "Set a working directory and branch first"}>
+            {probing ? "Checking GitHub…" : "Detect"}
+          </button>
+        </div>
+      </div>
+      {probe?.mode && probe.mode !== landing ? (
+        <div className="hlp" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <span>GitHub says: {probe.reason}</span>
+          <button className="btn btn-line btn-sm" onClick={() => setLanding(probe.mode!)}>
+            Use {probe.mode === "pr" ? "pull request" : "merge"}
+          </button>
+        </div>
+      ) : probe?.mode ? (
+        <div className="hlp" style={{ marginTop: 6 }}>GitHub agrees: {probe.reason}</div>
+      ) : probe && probeAsked ? (
+        <div className="hlp" style={{ marginTop: 6 }}>{probe.reason}</div>
+      ) : null}
+      {/* The tail of landing: what happens to the CHECKOUT once work lands. Off
+          by default, and per project, because it deletes a local branch without
+          being asked — see lib/reclaim.ts. The button in the session header
+          does the same thing on demand whether or not this is on. */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+        <input type="checkbox" checked={autoReclaim} onChange={(e) => setAutoReclaim(e.target.checked)} />
+        <span>
+          Reclaim a task&apos;s worktree when its work lands
+          <span className="hlp" style={{ display: "block", marginTop: 2 }}>
+            {landing === "pr"
+              ? "When its pull request reports merged, catch " + (branch || "the base branch") + " up with origin, remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."
+              : "When it merges into " + (branch || "the base branch") + ", remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."}
+          </span>
+        </span>
+      </label>
       <div style={{ marginTop: 14 }}>
         <AgentPicker
           agents={agents} value={project.default_agent} onChange={onSetDefaultAgent}
@@ -1273,7 +1381,7 @@ export function SessionsModal({ project, onClose, onJump }: { project: ProjectRo
   );
 }
 
-export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (i: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string }) => void | Promise<void> }) {
+export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (i: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string; landing_mode?: LandingMode }) => void | Promise<void> }) {
   const [name, setName] = useState("");
   const [sub, setSub] = useState("");
   const [context, setContext] = useState("");
@@ -1286,20 +1394,49 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
   const [cloneSpec, setCloneSpec] = useState(""); // owner/repo or pasted URL
   const [cloning, setCloning] = useState(false);
   const [cloneErr, setCloneErr] = useState<string | null>(null);
+  // How this project's work will land. Creation is the one moment detection may
+  // PRESELECT outright — there is no choice yet to override — so a repo whose
+  // default branch requires a pull request starts the project honest instead of
+  // telling every session for the next month that Merge lands into main.
+  // Touching the control pins it: a later probe result never moves it back.
+  const [landing, setLanding] = useState<LandingMode>("merge");
+  const [landingProbe, setLandingProbe] = useState<LandingProbeResult | null>(null);
+  const landingTouched = useRef(false);
+  const pickLanding = (m: LandingMode) => { landingTouched.current = true; setLanding(m); };
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   const ok = name.trim().length > 0 && !cloning && (mode === "fresh" || cloneSpec.trim().length > 0);
 
+  // Probe the folder the user pointed at, debounced so a path being typed
+  // doesn't spawn a gh subprocess per keystroke. Only the "fresh" path needs
+  // this; a clone is probed once, after it lands, in submit() below.
+  useEffect(() => {
+    const dir = repo.trim();
+    if (mode !== "fresh" || !dir) { setLandingProbe(null); return; }
+    let live = true;
+    const t = setTimeout(async () => {
+      const r = await probeLanding(dir, "");
+      if (!live) return;
+      setLandingProbe(r);
+      if (r.mode && !landingTouched.current) setLanding(r.mode);
+    }, 600);
+    return () => { live = false; clearTimeout(t); };
+  }, [repo, mode]);
+
   const submit = async () => {
     if (!ok) return;
     const base = { name: name.trim(), sub: sub.trim() || "app", color, context: context.trim() };
-    if (mode === "fresh") { await onCreate({ ...base, repo_path: repo.trim() }); return; }
+    if (mode === "fresh") { await onCreate({ ...base, repo_path: repo.trim(), landing_mode: landing }); return; }
     // Clone first; only create the project once the repo actually landed.
     setCloning(true);
     setCloneErr(null);
     try {
       const r = await jsend<{ path: string; branch: string }>("/api/github/clone", "POST", { repo: cloneSpec.trim() });
-      await onCreate({ ...base, repo_path: r.path, branch: r.branch });
+      // Now the repo exists on disk and its default branch is known, so this is
+      // the first moment the ruleset probe can answer for it. A user who already
+      // picked a mode keeps it; otherwise the repo's own rules decide.
+      const probed = landingTouched.current ? null : await probeLanding(r.path, r.branch);
+      await onCreate({ ...base, repo_path: r.path, branch: r.branch, landing_mode: probed?.mode ?? landing });
     } catch (e) {
       setCloneErr(e instanceof Error ? e.message : String(e));
       setCloning(false);
@@ -1348,6 +1485,12 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
             <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={repo} placeholder="/Users/you/code/project" onChange={(e) => setRepo(e.target.value)} />
             <BrowseDirButton initial={repo} onPick={setRepo} />
           </div>
+          {repo.trim() && (
+            <div style={{ marginTop: 12 }}>
+              <LandingSeg value={landing} onChange={pickLanding} branch="" />
+              {landingProbe?.mode && <div className="hlp" style={{ marginTop: 6 }}>GitHub says: {landingProbe.reason}</div>}
+            </div>
+          )}
         </div>
       ) : (
         <GitHubClonePicker

@@ -22,9 +22,34 @@ import { outputLines } from "./platform";
 const SCRIPT = path.resolve(__dirname, "..", "scripts", "backup.mjs");
 
 let root: string | null = null;
+let openDb: Database.Database | null = null;
 
+/* Teardown owns the fixture's connection, not the test body.
+ *
+ * Every case here holds a mid-WAL database open on purpose, and a case that
+ * FAILS never reaches the close at its end. POSIX doesn't care — an open file
+ * unlinks fine — so on Linux the leaked handle is invisible. Windows refuses
+ * with EBUSY, so one failed assertion became two red results: the assertion and
+ * an `unlink ...\data\calandria.db` from this hook (issue #53). Closing here
+ * means a red test reports its own reason and nothing else.
+ *
+ * The removal is then tolerant for the handles we DON'T hold, the same shape as
+ * tests/setup.ts: a Defender scan or an indexer on a freshly written tree is not
+ * worth failing a passing test over, and the directory is under %TEMP%. */
 afterEach(() => {
-  if (root) fs.rmSync(root, { recursive: true, force: true });
+  try {
+    if (openDb?.open) openDb.close();
+  } catch {
+    /* already closed */
+  }
+  openDb = null;
+  if (root) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (err) {
+      console.warn(`[tests] could not remove ${root}:`, err);
+    }
+  }
   root = null;
 });
 
@@ -34,7 +59,8 @@ type Fixture = {
   dbPath: string;
   home: string;
   worktrees: string;
-  /** Held open on purpose: closing the last connection checkpoints the WAL. */
+  /** Held open on purpose: closing the last connection checkpoints the WAL.
+   *  Closed by the afterEach above, so a failing case still lets go of it. */
   db: Database.Database;
 };
 
@@ -56,6 +82,7 @@ function fixture(dbFile = "calandria.db", rows = 40): Fixture {
 
   const dbPath = path.join(dbDir, dbFile);
   const db = new Database(dbPath);
+  openDb = db;
   db.pragma("journal_mode = WAL");
   db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
   const insert = db.prepare("INSERT INTO notes (body) VALUES (?)");
@@ -164,7 +191,6 @@ describe("scripts/backup.mjs", () => {
 
     // And the snapshot needs no sidecars — VACUUM INTO writes a checkpointed file.
     expect(fs.existsSync(path.join(dir, "db", "calandria.db-wal"))).toBe(false);
-    f.db.close();
   });
 
   it("archives the state beside the database and skips what must not be restored", () => {
@@ -186,7 +212,6 @@ describe("scripts/backup.mjs", () => {
     expect(members.some((m) => m.startsWith("db-dir/") && /\.db(-wal|-shm)?$/.test(m))).toBe(false);
     expect(members.some((m) => m.includes("lock"))).toBe(false);
     expect(members.some((m) => m.startsWith("worktrees"))).toBe(false);
-    f.db.close();
   });
 
   it("records where the data came from, so a restore can reconcile absolute paths", () => {
@@ -201,7 +226,6 @@ describe("scripts/backup.mjs", () => {
     expect(manifest.contents.agentLogin).toContain(".claude.json");
     expect(manifest.contents.worktrees).toBeNull();
     expect(manifest.db.counts).toBeTruthy();
-    f.db.close();
   });
 
   it("follows lib/storage.mjs to a pre-rename orchestrator.db instead of assuming a name", () => {
@@ -214,7 +238,6 @@ describe("scripts/backup.mjs", () => {
 
     const dir = extract(res.produced);
     expect(notes(path.join(dir, "db", "orchestrator.db"))).toBe(40);
-    f.db.close();
   });
 
   it("takes worktrees and project clones only when asked", () => {
@@ -227,7 +250,6 @@ describe("scripts/backup.mjs", () => {
     const members = listArchive(res.produced);
     expect(members).toContain("worktrees/task-1/file.txt");
     expect(members).toContain("projects/repo/README.md");
-    f.db.close();
   });
 
   it("--no-archive leaves the backup as a directory", () => {
@@ -236,7 +258,6 @@ describe("scripts/backup.mjs", () => {
     expect(res.status, res.stderr).toBe(0);
     expect(fs.statSync(res.produced).isDirectory()).toBe(true);
     expect(notes(path.join(res.produced, "db", "calandria.db"))).toBe(40);
-    f.db.close();
   });
 
   it("--no-logins omits the credentials", () => {
@@ -244,7 +265,6 @@ describe("scripts/backup.mjs", () => {
     const res = run(f, ["--no-logins"]);
     const members = listArchive(res.produced);
     expect(members.some((m) => m.startsWith("agent-login"))).toBe(false);
-    f.db.close();
   });
 
   it("fails loudly rather than writing an empty backup when there is no database", () => {

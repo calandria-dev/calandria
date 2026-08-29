@@ -114,6 +114,10 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // task-notification wake, so backgrounded shell commands die with it —
   // buildProjectContext warns Codex turns off them (lib/agents/shared.ts).
   backgroundTasksLinger: false,
+  // `codex exec` has no subagent verb — a turn is one model loop — so the
+  // delegation block buildProjectContext appends for Claude is omitted rather
+  // than pointing a Codex turn at a tool that isn't there.
+  dispatchesSubagents: false,
   // and costIsEstimated=true has the UI show the figure with an ~.
   reportsCostUsd: false,
   costIsEstimated: true,

@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
+import type { LandingMode, Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
-import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
+import { isAwaiting, needsYou, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel } from "./persist";
 import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TagRow } from "./types";
@@ -131,7 +131,12 @@ export function useShell() {
   // Cross-project "Needs you" surfacing. The selected project's tasks are live in
   // state (so its count reflects awaiting_input as it changes mid-turn); other
   // projects come from the server-computed awaiting_count on the project list.
-  const liveAwaiting = useMemo(() => realTasks.filter((t) => isAwaiting(t)), [realTasks]);
+  //
+  // `needsYou`, not `isAwaiting`: a task whose open PR went red needs a human
+  // just as much as one parked on a question, and the server's awaiting_count
+  // counts it — so filtering the selected project on the narrower predicate
+  // would make the pill's total jump every time you switched projects.
+  const liveAwaiting = useMemo(() => realTasks.filter((t) => needsYou(t)), [realTasks]);
   const needsYouTotal = useMemo(
     () => activeProjects.reduce((n, p) => n + (p.id === selProj ? liveAwaiting.length : p.awaiting_count), 0),
     [activeProjects, selProj, liveAwaiting]
@@ -514,6 +519,27 @@ export function useShell() {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }, [runTurn, selProj, loadTasks]);
+
+  // "Fix CI": the red-PR twin of resolveConflictsWithAI, and deliberately the
+  // same shape. The server composes the prompt (it re-checks GitHub, then reads
+  // the failing job's log tail); we stream it into the task's OWN session as an
+  // ordinary turn, so the fix shows up in the transcript like any other work
+  // rather than in some parallel channel.
+  //
+  // Fire-and-forget on the turn, like the conflict path: the caller switches to
+  // the chat as soon as this returns, so the user watches the diagnosis stream
+  // rather than sitting on a spinner until the whole turn completes.
+  const fixCi = useCallback(async (taskId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body?.ok) return { ok: false, error: body?.error || `could not read the failing checks (HTTP ${res.status})` };
+      void runTurn(taskId, body.prompt, false);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [runTurn]);
 
   // A merge just landed. Refresh the task list so its merged state shows, and —
   // if this was the tutorial (a task in the seeded Welcome project) — fire the
@@ -939,14 +965,14 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
     setProjects(ps);
     setModal(null);
   };
-  const createProject = async (input: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string }) => {
+  const createProject = async (input: { name: string; sub: string; color: string; context: string; repo_path: string; branch?: string; landing_mode?: LandingMode }) => {
     const p = await jsend<ProjectRow>("/api/projects", "POST", input);
     const ps = await jget<ProjectRow[]>("/api/projects");
     setProjects(ps);
@@ -1023,7 +1049,7 @@ export function useShell() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI,
+    projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,

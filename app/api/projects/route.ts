@@ -18,6 +18,8 @@ export async function POST(req: Request) {
     context: body.context,
     repo_path: body.repo_path,
     branch: body.branch,
+    // Validated in createProject (isLandingMode); anything else falls back to "merge".
+    landing_mode: body.landing_mode,
   });
   return NextResponse.json(project, { status: 201 });
 }

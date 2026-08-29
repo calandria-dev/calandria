@@ -42,7 +42,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { action } = (await req.json().catch(() => ({}))) as { action?: string };
 
     if (action === "push") {
-      const res = await pushBaseBranch(project.repo_path, project.branch);
+      // Under a PR landing policy this push is refused by the forge, so it is
+      // refused here first, in words that name the way forward. The client hides
+      // the button in that mode; this is the half that holds for a stale tab.
+      const res = await pushBaseBranch(project.repo_path, project.branch, {
+        prRequired: project.landing_mode === "pr",
+      });
       return NextResponse.json(res, { status: res.ok ? 200 : 409 });
     }
 

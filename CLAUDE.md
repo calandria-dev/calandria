@@ -36,6 +36,52 @@ Claude or Codex login rather than an API key.
 - No lint script. TypeScript is strict, path alias `@/*` → repo root (mirrored in
   `vitest.config.ts`).
 
+## Collecting context
+
+Measured across 198 task sessions in this repo (`docs/DELEGATION.md` has the method and the full
+table): 79% of the tool calls a first turn makes are Bash, and only ~12% of those are decisions the
+model has to see raw output for. Half of all first-turn Bash calls sit inside unbroken runs of
+three or more read-only commands — the longest measured is 43 — and collection steps put **59% of
+the context a first turn accumulates** into the window, where every later step re-reads it. Across
+the 25 most expensive first turns, `Agent` was called zero times.
+
+**The rule that follows is in the session prompt, not here** — `buildProjectContext()` in
+`lib/agents/shared.ts`, so it reaches every project on the instance rather than only this repo:
+past two read-only commands in a row, the third goes to a synchronous collection subagent, asked
+for conclusions and `file:line`s rather than file contents. It is stated there because this
+section said it first and was measured losing: the CLI's own auto-mode guidance points the other
+way in the same window, and from here the rule fired only after the reading it was meant to
+replace — 10.3 read-only Bash calls per run against 3.6 from the prompt. An appended system prompt
+is where it competes on equal footing. What stays here is what only this repo knows.
+
+Four dispatches this repo has already needed, each replacing a measured sweep:
+
+- *"Grep `project.branch` and `proj.branch` across `lib/` and `app/`. Report every call site as
+  `file:line` with its enclosing signature and one line on what it assumes about the base branch."*
+  — the 34-call sweep that opened the per-task-base-branch work.
+- *"Trace `withdraw_suggestion` through all five wiring points — `lib/agentToolDefs.mjs`,
+  `lib/agentTools.ts`, `app/api/internal/agent-tools/`, the Claude driver's registration,
+  `scripts/calandria-mcp.mjs`. Report `file:line` for each and the exact shape a new tool copies."*
+  — a 33-call sweep, and the template for adding any agent tool.
+- *"Find every place `running` or `awaiting_input` renders a status dot, spinner or label across
+  `app/shell/` and `lib/`. Report `file:line` plus the condition each tests."* — the 43-call sweep,
+  the longest measured.
+- *"Read `docs/DESKTOP_APP.md` and `docs/DESKTOP_E2E.md` in full and report which of openbox,
+  dbus-x11, xdotool and dunst are installed on this host."* — a reading errand costs the
+  coordinator two sentences instead of two files.
+
+**And none of this licenses a cheaper proxy for actually running something.** If the answer is a
+measurement — how many cases a file declares, which test is slowest, whether a build passes — run
+it and read the number. Measured: a session asked to inventory the suite counted `it(` with grep
+instead of running vitest, reported `tests/importGraph.test.ts` as 4 cases when it declares 57
+(they're generated in a loop), and left the slowest file out of its "five slowest" list. Static
+counting is not a cheap version of measuring, it is a different and wrong answer. A worktree has no
+`node_modules`; installing them is part of the job, not a reason to estimate.
+
+One shape that isn't delegation: waiting. Polling a backgrounded run with repeated `tail` and
+`grep -c` was 105 of one session's 194 Bash calls. Use `Bash(run_in_background)` and wait for the
+notification, or `Monitor` for a stream.
+
 ## Architecture
 
 Three processes and entrypoints, one origin:
@@ -392,7 +438,8 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   checkout "works" while silently discarding its state. Two rules stop that: terminal-only (that
   predicate) and never over work (`worktreePruneSafety()`, refused in `lib/taskMove.ts`'s words, so
   a log line and a refused move say the same thing). The branch is always kept — a checkout is
-  regenerable, a branch is the task's diff — and no knob deletes one unattended. The sweep is OFF
+  regenerable, a branch is the task's diff, and a fourteen-day silence is no evidence the diff is
+  anywhere else — `lib/reclaim.ts` is the case where it demonstrably is. The sweep is OFF
   by default, unlike the table prune, whose 180/400-day windows are longer than most instances have
   existed; a window in weeks would start deleting on the first tick after an upgrade nobody asked
   for. The clear goes through `clearTaskWorktreePath()` rather than `updateTask`, which stamps
@@ -401,6 +448,22 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   sweep, since the instance that didn't opt in is the one that needs telling: measured each pass,
   logged while over `CALANDRIA_WORKTREES_DISK_WARN_GB`, served on `schedulerHealth()`, shown above
   the reclaim list in Settings → Storage. The ticker starts for it too.
+- `lib/reclaim.ts` — LANDED → RECLAIMED, the definitive signal the sweep's clock stands in for.
+  A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
+  (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
+  (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
+  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
+  call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
+  unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ
+  PER LANDING: uncommitted edits block both; `ahead > 0` blocks a local merge (mergeTask makes
+  base a descendant, so those commits post-date it) and must NOT block a PR, since a squash
+  leaves every landed branch permanently ahead and gating on it means the feature never fires.
+  `unpushedCommits()` replaces it there — what the remote never received wasn't in what GitHub
+  merged. Only the STATUS write stamps `updated_at`, and only when the reclaim is what moved
+  the task to done; the columns go through `clearTaskWorktreePath()` for the sweep's reason.
+  In `DYNAMIC_ONLY` (it sweeps dependents), which is why `lib/prState.ts` moved there.
 - **Runbooks** (`lib/runbooks/store.ts`, `lib/dispatch.ts`, `app/shell/Runbooks.tsx`) are
   schedules with the clock taken off. A `runbooks` row is a saved prompt plus agent, permission
   mode, priority and send_context, and pressing Run MINTS A FRESH TASK (tagged `tasks.runbook_id`)
@@ -644,7 +707,7 @@ Unmerged worktree changes aren't in it; verify locations against your working tr
 self-hosting, architecture) · `.env.example` (every env var, documented) ·
 `lib/agents/CLAUDE.md` (per-driver detail, loaded when you open that directory).
 
-**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 18,524 measured
+**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 21,348 measured
 tokens, loaded into every session in this repo before any code is read, so new material belongs in
 the nearest directory-scoped `CLAUDE.md` unless you need it before you'd open that directory. Don't restate `docs/` prose here; that duplication has already
 drifted.

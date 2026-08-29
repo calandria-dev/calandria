@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { Logo } from "../Logo";
-import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
 import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { IdleStopChip } from "./IdleStop";
 import { SnoozeButton } from "./SnoozeMenu";
-import { SLABEL, AWAIT_LABEL, SNOOZE_LABEL, RAN_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
+import { SLABEL, AWAIT_LABEL, CI_LABEL, SNOOZE_LABEL, RAN_LABEL, SEARCH_MIN, type ProjectRow, type TaskRow, type AgentsBundle, type TaskView, type TagRow } from "./types";
 import { TagChips, TagBadges, useTagFilter, inTags, selectOneTag } from "./TagChips";
 import { TagStrip } from "./TagStrip";
 import { agentLabel } from "./agents";
@@ -47,11 +47,16 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   // Snoozed beats awaiting: the whole point of parking a task that's asking you
   // a question is that it stops reading as "waiting on you" until it's back.
   const awaiting = !snoozed && isAwaiting(task);
+  // The other half of "needs you": an open PR whose checks are failing. Below
+  // awaiting, because a parked question is a person being asked something
+  // directly; a red PR is a fact about work that already ended. Both land the
+  // card in the same group, so the row has to be able to say which it is.
+  const ciRed = !snoozed && !awaiting && isPrRed(task);
   const blocked = !!blockedBy?.length && !task.started;
   // Ran on its own and nobody has read it yet. Below snoozed and awaiting for
   // the same reason they're ordered that way — a parked or questioning row is
   // describing something more urgent than "there is output here".
-  const ranClean = !snoozed && !awaiting && isUnreadRun(task);
+  const ranClean = !snoozed && !awaiting && !ciRed && isUnreadRun(task);
   // The model's turn ended but the session is held open for run_in_background
   // work — live, but nothing to watch and nothing needed from the user.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
@@ -69,6 +74,9 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
     : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
     : inBackground ? `live · ${task.background_note || "working in background"}${idleNote || ` · ${relTime(task.updated_at)}`}`
     : running ? `live · working${idleNote}`
+    // Below `running`: a Fix-CI turn is live IN a task whose PR is still red,
+    // and "live · working" is the more useful of the two facts while it runs.
+    : ciRed ? `CI failing on PR #${task.pr_number}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
     : task.status === "cancelled" ? `cancelled · ${relTime(task.updated_at)}`
     : task.started ? relTime(task.updated_at) : "not started";
@@ -97,7 +105,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         {/* Snoozed reports the category it came from, not "Snoozed": the status
             group header already says that, and where it goes BACK to is the
             fact the row can't otherwise show. */}
-        <span className={`slabel ${awaiting ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
+        <span className={`slabel ${awaiting || ciRed ? "await" : ""}`}>{awaiting ? AWAIT_LABEL : ciRed ? CI_LABEL : SLABEL[task.status]}</span>
         <PriPill p={task.priority} />
       </div>
       <AgentEditedChip task={task} variant="list" />
@@ -369,18 +377,22 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // would be drawn twice.
   const snoozedGroup = shown.filter((t) => isSnoozed(t)).sort((a, b) => a.snoozed_until - b.snoozed_until);
   const awake = shown.filter((t) => !isSnoozed(t));
-  const needsYou = awake.filter((t) => isAwaiting(t));
+  // Both arms of "needs you" (./format.ts): parked on a question, or an open PR
+  // gone red. Every status group below has to exclude the same predicate — a
+  // DONE task with a red PR belongs here, and left in `g` as well it would be
+  // drawn twice.
+  const needsYouGroup = awake.filter((t) => needsYou(t));
   // Unattended runs that finished clean and haven't been read. Lifted out of
   // "In progress" like needsYou is, and for the stronger reason: nothing is
   // running in them and nothing ever will again on its own, so left in that
   // group they were permanent rows pretending to be live work (issue #28).
-  const ranClean = awake.filter((t) => isUnreadRun(t));
+  const ranClean = awake.filter((t) => isUnreadRun(t) && !needsYou(t));
   const groups = {
-    a: awake.filter((t) => t.status === "in_progress" && !isAwaiting(t) && !isUnreadRun(t)),
-    h: awake.filter((t) => t.status === "on_hold" && !isAwaiting(t)),
+    a: awake.filter((t) => t.status === "in_progress" && !needsYou(t) && !isUnreadRun(t)),
+    h: awake.filter((t) => t.status === "on_hold" && !needsYou(t)),
     r: awake.filter((t) => t.status === "not_started"),
     z: snoozedGroup,
-    g: awake.filter((t) => t.status === "done").sort((a, b) => b.updated_at - a.updated_at),
+    g: awake.filter((t) => t.status === "done" && !needsYou(t)).sort((a, b) => b.updated_at - a.updated_at),
     x: awake.filter((t) => t.status === "cancelled").sort((a, b) => b.updated_at - a.updated_at),
   };
   const canSearch = tasks.length + suggested.length >= SEARCH_MIN;
@@ -404,7 +416,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // Suggested rows are ordinary unstarted task rows server-side, so a range
   // crossing into the tray is a real selection, not a category error.
   const order = [
-    ...needsYou, ...ranClean, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
+    ...needsYouGroup, ...ranClean, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
     ...(doneCollapsed && !q ? [] : groups.g),
     ...(cancelledCollapsed && !q ? [] : groups.x),
     ...shownSuggested,
@@ -517,7 +529,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
-          <TaskGroup label="Needs your input" tasks={needsYou} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
+          <TaskGroup label="Needs your input" tasks={needsYouGroup} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
           {/* Between the two for a reason: a clean run wants reading, which is
               less than answering a question and more than a task that is
               simply still open. */}

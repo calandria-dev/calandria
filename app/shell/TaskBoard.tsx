@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
-import { isAwaiting, isUnreadRun, isWithdrawn, relTime, withdrawnLast } from "./format";
+import { isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
@@ -57,17 +57,22 @@ const COLS: Record<ColKey, {
   },
   in_progress: {
     label: "In progress", always: true,
-    member: (t) => inStatusColumn(t) && t.status === "in_progress" && !isAwaiting(t) && !isUnreadRun(t),
+    member: (t) => inStatusColumn(t) && t.status === "in_progress" && !needsYou(t) && !isUnreadRun(t),
     // Dropping an awaiting card here is "I've dealt with it": the explicit
     // status write clears the awaiting flag server-side, so patch even when
     // the status string wouldn't change.
     patchFor: (t) => (t.suggested ? { suggested: 0, status: "in_progress", ...wake(t) } : t.status !== "in_progress" || isAwaiting(t) || isSnoozed(t) ? { status: "in_progress", ...wake(t) } : {}),
   },
   awaiting: {
+    // Both arms of ./format.ts's needsYou: a turn parked on a question, and an
+    // open PR whose checks are failing. The second has no turn parked on
+    // anything and may sit on a task already marked done — which is exactly the
+    // case that used to go unnoticed — so every status column below excludes
+    // the same predicate rather than only the awaiting half.
     label: "Needs input", accent: true, derived: true, always: true,
-    member: (t) => inStatusColumn(t) && isAwaiting(t),
-    patchFor: (t) => (inStatusColumn(t) && isAwaiting(t) ? {} : null),
-    noDropWhy: "Needs input is derived from session state. The agent sets it when it asks you a question.",
+    member: (t) => inStatusColumn(t) && needsYou(t),
+    patchFor: (t) => (inStatusColumn(t) && needsYou(t) ? {} : null),
+    noDropWhy: "Needs input is derived from session state: the agent asks you a question, or the PR's checks go red.",
   },
   ran: {
     // A scheduled run that finished on its own with nothing to answer. Derived
@@ -76,8 +81,8 @@ const COLS: Record<ColKey, {
     // Dragging one OUT is an ordinary status write, which is also how the card
     // is acknowledged — the server clears the mark with the status (issue #28).
     label: RAN_LABEL, derived: true, always: false,
-    member: (t) => inStatusColumn(t) && isUnreadRun(t),
-    patchFor: (t) => (inStatusColumn(t) && isUnreadRun(t) ? {} : null),
+    member: (t) => inStatusColumn(t) && isUnreadRun(t) && !needsYou(t),
+    patchFor: (t) => (inStatusColumn(t) && isUnreadRun(t) && !needsYou(t) ? {} : null),
     noDropWhy: "Ran clean is what an unattended run settles as. Drag a card out to Done once you've read it.",
   },
   snoozed: {
@@ -102,7 +107,7 @@ const COLS: Record<ColKey, {
   },
   done: {
     label: "Done", mini: true, always: true,
-    member: (t) => inStatusColumn(t) && t.status === "done",
+    member: (t) => inStatusColumn(t) && t.status === "done" && !needsYou(t),
     patchFor: (t) => statusPatch(t, "done"),
   },
   cancelled: {
@@ -161,17 +166,21 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   // Snoozed beats awaiting, the way it does in the list: a parked task must
   // stop reading as "waiting on you" until it comes back.
   const awaiting = !snoozed && isAwaiting(task);
+  // The other arm of needsYou: an open PR gone red. Ranked under awaiting for
+  // the same reason the list ranks it there — a question was asked OF someone,
+  // a red PR is a fact about work that already finished.
+  const ciRed = !snoozed && !awaiting && isPrRed(task);
   const blocked = !!blockedBy?.length && !task.started;
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   // A suggestion the filing agent retracted. It reads "withdrawn", not
   // "cancelled": nothing was ever started, so nothing was called off.
   const withdrawn = isWithdrawn(task);
   // Held open for run_in_background work — live, but the model isn't talking.
-  const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
+  const inBackground = !snoozed && !awaiting && !ciRed && running && !!task.background_pending;
   // Queued for the usage-window reset (./queuedStart.ts); moot once a turn is live.
   const queued = isQueuedStart(task) && !running;
   // Ran unattended, cleanly, and unread — the ran-clean column's state.
-  const ranClean = !snoozed && !awaiting && isUnreadRun(task);
+  const ranClean = !snoozed && !awaiting && !ciRed && isUnreadRun(task);
   // Live but silent for a long stretch (./idleTurn.ts) — reported next to the
   // running state, never in place of it.
   const idle = isIdleTurn(task, running) && !awaiting;
@@ -181,6 +190,9 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
     : awaiting ? `waiting on you · ${relTime(task.updated_at)}`
     : inBackground ? `live · ${task.background_note || "working in background"}${idleNote || ` · ${relTime(task.updated_at)}`}`
     : running ? `live · working${idleNote}`
+    // Below `running`: a Fix-CI turn is live IN a task whose PR is still red,
+    // and "live · working" is the more useful of the two facts while it runs.
+    : ciRed ? `CI failing on PR #${task.pr_number}`
     : ranClean ? `ran clean · ${relTime(task.unread_run_at)}`
     : withdrawn ? `withdrawn · ${relTime(task.updated_at)}`
     : task.status === "done" ? `done · ${relTime(task.updated_at)}`
@@ -190,7 +202,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   return (
     <article
       role="button" tabIndex={0}
-      className={`bcard ${mini ? "mini" : ""} ${selected ? "sel" : ""} ${awaiting ? "needs" : ""} ${running ? "working" : ""} ${dragging ? "dragging" : ""} ${withdrawn ? "withdrawn" : ""} ${snoozed ? "snoozed" : ""}`}
+      className={`bcard ${mini ? "mini" : ""} ${selected ? "sel" : ""} ${awaiting || ciRed ? "needs" : ""} ${running ? "working" : ""} ${dragging ? "dragging" : ""} ${withdrawn ? "withdrawn" : ""} ${snoozed ? "snoozed" : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
       draggable={canDrag}

@@ -9,8 +9,9 @@ runs on which agent). What follows is the per-driver detail.
 `driver.ts` runs a turn through the Agent SDK, resuming the task's session or starting a fresh
 one, with project context appended to the Claude Code system prompt by `buildProjectContext()`.
 It also hosts the Calandria MCP tools (`suggest_task`, `list_tasks`, `get_task`, `update_task`,
-`withdraw_suggestion`, `list_projects`, `expose_service`), `summarizeTranscript()` for `/clear`
-and `draftProjectContext()`, a read-only repo-exploring agent. Auth delegates to
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `list_projects`, `expose_service`),
+`summarizeTranscript()` for `/clear` and `draftProjectContext()`, a read-only repo-exploring
+agent. Auth delegates to
 `lib/claude-auth.ts`.
 
 ### Permission modes
@@ -27,6 +28,34 @@ refused with `decision_reason_type: "mode"`, and the callback fired for neither.
 in `lib/permissions.ts` is therefore inert under it, and "pre-approved" would mean allow rules
 in the user's own `~/.claude` settings, which Calandria doesn't write. `default` plus remembered
 rules is already deny-unless-allowed, with a prompt and a revocable record.
+
+### What auto mode tells the model, and the one thing we say back
+
+A task session's prompt is not only ours, and the CLI's half of it points away from delegating.
+Under `auto` the CLI adds a meta message — *"Do your work through the Bash tool wherever it can
+accomplish the job: read files with cat, head, or sed -n, search with grep and find … Fall back to
+a dedicated tool only when Bash genuinely cannot do the job"* — and on an Opus 5 prompt bundle the
+system prompt additionally carries *"Do not call the AgentTool unless the user requested it"*.
+Both are sensible defaults for a session nobody has told otherwise, both come from the CLI rather
+than from here, and together they are the measured reason a first turn spends 79% of its tool
+calls on Bash and none on `Agent` (`docs/DELEGATION.md`).
+
+`buildProjectContext()` therefore ends with the block that answers them: bulk collection goes to a
+synchronous subagent past two read-only commands in a row. Three things about it are load-bearing
+and pinned by `tests/delegateCollection.test.ts`. It is **last** in the appended text, and the
+append lands after every CLI section — which is the difference between this and the same rule in
+`CLAUDE.md`, which dispatched only after a median of two read-only commands and opened a turn with
+one in 1 of 9 runs, against 5 of 9 here. Its trigger is a **count**, because the
+`CLAUDE.md` version's "a third read-only command against the same question" let a model rule each
+command a different question. And it is gated on `dispatchesSubagents`, so a Codex turn isn't
+pointed at a tool it doesn't have. `CALANDRIA_DELEGATE_COLLECTION=off` removes it.
+
+One thing to watch on a CLI upgrade: 2.1.240 also carries a `## Delegating to subagents` section
+arguing the other way ("subagents multiply cost and time … do not fan out"), gated behind an
+experiment (`CLAUDE_CODE_THISTLE_GREBE`, values `default` / `no_nudges` / `counter_steer`) that is
+not on for us today. If a release ever floors Opus to `counter_steer`, this block is arguing with a
+whole section instead of two lines, and the dispatch rate in `docs/DELEGATION.md` is what to
+re-measure.
 
 ### Refusals that skip the callback
 

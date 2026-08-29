@@ -147,23 +147,19 @@ test.describe("full-width text", () => {
   });
 });
 
-// The other end of the same measure. Every other spec here runs at a viewport
-// wider than the three fixed columns put together (236 + 352 + 430 = 1018), so
-// none of them could see what happens just below it: the rail is a fixed grid
-// track, so the transcript — the only flexible one — absorbed the whole
-// shortfall and laid out at ~0px. The messages stayed in the DOM and in the
-// accessibility tree the entire time, which is what made it so hard to read:
-// the session pane was simply blank, and Playwright called every message
-// "hidden" (a zero-area box is not visible) rather than missing.
+// Narrow desktop windows. The three tracks beside the transcript are fixed
+// (236 + 352 + 430 = 1018 at the defaults) and only the transcript flexes, so
+// below ~1400px it was the transcript — the one pane being read — that absorbed
+// the whole shortfall: 262px at 1280, 6px at 1024. The shell now sheds a side
+// column instead, projects then tasks then the diff rail, at the widths in
+// AUTO_COLLAPSE_BELOW (app/shell/types.ts).
 //
-// 1024x768 is the exact size that caught it — the GitHub-hosted macOS and
-// Windows runners' virtual display, which is what the Electron shell's window
-// gets clamped to. The desktop e2e lane has no viewport of its own (it drives a
-// real OS window), so its transcript assertion failed there and nowhere else;
-// this is the cheap Linux-side pin for the layout rule underneath it.
-test.describe("narrow desktop window", () => {
-  test.use({ viewport: { width: 1024, height: 768 } });
-
+// 1024x768 is not hypothetical: it is the GitHub-hosted macOS and Windows
+// runners' virtual display, which is what the Electron shell's window gets
+// clamped to on two of the three desktop lanes. 800x600 is the tier below it,
+// where the rail goes too. Both are driven here rather than only in the desktop
+// suite so a regression is caught on the cheap Linux browser lane.
+test.describe("auto-collapse on a narrow window", () => {
   const NARROW_TASK = "Narrow task";
 
   test.beforeAll(async ({ request }) => {
@@ -174,51 +170,131 @@ test.describe("narrow desktop window", () => {
     await waitForIdle(request, task.id);
   });
 
-  test("the rail yields rather than squeezing the transcript to nothing", async ({ page }) => {
+  // Which of the three side tracks are panels rather than 30px spines, read in
+  // one pass so they describe a single layout.
+  type Tracks = { proj: boolean; task: boolean; rail: boolean; spines: number };
+  const tracks = (page: import("@playwright/test").Page): Promise<Tracks> =>
+    page.evaluate(() => ({
+      proj: !!document.querySelector(".col-projects"),
+      task: !!document.querySelector(".col-tasks .task-scroll"),
+      rail: !!document.querySelector(".sess-rail"),
+      spines: document.querySelectorAll(".col-rail").length,
+    }));
+
+  // Polled, not read once. A viewport change reaches the shell through
+  // matchMedia and a reload remounts the whole session pane, so a single
+  // evaluate can land mid-render — the rail is a sibling of the transcript and
+  // has been seen missing for a frame after `.transcript .tw` is already
+  // visible. Same reason the full-width spec above polls its widths.
+  const expectTracks = async (page: import("@playwright/test").Page, want: Tracks) => {
+    await expect
+      .poll(() => tracks(page), { message: `shell never settled into ${JSON.stringify(want)}` })
+      .toEqual(want);
+  };
+
+  // The transcript's own measure, inside its 28px gutters: the width a message
+  // is actually laid out into, and the number this whole policy exists to keep
+  // off the floor.
+  const measure = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => document.querySelector(".transcript .tw")?.getBoundingClientRect().width ?? 0);
+
+  test("sheds the side columns as the window narrows, and gives them back", async ({ page }) => {
     await gotoApp(page);
     await page.getByText(PROJECT).first().click();
     await listRow(page, NARROW_TASK).click();
+    await expect(page.locator(".transcript .tw")).toBeVisible();
 
-    // The assertion the desktop lane makes, at the width that broke it: a
-    // streamed message is genuinely on screen, not merely in the document.
-    await expect(page.getByText("Mock turn complete").first()).toBeVisible();
+    // 1440: above every threshold, so the full three-column shell.
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
+    const wide = await measure(page);
+    expect(wide).toBeGreaterThan(300);
 
-    // And the rail did not simply disappear to make room — both panes are real.
-    const panes = await page.evaluate(() => ({
-      main: document.querySelector(".sess-main")!.getBoundingClientRect().width,
-      rail: document.querySelector(".sess-rail")!.getBoundingClientRect().width,
-      tw: document.querySelector(".transcript .tw")!.getBoundingClientRect().width,
-    }));
-    expect(panes.main).toBeGreaterThan(100);
-    expect(panes.rail).toBeGreaterThan(100);
-    // The transcript's own measure, inside its 28px gutters, is what a message
-    // is laid out into. Zero here is the bug however wide .sess-main reads.
-    expect(panes.tw).toBeGreaterThan(0);
+    // 1024: projects and tasks are spines, the rail is still a real panel, and
+    // the transcript has more room than it had at 1440 with all three open.
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expectTracks(page, { proj: false, task: false, rail: true, spines: 2 });
+    const narrow = await measure(page);
+    expect(narrow).toBeGreaterThan(wide);
+
+    // 800: the rail goes too, and the transcript keeps growing rather than
+    // shrinking — the whole point of shedding in this order.
+    await page.setViewportSize({ width: 800, height: 600 });
+    await expectTracks(page, { proj: false, task: false, rail: false, spines: 3 });
+    expect(await measure(page)).toBeGreaterThan(narrow);
+
+    // Back up: the policy is applied at render, never written into the persisted
+    // Layout, so the user's own columns come straight back — and are still there
+    // after a reload, which reads what was actually stored.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
+
+    await page.reload();
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
   });
 
-  // The same window is also SHORT, and the rail's scroll box had a 40px
-  // `padding-bottom` — incompressible, so `min-height:0` could not shrink it
-  // past 40px and, being `position:relative`, it painted over its next sibling
+  // The spine's button has to mean something at a width the policy is collapsing
+  // at, or it is a control that visibly does nothing. Expanding wins over the
+  // policy for as long as the window stays this size; leaving the size and
+  // coming back starts the policy over rather than remembering a decision made
+  // at a width the user has since left.
+  test("a column the policy tucked away still opens from its spine", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await gotoApp(page);
+
+    const spine = page.getByTitle("Show projects panel");
+    await expect(spine).toBeVisible();
+    await spine.click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
+    // Still open through the re-render selecting a project causes: the override
+    // is state, not a one-shot.
+    await page.getByText(PROJECT).first().click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
+    // The tasks column is on the same policy, and its spine works the same way.
+    await page.getByTitle("Show tasks panel").click();
+    await expect(listRow(page, NARROW_TASK)).toBeVisible();
+
+    // Leave the breakpoint and come back: both are tucked away again.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator(".col-projects")).toBeVisible();
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.getByTitle("Show projects panel")).toBeVisible();
+    await expect(page.getByTitle("Show tasks panel")).toBeVisible();
+  });
+
+  // The same window is also SHORT, which the shedding policy above says nothing
+  // about — it is a width policy. The rail's scroll box carried a 40px
+  // `padding-bottom`, incompressible, so `min-height:0` could not shrink it past
+  // 40px and, being `position:relative`, it painted over its next sibling
   // instead of scrolling. With the terminal drawer taking 300px off a 768px
   // display that overhang landed across the drawer's own button bar and ate the
-  // clicks on it. Clicking Hide through the drawer is the assertion: an
-  // intercepted click times out rather than failing on the toggle.
+  // clicks on it, which is how it surfaced: as a 30s `locator.click` timeout on
+  // the desktop lanes, whose windows the runners clamp to exactly this size.
+  // Clicking Hide THROUGH the drawer is the assertion — an intercepted click
+  // times out rather than failing on the toggle.
   test("the diff rail does not overhang the terminal drawer's buttons", async ({ page }) => {
+    // Selected at the full width, since at 1024 both side columns are spines.
     await gotoApp(page);
     await page.getByText(PROJECT).first().click();
     await listRow(page, NARROW_TASK).click();
     await expect(page.locator(".tc-scroll")).toBeVisible();
 
+    await page.setViewportSize({ width: 1024, height: 768 });
     await page.getByRole("button", { name: "Terminal", exact: true }).click();
     const drawer = page.locator(".term-drawer");
     await expect(drawer).toBeVisible();
+
     // Nothing above may reach into the drawer: it is the last thing in the
     // column and every pane before it is supposed to have stopped.
-    const overhang = await page.evaluate(() => {
-      const top = document.querySelector(".term-drawer")!.getBoundingClientRect().top;
-      return document.querySelector(".tc-scroll")!.getBoundingClientRect().bottom - top;
-    });
-    expect(overhang).toBeLessThanOrEqual(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const top = document.querySelector(".term-drawer")!.getBoundingClientRect().top;
+          return document.querySelector(".tc-scroll")!.getBoundingClientRect().bottom - top;
+        }),
+      { message: ".tc-scroll never stopped overhanging .term-drawer" })
+      .toBeLessThanOrEqual(0);
 
     await page.getByTitle("Hide terminal (the shell keeps running)").click();
     await expect(drawer).toHaveClass(/\bcollapsed\b/);

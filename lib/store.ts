@@ -7,15 +7,33 @@ import { getDb } from "./db";
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
 import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
 
-// The single "needs you" predicate (over tasks aliased `t`): a real task,
-// in progress, flagged awaiting_input. Deliberately NO running condition — a
-// turn parked mid-stream on an AskUserQuestion has running=1 AND
+// The single "needs you" predicate (over tasks aliased `t`), which a real task
+// satisfies two ways.
+//
+// PARKED: in progress, flagged awaiting_input. Deliberately NO running
+// condition — a turn parked mid-stream on an AskUserQuestion has running=1 AND
 // awaiting_input=1 and needs the user exactly as much as a settled one (the
 // client-side isAwaiting in app/shell/format.ts makes the same call).
+//
+// RED PR: an open PR whose check rollup is failing. Nothing is parked here —
+// the turn ended, often successfully, and the task may already be marked done —
+// but a broken PR is work only a human can route, and .github/CLAUDE.md's "a
+// push isn't done until its CI runs conclude" was pure policy until this line:
+// it asked every session to remember to watch Actions, and main once sat red
+// for nine hours because they all verified locally instead. Riding THIS
+// predicate rather than inventing a second notifier is the point — one pill,
+// one dropdown, one project badge, one snooze.
+//
+// `done` counts, `on_hold` and `cancelled` don't. A finished task with a red PR
+// is the exact case that went unnoticed, so excluding it would leave the hole
+// this closes; a held or cancelled one has already been answered by a human
+// deciding not to pursue it.
+//
 // Shared by listProjects' awaiting_count subquery, listNeedsYou, and
 // countAwaiting so the project badges, the titlebar "N need you" pill, and its
 // dropdown can never disagree.
@@ -31,7 +49,12 @@ export { addInternalUsage, type InternalJob } from "./internalUsage";
 // the bus. The client closes that by refetching when its own wake timer fires
 // (app/shell/snooze.ts nextWake) — the same refetch a task_edited does.
 const NOT_SNOOZED = "(t.snoozed_until = 0 OR t.snoozed_until <= CAST(strftime('%s','now') AS INTEGER) * 1000)";
-const NEEDS_YOU = `t.suggested = 0 AND t.status = 'in_progress' AND t.awaiting_input = 1 AND ${NOT_SNOOZED}`;
+const AWAITING_ARM = "(t.status = 'in_progress' AND t.awaiting_input = 1)";
+// pr_state = 'open' is load-bearing, not decoration: a merged or closed PR is
+// never re-polled (stalePrTasks), so its last-seen 'failing' would otherwise sit
+// in the pill forever with nothing left that could ever clear it.
+const PR_RED_ARM = "(t.pr_state = 'open' AND t.pr_checks = 'failing' AND t.status IN ('in_progress', 'done'))";
+const NEEDS_YOU = `t.suggested = 0 AND (${AWAITING_ARM} OR ${PR_RED_ARM}) AND ${NOT_SNOOZED}`;
 
 export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[] {
   return getDb()
@@ -79,12 +102,17 @@ export function listRunningTaskIds(): string[] {
 }
 
 // Every task across all active projects that's waiting on the user (the shared
-// NEEDS_YOU predicate: in_progress with awaiting_input set — including a turn
-// still live but parked on an AskUserQuestion) — the rows behind the titlebar
-// "N need you" dropdown. `waiting_since` is when Claude last spoke (its final
-// message of the paused turn), falling back to the task's updated_at when a task
-// is awaiting with no messages yet; the UI renders it as "waiting for <duration>".
-// Longest-waiting first, so the most-stale task sits at the top of the list.
+// NEEDS_YOU predicate, both arms) — the rows behind the titlebar "N need you"
+// dropdown. `waiting_since` is when Claude last spoke (its final message of the
+// paused turn), falling back to the task's updated_at when a task is awaiting
+// with no messages yet. Longest-waiting first, so the most-stale task sits at
+// the top of the list.
+//
+// `reason` says WHICH arm put the row here, because the two need different
+// sublines: "waiting for 3 hours" is true of a parked turn and a lie about a
+// red PR, whose age we don't store (only when we last ASKED GitHub). A CI row
+// names its PR instead. Derived from the same expression the predicate uses, so
+// a row can't claim an arm it didn't match.
 export function listNeedsYou(): {
   id: string;
   project_id: string;
@@ -93,12 +121,17 @@ export function listNeedsYou(): {
   project_color: string;
   project_icon: string;
   waiting_since: number;
+  reason: "input" | "ci";
+  pr_number: number;
+  pr_url: string;
 }[] {
   return getDb()
     .prepare(
       `SELECT t.id, t.project_id, t.title,
          p.name AS project_name, p.color AS project_color, p.icon AS project_icon,
-         COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.task_id = t.id), t.updated_at) AS waiting_since
+         COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.task_id = t.id), t.updated_at) AS waiting_since,
+         CASE WHEN ${AWAITING_ARM} THEN 'input' ELSE 'ci' END AS reason,
+         t.pr_number, t.pr_url
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
        WHERE ${NEEDS_YOU} AND p.deprecated = 0
@@ -118,20 +151,29 @@ export function countAwaiting(projectId: string): number {
   return row.n;
 }
 
-// Does this ONE task need the user right now? The same predicate the pill
-// count and the dropdown use, asked of a single row — including the
-// deprecated-project join listNeedsYou applies, since a project the user has
-// archived should not buzz their phone.
+// Is this ONE task parked on the user's input right now? The AWAITING arm of
+// the pill's predicate asked of a single row, plus the deprecated-project join
+// listNeedsYou applies, since a project the user has archived should not buzz
+// their phone.
 //
 // The notification emitter screens through this rather than trusting the event
 // that woke it: a snoozed task, an unreviewed suggestion, and an ask that
 // auto-denied on an unattended turn all publish the same "your turn" event,
 // and none of them is a reason to interrupt anybody.
-export function taskNeedsYou(id: string): boolean {
+//
+// Deliberately the ARM, not the whole NEEDS_YOU predicate. The emitter behind
+// it delivers a toast that says "Waiting for input", and the dispatcher calls
+// it on EVERY turn end and lets this row-read decide — so under the full
+// predicate a turn that ended cleanly on a task whose PR happens to be red
+// would announce a question nobody asked. A red PR belongs in the pill, the
+// dropdown and the board (which all use NEEDS_YOU); whether it should also
+// push a notification is a separate decision with its own wording, and this is
+// not the place to make it by accident.
+export function taskAwaitingInput(id: string): boolean {
   const row = getDb()
     .prepare(
       `SELECT 1 AS ok FROM tasks t JOIN projects p ON p.id = t.project_id
-       WHERE t.id = ? AND p.deprecated = 0 AND ${NEEDS_YOU}`
+       WHERE t.id = ? AND p.deprecated = 0 AND t.suggested = 0 AND ${AWAITING_ARM} AND ${NOT_SNOOZED}`
     )
     .get(id);
   return !!row;
@@ -197,6 +239,7 @@ export function createProject(input: {
   context?: string;
   repo_path?: string;
   branch?: string;
+  landing_mode?: LandingMode;
 }): Project {
   const now = Date.now();
   const id = nanoid();
@@ -208,10 +251,10 @@ export function createProject(input: {
   const defaultAgent = getSetting("default_agent") || "claude";
   getDb()
     .prepare(
-      `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, default_agent, port, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
@@ -242,10 +285,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const n = { ...cur, ...patch };
   getDb()
     .prepare(
-      `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?,
-        dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
+      `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
     )
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
+    // landing_mode is normalized rather than trusted: the column has no CHECK
+    // behind it and this is reached straight from PATCH /api/projects/[id].
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
   return getProject(id);
 }
 
@@ -909,6 +954,7 @@ export function moveTasks(
     // thrown away, and the next turn opens a fresh one that reports its own.
     const clearCheckout = db.prepare(
       `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
+        pr_number = 0, pr_state = '', pr_checks = '', pr_review = '', pr_merged_at = 0, pr_synced_at = 0,
         session_id = NULL, context_measured = NULL WHERE id = ?`
     );
     // Project-keyed child rows follow their task. These are the tables that
@@ -1011,9 +1057,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
   return getTask(id);
 }
 
@@ -1026,11 +1072,96 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
  * each bucket is the most recently active task) AND retention's clock, so
  * stamping it here would float a six-month-old finished task to the top of
  * Done and push its transcript prune out by the width of the worktree window.
- * Used by the scheduled worktree sweep (lib/worktreeSweep.ts); the interactive
- * paths go through updateTask, where the stamp is the truth.
+ * Used by the scheduled worktree sweep (lib/worktreeSweep.ts) and by
+ * lib/reclaim.ts; the interactive paths go through updateTask, where the stamp
+ * is the truth.
+ *
+ * `branch: true` clears the branch columns in the same statement, for the
+ * caller that deleted the local branch as well as the checkout (a landed task,
+ * whose diff now lives in the base branch rather than on a branch of its own).
+ * Leaving `work_branch` pointing at a ref that no longer exists would make the
+ * DIFF tab, the reclaim list and worktreePruneSafety all reason about a branch
+ * git cannot resolve.
  */
-export function clearTaskWorktreePath(id: string): void {
-  getDb().prepare("UPDATE tasks SET worktree_path = '' WHERE id = ?").run(id);
+export function clearTaskWorktreePath(id: string, opts: { branch?: boolean } = {}): void {
+  getDb()
+    .prepare(
+      opts.branch
+        ? "UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '' WHERE id = ?"
+        : "UPDATE tasks SET worktree_path = '' WHERE id = ?"
+    )
+    .run(id);
+}
+
+/**
+ * Write back what GitHub just said about a task's PR — and NOTHING else, not
+ * even `updated_at`, for exactly the reason clearTaskWorktreePath gives.
+ *
+ * A refresh is a poll nobody asked for: it runs on a timer, on opening a task,
+ * and after a PR is created. updateTask() would stamp `updated_at`, which is
+ * the board's sort key AND retention's clock, so a five-minute CI poll would
+ * float every open-PR task to the top of its column and push its transcript
+ * prune out indefinitely. The chip's freshness must not reorder the board.
+ *
+ * Returns the fresh row so the caller can publish an authoritative snapshot.
+ */
+export function setTaskPrState(
+  id: string,
+  pr: {
+    state: string;
+    checks: string;
+    review: string;
+    merged_at: number;
+    synced_at: number;
+    number?: number;
+    draft?: number;
+    merge_state?: string;
+    failing?: string;
+  }
+): Task | undefined {
+  getDb()
+    .prepare(
+      `UPDATE tasks SET pr_state = ?, pr_checks = ?, pr_review = ?, pr_merged_at = ?, pr_synced_at = ?,
+        pr_number = COALESCE(?, pr_number),
+        pr_draft = COALESCE(?, pr_draft), pr_merge_state = COALESCE(?, pr_merge_state),
+        pr_failing = COALESCE(?, pr_failing) WHERE id = ?`
+    )
+    .run(
+      pr.state, pr.checks, pr.review, pr.merged_at, pr.synced_at,
+      pr.number ?? null, pr.draft ?? null, pr.merge_state ?? null, pr.failing ?? null, id
+    );
+  return getTask(id);
+}
+
+/**
+ * Tasks whose PR is worth asking GitHub about again: one exists, and the last
+ * answer wasn't terminal. A merged or closed PR is never polled again — its
+ * state cannot change back — which is what keeps the ticker's cost bounded by
+ * open work rather than by how many PRs the instance has ever opened.
+ *
+ * `staleBefore` is the pr_synced_at cutoff, so a task refreshed by a click a
+ * moment ago isn't re-fetched by the tick that follows. Oldest sync first, so a
+ * capped batch always makes progress rather than re-serving the same rows.
+ */
+export function stalePrTasks(staleBefore: number, limit: number): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM tasks
+       WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')
+         AND pr_synced_at < ?
+       ORDER BY pr_synced_at ASC LIMIT ?`
+    )
+    .all(staleBefore, limit) as Task[];
+}
+
+/** How many tasks still have a PR that could change — the ticker's stop condition. */
+export function openPrTaskCount(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')`
+    )
+    .get() as { n: number };
+  return row.n;
 }
 
 export function deleteTask(id: string) {

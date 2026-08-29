@@ -337,7 +337,7 @@ describe("the launcher's TurnHooks reach the driver", () => {
       yield { type: "done", sessionId: `s-${seen.length}` } as StreamEvent;
     });
 
-    const hooks = { onTaskCleared: vi.fn() };
+    const hooks = { onTaskCleared: vi.fn(), onPrOpened: vi.fn() };
     // Resolves on the second turn's turn_end (the first hands off to the drain).
     const { done } = collectEvents(task.id);
     await startResumeTurn(task, project, "go", undefined, hooks);
