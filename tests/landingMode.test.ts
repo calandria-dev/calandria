@@ -64,6 +64,18 @@ describe("projects.landing_mode", () => {
     expect(getProject(project.id)!.landing_mode).toBe("merge");
   });
 
+  it("names the tool that actually opens the PR, since the shell cannot", () => {
+    // The sentence used to say what finishing means without saying how, and a
+    // session's own `git push` is normally refused — so it went looking for a
+    // button. create_pr is registered exactly when this branch of the sentence
+    // is (lib/agents/claude/driver.ts, scripts/calandria-mcp.mjs).
+    const sentence = landingSentence({ landing_mode: "pr" }, "main");
+    expect(sentence).toContain("create_pr");
+    // And the half it must not think it can do.
+    expect(sentence).toContain("no tool for it");
+    expect(landingSentence({ landing_mode: "merge" }, "main")).not.toContain("create_pr");
+  });
+
   it("landingSentence is pure and covers both modes", () => {
     expect(landingSentence({ landing_mode: "merge" }, "main")).toContain("Merge lands into it");
     expect(landingSentence({ landing_mode: "pr" }, "trunk")).toContain("trunk is protected");
