@@ -106,7 +106,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # `github.event_name` for the reason test.yml carries it (issue #48): only
+  # `pull_request` runs cancel, and a group keyed on ref alone rests on a PR's
+  # ref never colliding with a push's — an assumption a closed PR's `labeled`
+  # run was observed to break. Without it, the sentence below is a hope rather
+  # than a guarantee.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # Superseded PR pushes are wasted work, but never cancel a publish mid-push:
   # a half-written manifest is worse than a redundant build.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -170,9 +175,9 @@ jobs:
       # occasionally — it lost it on every release, which made the manual
       # `gh workflow run publish-image.yml --ref vX.Y.Z` that issue #12 exists
       # to abolish a mandatory step again. Waiting keeps the property this step
-      # is here for: a run that concludes anything but success, or a tag whose
-      # commit has no push-to-main run at all, still fails hard and publishes
-      # nothing.
+      # is here for: a run that concludes RED, or a tag whose commit has no
+      # push-to-main run at all, still fails hard and publishes nothing.
+      # `cancelled` is the one conclusion that is neither — see the loop below.
       #
       # `event=push` is load-bearing, not tidiness (issue #12, defect 3). A
       # `pull_request` run for the same SHA is green with **e2e skipped**, so
@@ -209,13 +214,15 @@ jobs:
             exit 1
           }
 
-          # Echoes "<status> <conclusion>" for the newest push-event Test run on
-          # this SHA, or "absent -" when there is none yet. A transient API
-          # error echoes nothing, which the loop reads as one more reason to
-          # keep waiting rather than as grounds to fail a release.
+          # Echoes "<status> <conclusion> <run id>" for the newest push-event
+          # Test run on this SHA, or "absent - -" when there is none yet. A
+          # transient API error echoes nothing, which the loop reads as one more
+          # reason to keep waiting rather than as grounds to fail a release.
+          # The id is here so a cancelled run's recovery is a copyable command
+          # rather than a hunt through the Actions tab.
           probe() {
             gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
-              --jq '(.workflow_runs[0] // {}) | "\(.status // "absent") \(.conclusion // "-")"' 2>/dev/null || true
+              --jq '(.workflow_runs[0] // {}) | "\(.status // "absent") \(.conclusion // "-") \(.id // "-")"' 2>/dev/null || true
           }
 
           deadline=$(( SECONDS + WAIT_SECONDS ))
@@ -224,29 +231,52 @@ jobs:
 
           while :; do
             line=$(probe)
-            [ -n "$line" ] || line="unreadable -"
-            status="${line%% *}"
-            conclusion="${line##* }"
+            [ -n "$line" ] || line="unreadable - -"
+            read -r status conclusion run_id <<<"$line"
 
             case "$status" in
               completed)
-                [ "$conclusion" = "success" ] || fail "found: ${conclusion}"
-                echo "Test workflow succeeded for ${SHA}; proceeding with release ${GITHUB_REF_NAME}"
-                exit 0
+                case "$conclusion" in
+                  success)
+                    echo "Test workflow succeeded for ${SHA}; proceeding with release ${GITHUB_REF_NAME}"
+                    exit 0
+                    ;;
+                  # `cancelled` is the ABSENCE of a verdict, not a red one, and
+                  # it is the failure this step actually meets in the wild: it
+                  # sank v0.3.0 and v0.4.0 (issue #48), where a stray
+                  # `pull_request` run killed main's before a single test ran.
+                  # Failing on it made the recovery two manual steps — rerun the
+                  # Test run, then re-dispatch this workflow — when a rerun
+                  # lands as a later ATTEMPT on the same run id, so the very
+                  # next poll would have seen it. So wait, on the same budget
+                  # `in_progress` gets. A red run still fails instantly below;
+                  # nothing unverified becomes publishable, the gate just stops
+                  # discarding a release over a question that was never answered.
+                  cancelled) ;;
+                  *) fail "found: ${conclusion}" ;;
+                esac
                 ;;
               absent)
                 [ "$SECONDS" -lt "$absent_deadline" ] || fail "found: no run found"
                 ;;
             esac
 
-            [ "$SECONDS" -lt "$deadline" ] \
-              || fail "still ${status} after $(( WAIT_SECONDS / 60 )) minutes"
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              [ "$conclusion" != "cancelled" ] \
+                || fail "run ${run_id} was cancelled and no rerun landed within $(( WAIT_SECONDS / 60 )) minutes; \`gh run rerun ${run_id}\` and then rerun this workflow"
+              fail "still ${status} after $(( WAIT_SECONDS / 60 )) minutes"
+            fi
 
             # Only on a transition, so a 45-minute wait doesn't produce 90 lines
-            # of identical log.
-            if [ "$status" != "$announced" ]; then
-              echo "Test run for ${SHA} is ${status}; waiting for it to conclude…"
-              announced="$status"
+            # of identical log. Keyed on status AND conclusion, or the cancelled
+            # case (which stays `completed`) would announce nothing at all.
+            if [ "${status} ${conclusion}" != "$announced" ]; then
+              if [ "$conclusion" = "cancelled" ]; then
+                echo "Test run ${run_id} for ${SHA} was cancelled — no verdict. Waiting for a rerun; start one with \`gh run rerun ${run_id}\`."
+              else
+                echo "Test run for ${SHA} is ${status}; waiting for it to conclude…"
+              fi
+              announced="${status} ${conclusion}"
             fi
             sleep "$POLL_SECONDS"
           done
