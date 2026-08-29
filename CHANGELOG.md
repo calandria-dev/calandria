@@ -8,6 +8,25 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.4.0](https://github.com/calandria-dev/calandria/compare/v0.3.0...v0.4.0) (2026-08-29)
+
+
+### Features
+
+* A cc/codex compatible skill for analyzing a calandria project and suggesting changes to support worktree development (calandria task qEYs7gB2pGrbLpRbcw1Wq) ([2f0ae01](https://github.com/calandria-dev/calandria/commit/2f0ae01be4ad3aa6e62d3badf92437e2ce0c8772))
+* land work by pull request — PR state, create_pr, squash-merge, reclaim and red-build inbox ([#63](https://github.com/calandria-dev/calandria/issues/63)) ([d08146d](https://github.com/calandria-dev/calandria/commit/d08146d675c9af4af3af37e2a508f559206bca45))
+* Let an agent suggest a task in-window, and offer the option to start that task directly. (calandria task Go_M3t7wSGLjeFTImRY31) ([3bcb135](https://github.com/calandria-dev/calandria/commit/3bcb1356ab2c8e97736af0ea973189289198d565))
+* Let an agent suggest a task in-window, and offer the option to start that task directly. (calandria task Go_M3t7wSGLjeFTImRY31) ([669fea0](https://github.com/calandria-dev/calandria/commit/669fea0a45051c10224e6035467077d6a779d9b3))
+* ship a worktree-readiness skill for Claude Code and Codex ([bdaba0a](https://github.com/calandria-dev/calandria/commit/bdaba0af31c53374f15cf4c61034aa5325cd1e23))
+* **website:** calandria.dev placeholder + Cloudflare Pages deploy ([3a5bdb6](https://github.com/calandria-dev/calandria/commit/3a5bdb629fb856da51efe594d0e8ee0cbb46477a))
+* **website:** create the calandria-dev Pages project, attach the domains, harden TLS ([e894bae](https://github.com/calandria-dev/calandria/commit/e894baee424767a9df08c4523ab905ca778c5d49))
+
+
+### Bug Fixes
+
+* npm ci compiles better-sqlite3 despite gypfile:false (main is red) (calandria task 4aJN-clk-dIiQs0nIyerr) ([0162c61](https://github.com/calandria-dev/calandria/commit/0162c6176197d233f3b97b9ba8e74bdc59a1d413))
+* npm ci compiles better-sqlite3 despite gypfile:false (main is red) (calandria task 4aJN-clk-dIiQs0nIyerr) ([59a9dc3](https://github.com/calandria-dev/calandria/commit/59a9dc32dc9bcaa7082bc8b2b9d18a3243958edc))
+
 ## [0.3.0](https://github.com/calandria-dev/calandria/compare/v0.2.0...v0.3.0) (2026-08-27)
 
 
