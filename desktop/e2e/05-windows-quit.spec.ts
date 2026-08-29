@@ -15,15 +15,19 @@
  *                            quit lifecycle runs at all. Ending a task is not a
  *                            quit here, and neither is clicking the X.
  *   `taskkill /pid n /F`     is `TerminateProcess`. No window message, no
- *                            handler, no supervisor. The sidecars are not in a
- *                            job object and were spawned without `detached`
- *                            (which on Windows would mean a new console
- *                            window), so nothing reaps them: they survive,
- *                            holding the instance's ports and its database
- *                            lock. `/T` is what walks the tree.
+ *                            handler, no supervisor — the app hears nothing at
+ *                            all, which is the half of this that is a fact
+ *                            about Windows and is asserted below. What becomes
+ *                            of the two node sidecars is NOT: they are in no
+ *                            job object, but their stdout and stderr are pipes
+ *                            whose read ends die with the parent, so the first
+ *                            thing either one logs is an EPIPE it does not
+ *                            survive. On windows-latest that took both of them
+ *                            within the poll window. `/T` walks the tree and is
+ *                            kept for the runner where it does not.
  *
- * The first of those changed under us, and the test below now pins the current
- * answer rather than the old one. Close-to-quit was replaced by close-to-tray
+ * Both of those changed under us, and the tests below pin the current answers
+ * rather than the ones this file was written with. Close-to-quit was replaced by close-to-tray
  * (`decideClose()` in `main.js`, and the "Close vs quit" note it carries):
  * hiding is gated on a status area that is ACTUALLY drawing the icon, and on
  * win32 `confirmTrayResidency` answers `hosted: true` unconditionally, because
@@ -109,8 +113,9 @@ test.describe("Windows process termination", () => {
     shell = null; // already gone; nothing for afterAll to stop
   });
 
-  test("taskkill /F without /T orphans the sidecars, and /T is what reaps them", async () => {
+  test("taskkill /F runs no lifecycle at all, and leaves nothing of the instance behind", async () => {
     shell = await launchShell("win-taskkill-force");
+    const origin = shell.origin;
     const marker = await quitEventRecorder(shell);
     const electron = await electronPid(shell);
     const sidecars = sidecarPids(electron);
@@ -123,30 +128,48 @@ test.describe("Windows process termination", () => {
       .poll(() => alive(electron), { timeout: 60_000, message: "the shell survived taskkill /F" })
       .toBe(false);
 
-    // TerminateProcess delivers nothing the app can hear.
+    // TerminateProcess delivers nothing the app can hear. This is the claim
+    // about Windows that this file exists to pin, and it is the one that
+    // decides product behaviour: there is no handler to write, because there is
+    // no event. `03-quit-drain` covers the path where there IS one.
     expect(fs.readFileSync(marker, "utf8"), "a lifecycle event fired on TerminateProcess").toBe("");
 
-    // The hazard, stated as the weakest true form of it: at least one sidecar is
-    // still running with its parent gone. Both normally are — the reason this is
-    // not `expect(both).toBe(true)` is that a sidecar that happens to log in this
-    // window writes into a pipe whose read end just closed, and an EPIPE would
-    // take that one process down for a reason unrelated to what is being tested.
-    const orphans = pids.filter(alive);
-    expect(
-      orphans.length,
-      "taskkill /F reaped the sidecars on its own — if that is now true, desktop/e2e/fixtures.ts's " +
-        "killTree() no longer needs /T and this test should say so instead"
-    ).toBeGreaterThan(0);
+    // WHAT HAPPENS TO THE SIDECARS IS THE PLATFORM'S ANSWER, AND WE MEASURE IT
+    // RATHER THAN ASSERT IT. This case used to require at least one orphan, on
+    // the reasoning that TerminateProcess kills one process and the two node
+    // children are not in a job object. It had never actually run — the file is
+    // `serial` and the case above it was red from the day it was written — and
+    // the first green run of the file measured the opposite: windows-latest
+    // left ZERO of the two alive. Their only inherited handles are the stdout
+    // and stderr pipes whose read ends the dying parent closed, so a sidecar
+    // that writes anything at all takes an EPIPE and goes down with it, and
+    // both of ours write. Requiring an orphan is therefore requiring the
+    // sidecars to stay SILENT, which is not a property of this app.
+    //
+    // So the assertion is the invariant the next spec file depends on instead —
+    // nothing of this instance is left holding its port or its database lock —
+    // and the observation is recorded rather than encoded. If a future runner
+    // does leave orphans, `/T` below is what takes them, and the log line says
+    // so.
+    const orphansAtKill = pids.filter(alive);
+    console.log(
+      `[spec] taskkill /F left ${orphansAtKill.length} of 2 sidecars running` +
+        (orphansAtKill.length ? ` (pids ${orphansAtKill.join(", ")}) — /T is what reaps them` : "")
+    );
 
-    // ...and this is why `quitShell`'s backstop uses /T. Doubles as the cleanup:
-    // an orphan here holds the port and the db lock into the next spec file.
-    for (const pid of orphans) taskkill(pid, ["/T", "/F"]);
-    await expect
-      .poll(() => pids.some(alive), { timeout: 30_000, message: "taskkill /T left a sidecar running" })
-      .toBe(false);
+    // `quitShell`'s backstop, run here as the cleanup it also is: an orphan
+    // holds the port and the db lock into the next spec file. Unconditional on
+    // purpose — the suite must not depend on the platform having done it, which
+    // is exactly why `desktop/e2e/fixtures.ts`'s killTree() keeps `/T`.
+    for (const pid of orphansAtKill) taskkill(pid, ["/T", "/F"]);
     // The launch wrapper too (see `electronPid`): `cmd.exe` normally exits with
     // the child it is waiting on, and this is only in case it doesn't.
     taskkill(shell.proc.pid!, ["/T", "/F"]);
+
+    await expect
+      .poll(() => pids.filter(alive), { timeout: 30_000, message: "a sidecar outlived taskkill /F and /T" })
+      .toEqual([]);
+    expect(await serverIsUp(origin), "something is still serving this instance's origin").toBe(false);
 
     shell = null;
   });
