@@ -144,7 +144,7 @@ hdiutil detach /tmp/cal-dmg
 codesign --verify --deep --strict /tmp/calandria-dmg.app
 CALANDRIA_TEST_BIN=/tmp/calandria-dmg.app/Contents/MacOS/Calandria \
   CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-dmg.app \
-  npx playwright test --config playwright.desktop.config.ts 06-packaged 08-macos-launchd
+  npx playwright test --config playwright.desktop.config.ts 06-packaged
 ```
 
 `CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
