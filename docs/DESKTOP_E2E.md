@@ -159,23 +159,43 @@ whatever the runner's display allows. The hosted macOS and Windows runners have
 a 1024x768 virtual display and clamp `main.js`'s requested 1440x900 down to fit
 it; `xvfb-run`'s screen is larger and there is no window manager to clamp
 anything, so the ubuntu lane really does get 1440x900. That gap cost a full
-debugging round on PR #54: at 1024 the app's three fixed columns (236 + 352 +
-430) left the transcript ~4px, so 02-smoke's streamed message was laid out at
-zero width — present in the DOM and in the accessibility snapshot, `hidden` to
-`toBeVisible`, and identically red on both real-window-manager lanes. The
-product side is fixed (the rail now yields to a floor under the transcript,
-`SESS_MAIN_MIN`) and pinned Linux-side by a 1024x768 case in
-`e2e/03-views.spec.ts`, so the desktop lane is no longer the only thing standing
-between that layout rule and a release. There was a **second** narrow-window
-defect behind it, which CI could not have shown: this file runs `serial`, so the
-terminal spec after the transcript one was skipped rather than run, and the
-1024x768 window is short as well as narrow — with the drawer taking 300 of 716
-rows, `.tc-scroll`'s incompressible 40px `padding-bottom` overhung the drawer's
-button bar and swallowed the clicks on it. Reproduce both locally rather than by
-pushing: `xvfb-run -a -s "-screen 0 1024x768x24"` with `openbox` running inside
-it clamps the window to 1022x716 exactly as a hosted runner's WM does, and
-without a window manager Xvfb clamps nothing, which is precisely why the ubuntu
-lane cannot see any of this. What remains is a reading habit: a
+debugging round on PR #54, and three separate defects came out of it.
+
+**The transcript at zero width.** At 1024 the app's three fixed columns
+(236 + 352 + 430) left it ~4px, so 02-smoke's streamed message was present in
+the DOM and in the accessibility snapshot, `hidden` to `toBeVisible`, and
+identically red on both real-window-manager lanes. Two rules fix it and they
+compose: a render-time floor under the transcript (`SESS_MAIN_MIN`) for a pane
+too narrow for its tracks, and `AUTO_COLLAPSE_BELOW` (#66) shedding a side
+column to a 30px spine so the pane does not get there. Both are pinned
+Linux-side in `e2e/03-views.spec.ts`, so the desktop lane is no longer the only
+thing standing between that layout rule and a release.
+
+**A rail painting over the terminal drawer.** The 1024x768 window is short as
+well as narrow, and the panes in `.session-body` are flex columns of
+`flex:0 0 auto` chrome around one scroller — so a body shorter than its own
+chrome overflows, and a plain overflowing block paints on top of the next thing
+in the shell column. That is the drawer, and what it covers first is the
+drawer's button bar. It surfaced as a 30s `locator.click` timeout on Hide with
+`.tc-bar` named as the interceptor. `.tc-scroll`'s incompressible 40px
+`padding-bottom` was the same bug one element lower; the general rule is that
+`.session-body` clips and `.tc-bar` shrinks with its own scroll, so nothing is
+lost that cannot be scrolled back to.
+
+**A spec that assumed which columns were open.** Under `AUTO_COLLAPSE_BELOW` the
+projects column is a 30px spine at 1024, so `getByText(PROJECT)` is not in the
+document on the two clamped lanes and 02-smoke failed on its first assertion.
+A suite with no viewport of its own must not navigate by clicking the sidebars:
+it selects through the URL (`?project=&task=`) instead, and clicking through the
+shell stays the browser suite's business at a viewport it pins.
+
+Reproduce all three locally rather than by pushing: `xvfb-run -a -s "-screen 0
+1024x768x24"` with `openbox` running inside it clamps the window to 1022x716
+exactly as a hosted runner's WM does, and without a window manager Xvfb clamps
+nothing, which is precisely why the ubuntu lane cannot see any of this. Note
+that this file runs `serial`, so a red spec SKIPS the ones after it — the
+drawer defect was hidden behind the transcript one for a full round. What
+remains is a reading habit: a
 desktop spec that fails on the windowed lanes and passes under Xvfb is a size
 question until something rules it out, which is why `attachShellLog` now appends
 the window's content bounds and the display's size to every failure it attaches.
