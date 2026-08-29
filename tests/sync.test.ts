@@ -216,3 +216,29 @@ describe("sync against a non-default base branch", () => {
     expect(fs.existsSync(path.join(wt.path, "main.txt"))).toBe(false);
   });
 });
+
+// A project whose base branch only takes pull requests can still hit conflicts,
+// and resolving them is the same work: merge the base INTO the task branch so
+// the PR becomes mergeable. What it must not do is the second half — landing
+// that branch on the local base, which is the merge that can never be pushed.
+describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
+  it("commits the resolution to the work branch and leaves the base branch where it was", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    const baseBefore = await git(repo, "rev-parse", "main");
+    const args = { repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main" };
+
+    await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
+    writeFile(wt.path, "file.txt", "merged version\n");
+    const res = await completeWorktreeMerge({ ...args, message: "land it", resolveOnly: true });
+
+    expect(res).toMatchObject({ ok: true, resolveOnly: true, targetBranch: wt.branch });
+    expect(await git(repo, "rev-parse", "main")).toBe(baseBefore);
+
+    // The branch now contains the base — which is the whole point — and the
+    // paused merge is gone, so the banner has nothing left to ask about.
+    const s = await worktreeSyncStatus(args);
+    expect(s).toMatchObject({ behind: 0, mergeInProgress: false, conflicts: [] });
+  });
+});

@@ -580,6 +580,26 @@ export interface PushResult {
   label?: string; // "origin/main"
   error?: string;
   detail?: string; // hook/rejection output beyond the one-line headline, if any
+  prRequired?: boolean; // the base branch only takes pull requests — this push can never work
+}
+
+/**
+ * The forge's way of saying "this branch only moves through a pull request", in
+ * the spellings it actually arrives in: a GitHub ruleset ("Changes must be made
+ * through a pull request"), classic branch protection ("GH006: Protected branch
+ * update failed"), and the plainer wording other forges use. Matched against raw
+ * stderr, because the pre-receive prefix and the hint block are still on it.
+ */
+const PROTECTED_REJECTION =
+  /GH006|protected branch|branch is protected|through a pull request|pull request is required|requires a pull request/i;
+
+/**
+ * The one sentence a protected-base refusal says, wherever it was noticed —
+ * preflighted from the project's landing policy or read back off the remote.
+ * Both paths have to say the same thing or the two would read as two problems.
+ */
+export function prRequiredMessage(baseBranch: string): string {
+  return `${baseBranch} requires a pull request — open a PR instead`;
 }
 
 // A push moves more data than a fetch of one branch, so it gets the same
@@ -591,8 +611,20 @@ const PUSH_TIMEOUT_MS = 120_000;
  * remote has moved on or branch protection says no, that's a rejection to report,
  * never something to override. Offered after a merge lands, so the app-side loop
  * and the GitHub-side loop stop drifting apart — but only ever on a click.
+ *
+ * `prRequired` is the caller's landing policy (`projects.landing_mode === "pr"`),
+ * preflighted here: under it the push is already known to be refused, and saying
+ * so before the network beats spending two minutes to be told GH006. The remote
+ * gets the last word either way — a project still on the default policy against a
+ * protected branch is recognized from the rejection and given the same sentence,
+ * with the forge's own text kept in `detail`.
  */
-export async function pushBaseBranch(repoPath: string, baseBranch: string): Promise<PushResult> {
+export async function pushBaseBranch(
+  repoPath: string,
+  baseBranch: string,
+  opts: { prRequired?: boolean } = {},
+): Promise<PushResult> {
+  if (opts.prRequired) return { ok: false, prRequired: true, error: prRequiredMessage(baseBranch) };
   if (!GIT_FETCH_ENABLED) return { ok: false, error: "remote access is turned off for this instance" };
   const up = await baseRemote(repoPath, baseBranch).catch(() => null);
   if (!up) return { ok: false, error: "this repo has no remote to push to" };
@@ -602,7 +634,10 @@ export async function pushBaseBranch(repoPath: string, baseBranch: string): Prom
     return { ok: true, label: up.label };
   } catch (e) {
     const detail = gitErrorDetail(e);
-    return { ok: false, label: up.label, error: gitErrorLine(e, "git push failed"), ...(detail ? { detail } : {}) };
+    const line = gitErrorLine(e, "git push failed");
+    if (PROTECTED_REJECTION.test(subprocessStderr(e)))
+      return { ok: false, label: up.label, prRequired: true, error: prRequiredMessage(baseBranch), detail: detail || line };
+    return { ok: false, label: up.label, error: line, ...(detail ? { detail } : {}) };
   }
 }
 
@@ -1488,6 +1523,7 @@ export interface MergeResult {
   dirty?: DirtyEntry[]; // in-place merge refused: what's uncommitted in the MAIN checkout
   dirtyTruncated?: boolean; // `dirty` was clipped at DIRTY_CAP
   stashed?: StashRestore; // set when the merge ran after stashing that dirt aside
+  resolveOnly?: boolean; // the resolution was committed to the work branch and nothing landed on the base
 }
 
 /** One `git status --porcelain` entry of a repo's main working tree. */
@@ -2255,8 +2291,14 @@ export async function completeWorktreeMerge(input: {
   baseBranch: string;
   message: string;
   stashDirty?: string[]; // acknowledged main-checkout dirt — see `mergeTask`
+  // Stop once the resolution is committed to the work branch, without landing it
+  // on the base. What "accept" means under a PR landing policy: the base only
+  // moves through a pull request, so the whole point of the sync merge is to make
+  // the BRANCH contain the base — landing it locally is the thing that can't be
+  // pushed afterwards.
+  resolveOnly?: boolean;
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message, stashDirty } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, stashDirty, resolveOnly } = input;
   const { mergeInProgress } = await worktreeMergeStatus(worktreePath);
 
   // Editing a conflicted file leaves it "unmerged" until staged; stage first so a
@@ -2277,6 +2319,14 @@ export async function completeWorktreeMerge(input: {
     } catch {
       await git(worktreePath, [...FALLBACK_IDENTITY, "commit", "--no-edit", "--no-verify"]);
     }
+  }
+
+  // The merge commit is in the work branch and that is the whole job. Its marker
+  // is spent for the same reason the landing path drops it: there is no longer a
+  // pre-merge state a "discard" could unwind to.
+  if (resolveOnly) {
+    await clearMergeAbortMarker(worktreePath);
+    return { ok: true, targetBranch: workBranch, committed: mergeInProgress, resolveOnly: true };
   }
 
   const result = await mergeTask({ repoPath, worktreePath, workBranch, baseBranch, message, stashDirty });

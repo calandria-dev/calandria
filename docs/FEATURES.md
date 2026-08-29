@@ -151,6 +151,18 @@ that Merge will be rejected, and that finishing means opening a PR. On a repo wi
 ruleset, the old unconditional wording sent every session off to press a button that could
 not work.
 
+The buttons follow the setting, for the same reason. Under `pr` the Changes tab makes **Create
+PR** the primary action; **Merge** stays available but demoted to **Merge locally…**, whose
+first click opens a note rather than merging — a local merge really does work, it just moves
+the copy of the base branch in your own checkout and can never be pushed afterwards, which is
+how you end up with a local `main` diverged from origin and nothing to do about it but reset.
+So the **Push to origin** offer that follows an ordinary merge is replaced under `pr` by a
+line saying the merge was local only. The push route refuses it server-side too, in the same
+words — a stale tab shouldn't be able to try. That refusal is not only about the setting: a
+protected-branch rejection from the remote is recognized wherever the policy says otherwise,
+and reported as "`main` requires a pull request — open a PR instead", with GitHub's own
+`GH006` text kept underneath rather than shown as the headline.
+
 **Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
 `pull_request` rule, and classic branch protection, neither of which reports the other. It
 runs on its own when you open the settings dialog and when you point a new project at a
@@ -180,7 +192,8 @@ real remote tip instead of a local `main` that's gone stale.
 Your own checkout is never moved without your say-so. When local `main` is behind, the
 project header offers a one-click fast-forward. When it's ahead, it offers a push. When the
 two have diverged, it says so and leaves the resolution to you. After a merge lands, the same
-push is offered inline. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
+push is offered inline — except under a pull-request landing policy, where it can only be
+rejected. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
 
 When the base branch advances, an in-flight task's pending merge can go from a plain
 fast-forward to needing a sync first; the sync banner explains that the base moved. When the
@@ -190,6 +203,13 @@ the banner switches to "conflicts resolved" with **Accept & merge** (the same as
 tab's Merge button) and **Review** to open that tab first, where **Discard** returns the
 worktree to where it was. Only Accept or Discard clears the banner. If the agent leaves some
 files still conflicted, the banner counts them and offers another pass.
+
+Resolving conflicts is the same work under either landing policy — it merges the base *into*
+the task branch, which is exactly what an out-of-date PR needs — so the demotion above leaves
+it alone. Only the last step changes: under `pr` the button reads **Accept resolution** and
+stops once the merge is committed to the task branch, because the second half (landing that
+branch on the base) is the move the remote would refuse. The task isn't marked merged, and
+pushing the branch — Create PR / Update PR — is what makes the work land.
 
 A merge into the branch your own checkout has open runs inside that checkout, and git only
 allows that on a clean tree. If it isn't clean, the merge is refused and the card shows

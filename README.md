@@ -42,8 +42,10 @@ covers it. No API key needed.
   rest keep shipping to `main`.
 - **Say how work lands.** A project lands by merge or by pull request, and
   every session in it is told which. On a repo whose base branch requires a
-  PR, agents stop reaching for a Merge that GitHub will reject. Calandria can
-  read the branch's rules from GitHub and preselect the answer.
+  PR, agents stop reaching for a Merge that GitHub will reject — and so does
+  the diff rail: Create PR becomes the primary button, and the local merge
+  says up front that it can't be pushed. Calandria can read the branch's rules
+  from GitHub and preselect the answer.
 
 ## How it works
 

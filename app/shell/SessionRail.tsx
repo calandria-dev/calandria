@@ -149,7 +149,7 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
       </div>
       <div className="rail-scroll">
         {tab === "diff" && (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={refreshChanges} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} projectId={project.id} running={running} prUrl={task.pr_url} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={refreshChanges} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             if (res.resolving) onSwitchToChat();
             return res;
