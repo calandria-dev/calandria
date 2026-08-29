@@ -474,7 +474,7 @@ function calandriaServer(
                 // model's word for WHICH task. The closed-over `task` is the
                 // caller, and lib/prTools.ts re-reads it: this turn's snapshot
                 // predates its own worktree cut.
-                const { url, text } = await createPrForAgent(task, args);
+                const { url, text } = await createPrForAgent(task, args, (id) => hooks?.onPrOpened(id));
                 return { content: [{ type: "text", text }], ...(url ? {} : { isError: true }) };
               }
             ),

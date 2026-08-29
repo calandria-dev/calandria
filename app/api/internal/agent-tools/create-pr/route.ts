@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { createPrForAgent } from "@/lib/prTools";
+import { schedulePrRefresh, startPrPolling } from "@/lib/prState";
 
 export const dynamic = "force-dynamic";
 // Push + `gh pr create` against github.com, with createTaskPr's own 120s
@@ -36,10 +37,16 @@ export async function POST(req: NextRequest) {
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });
 
-  const { url, text } = await createPrForAgent(caller, {
-    title: typeof body.title === "string" ? body.title : undefined,
-    body: typeof body.body === "string" ? body.body : undefined,
-  });
+  const { url, text } = await createPrForAgent(
+    caller,
+    {
+      title: typeof body.title === "string" ? body.title : undefined,
+      body: typeof body.body === "string" ? body.body : undefined,
+    },
+    // The bridge's own kick: this is an ordinary sync route entry, so unlike
+    // the in-process driver it may reach lib/prState.ts directly.
+    (id) => { schedulePrRefresh(id, { force: true }); startPrPolling(); }
+  );
 
   // 400, not 404: the caller's row exists (we just read it), and the request
   // either landed on a project that doesn't open PRs at all or on a push github

@@ -17,12 +17,19 @@
  *
  * DB + git + gh only — no driver, no agent SDK. Pinned SDK-free in
  * tests/importGraph.test.ts, because the internal agent-tools route sits on it.
+ *
+ * That pin is why the post-open state refresh is an INJECTED callback rather
+ * than a call into lib/prState.ts. prState reaches lib/reclaim.ts (a landed PR
+ * is a reclaimable checkout), reclaim reaches a launcher, and the Claude driver
+ * imports this module for `create_pr` — so importing prState here would close
+ * the registry → driver → … → runner → registry cycle that killed auto-start
+ * in prod while dev and vitest stayed green. Each caller passes `onOpened`:
+ * the two route entries their own kick, the driver `TurnHooks.onPrOpened`.
  */
 import { getProject, getTask, listSummaries, updateTask } from "./store";
 import { commitWorktree, taskCommitMessage } from "./git";
 import { resolveBaseBranch } from "./baseBranch";
 import { buildPrBody, createTaskPr, parsePrNumber, type CreatePrResult } from "./github";
-import { schedulePrRefresh, startPrPolling } from "./prState";
 import type { Project, Task } from "./types";
 
 /**
@@ -38,7 +45,8 @@ import type { Project, Task } from "./types";
 export async function openTaskPr(
   task: Task,
   project: Project,
-  overrides: { title?: string; body?: string } = {}
+  overrides: { title?: string; body?: string } = {},
+  onOpened?: (taskId: string) => void
 ): Promise<CreatePrResult> {
   if (!task.worktree_path || !task.work_branch)
     return { ok: false, error: "this task has no isolated branch to open a PR from" };
@@ -70,10 +78,9 @@ export async function openTaskPr(
     // must not reorder the board (setTaskPrState).
     updateTask(task.id, { pr_url: result.url, pr_number: parsePrNumber(result.url) });
     // First read of the PR's actual state, detached: the caller returns now, and
-    // the chip fills in over /api/events. startPrPolling restarts a sweep that
-    // stopped itself when the last open PR landed.
-    schedulePrRefresh(task.id, { force: true });
-    startPrPolling();
+    // the chip fills in over /api/events. The callback also restarts the sweep
+    // that stopped itself when the last open PR landed.
+    onOpened?.(task.id);
   }
   return result;
 }
@@ -92,7 +99,8 @@ export async function openTaskPr(
  */
 export async function createPrForAgent(
   caller: Task,
-  input: { title?: string; body?: string }
+  input: { title?: string; body?: string },
+  onOpened?: (taskId: string) => void
 ): Promise<{ url: string | null; text: string }> {
   const fail = (text: string) => ({ url: null, text });
 
@@ -120,7 +128,7 @@ export async function createPrForAgent(
       "Could not open a PR: this task has no isolated branch to open one from. Nothing was pushed."
     );
 
-  const result = await openTaskPr(task, project, input);
+  const result = await openTaskPr(task, project, input, onOpened);
   if (!result.ok || !result.url)
     return fail(
       `Could not open a PR: ${result.error || "gh reported no URL."}${result.detail ? `\n\n${result.detail}` : ""}`

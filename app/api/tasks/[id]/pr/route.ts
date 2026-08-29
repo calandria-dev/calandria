@@ -42,6 +42,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const project = getProject(task.project_id);
   if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
-  const result = await openTaskPr(task, project);
+  const result = await openTaskPr(task, project, {}, (id) => {
+    // First read of the PR's actual state, detached: the response returns now
+    // and the chip fills in over /api/events. startPrPolling restarts a sweep
+    // that stopped itself when the last open PR landed.
+    schedulePrRefresh(id, { force: true });
+    startPrPolling();
+  });
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });
 }
