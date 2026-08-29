@@ -377,6 +377,11 @@ export async function cloneRepo(spec: string): Promise<{ path: string; branch: s
 }
 
 // Distill git/gh's stderr wall into the line that says what actually failed.
+/** Everything a failed subprocess wrote to stderr, for matching on rather than showing. */
+function rawStderr(e: unknown): string {
+  return e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
+}
+
 function cliErrorMessage(e: unknown, fallback: string): string {
   const stderr = e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
   const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -611,6 +616,8 @@ export interface PrSnapshot {
   mergedAt: number;
   /** gh's mergeStateStatus (CLEAN/BLOCKED/DIRTY/BEHIND/…), "" when unknown. */
   mergeState: string;
+  /** Is the PR still a draft? A draft cannot be merged, by anyone. */
+  draft: boolean;
 }
 
 // One entry of gh's statusCheckRollup: a GitHub Actions CheckRun (status +
@@ -678,7 +685,7 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
   try {
     ({ stdout } = await run(
       resolveGhBin(),
-      ["pr", "view", String(number), "--json", "state,mergedAt,statusCheckRollup,mergeStateStatus,reviewDecision"],
+      ["pr", "view", String(number), "--json", "state,mergedAt,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft"],
       {
         cwd,
         timeout: 30_000,
@@ -700,6 +707,7 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
     statusCheckRollup?: RollupEntry[] | null;
     mergeStateStatus?: string | null;
     reviewDecision?: string | null;
+    isDraft?: boolean | null;
   };
   try {
     raw = JSON.parse(stdout || "{}");
@@ -720,6 +728,123 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
       review: String(raw.reviewDecision || ""),
       mergedAt: Number.isFinite(mergedAt) ? mergedAt : 0,
       mergeState: String(raw.mergeStateStatus || ""),
+      draft: raw.isDraft === true,
     },
   };
+}
+
+// ---------- landing a pull request ----------
+
+/**
+ * `owner/repo` from a GitHub remote URL, or "" when it isn't one we recognise.
+ * Handles the spellings git hands out — `git@github.com:o/r.git`,
+ * `https://github.com/o/r[.git]`, `ssh://git@github.com/o/r` — and gives up on
+ * anything else, which just leaves gh to infer the repo from the checkout the
+ * way it already does everywhere else. Pure: no subprocess, no network.
+ */
+export function repoSlug(remoteUrl: string): string {
+  const m = /github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec((remoteUrl || "").trim());
+  return m ? `${m[1]}/${m[2]}` : "";
+}
+
+export interface MergePrResult {
+  ok: boolean;
+  /** Auto-merge is armed: GitHub lands it the moment its requirements are met. */
+  queued?: boolean;
+  /** It merged there and then. */
+  merged?: boolean;
+  /** Set when --auto was refused and we fell back to a plain squash — the reason gh gave. */
+  fellBack?: string;
+  error?: string;
+}
+
+// gh's own wording when `enablePullRequestAutoMerge` refuses. Two cases reach
+// here and BOTH mean "merge it now instead": the repo has auto-merge switched
+// off, and the PR is already in "clean status" so there is nothing left to wait
+// for. Matching the mutation name as well covers the rest of that family
+// without guessing at GraphQL's phrasing for each one.
+const AUTO_MERGE_REFUSED = /failed to enable auto[- ]?merge|enablePullRequestAutoMerge|auto[- ]?merge is not allowed|clean status/i;
+
+/**
+ * Was THIS the thing that failed — arming auto-merge — rather than the merge
+ * itself? Only then is retrying as a plain squash the right move; a PR that is
+ * genuinely unmergeable must report that, not merge by a second route. Pure,
+ * exported for tests.
+ */
+export function autoMergeRefused(stderr: string): boolean {
+  return AUTO_MERGE_REFUSED.test(stderr || "");
+}
+
+/**
+ * Squash-merge a task's PR on GitHub — the one click that closes the loop the
+ * app opened with `createTaskPr`, so landing reviewed work doesn't mean leaving
+ * Calandria for github.com.
+ *
+ * `--auto` is the point. With auto-merge enabled on the repo and required
+ * checks configured, the click QUEUES the merge and GitHub lands it the moment
+ * CI goes green, instead of the user sitting on the tab waiting for a tick. A
+ * repo with auto-merge disabled refuses that mutation, and so does a PR that is
+ * already clean — both fall back to a plain `--squash`, and the result says
+ * which of the two happened rather than letting the caller assume.
+ *
+ * `--repo` is passed whenever the origin remote parses, and does double duty:
+ * it names the repo without gh having to infer it, and it puts gh in a
+ * non-local context, so `--delete-branch` deletes the REMOTE branch only. That
+ * is deliberate. The task's local branch IS the task's diff (the same rule
+ * lib/worktreeSweep.ts keeps: a checkout is regenerable, a branch is not), and
+ * it is checked out by the task's worktree, so a local delete would fail and
+ * report a merge that actually succeeded as an error.
+ *
+ * Never throws: every failure comes back as `{ ok: false, error }`.
+ */
+export async function mergeTaskPr(input: { repoPath: string; number: number }): Promise<MergePrResult> {
+  if (!input.number) return { ok: false, error: "this task has no pull request to merge" };
+  const st = await ghStatus();
+  if (!st.installed) return { ok: false, error: ghMissingMessage() };
+  if (!st.authenticated) return { ok: false, error: "gh is not logged in to GitHub. Connect GitHub in Settings, then merge again." };
+
+  const opts = {
+    cwd: input.repoPath,
+    timeout: 120_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+  };
+
+  const remote = await run("git", ["-C", input.repoPath, "remote", "get-url", "origin"], {
+    timeout: 15_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
+    .then((r) => r.stdout.trim())
+    .catch(() => "");
+  const slug = repoSlug(remote);
+  const target = ["pr", "merge", String(input.number), ...(slug ? ["--repo", slug] : [])];
+
+  // A plain --squash from here is still gh's own merge: same strategy, same
+  // branch cleanup, just without waiting for requirements that this repo has
+  // no way to express.
+  const squashNow = async (fellBack?: string): Promise<MergePrResult> => {
+    try {
+      await run(resolveGhBin(), [...target, "--squash", "--delete-branch"], opts);
+      return { ok: true, merged: true, ...(fellBack ? { fellBack } : {}) };
+    } catch (e) {
+      return { ok: false, error: cliErrorMessage(e, "gh pr merge failed"), ...(fellBack ? { fellBack } : {}) };
+    }
+  };
+
+  try {
+    const { stdout, stderr } = await run(resolveGhBin(), [...target, "--squash", "--auto", "--delete-branch"], opts);
+    // gh reports which of the two it did. It merges outright when the PR is
+    // already mergeable and the repo uses no merge queue, so "--auto succeeded"
+    // is not by itself "queued".
+    const said = `${stdout || ""}\n${stderr || ""}`;
+    if (/merged pull request/i.test(said)) return { ok: true, merged: true };
+    return { ok: true, queued: true };
+  } catch (e) {
+    const msg = cliErrorMessage(e, "gh pr merge failed");
+    // Tested against the WHOLE stderr, not the one distilled line: gh writes
+    // "failed to enable auto-merge:" above the GraphQL detail, and which of the
+    // two cliErrorMessage picks is not something to hang the fallback on.
+    if (autoMergeRefused(rawStderr(e) || msg)) return squashNow(msg);
+    return { ok: false, error: msg };
+  }
 }

@@ -1066,14 +1066,27 @@ export function clearTaskWorktreePath(id: string, opts: { branch?: boolean } = {
  */
 export function setTaskPrState(
   id: string,
-  pr: { state: string; checks: string; review: string; merged_at: number; synced_at: number; number?: number }
+  pr: {
+    state: string;
+    checks: string;
+    review: string;
+    merged_at: number;
+    synced_at: number;
+    number?: number;
+    draft?: number;
+    merge_state?: string;
+  }
 ): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET pr_state = ?, pr_checks = ?, pr_review = ?, pr_merged_at = ?, pr_synced_at = ?,
-        pr_number = COALESCE(?, pr_number) WHERE id = ?`
+        pr_number = COALESCE(?, pr_number),
+        pr_draft = COALESCE(?, pr_draft), pr_merge_state = COALESCE(?, pr_merge_state) WHERE id = ?`
     )
-    .run(pr.state, pr.checks, pr.review, pr.merged_at, pr.synced_at, pr.number ?? null, id);
+    .run(
+      pr.state, pr.checks, pr.review, pr.merged_at, pr.synced_at,
+      pr.number ?? null, pr.draft ?? null, pr.merge_state ?? null, id
+    );
   return getTask(id);
 }
 

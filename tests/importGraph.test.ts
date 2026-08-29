@@ -39,6 +39,7 @@ const PINNED = [
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/prMerge.ts", //          may this PR be squash-merged, and if not why not; pure types-only policy the client bundles alongside the route that enforces it
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
   "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here

@@ -55,6 +55,10 @@ export interface PrView {
   review: string;
   merged_at: number;
   synced_at: number;
+  /** 1 while the PR is a draft — open, but unmergeable by anyone. */
+  draft: number;
+  /** gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown). */
+  merge_state: string;
   refreshing: boolean;
 }
 
@@ -69,6 +73,8 @@ export function prView(task: Task): PrView | null {
     review: task.pr_review,
     merged_at: task.pr_merged_at,
     synced_at: task.pr_synced_at,
+    draft: task.pr_draft,
+    merge_state: task.pr_merge_state,
     refreshing: inFlight.has(task.id),
   };
 }
@@ -76,13 +82,18 @@ export function prView(task: Task): PrView | null {
 // Did GitHub actually tell us something new? pr_synced_at moves on EVERY
 // refresh, so comparing whole rows would publish a "the task changed" event
 // every five minutes forever and have every tab refetch its tray for nothing.
-// Only the four facts a human can see count as a change.
+// Only the facts a human can see count as a change — which now includes the two
+// the Squash & merge button is enabled off (lib/prMerge.ts): a draft marked
+// ready, or a conflict appearing, has to reach the rail as promptly as a check
+// going red, or the button stays wrong until something else moves.
 function changed(task: Task, snap: PrSnapshot): boolean {
   return (
     task.pr_state !== snap.state ||
     task.pr_checks !== snap.checks ||
     task.pr_review !== snap.review ||
-    task.pr_merged_at !== snap.mergedAt
+    task.pr_merged_at !== snap.mergedAt ||
+    task.pr_draft !== (snap.draft ? 1 : 0) ||
+    task.pr_merge_state !== snap.mergeState
   );
 }
 
@@ -130,6 +141,8 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
         review: task.pr_review,
         merged_at: task.pr_merged_at,
         synced_at: now,
+        draft: task.pr_draft,
+        merge_state: task.pr_merge_state,
       });
       return { ok: false, reason: "failed", error: res.error };
     }
@@ -142,6 +155,8 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
       review: snap.review,
       merged_at: snap.mergedAt,
       synced_at: now,
+      draft: snap.draft ? 1 : 0,
+      merge_state: snap.mergeState,
     });
     // task_edited is the "refetch the row" event, which is exactly right here:
     // the coarse wire payload can't carry pr_state or a check rollup, so

@@ -5,6 +5,10 @@ import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
 import type { LandingMode, TaskComment } from "@/lib/types";
+import { prMergeBlocker, type PrMergeFacts } from "@/lib/prMerge";
+
+/** The PR fields this panel reads — exactly the set the merge decision needs. */
+type PrFacts = PrMergeFacts;
 
 interface DiffFile {
   path: string;
@@ -37,6 +41,17 @@ interface DirtyEntry {
   path: string;
   untracked: boolean;
 }
+// What POST /api/tasks/[id]/pr/merge answers with. `queued` and `merged` are
+// the two different things a successful click can mean and are never both set:
+// auto-merge armed and waiting on CI, or landed there and then.
+interface PrMergeResp {
+  ok?: boolean;
+  queued?: boolean;
+  merged?: boolean;
+  fellBack?: string; // --auto was refused (auto-merge off, or nothing left to wait for) and a plain squash ran
+  error?: string;
+}
+
 interface MergeResp {
   ok: boolean;
   targetBranch: string;
@@ -531,7 +546,7 @@ export default function TaskChanges({
   taskId,
   projectId,
   running,
-  prUrl,
+  pr,
   onMerged,
   onPrCreated,
   onResolveWithAI,
@@ -556,7 +571,11 @@ export default function TaskChanges({
   // (the session's sync banner accepting a resolution): the review state shown
   // here is otherwise re-read only on mount, a task switch, or a turn ending.
   refresh?: number;
-  prUrl?: string; // GitHub PR already opened from this branch ("" / undefined = none)
+  // The task's live PR state, straight off the row (lib/prState.ts keeps it
+  // fresh). The whole snapshot rather than just the URL, because "Squash &
+  // merge PR" is enabled off what GitHub actually says — open, not a draft, no
+  // conflicts, checks not failing — rather than off the mere existence of a PR.
+  pr?: PrFacts | null;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onResolveWithAI?: (taskId: string) => Promise<ResolveResult>;
@@ -572,6 +591,8 @@ export default function TaskChanges({
   const [prBusy, setPrBusy] = useState(false);
   const [prErr, setPrErr] = useState<string | null>(null);
   const [prDetail, setPrDetail] = useState<string | undefined>(undefined);
+  const [prMerging, setPrMerging] = useState(false);
+  const [prMergeRes, setPrMergeRes] = useState<PrMergeResp | null>(null);
   const [resolving, setResolving] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [dirtyHelp, setDirtyHelp] = useState(false);
@@ -793,6 +814,26 @@ export default function TaskChanges({
     }
   };
 
+  // Land the PR on GitHub without leaving the app. The server does the
+  // screening again against a fresh `gh pr view`, so a 409 here is a real
+  // "no, not any more" rather than a disagreement with the disabled state.
+  const doMergePr = async () => {
+    setPrMerging(true);
+    setPrMergeRes(null);
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/pr/merge`, { method: "POST" });
+      const res: PrMergeResp = await r.json();
+      setPrMergeRes({ ...res, ok: !!res.ok });
+    } catch (e) {
+      setPrMergeRes({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPrMerging(false);
+      // Nothing local changed — the merge happened on github.com — but the row's
+      // pr_* fields did, and they arrive on their own over /api/events.
+      setPrBusy(false);
+    }
+  };
+
   // Fix with AI: prepare the trial merge + stream a resolution turn (handled by
   // the parent so it shows in the transcript), then reload into review state.
   const doResolveWithAI = async () => {
@@ -895,6 +936,11 @@ export default function TaskChanges({
   const pending = !data.alreadyMerged || data.isDirty;
   // A conflict resolution is staged in the worktree, awaiting accept/discard.
   const reviewing = !!data.mergeInProgress;
+  const prUrl = pr?.pr_url || "";
+  // Why the PR can't be landed right now, or null when it can. Same predicate
+  // the route re-runs server-side (lib/prMerge.ts), so the tooltip on the
+  // disabled button is literally the refusal the POST would have returned.
+  const prBlock = pr ? prMergeBlocker(pr) : null;
 
   return (
     <div className="tc-root">
@@ -962,6 +1008,24 @@ export default function TaskChanges({
                 {prBusy ? (prUrl ? "Pushing…" : "Creating PR…") : prUrl ? "Update PR" : "Create PR"}
               </button>
             )}
+            {/* Landing the PR from here. Shown whenever one exists, and enabled
+                only when GitHub's own answer says it could be merged — a
+                disabled button that says WHY beats a live one that 409s. Under
+                a PR-required base this is THE landing action, which is why the
+                local merge below loses its primary styling rather than this. */}
+            {prUrl && (
+              <button
+                className="tc-btn tc-prmerge"
+                onClick={doMergePr}
+                disabled={prMerging || merging || prBusy || !!prBlock}
+                title={
+                  prBlock ||
+                  `Squash-merge PR #${pr?.pr_number} on GitHub and delete the remote branch. Where the repo allows auto-merge, this queues it and GitHub lands it the moment the required checks pass.`
+                }
+              >
+                {prMerging ? "Merging…" : "Squash & merge PR"}
+              </button>
+            )}
             {/* PR mode demotes this: the merge still works, but only ever on the
                 LOCAL base branch, which then can't be pushed. So it loses the
                 primary styling and the first click opens the note below rather
@@ -1026,6 +1090,21 @@ export default function TaskChanges({
         <div className="tc-mergebar bad">
           ⚠ {prErr}
           <ErrDetail detail={prDetail} />
+        </div>
+      )}
+
+      {/* Say which of the two happened. "Queued" and "merged" are different
+          promises and the user has to know which one they got: one means the
+          tab can be closed, the other means it already landed. */}
+      {prMergeRes && (
+        <div className={`tc-mergebar ${prMergeRes.ok ? "ok" : "bad"}`}>
+          {!prMergeRes.ok
+            ? `⚠ ${prMergeRes.error || "the pull request could not be merged"}`
+            : prMergeRes.queued
+              ? "Auto-merge is on. GitHub will squash-merge this pull request as soon as its requirements are met — you can close the tab."
+              : prMergeRes.fellBack
+                ? "Squash-merged on GitHub. Auto-merge wasn't available here, so it merged straight away."
+                : "Squash-merged on GitHub."}
         </div>
       )}
 
