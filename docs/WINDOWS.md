@@ -146,6 +146,15 @@ WEBPs and WOFF2s stay `-text` and are never converted. `tests/gitattributes.test
 three facts, the last of them (nothing committed CRLF) independently of the mechanism that
 produces it.
 
+That run also re-found the lane's very first bug, in a file written after the sweep that
+fixed it: `tests/backup.test.ts` closed its mid-WAL SQLite handle at the END of each case, so
+each CRLF failure produced a second red from the `afterEach` — `EBUSY: resource busy or
+locked, unlink ...\data\calandria.db` — burying the assertion that actually failed. The
+teardown owns the connection now, and retries the removal for handles the suite doesn't hold,
+which is the shape `tests/setup.ts` already used. **A fixture that opens a database, a server
+or a pty must close it from teardown, not from the test body**, or every failure on Windows
+reports twice and neither line names the cause.
+
 The e2e lane found nothing on its first run: 92 specs, green, in 2.7 minutes. The portability
 work the unit lane forced had already reached every file the e2e suite leans on: `e2e/env.ts`
 resolves its temp root through `fs.realpathSync.native` and strips the `\\?\` prefix, the
