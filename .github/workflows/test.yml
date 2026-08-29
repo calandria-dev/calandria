@@ -842,6 +842,9 @@ jobs:
       # a person would actually download, and building them here is the only way
       # to find out whether they open.
       - name: Package the desktop app
+        # The installer checks below key off this step by name rather than off
+        # the job's overall health — see the first of them.
+        id: package
         working-directory: desktop
         env:
           # electron-builder otherwise scans the keychain for a Developer ID and
@@ -935,10 +938,20 @@ jobs:
       # $RUNNER_TEMP is where the `dir` bundle already went — desktop/e2e/
       # fixtures.ts refuses to launch a binary from inside this checkout.
       - name: Unpack the app from the dmg
-        # See the launch step below: the packaged pass carries a pre-existing
-        # failure, and gating the installer checks behind it would mean the .dmg
-        # goes unverified every run without saying so.
-        if: ${{ !cancelled() }}
+        # Keyed to the PACKAGING step, not to the job. Two failure modes to tell
+        # apart, and a bare `!cancelled()` gets one of them badly wrong:
+        #
+        #   - the packaged suite above fails. It carries a pre-existing red (see
+        #     the launch step), and skipping the installer checks behind it would
+        #     leave the .dmg unverified every run without saying so.
+        #   - something BEFORE packaging fails, so there is no .dmg at all. Then
+        #     these steps must not run: they cannot find a file that was never
+        #     built, and they fail in a way that reads like an installer problem
+        #     while burying the real one. Worse, the launch step "passed" that
+        #     way once, against a bundle that did not exist.
+        #
+        # `steps.package.conclusion` distinguishes them; `!cancelled()` cannot.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
@@ -1003,10 +1016,8 @@ jobs:
       # red for a reason that has nothing to do with the dmg. Put it back when
       # that spec is fixed — it is the stronger test of the two.
       - name: Launch the app from the dmg
-        # The packaged pass above carries that pre-existing failure, and a
-        # skipped dmg check reads as "fine" when it is really "never ran". This
-        # step's actual dependency is the packaging step, not the suite.
-        if: ${{ !cancelled() }}
+        # Same gate as the unpack step above, and for the same reasons.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: npx playwright test --config playwright.desktop.config.ts 06-packaged
 
       # The .zip is the load-bearing macOS artifact even though nothing consumes
@@ -1015,7 +1026,7 @@ jobs:
       # at all. Checking it exists and holds an intact bundle is cheap; the feed
       # itself arrives with the publish block in the auto-update task.
       - name: Check the zip carries an intact bundle
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           zip=$(find desktop/dist -maxdepth 1 -name '*.zip' -type f | head -n 1)
