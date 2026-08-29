@@ -292,10 +292,12 @@ Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
 
 What remains open is distribution, not behaviour. Signing + notarization are
 required for anything downloaded (Gatekeeper blocks unsigned apps by default),
-and that stays §6's decision. The lane ad-hoc signs its artifact
-(`codesign --sign -`) for one narrow reason with no bearing on that: arm64 macOS
+and that stays §6's decision. The build ad-hoc signs the bundle
+(`mac.identity: "-"`) for one narrow reason with no bearing on that: arm64 macOS
 will not exec a Mach-O carrying no signature at all, and electron-builder
-invalidates the one Electron's prebuilt arrived with.
+invalidates the one Electron's prebuilt arrived with. §6.2 has why that sits in
+the build rather than in the lane, now that there are installer targets cut from
+the bundle it signs.
 
 **Windows** — **verified on real hardware**, not just on a runner: Windows 11 Pro
 26200, a logged-in console session, Defender real-time protection on. Native is the
@@ -602,20 +604,117 @@ The prototype now produces a real artifact, not just a `desktop/` checkout:
 cd desktop && npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
-npm run dist:mac      # → dist/mac-arm64/Calandria.app  (macOS host only)
 npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip  (Windows host)
+npm run dist:mac      # → dist/mac-arm64/Calandria.app, plus .dmg and .zip
 ```
 
-Signing, notarization and auto-update are deliberately **not** wired into this —
-that is still phase 2 (§7). `dist:mac` is `--dir` for the same reason the CI
-lanes are: an unpacked bundle is everything a test can launch, and the installer
-targets are where the signing decision would have to be made rather than
-deferred. The one signature it does need is not that decision: arm64 macOS
-refuses to exec a Mach-O with no signature at all, and electron-builder
-invalidates the one Electron's prebuilt binary arrived with, so an artifact
-built this way must be ad-hoc signed (`codesign --force --deep --sign - Calandria.app`)
-before it will start. That carries no identity and satisfies no Gatekeeper
-policy — it is what makes the file runnable on the machine that built it.
+Signing with a real identity, notarization and auto-update are deliberately
+**not** wired into this — that is still phase 2 (§7).
+
+### 6.1 The macOS targets, and which one matters
+
+`dist:mac` builds `dir`, `dmg` and `zip`. The unpacked `dir` bundle is what the
+CI lanes launch and the only form the launchd spec can `open`, so it stays. The
+other two are what a person would actually receive, and of those **the `.zip` is
+the load-bearing one** even though nothing consumes it yet. Squirrel.Mac — what
+`electron-updater` drives on macOS — updates from the `.zip`, not the `.dmg`, and
+a dmg-only build emits no `latest-mac.yml` at all, which means no macOS update
+feed exists. The `.dmg` is the download people expect; the `.zip` is the one the
+updater cannot work without. The feed itself arrives with the `publish` block in
+the auto-update work, not here.
+
+The dmg keeps electron-builder's default layout — app icon, `/Applications`
+symlink, no `dmg` block in `desktop/package.json`. There is nothing to brand
+until there is something to distribute.
+
+**Measured on the `macos-desktop` lane, 2026-08-29** (macos-latest, arm64), so
+the sizes here are observations rather than estimates:
+
+| Artifact | Size |
+|-|-|
+| `Calandria-0.3.0-arm64.dmg` | 464 MB |
+| `Calandria-0.3.0-arm64-mac.zip` | 480 MB |
+
+The dmg mounted, the app inside it verified (`valid on disk`, `satisfies its
+Designated Requirement`) and booted; the zip extracted to a bundle that verified
+the same way. Both are large for the reason §2's table gives: the payload, not
+Electron.
+
+### 6.2 The ad-hoc signature runs in the build, not in CI
+
+arm64 macOS will not exec a Mach-O carrying **no** signature at all — the kernel
+kills it — and electron-builder rewrites the binary and its resources, which
+invalidates the signature Electron's prebuilt arrived with. So every macOS
+artifact needs *a* signature before it will start, quite apart from the
+Developer ID question.
+
+That used to be a CI step: the `macos-desktop` lane packaged `--mac dir`, moved
+the `.app` out of the checkout and ran `codesign --force --deep --sign -` on it.
+**Adding installer targets made that placement wrong**, and the reason is
+ordering rather than taste. electron-builder cuts the `.dmg` and the `.zip` from
+the `.app` *during* packaging. A signature applied afterwards — to a bundle that
+has by then been moved out of `desktop/dist` — reaches the copy CI tests and
+nothing else. Both installers would ship an app the kernel refuses to launch,
+while every step in the lane stayed green.
+
+So it moved into the build, as `mac.identity: "-"` in `desktop/package.json`.
+That is electron-builder's own ad-hoc path (`MacTargetHelper.findSigningIdentity`
+special-cases `"-"` and hands `@electron/osx-sign` an identity-less signature),
+it runs before the targets are cut, and it means `npm run dist:mac` on a Mac
+produces artifacts that are launchable on the machine that built them without a
+second manual command. The lane now *verifies* the signature instead of applying
+it — a second signing path would paper over a build that quietly stopped signing
+and leave the installers broken behind a green run.
+
+It is also better coverage than the `--deep` it replaced, which mattered enough
+to check rather than assume. `@electron/osx-sign` walks the whole of
+`Contents/`, Mach-O-detects every file and signs them deepest-first, so it
+reaches the `extraResources` the payload lives in — `resources/node/bin/node`
+and the `.node` addons under `resources/app-payload/node_modules` — and not just
+the app and its frameworks. That matters more than tidiness: the vendored Node
+arrives from nodejs.org carrying Apple's own notarized, hardened-runtime
+signature, and hardened runtime means library validation, which would refuse to
+`dlopen` an unsigned `better-sqlite3`. Re-signing it ad-hoc is what clears that,
+and it is what `--deep` was quietly doing before. `--deep` is deprecated by
+Apple; deepest-first is the order Apple actually documents.
+
+One trap that placement inherits, recorded because it is invisible and its
+symptom is a signal kill rather than an error: **electron-builder skips macOS
+signing outright on pull-request builds.** `isSignAllowed()` in `app-builder-lib`
+treats a set `GITHUB_BASE_REF` as "this is a PR" and returns false before
+`identity` is even read. Since this lane's usual trigger is a labelled PR, the
+ad-hoc signature would silently not happen there. `CSC_FOR_PULL_REQUEST: "true"`
+on the packaging step is what re-enables it. The warning that flag carries is
+about exposing a real signing **certificate** to fork PRs, and there is no
+certificate here — but that stops being true the moment the signing task lands a
+Developer ID, and **that task must remove the flag**.
+
+### 6.3 What this does not achieve
+
+An ad-hoc signature does not survive distribution. It carries no identity,
+satisfies no Gatekeeper policy and notarizes nothing; it is what makes the file
+runnable, not what makes it distributable.
+
+A `.app` downloaded from the internet is tagged `com.apple.quarantine`, and
+without a Developer ID plus notarization Gatekeeper refuses it — usually as
+**"Calandria is damaged and can't be opened. You should move it to the Trash"**,
+which reads like a corrupt download and is not one. The lane prints the
+`spctl --assess` refusal on every run so this stays an observed fact rather than
+an assumption — and on 2026-08-29 it duly printed `Calandria.app: rejected` for
+a bundle whose signature `codesign --verify --deep --strict` had just accepted.
+That pair is the whole distinction: internally valid, and refused anyway.
+
+Until the signing work lands, an honest install instruction for a downloaded
+build is therefore:
+
+```bash
+# after dragging Calandria.app to /Applications
+xattr -dr com.apple.quarantine /Applications/Calandria.app
+```
+
+or right-click → Open and confirm the dialog. Either way it is **every install**,
+not once per machine. This is why the signing task is the real distribution
+work, and why §7's $99/yr is the price of the feature rather than a nicety.
 
 **Windows builds two targets, and neither is signed.** `nsis` is the installer
 proper: `oneClick: false` so it opens a wizard rather than installing wherever it

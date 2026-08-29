@@ -123,15 +123,28 @@ sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
 CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 \
   DISPLAY=:1 npm run test:desktop:window
 
-# macOS: what the macos-desktop CI job does (--mac dir is the only target
-# wired up — see "Building a package" below — and unsigned in the Developer
-# ID sense, so an ad-hoc signature is what lets arm64 exec it at all)
+# macOS: what the macos-desktop CI job does. dist:mac builds dir, dmg and zip
+# (see "Building a package" below); the suite runs against the unpacked `dir`
+# bundle. The build ad-hoc signs it via mac.identity "-" — no codesign step
+# here — which is what lets arm64 exec it at all. It is still unsigned in the
+# Developer ID sense.
 cd desktop && npm run dist:mac
 cd .. && mv desktop/dist/mac*/Calandria.app /tmp/calandria-app.app   # mac-arm64 or mac, by host arch
-codesign --force --deep --sign - /tmp/calandria-app.app
+codesign --verify --deep --strict /tmp/calandria-app.app             # should pass; if not, nothing will launch
 CALANDRIA_TEST_BIN=/tmp/calandria-app.app/Contents/MacOS/Calandria \
   CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-app.app \
   npm run test:desktop:window
+
+# what the .dmg actually contains — the only thing that proves an installer
+# opens. Two specs, not the suite: the app inside is a ditto copy of the same
+# bundle, so all the round trip can break is the signature and the launch.
+hdiutil attach desktop/dist/*.dmg -nobrowse -readonly -mountpoint /tmp/cal-dmg
+ditto /tmp/cal-dmg/Calandria.app /tmp/calandria-dmg.app
+hdiutil detach /tmp/cal-dmg
+codesign --verify --deep --strict /tmp/calandria-dmg.app
+CALANDRIA_TEST_BIN=/tmp/calandria-dmg.app/Contents/MacOS/Calandria \
+  CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-dmg.app \
+  npx playwright test --config playwright.desktop.config.ts 06-packaged
 ```
 
 `CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
@@ -291,18 +304,31 @@ npm run dist:mac      # → dist/mac(-arm64)/Calandria.app
 npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip
 ```
 
-`dist:mac` is `--dir` only — no `dmg`/`zip` target is wired up yet, since
-there's nowhere to publish one to without Developer ID signing and
-notarization, which stay a separate later decision (see the closing note
-below). `mac.identity: null` tells electron-builder not to sign at all
-rather than search the keychain for an identity that isn't there, so the
-`.app` it produces is unsigned in the Developer ID sense — which is fine for a
-bundle you built yourself, since Gatekeeper's assessment is triggered by the
-quarantine attribute a *download* carries, and matters the moment anyone
-distributes one. Unlike Linux, though, that's not optional to work around:
-arm64 macOS refuses to `exec` a Mach-O carrying no signature whatsoever, so
-the `.app` needs at least an ad-hoc signature (`codesign --force --deep
---sign -`) before anything, including the test suite below, can launch it.
+`dist:mac` builds all three of `mac.target`. `dir` is the unpacked bundle the
+test suite launches; `dmg` is the download people expect; `zip` is the one
+Squirrel.Mac needs, since `electron-updater` updates from the `.zip` on macOS
+and a dmg-only build emits no `latest-mac.yml` at all. The dmg keeps
+electron-builder's default layout — there is nothing to brand until there is
+something to distribute.
+
+All three are unsigned in the Developer ID sense, which stays a separate later
+decision (see the closing note below). What they *do* carry is an ad-hoc
+signature, because arm64 macOS refuses to `exec` a Mach-O carrying no signature
+whatsoever and electron-builder invalidates the one Electron's prebuilt arrived
+with. `mac.identity: "-"` asks electron-builder for exactly that, in the build,
+before the `dmg` and `zip` are cut from the bundle — which is why it is no
+longer a `codesign` you run afterwards. A signature applied to the `.app` after
+packaging never reaches the installers, so they would ship an app the kernel
+kills. `docs/DESKTOP_APP.md` §6.2 records the ordering in full, including the
+`CSC_FOR_PULL_REQUEST` trap that makes electron-builder skip signing on PR
+builds.
+
+Ad-hoc is still not distributable. A `.app` that arrives over the network carries
+the quarantine attribute, and Gatekeeper refuses an ad-hoc-signed bundle with
+"Calandria is damaged and can't be opened" — which is not a corrupt download.
+Until signing and notarization land, a downloaded build needs
+`xattr -dr com.apple.quarantine /Applications/Calandria.app`, or right-click →
+Open, on **every** install.
 
 `dist:win` does build real installer targets, unlike `dist:mac`, because on
 Windows there is no signing decision blocking one — there is only an unsigned

@@ -10,7 +10,7 @@
     "payload": "node scripts/build-payload.js",
     "dist:dir": "npm run payload && electron-builder --linux dir",
     "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage",
-    "dist:mac": "npm run payload && electron-builder --mac dir",
+    "dist:mac": "npm run payload && electron-builder --mac dir dmg zip",
     "dist:win": "npm run payload && electron-builder --win nsis zip"
   },
   "devDependencies": {
@@ -52,11 +52,13 @@
     "nodeGypRebuild": false,
     "mac": {
       "target": [
-        "dir"
+        "dir",
+        "dmg",
+        "zip"
       ],
       "category": "public.app-category.developer-tools",
       "icon": "../public/icons/icon-512.png",
-      "identity": null,
+      "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
