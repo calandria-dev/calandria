@@ -627,6 +627,19 @@ The dmg keeps electron-builder's default layout — app icon, `/Applications`
 symlink, no `dmg` block in `desktop/package.json`. There is nothing to brand
 until there is something to distribute.
 
+**Measured on the `macos-desktop` lane, 2026-08-29** (macos-latest, arm64), so
+the sizes here are observations rather than estimates:
+
+| Artifact | Size |
+|-|-|
+| `Calandria-0.3.0-arm64.dmg` | 464 MB |
+| `Calandria-0.3.0-arm64-mac.zip` | 480 MB |
+
+The dmg mounted, the app inside it verified (`valid on disk`, `satisfies its
+Designated Requirement`) and booted; the zip extracted to a bundle that verified
+the same way. Both are large for the reason §2's table gives: the payload, not
+Electron.
+
 ### 6.2 The ad-hoc signature runs in the build, not in CI
 
 arm64 macOS will not exec a Mach-O carrying **no** signature at all — the kernel
@@ -687,7 +700,9 @@ without a Developer ID plus notarization Gatekeeper refuses it — usually as
 **"Calandria is damaged and can't be opened. You should move it to the Trash"**,
 which reads like a corrupt download and is not one. The lane prints the
 `spctl --assess` refusal on every run so this stays an observed fact rather than
-an assumption.
+an assumption — and on 2026-08-29 it duly printed `Calandria.app: rejected` for
+a bundle whose signature `codesign --verify --deep --strict` had just accepted.
+That pair is the whole distinction: internally valid, and refused anyway.
 
 Until the signing work lands, an honest install instruction for a downloaded
 build is therefore:
