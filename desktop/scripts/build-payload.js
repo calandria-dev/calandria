@@ -45,7 +45,19 @@ const opt = (name, fallback) => args.find((a) => a.startsWith(`--${name}=`))?.sp
 const log = (msg) => console.log(msg);
 
 function run(cmd, cmdArgs, cwd) {
-  execFileSync(cmd, cmdArgs, { cwd, stdio: "inherit", env: { ...process.env, NODE_ENV: "production" } });
+  execFileSync(cmd, cmdArgs, {
+    cwd,
+    stdio: "inherit",
+    // On Windows `npm` is a `.cmd` shim and `CreateProcess` cannot execute one,
+    // so a bare execFileSync dies `spawnSync npm ENOENT` — the same difference
+    // lib/binPath.ts exists for on the app side. Naming `npm.cmd` explicitly is
+    // not the fix either: Node's CVE-2024-27980 patch refuses to spawn .cmd or
+    // .bat without a shell, so that path fails EINVAL instead. Going through
+    // cmd.exe is what is left, and it is safe here because every argument this
+    // helper is ever passed is a fixed literal — there is nothing to quote.
+    shell: process.platform === "win32",
+    env: { ...process.env, NODE_ENV: "production" },
+  });
 }
 
 function bytes(target) {

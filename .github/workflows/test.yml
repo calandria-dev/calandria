@@ -769,11 +769,26 @@ jobs:
       # `Zone.Identifier` stream a DOWNLOAD attaches, so an unsigned installer
       # built locally never trips the interstitial a user gets. That cost is
       # documented (docs/WINDOWS.md, docs/DESKTOP_APP.md §7) rather than tested.
+      # Each command is exit-checked by hand because this job's shell is pwsh,
+      # and GitHub's pwsh wrapper only propagates the LAST command's status:
+      # `$ErrorActionPreference = 'stop'` governs cmdlet errors, not a native
+      # command's non-zero exit. The Ubuntu lane needs no equivalent — its
+      # `run:` block is `bash -e`, which aborts on the first failure.
+      #
+      # Without these guards a failed payload build sails straight on into
+      # electron-builder, which logs `file source doesn't exist` for the missing
+      # payload and vendored Node, packages an app around the hole, and exits 0 —
+      # so the step goes GREEN and the failure surfaces fifteen minutes later as
+      # every packaged spec timing out on a shell that boots, prints its payload
+      # path and never becomes ready. That is exactly the false green this lane
+      # exists to catch, so it must not be the lane's own reporting that hides it.
       - name: Package the desktop app
         working-directory: desktop
         run: |
           npm run payload -- --no-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx electron-builder --win dir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # An installed app is never inside a source tree. Leaving the artifact at
       # desktop/dist/ would let anything that resolves upward — a module, a
