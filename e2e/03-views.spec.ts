@@ -280,7 +280,20 @@ test.describe("auto-collapse on a narrow window", () => {
     await listRow(page, NARROW_TASK).click();
     await expect(page.locator(".tc-scroll")).toBeVisible();
 
-    await page.setViewportSize({ width: 1024, height: 768 });
+    // 600 tall, not 768: at 768 the wrapped toolbar still just fits above the
+    // drawer, so the case would pass with the clip removed. This is the height
+    // the overhang is 107px at.
+    await page.setViewportSize({ width: 1024, height: 600 });
+    // Both spines expanded back out, which the policy above allows and which is
+    // the WORST case for this pane rather than an exotic one: 236 + 352 leaves
+    // the rail on SESS_MAIN_MIN's floor at ~74px, where `.tc-bar`'s
+    // `flex-wrap:wrap` turns one toolbar row into five and the rail's own
+    // children stop fitting its height. Reached from the shell's own controls,
+    // so nothing here depends on a layout the user cannot actually produce.
+    await page.getByTitle("Show projects panel").click();
+    await page.getByTitle("Show tasks panel").click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
     await page.getByRole("button", { name: "Terminal", exact: true }).click();
     const drawer = page.locator(".term-drawer");
     await expect(drawer).toBeVisible();
@@ -291,9 +304,15 @@ test.describe("auto-collapse on a narrow window", () => {
       .poll(() =>
         page.evaluate(() => {
           const top = document.querySelector(".term-drawer")!.getBoundingClientRect().top;
-          return document.querySelector(".tc-scroll")!.getBoundingClientRect().bottom - top;
+          // Every box in the rail, not just the scroll one: the element that
+          // actually ate the click on the desktop lanes was `.tc-bar`, the
+          // toolbar ABOVE it, which `flex:0 0 auto` makes incompressible.
+          return Math.max(
+            ...[...document.querySelectorAll(".sess-rail, .tc-root, .tc-bar, .tc-scroll")]
+              .map((el) => el.getBoundingClientRect().bottom - top),
+          );
         }),
-      { message: ".tc-scroll never stopped overhanging .term-drawer" })
+      { message: "the diff rail never stopped overhanging .term-drawer" })
       .toBeLessThanOrEqual(0);
 
     await page.getByTitle("Hide terminal (the shell keeps running)").click();

@@ -889,7 +889,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .empty.void .e-t{font-size:20px;}
 
 /* ============================== session ============================== */
-.session-body{flex:1;min-height:0;display:flex;}
+/* `overflow:hidden` is load-bearing, not tidiness. Both panes in here are flex
+   columns of `flex:0 0 auto` chrome around one scroller, so a body shorter than
+   that chrome cannot shrink it — it OVERFLOWS, and being a plain block that
+   paints outside its box, it lands on top of whatever comes next in the shell
+   column. What comes next is the terminal drawer, and the first thing the
+   overflow covers is the drawer's button bar: the desktop lanes failed as a 30s
+   `locator.click` timeout on Hide with `.tc-bar` named as the interceptor, at
+   the 1022x716 window the hosted runners clamp the shell to. Clipping is what
+   makes "a pane stops where its box stops" true; `.tc-bar` further down is what
+   keeps the clipped part reachable. */
+.session-body{flex:1;min-height:0;display:flex;overflow:hidden;}
 .session{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0;position:relative;}
 /* Wrapper exists so the nav cluster anchors to the transcript's bottom edge —
    i.e. always just above the composer, however tall the composer grows. */
@@ -1027,7 +1037,12 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-root{display:flex;flex-direction:column;flex:1;min-height:0;}
 .tc-note{padding:18px 16px;color:var(--ink-2);font-size:13px;}
 .tc-note.err{color:var(--red);}
-.tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 0 auto;}
+/* `flex:0 1 auto` + its own scroll, not `0 0 auto`: this bar WRAPS, so on a rail
+   squeezed to SESS_MAIN_MIN's floor one toolbar row becomes five and 200px of
+   incompressible chrome sits above a scroll box that has already given up all
+   of its own height. Shrinking here means the clip on `.session-body` truncates
+   nothing the user cannot scroll back to. */
+.tc-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line);flex:0 1 auto;min-height:0;overflow:auto;}
 .tc-branch{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px;color:var(--ink);}
 .tc-arrow{font-size:12px;color:var(--ink-3);}
 /* "own base": this task is based on a branch that isn't the project's default

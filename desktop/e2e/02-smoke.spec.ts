@@ -61,11 +61,19 @@ test("a turn streams into the transcript inside the Electron window", async () =
     localStorage.setItem("calandria_agent_nudge_dismissed", "1");
     localStorage.setItem("calandria:welcomeCoach:dismissed", "1");
   });
-  await shell.win.goto(`${shell.origin}/`);
-  await expect(shell.win.getByText(PROJECT).first()).toBeVisible();
-
-  await shell.win.getByText(PROJECT).first().click();
-  await shell.win.getByText(TASK_TITLE).first().click();
+  //
+  // Selected through the URL (?project=&task=, app/shell/persist.ts) rather than
+  // by clicking the two sidebars, because THIS suite has no viewport of its own:
+  // it drives a real OS window, and the hosted macOS and Windows runners clamp
+  // it to their 1024x768 virtual display. Below AUTO_COLLAPSE_BELOW the shell
+  // sheds the projects column and then the tasks column to a 30px spine
+  // (app/shell/types.ts), so `getByText(PROJECT)` is not in the document there
+  // at all — and expanding both spines back out at 1024 would leave the
+  // transcript on its 360px floor, which is not the shell anyone runs. The
+  // clicking-through-the-sidebars path is the browser suite's to cover, at a
+  // viewport it pins; what is unique here is the renderer and the stream.
+  await shell.win.goto(`${shell.origin}/?project=${project.id}&task=${task.id}`);
+  await expect(shell.win.getByText(TASK_TITLE).first()).toBeVisible();
 
   // Start the turn from outside and watch it arrive: the transcript is fed by
   // the SSE tail on GET /api/tasks/[id]/messages, so nothing below can be a
