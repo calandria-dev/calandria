@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.4.1](https://github.com/calandria-dev/calandria/compare/v0.4.0...v0.4.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ci:** stop the release PR's post-merge label from cancelling main's Test run ([#68](https://github.com/calandria-dev/calandria/issues/68)) ([e216f21](https://github.com/calandria-dev/calandria/commit/e216f2186f17535fce1ddc06537c70ee589430b5)), closes [#48](https://github.com/calandria-dev/calandria/issues/48)
+
 ## [0.4.0](https://github.com/calandria-dev/calandria/compare/v0.3.0...v0.4.0) (2026-08-29)
 
 
