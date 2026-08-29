@@ -505,6 +505,36 @@ export const PROJ_W = { min: 170, max: 460 };
 export const TASK_W = { min: 240, max: 620 };
 export const RAIL_W = { min: 320, max: 760 };
 
+// The widths at which the shell sheds a SIDE column rather than the transcript.
+//
+// The three tracks beside the transcript are all fixed — projects 236 + tasks
+// 352 + rail 430 = 1018 at the defaults — and only the transcript flexes, so
+// every pixel a window is short of that comes out of the one pane the user is
+// actually reading: 262px of transcript at a 1280px window, 6px at 1024. Below
+// 760px the phone layout takes over and the question disappears; between those
+// two there was no adaptation at all.
+//
+// So below each width here the shell hands that column its 30px spine instead,
+// cheapest loss first: projects (a short list, and the spine restores it in one
+// click), then tasks, then the diff rail. Each threshold is the point where the
+// transcript would otherwise drop under SESS_MAIN_TARGET on the tier above it,
+// rounded down to a round number:
+//
+//   1400 ≈ 236 + 352 + 430 + 400   → below it, projects → spine
+//   1200 ≈  30 + 352 + 430 + 400   → below it, tasks    → spine
+//    880 ≈  30 +  30 + 430 + 400   → below it, the rail → spine
+//
+// which leaves the transcript 382px at 1400, 388px at 1200, 390px at 880 and
+// 534px at 1024 — a flat floor across the range instead of a cliff.
+//
+// Applied at RENDER, never written into Layout (same reason the rail's own
+// clamp is): a window the user narrows and re-widens gives their own columns
+// straight back. `useAutoCollapse` in app/Shell.tsx owns that, and the escape
+// hatch that keeps each spine's button honest at a width the policy is
+// collapsing at.
+export const SESS_MAIN_TARGET = 400;
+export const AUTO_COLLAPSE_BELOW = { proj: 1400, task: 1200, rail: 880 } as const;
+
 // ---------- scheduled tasks (project landing "Schedules" card) ----------
 // Mirrors lib/store.ts's schedule + schedule_run rows as served by
 // GET /api/projects/[id]/schedules (Task 10). `last_run`/`runs` are joined in

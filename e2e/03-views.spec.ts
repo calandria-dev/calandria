@@ -147,6 +147,123 @@ test.describe("full-width text", () => {
   });
 });
 
+// Narrow desktop windows. The three tracks beside the transcript are fixed
+// (236 + 352 + 430 = 1018 at the defaults) and only the transcript flexes, so
+// below ~1400px it was the transcript — the one pane being read — that absorbed
+// the whole shortfall: 262px at 1280, 6px at 1024. The shell now sheds a side
+// column instead, projects then tasks then the diff rail, at the widths in
+// AUTO_COLLAPSE_BELOW (app/shell/types.ts).
+//
+// 1024x768 is not hypothetical: it is the GitHub-hosted macOS and Windows
+// runners' virtual display, which is what the Electron shell's window gets
+// clamped to on two of the three desktop lanes. 800x600 is the tier below it,
+// where the rail goes too. Both are driven here rather than only in the desktop
+// suite so a regression is caught on the cheap Linux browser lane.
+test.describe("auto-collapse on a narrow window", () => {
+  const NARROW_TASK = "Narrow task";
+
+  test.beforeAll(async ({ request }) => {
+    const projects = await (await request.get("/api/projects")).json();
+    const proj = projects.find((p: { name: string }) => p.name === PROJECT);
+    const task = await createTask(request, { projectId: proj.id, title: NARROW_TASK });
+    await sendMessage(request, task.id);
+    await waitForIdle(request, task.id);
+  });
+
+  // Which of the three side tracks are panels rather than 30px spines, read in
+  // one pass so they describe a single layout.
+  type Tracks = { proj: boolean; task: boolean; rail: boolean; spines: number };
+  const tracks = (page: import("@playwright/test").Page): Promise<Tracks> =>
+    page.evaluate(() => ({
+      proj: !!document.querySelector(".col-projects"),
+      task: !!document.querySelector(".col-tasks .task-scroll"),
+      rail: !!document.querySelector(".sess-rail"),
+      spines: document.querySelectorAll(".col-rail").length,
+    }));
+
+  // Polled, not read once. A viewport change reaches the shell through
+  // matchMedia and a reload remounts the whole session pane, so a single
+  // evaluate can land mid-render — the rail is a sibling of the transcript and
+  // has been seen missing for a frame after `.transcript .tw` is already
+  // visible. Same reason the full-width spec above polls its widths.
+  const expectTracks = async (page: import("@playwright/test").Page, want: Tracks) => {
+    await expect
+      .poll(() => tracks(page), { message: `shell never settled into ${JSON.stringify(want)}` })
+      .toEqual(want);
+  };
+
+  // The transcript's own measure, inside its 28px gutters: the width a message
+  // is actually laid out into, and the number this whole policy exists to keep
+  // off the floor.
+  const measure = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => document.querySelector(".transcript .tw")?.getBoundingClientRect().width ?? 0);
+
+  test("sheds the side columns as the window narrows, and gives them back", async ({ page }) => {
+    await gotoApp(page);
+    await page.getByText(PROJECT).first().click();
+    await listRow(page, NARROW_TASK).click();
+    await expect(page.locator(".transcript .tw")).toBeVisible();
+
+    // 1440: above every threshold, so the full three-column shell.
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
+    const wide = await measure(page);
+    expect(wide).toBeGreaterThan(300);
+
+    // 1024: projects and tasks are spines, the rail is still a real panel, and
+    // the transcript has more room than it had at 1440 with all three open.
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expectTracks(page, { proj: false, task: false, rail: true, spines: 2 });
+    const narrow = await measure(page);
+    expect(narrow).toBeGreaterThan(wide);
+
+    // 800: the rail goes too, and the transcript keeps growing rather than
+    // shrinking — the whole point of shedding in this order.
+    await page.setViewportSize({ width: 800, height: 600 });
+    await expectTracks(page, { proj: false, task: false, rail: false, spines: 3 });
+    expect(await measure(page)).toBeGreaterThan(narrow);
+
+    // Back up: the policy is applied at render, never written into the persisted
+    // Layout, so the user's own columns come straight back — and are still there
+    // after a reload, which reads what was actually stored.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
+
+    await page.reload();
+    await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
+  });
+
+  // The spine's button has to mean something at a width the policy is collapsing
+  // at, or it is a control that visibly does nothing. Expanding wins over the
+  // policy for as long as the window stays this size; leaving the size and
+  // coming back starts the policy over rather than remembering a decision made
+  // at a width the user has since left.
+  test("a column the policy tucked away still opens from its spine", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await gotoApp(page);
+
+    const spine = page.getByTitle("Show projects panel");
+    await expect(spine).toBeVisible();
+    await spine.click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
+    // Still open through the re-render selecting a project causes: the override
+    // is state, not a one-shot.
+    await page.getByText(PROJECT).first().click();
+    await expect(page.locator(".col-projects")).toBeVisible();
+
+    // The tasks column is on the same policy, and its spine works the same way.
+    await page.getByTitle("Show tasks panel").click();
+    await expect(listRow(page, NARROW_TASK)).toBeVisible();
+
+    // Leave the breakpoint and come back: both are tucked away again.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator(".col-projects")).toBeVisible();
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.getByTitle("Show projects panel")).toBeVisible();
+    await expect(page.getByTitle("Show tasks panel")).toBeVisible();
+  });
+});
+
 async function idOf(page: import("@playwright/test").Page, title: string): Promise<string> {
   const projects = await (await page.request.get("/api/projects")).json();
   const proj = projects.find((p: { name: string }) => p.name === PROJECT);
