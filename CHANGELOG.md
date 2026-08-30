@@ -8,6 +8,25 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.5.0](https://github.com/calandria-dev/calandria/compare/v0.4.1...v0.5.0) (2026-08-30)
+
+
+### Features
+
+* **ci:** publish signed desktop artifacts on a release tag ([#77](https://github.com/calandria-dev/calandria/issues/77)) ([e216a90](https://github.com/calandria-dev/calandria/commit/e216a90a294080925c24cae83510c5b72a56eb98))
+* **desktop:** a Windows packaging target, unsigned ([#71](https://github.com/calandria-dev/calandria/issues/71)) ([d67a756](https://github.com/calandria-dev/calandria/commit/d67a756733b8767ae0f2b662d722f0c4b749cec0))
+* **desktop:** an Electron shell with a supervisor, packaging and four CI lanes ([#54](https://github.com/calandria-dev/calandria/issues/54)) ([1e8770b](https://github.com/calandria-dev/calandria/commit/1e8770bf5960658b5cbcb363c471625cab57cbec))
+* **desktop:** auto-update through the drain, never around it ([#79](https://github.com/calandria-dev/calandria/issues/79)) ([2aacc05](https://github.com/calandria-dev/calandria/commit/2aacc057b0893c72d6c89cac529c45cc7b939c30))
+* **desktop:** build macOS dmg and zip, and sign before they are cut ([#72](https://github.com/calandria-dev/calandria/issues/72)) ([f182301](https://github.com/calandria-dev/calandria/commit/f1823013592b1dc6dceebbdd2fc97829876ff67b))
+* **desktop:** env-driven Developer ID signing and notarization ([#76](https://github.com/calandria-dev/calandria/issues/76)) ([f9d95fa](https://github.com/calandria-dev/calandria/commit/f9d95fad074d46dcf0fd559948873afdf56d72aa))
+* **ui:** render the unstarted task's brief as markdown, and stop truncating the box under it ([#83](https://github.com/calandria-dev/calandria/issues/83)) ([33ca3fb](https://github.com/calandria-dev/calandria/commit/33ca3fb565927ec35a9e584d5117aa4930e42b2f))
+
+
+### Bug Fixes
+
+* collapse the session header's control rail to fit the pane ([#80](https://github.com/calandria-dev/calandria/issues/80)) ([6ea0283](https://github.com/calandria-dev/calandria/commit/6ea02834159473be9b73caa45b6cba0faf60a6d1))
+* don't offer a finished task as a blocker, and sort the pickers A→Z ([#81](https://github.com/calandria-dev/calandria/issues/81)) ([539ed39](https://github.com/calandria-dev/calandria/commit/539ed39366e1fb292f65ac43e990af194629086c))
+
 ## [0.4.1](https://github.com/calandria-dev/calandria/compare/v0.4.0...v0.4.1) (2026-08-29)
 
 
