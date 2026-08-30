@@ -269,6 +269,22 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
     .poll(() => serverIsUp(`http://127.0.0.1:${PORT}`), { timeout: 150_000, intervals: [1000] })
     .toBe(true);
 
+  // The server answering is NOT the log having been written, and the gap
+  // between them is a race this test wins often enough to matter. `serverIsUp()`
+  // and the supervisor's own readiness poll ask `/api/version` the same question
+  // independently, so ours can be answered a tick before the supervisor writes
+  // `[shell] ready on …`; `open --stdout` buffers on top of that. Sampling
+  // open.log once at that instant reads a boot still mid-narration.
+  //
+  // Run 33286825270 failed exactly there: on the LAST line of a log whose every
+  // earlier line — the stub decision, the bundled-node line — was present and
+  // asserted green. So waiting for the final line is what makes the snapshot
+  // below a whole one, and it strengthens the negative assertion in (2), which
+  // a truncated log would have passed vacuously.
+  await expect
+    .poll(() => readLog(), { timeout: 30_000, intervals: [250] })
+    .toMatch(/\[shell] ready on http:\/\/127\.0\.0\.1:\d+/);
+
   const log = readLog();
   await testInfo.attach("open.log", { body: log, contentType: "text/plain" });
 
