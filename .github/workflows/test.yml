@@ -855,27 +855,57 @@ jobs:
             Start-Sleep -Seconds 3
           }
 
+          # `-like`, not `-eq`. electron-builder's `uninstallDisplayName` defaults
+          # to "${productName} ${version}" (NsisTarget.ts), so the entry reads
+          # "Calandria 0.3.0" and an exact match finds nothing.
+          function Find-CalandriaEntry($hive) {
+            Get-ChildItem "${hive}:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |
+              Where-Object { $_.DisplayName -like 'Calandria*' }
+          }
+
           # Polled rather than read once: `-Wait` returning is the installer
           # process exiting, and an installer that relaunched itself would have
           # exited long before it finished writing.
           $deadline = (Get-Date).AddSeconds(60)
           do {
-            $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-              ForEach-Object { Get-ItemProperty $_.PSPath } |
-              Where-Object { $_.DisplayName -eq 'Calandria' } |
-              Select-Object -First 1
+            $entry = Find-CalandriaEntry HKCU | Select-Object -First 1
             if (-not $entry) { Start-Sleep -Seconds 2 }
           } while (-not $entry -and (Get-Date) -lt $deadline)
+
           if (-not $entry) {
-            Write-Output "::error::the silent install registered no HKCU uninstall entry for Calandria"
+            # Say WHERE it went, not just that it isn't here. The runner's shell
+            # is an administrator, and `assistedInstaller.nsh` resolves the
+            # install mode itself when `/S` skips the page that would otherwise
+            # ask — so a per-machine install is the interesting way for this to
+            # fail, and `/S /currentuser` would be the fix.
+            $hklm = @(Find-CalandriaEntry HKLM)
+            if ($hklm.Count -gt 0) {
+              Write-Output "::error::the silent install went PER-MACHINE (HKLM: $($hklm[0].DisplayName), $($hklm[0].UninstallString)) — a perMachine:false build should not need elevation"
+            } else {
+              Write-Output "::error::the silent install registered no uninstall entry for Calandria in either hive"
+            }
+            foreach ($root in @((Join-Path $env:LOCALAPPDATA 'Programs'), $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+              if ($root -and (Test-Path $root)) {
+                "--- $root"
+                Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Write-Output
+              }
+            }
             exit 1
           }
-          "uninstall entry: $($entry.PSChildName)  version=$($entry.DisplayVersion)"
+          "uninstall entry: $($entry.PSChildName)  name='$($entry.DisplayName)'  version=$($entry.DisplayVersion)"
 
+          # NOT $entry.InstallLocation: `registryAddInstallInfo` writes that
+          # under `Software\<APP_GUID>`, and the Uninstall key it writes
+          # alongside carries only the two uninstall strings. The uninstaller
+          # sits in the install directory, so its path IS the location — parsed
+          # out of the quotes rather than stripped of them, since the string is
+          # `"<dir>\Uninstall Calandria.exe" /currentuser` and stripping would
+          # leave the switch attached.
           $uninstallString = $entry.UninstallString
-          $uninstaller = ($uninstallString -replace '"', '').Trim()
-          $dir = $entry.InstallLocation
-          if (-not $dir) { $dir = Split-Path -Parent $uninstaller }
+          if ($uninstallString -match '^\s*"(?<exe>[^"]+)"') { $uninstaller = $Matches.exe }
+          else { $uninstaller = ($uninstallString -split '\s+')[0] }
+          $dir = Split-Path -Parent $uninstaller
           $expected = Join-Path $env:LOCALAPPDATA 'Programs\Calandria'
           if ($dir.TrimEnd('\') -ne $expected.TrimEnd('\')) {
             Write-Output "::error::a perMachine:false install should land in $expected, not $dir"
@@ -967,8 +997,8 @@ jobs:
           if (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Calandria.lnk')) { $left += 'the Start Menu shortcut' }
           if (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Calandria.lnk')) { $left += 'the desktop shortcut' }
           $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-            ForEach-Object { Get-ItemProperty $_.PSPath } |
-            Where-Object { $_.DisplayName -eq 'Calandria' }
+            ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |
+            Where-Object { $_.DisplayName -like 'Calandria*' }
           if ($entry) { $left += 'the uninstall registry entry' }
 
           if ($left.Count -gt 0) {
