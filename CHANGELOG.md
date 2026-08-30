@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.5.1](https://github.com/calandria-dev/calandria/compare/v0.5.0...v0.5.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **ci:** stop the desktop lanes publishing, and asking for a token they have no business holding ([#84](https://github.com/calandria-dev/calandria/issues/84)) ([15ce022](https://github.com/calandria-dev/calandria/commit/15ce022a577bd6830b8734f999d95bec78978261))
+
 ## [0.5.0](https://github.com/calandria-dev/calandria/compare/v0.4.1...v0.5.0) (2026-08-30)
 
 
