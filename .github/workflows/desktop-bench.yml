@@ -136,7 +136,12 @@ jobs:
         working-directory: desktop
         run: |
           npm run payload -- --no-build
-          npx electron-builder --linux dir deb
+          # `--publish never`: this lane fires on a schedule, so there is no
+          # GITHUB_BASE_REF to make electron-publish skip publishing, and `deb`
+          # is a real artifact to announce. Without the flag every nightly run
+          # ends on "GitHub Personal Access Token is not set" after a
+          # forty-minute build. desktop/electron-builder.cjs explains the policy.
+          npx electron-builder --linux dir deb --publish never
 
       - name: Install the .deb as a user would
         run: sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb

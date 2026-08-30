@@ -565,7 +565,11 @@ jobs:
         working-directory: desktop
         run: |
           npm run payload -- --no-build
-          npx electron-builder --linux dir
+          # `--publish never` on every lane that is not the release. Omitted, a
+          # CI run with no --publish flag falls through to `onTagOrDraft` and
+          # constructs a GitHub publisher, which throws for want of a token.
+          # desktop/electron-builder.cjs's `publish` block has the full account.
+          npx electron-builder --linux dir --publish never
 
       # An installed app is never inside a source tree. Leaving the artifact at
       # desktop/dist/ would let anything that resolves upward — a module, a
@@ -800,7 +804,15 @@ jobs:
         run: |
           npm run payload -- --no-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx electron-builder --win nsis
+          # `--publish never` is what keeps this lane green on a push to main.
+          # Without it electron-builder picks its own policy (`onTagOrDraft` on
+          # any CI), builds a GitHub publisher for the finished installer and
+          # dies with "GitHub Personal Access Token is not set" — which is the
+          # failure that blocked v0.5.0's artifacts, since the release gate
+          # refuses a tag whose Test run is not green. A pull_request run hid it:
+          # electron-publish skips publishing entirely when GITHUB_BASE_REF is
+          # set. desktop/electron-builder.cjs's `publish` block has the rest.
+          npx electron-builder --win nsis --publish never
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # There is no "move the artifact out of the checkout" step on this lane
@@ -1140,7 +1152,12 @@ jobs:
           # The spctl gate below asserts exactly that.
           unset GITHUB_BASE_REF
 
-          npx electron-builder --mac dir dmg zip
+          # `--publish never` matters MORE here than on the other lanes, because
+          # the unset above is what would otherwise arm the publish path: it is
+          # the same variable electron-publish's isPullRequest() reads to skip
+          # publishing. Re-enabling signing re-enabled that too, so this lane
+          # would fail for want of a token on a pull request as well as on main.
+          npx electron-builder --mac dir dmg zip --publish never
 
       - name: Move the artifact out of the checkout
         # Same reason as the Ubuntu lane: an installed app is never inside a
