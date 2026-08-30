@@ -900,7 +900,12 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    makes "a pane stops where its box stops" true; `.tc-bar` further down is what
    keeps the clipped part reachable. */
 .session-body{flex:1;min-height:0;display:flex;overflow:hidden;}
-.session{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0;position:relative;}
+/* A query container so the session header can answer to the PANE's width rather
+   than the window's. The pane is a resizable column between two others, so the
+   two numbers come apart badly: a 1600px window with the projects, tasks and
+   DIFF columns all open leaves the session ~500px, which every viewport
+   breakpoint reads as a wide desktop. */
+.session{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0;position:relative;container-type:inline-size;}
 /* Wrapper exists so the nav cluster anchors to the transcript's bottom edge —
    i.e. always just above the composer, however tall the composer grows. */
 .transcript-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
@@ -975,12 +980,53 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .ctxw-desc{font-family:var(--mono);font-size:11px;color:var(--ink-3);line-height:1.6;margin-top:4px;}
 .ctxw-clear{width:100%;justify-content:center;margin-top:20px;}
 .ctxw-foot{margin-top:12px;font-family:var(--mono);font-size:10px;line-height:1.7;color:var(--ink-4);text-align:center;}
-.sess-head{flex:0 0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:60px;padding:11px 18px;border-bottom:1px solid var(--line);background:var(--surface);}
-.sess-head .sh-main{min-width:150px;flex:1;}
-.sess-head .crumb{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;}
+/* nowrap on purpose: a wrappable header lets the whole control rail jump to a
+   second row the moment it stops fitting, which both grows the header and hides
+   the overflow from the rail itself (it would then be measuring against the
+   full width). Keeping it on one line makes the rail shrink instead, which is
+   the signal it collapses on. The phone layout re-enables wrapping — there the
+   rail owning row two is the intended shape. */
+.sess-head{flex:0 0 auto;display:flex;align-items:center;gap:12px;flex-wrap:nowrap;min-height:60px;padding:11px 18px;border-bottom:1px solid var(--line);background:var(--surface);}
+/* The title line's floor. The rail is capped by it rather than by a share of
+   the header: past this the rail collapses instead of squeezing the task's
+   name, which is the trade we want — the controls have a "More", the name
+   doesn't. */
+.sess-head .sh-main{min-width:340px;flex:1;}
+/* The breadcrumb also carries the session's IDENTITY — its tags and the agent
+   it runs on (SessionView's crumb comment). One quiet mono line that clips from
+   the right rather than wrapping, so the header is always exactly two rows
+   tall and the lowest-priority thing on the line is the first to go. */
+.sess-head .crumb{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;}
 .sess-head .crumb .sep{opacity:.5;}
-.sess-head .sh-title{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.sess-head .sh-tools{display:flex;align-items:center;gap:7px;flex:0 0 auto;}
+/* The project dot is a fixed 16px square; without this it is the flex item that
+   absorbs the clipping and squashes to a sliver. */
+.sess-head .crumb .pic{flex:0 0 auto;}
+.sess-head .sh-title{margin-top:2px;font-size:17px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* The control rail. `flex:0 1 auto` + `min-width:0` is what makes the overflow
+   readable: the rail is its content's width while that fits and is CLIPPED to
+   whatever the title line leaves it when it doesn't, so scrollWidth over
+   clientWidth is the "doesn't fit" signal useOverflowRail collapses on. Its
+   children never shrink, or they would absorb the overflow as squashed chips
+   and it would never register. */
+.sess-head .sh-tools{display:flex;align-items:center;gap:7px;flex:0 1 auto;min-width:0;overflow:hidden;}
+.sess-head .sh-tools > *{flex:0 0 auto;}
+/* "More" expanded: the rail stops being one clipped line and wraps the full
+   control set into rows. Same mechanism at every width — this was the phone
+   layout before the collapse learned to measure. */
+.sess-head .sh-tools.open{flex-wrap:wrap;justify-content:flex-end;row-gap:7px;overflow:visible;}
+/* Below this a shared row is a bad deal for both halves: the rail's share is
+   down to the status chip and a "More", while the title it is protecting has
+   already ellipsised. A whole row each fits four or five controls where one
+   cramped row fit two, so give the rail its own — the shape the phone layout
+   has always had, now reached by any pane this narrow, a desktop column
+   dragged in included. */
+@container (max-width:900px){
+  .sess-head{flex-wrap:wrap;row-gap:8px;}
+  .sess-head .sh-main{flex:1 1 100%;min-width:0;}
+  .sess-head .sh-tools{flex:1 1 100%;justify-content:flex-start;overflow-x:auto;scrollbar-width:none;}
+  .sess-head .sh-tools::-webkit-scrollbar{display:none;}
+  .sess-head .sh-tools.open{justify-content:flex-start;overflow-x:visible;}
+}
 
 /* Live PR chip: a link to the GitHub PR opened from this task's branch, plus
    the state the server keeps fresh (lib/prState.ts) — state word, check rollup
@@ -1971,19 +2017,20 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .task{padding-top:11px;padding-bottom:11px;}
 
   /* Session header: the model/reasoning/priority/status chips can't fit on one
-     390px row, so stack the title above a horizontally scrollable control rail.
-     sh-main takes the REMAINDER of row one (basis 0, not 100%) so the back
-     chevron sits to the left of the task name instead of alone on its own row;
-     min-width:0 lets the ellipsised title actually shrink beside it. */
+     390px row, so stack the title above the control rail, which gets the whole
+     of row two. sh-main takes the REMAINDER of row one (basis 0, not 100%) so
+     the back chevron sits to the left of the task name instead of alone on its
+     own row; min-width:0 lets the ellipsised title actually shrink beside it.
+     The rail still collapses by measurement like everywhere else — the scroll
+     is the floor under it, for when even the pinned items don't fit. */
   .app.mobile .sess-head{flex-wrap:wrap;row-gap:8px;align-items:center;}
   .app.mobile .sh-main{flex:1 1 0;min-width:0;order:1;}
   .app.mobile .mobile-back{order:0;}
   .app.mobile .sh-tools{order:2;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none;}
   .app.mobile .sh-tools::-webkit-scrollbar{display:none;}
-  .app.mobile .sh-tools > *{flex:0 0 auto;}
-  /* "More" expanded: the rail stops being a one-line scroll and wraps the full
-     control set into rows (see SessionView's sh-tools comment). */
-  .app.mobile .sh-tools.open{flex-wrap:wrap;row-gap:7px;overflow-x:visible;}
+  /* The rail owns the whole row here, so its wrapped rows read from the left
+     edge rather than trailing a title the way the desktop's do. */
+  .app.mobile .sh-tools.open{overflow-x:visible;justify-content:flex-start;}
   .app.mobile .status-ctl{height:36px;}
 
   /* Composer: 16px text stops iOS from zooming on focus; pad out the bottom for
@@ -2339,6 +2386,7 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
 .sess-head .gbadge{max-width:200px;}
+
 /* The tag strip (TagStrip.tsx): what a selected chip expands into, sitting
    directly under the bar. Tinted with the tag's own --gc like the chips. */
 .gstrip{margin:2px 12px 6px;padding:10px 12px;border:1px solid var(--line-2);border-left:3px solid var(--gc,var(--ink-4));border-radius:var(--r);background:var(--surface);display:flex;flex-direction:column;gap:8px;}
