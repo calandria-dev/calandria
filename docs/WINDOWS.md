@@ -100,6 +100,16 @@ every platform; `desktop/e2e/05-windows-quit.spec.ts` pins the `taskkill` half. 
 of it covers is a real shutdown or logout: Electron emits neither `before-quit` nor
 `will-quit` for `WM_QUERYENDSESSION`, and no test here claims otherwise.
 
+That lane packages too, the same way the Ubuntu one does: `electron-builder --win dir`,
+the artifact moved out of the checkout, and the window suite run again against it with no
+`CALANDRIA_REPO_ROOT`, so what is exercised is the payload the build laid down rather than
+the repo it was built in. (`desktop/e2e/fixtures.ts` refuses to launch a binary under the
+source tree — anything resolving upward would find this checkout and pass on a machine
+that has one, which is the false green being guarded against.) It builds `--dir` rather
+than the `nsis` installer `npm run dist:win` produces, because the unpacked tree is both
+what the suite can launch and what NSIS wraps, while the one thing the installer adds that
+a user will certainly notice is invisible to CI by construction — see below.
+
 A separate workflow, `.github/workflows/node-current.yml`, installs on the latest Node
 **Current** rather than `.nvmrc`'s 22, on `ubuntu-24.04` and `windows-latest`, and does
 nothing else: `npm ci`, then load `better-sqlite3` and open a database, then open a real pty
@@ -185,7 +195,7 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
 |-|-|
 | `NODE_ENV=…` prefixes and bare `.sh` invocations in npm scripts | `cross-env`, and `bash scripts/docker-test.sh` for the `*:docker` scripts (which also need Git Bash on `PATH` and Docker Desktop in Linux-container mode) |
 | `$SHELL` is a POSIX convention; the old `/bin/zsh` fallback doesn't exist on Windows | `CALANDRIA_PTY_SHELL`, then `$SHELL`, then a probed default: `pwsh.exe`/`powershell.exe` on `PATH`, else `%COMSPEC%` (`pty-server.js`) |
-| `CreateProcess` finds `.exe` but never npm's `.cmd` shim | `lib/binPath.ts`, a `PATHEXT`-aware lookup plus `cmd.exe` wrapping for shims, used by `codex` (`lib/agents/codex/bin.ts`) and `gh`. `claude` is the exception: `CLAUDE_CLI_PATH` defaults to a real `claude.exe` under `%USERPROFILE%\.local\bin`, because the Agent SDK and node-pty spawn it directly and can't route a batch shim |
+| `CreateProcess` finds `.exe` but never npm's `.cmd` shim | `lib/binPath.ts`, a `PATHEXT`-aware lookup plus `cmd.exe` wrapping for shims, used by `codex` (`lib/agents/codex/bin.ts`) and `gh`. `claude` is the exception: `CLAUDE_CLI_PATH` defaults to a real `claude.exe` under `%USERPROFILE%\.local\bin`, because the Agent SDK and node-pty spawn it directly and can't route a batch shim. The desktop payload builder hits the same wall from outside the app: `desktop/scripts/build-payload.js` shells its `npm ci` through `cmd.exe` on win32, since naming `npm.cmd` outright fails `EINVAL` under Node's CVE-2024-27980 patch |
 | No process groups; `detached` means "new console"; no `ps` | `lib/processTree.ts`: `taskkill /pid <pid> /T /F` for the tree, `tasklist` for liveness, a `Win32_Process` CommandLine lookup for the recycled-pid guard, and `detached` requested only where groups exist. A `dev_command` is a `cmd.exe` command line ([SERVICES.md](SERVICES.md#windows-command-syntax)) |
 | NTFS is case-insensitive, so `realpathSync` output can't be compared with `===` | `lib/paths.ts`, one `samePath()`/`canonicalPath()` pair, case-folded on win32. This was the correctness bug of the set: a false "not linked" authorized an `rmSync` of a live worktree |
 | `MAX_PATH`, and files that can't be deleted while a handle is open | `-c core.longpaths=true` on the app's own git calls; teardown retries `EBUSY`/`EPERM`/`ENOTEMPTY`. The global `core.longpaths` setting and closing a terminal holding a file open are covered in Troubleshooting |
@@ -223,6 +233,20 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
   kills — verified on real hardware, teardown in 384ms with no orphaned sidecars), but
   Electron emits neither `before-quit` nor `will-quit` for `WM_QUERYENDSESSION`, so a
   session ending underneath the app drains nothing. No `session-end` listener exists yet.
+- **The desktop app's Windows artifacts are unsigned, so SmartScreen warns on every
+  download.** `npm run dist:win` builds an NSIS installer (a wizard, installed per-user, so
+  no UAC prompt) and a zip, and neither carries a code-signing certificate. Windows marks
+  anything a browser downloads with a `Zone.Identifier` stream, and running a marked
+  executable with no recognized signature raises *"Windows protected your PC"*, whose only
+  obvious button is **Don't run** — **More info** → **Run anyway** is the way through. The
+  zip does not dodge it, since Explorer propagates the mark to what it extracts. Two things
+  make this recurring rather than a one-off: with no publisher identity, SmartScreen
+  reputation attaches to each file, so every release re-earns the warning from zero; and a
+  file that was never downloaded has no mark, so neither a local `dist:win` nor the CI lane
+  above can see it. Signing is the fix and is priced, not bought:
+  [DESKTOP_APP.md](DESKTOP_APP.md#7-cost-of-going-further-phase-2) §7 — Azure Trusted
+  Signing at $9.99/month or an OV certificate at roughly $129/yr, and explicitly not EV,
+  which stopped buying instant reputation in March 2024.
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS story as on any
   platform; `localhost` subdomains don't resolve without a `hosts` entry.
 

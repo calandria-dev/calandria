@@ -301,6 +301,7 @@ npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
 npm run dist:mac      # → dist/mac(-arm64)/Calandria.app
+npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip
 ```
 
 `dist:mac` builds all three of `mac.target`. `dir` is the unpacked bundle the
@@ -328,6 +329,20 @@ the quarantine attribute, and Gatekeeper refuses an ad-hoc-signed bundle with
 Until signing and notarization land, a downloaded build needs
 `xattr -dr com.apple.quarantine /Applications/Calandria.app`, or right-click →
 Open, on **every** install.
+
+`dist:win` does build real installer targets, unlike `dist:mac`, because on
+Windows there is no signing decision blocking one — there is only an unsigned
+artifact and a warning. `nsis` is a wizard (`oneClick: false`) that installs
+per-user (`perMachine: false`, so no UAC prompt) and lets you pick the
+directory; `zip` is there for anyone who would rather unpack a folder. No
+certificate is configured, so electron-builder skips signing rather than
+failing, and **anything downloaded from a release will raise a SmartScreen
+interstitial** — *"Windows protected your PC"*, past which is **More info** →
+**Run anyway**. The zip does not avoid it (Explorer propagates the Mark of the
+Web to extracted files), and a build you made yourself will never show it,
+because a file that was never downloaded carries no mark. The full account,
+including why this recurs with every release while unsigned, is in
+[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

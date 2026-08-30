@@ -604,8 +604,8 @@ The prototype now produces a real artifact, not just a `desktop/` checkout:
 cd desktop && npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
+npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip  (Windows host)
 npm run dist:mac      # → dist/mac-arm64/Calandria.app, plus .dmg and .zip
-                      #   (macOS host only)
 ```
 
 Signing with a real identity, notarization and auto-update are deliberately
@@ -715,6 +715,35 @@ xattr -dr com.apple.quarantine /Applications/Calandria.app
 or right-click → Open and confirm the dialog. Either way it is **every install**,
 not once per machine. This is why the signing task is the real distribution
 work, and why §7's $99/yr is the price of the feature rather than a nicety.
+
+**Windows builds two targets, and neither is signed.** `nsis` is the installer
+proper: `oneClick: false` so it opens a wizard rather than installing wherever it
+likes the moment it is double-clicked, `allowToChangeInstallationDirectory: true`
+so that wizard is worth having, and `perMachine: false` so it installs under the
+user's own profile and never raises a UAC prompt. `zip` is the escape hatch for
+anyone who would rather unpack a folder than run an installer, and for the case
+where an installer is what the machine's policy objects to. There is no `win.sign`
+block and no certificate: electron-builder skips signing when it finds nothing to
+sign with, so the build succeeds and produces an unsigned artifact rather than
+failing. Buying a certificate and wiring it in is its own decision (§7).
+
+The cost of that is **Microsoft Defender SmartScreen**, and it is worth stating
+plainly because the first person to download a release will meet it. Windows
+attaches a `Zone.Identifier` alternate data stream — the Mark of the Web — to
+anything a browser downloads. Running a MotW-marked executable that carries no
+recognized signature raises a full-screen *"Windows protected your PC"* dialog
+whose only obvious button is **Don't run**; getting past it means clicking **More
+info** and then **Run anyway**. The `zip` target is not a way around this: Explorer
+propagates the mark to the files it extracts, so `Calandria.exe` out of the zip
+warns the same way the installer does.
+
+Two properties of that make it a recurring cost rather than a one-off. SmartScreen
+reputation attaches to a *file* when there is no publisher to attach it to, so
+every release re-earns the warning from zero, forever, as long as the artifacts are
+unsigned. And a locally built installer will never show it — a file that was never
+downloaded has no MotW — so neither a developer's own `dist:win` nor the CI lane
+can observe the thing a user hits first. Signing is what removes it; §7 prices
+that, and the March 2024 change to what EV buys is the important half.
 
 **Layout of the packaged app:**
 
@@ -833,6 +862,13 @@ eligibility is the first thing to check, not the last. Failing that, a
 June 2023 rule the private key must live in FIPS 140-2 Level 2 hardware, which
 ended file-based certificates; budget for a cloud HSM signing service rather
 than a USB token, which is close to unusable from CI.
+
+Until one of those is bought, **the Windows targets in §6 ship unsigned**, and the
+SmartScreen interstitial in the row above is not a hypothetical cost — it is what
+every downloader of every release gets, since with no publisher identity the
+reputation that would eventually silence it accrues to nothing. §6 has what the
+dialog says, how to get past it, why the `zip` target does not dodge it, and why
+neither a local build nor a CI run can reproduce it.
 
 **On macOS the $99 is not a premium, it is the price of the feature.** An
 unsigned or ad-hoc-signed app cannot auto-update at all: Squirrel.Mac, which
