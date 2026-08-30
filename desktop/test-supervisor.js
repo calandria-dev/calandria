@@ -924,6 +924,59 @@ function hold(port) {
     );
   });
 
+  // ---- updater.js ---------------------------------------------------------
+  //
+  // The full policy is pinned by tests/desktopUpdater.test.ts, which runs in the
+  // ordinary `npm test` lane. These are the two facts the DESKTOP lane should
+  // fail on by itself, because both are about this directory's own wiring: an
+  // update must never restart the app around the drain, and a .deb must never
+  // reach electron-updater at all.
+
+  await test("an update installs only on an explicit request against a real download", async () => {
+    const { quitAction } = require("./updater");
+    assert.equal(quitAction({ installRequested: true, phase: "ready" }), "install");
+    // A quit is not consent to be upgraded.
+    assert.equal(quitAction({ installRequested: false, phase: "ready" }), "exit");
+    // And a stale request with nothing downloaded would hang the quit on an
+    // empty installer path rather than fail it.
+    assert.equal(quitAction({ installRequested: true, phase: "downloading" }), "exit");
+    assert.equal(quitAction({}), "exit");
+  });
+
+  await test("only an AppImage self-updates on Linux", async () => {
+    const { updaterDisposition } = require("./updater");
+    const linux = (appImage) => updaterDisposition({ env: {}, platform: "linux", packaged: true, appImage });
+    assert.equal(linux("/opt/Calandria.AppImage").enabled, true);
+    // Because a `publish` config is configured, the .deb carries a
+    // resources/package-type marker, and electron-updater answers that marker
+    // with a DebUpdater that installs via `sudo dpkg -i`. main.js must not be on
+    // that path, so the gate runs before the require.
+    const deb = linux(null);
+    assert.equal(deb.enabled, false);
+    assert.equal(deb.code, "linux-package");
+  });
+
+  await test("main.js drains before it installs, and requires the updater lazily", async () => {
+    // Comments stripped: this file names the calls it forbids, in prose.
+    const src = fs
+      .readFileSync(path.join(__dirname, "main.js"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    // electron-updater's default installs from `app.on("quit")`, which fires
+    // after our before-quit has already drained and exited.
+    assert.ok(/autoInstallOnAppQuit\s*=\s*false/.test(src), "install-on-quit must be off");
+    assert.equal((src.match(/\.quitAndInstall\(/g) || []).length, 1, "one install call site only");
+    const finishQuit = src.slice(src.indexOf("function finishQuit()"), src.indexOf("function messageBox("));
+    assert.ok(finishQuit.includes(".quitAndInstall("), "the install belongs in the drain's tail");
+    // The gate has to precede the require: the module picks its implementation
+    // on first property access.
+    const start = src.slice(src.indexOf("function startUpdater()"), src.indexOf("function trayUpdateItem()"));
+    assert.ok(
+      start.indexOf('require("electron-updater")') > start.indexOf("if (!updateDisposition.enabled)"),
+      "electron-updater must be required after the disposition gate",
+    );
+  });
+
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");
   process.exit(failures ? 1 : 0);
 })();

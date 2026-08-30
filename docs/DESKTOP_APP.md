@@ -1254,6 +1254,158 @@ decision.
 Each platform is one architecture: x64 on Linux and Windows, arm64 on macOS
 (`macos-latest` is Apple silicon). The release notes say so.
 
+### 6.6 Auto-update
+
+The lane above is the first thing that puts a binary in somebody's hands, so it
+is the thing that must not exist without an updater — not the merge to main.
+Both now do.
+
+**Nothing about the lane changed to make this work.** The `publish` block in
+§6.5 already caused electron-builder to write `latest.yml`, `latest-mac.yml` and
+`latest-linux.yml` beside every published artifact, and the lane already
+publishes with `--publish always` rather than hand-rolling `gh release upload`,
+which would have produced downloads with no feed at all. The whole of this
+section is client-side: `desktop/updater.js` (pure policy, Electron-free, in the
+manner of `notifier.js`) and the wiring in `desktop/main.js`.
+
+#### The one rule: the restart goes through the drain
+
+This app supervises long-running agent turns, so a restart is destructive and an
+unattended one is destructive without warning. `desktop/main.js` already drains:
+`before-quit` prevents the default, POSTs `/api/instance/drain`, waits, stops the
+sidecars, and only then exits.
+
+`electron-updater` makes routing around that the default. `autoInstallOnAppQuit`
+is **true** out of the box and installs from an `app.on("quit")` handler — and
+`quit` fires *after* our `before-quit` has finished draining and called
+`app.exit(0)`. So the shipped default either skips the install silently or runs
+it over turns that were still settling, depending on timing. It is switched off,
+and the install is instead the last statement of the drain itself:
+
+```
+user presses "Restart and update"   →  installOnQuit = true; app.quit()
+app.quit()                          →  before-quit  (preventDefault)
+                                    →  supervisor.stop()  → POST /api/instance/drain
+                                    →  finally: tray destroyed
+                                    →  finishQuit()
+                                         quitAction() === "install" → quitAndInstall()
+                                         otherwise                  → app.exit(0)
+```
+
+`quitAndInstall()` calls `app.quit()` itself, which re-enters `before-quit` —
+harmless, because `quitting` is already true there and the handler returns
+without preventing it. A 10s fallback exits anyway if the installer hands back
+instead of taking the process down, because a drained shell with no sidecars is
+not something to leave on screen looking alive.
+
+`quitAction()` requires **both** an explicit user request and a completed
+download. Neither half is redundant: a quit is not consent to be upgraded, and a
+stale request against nothing downloaded would hand `quitAndInstall()` an empty
+installer path and hang the quit rather than fail it.
+
+This is the part worth testing, and it is tested three ways in
+`tests/desktopUpdater.test.ts` (which runs in the ordinary `npm test` lane) and
+again in `desktop/test-supervisor.js`: the predicate directly, and two
+structural pins over `main.js` — that `autoInstallOnAppQuit = false` and that the
+file's only `quitAndInstall` call site is inside `finishQuit`. It is **not**
+covered end-to-end. Reaching the "downloaded" state from `desktop/e2e/` would
+need either a fake update server or a test-only hook into module state, and a
+backdoor into the install path is a worse thing to ship than a gap in the suite.
+`desktop/e2e/03-quit-drain.spec.ts` covers the drain that this reuses.
+
+#### Both a launch check and a menu item
+
+Checked 45s after boot (so it is not competing with the sidecars for bandwidth
+on a slow first start) and every six hours after that, which suits something
+people leave running for weeks. Downloading is automatic; **installing never
+is.** That is what makes an on-by-default knob safe: the worst the default can
+do is spend some bandwidth and light up a menu item.
+
+The manual item is in **both** the tray menu and the application menu's View
+submenu, from one shared function so they cannot disagree. Two different
+situations: the tray is the one that works when the window is hidden, which is
+this app's normal resting state; the application menu is the one that exists
+when there is no tray at all (no status area, or the `Tray` constructor failed),
+where the window is by definition still on screen.
+
+#### The UI for a ready update, given the window is usually hidden
+
+A modal against a window in the tray is a modal nobody sees, and on some
+platforms one nobody can dismiss. So a ready update announces itself through the
+surfaces that survive a hidden window:
+
+- an **OS notification** carrying a click, which opens the window and the prompt;
+- the **tray item's label**, which becomes `Restart to update to 0.5.0`;
+- the **application menu**, same item.
+
+Only then, and only from a click, a dialog: `Restart and update` / `Later`. Its
+detail line reads the live turn count from `GET /api/instance/metrics` — the
+read-only route, not `POST /api/instance/drain`, which is the other thing that
+knows the number and answers by aborting them — and says *"2 turns are running.
+They will be stopped and settled before the update installs."* Stopped, not
+finished: `drainActiveTurns` aborts, it does not wait for the model, and an
+update prompt that undersells what it interrupts is how a supervisor loses
+somebody an hour of work.
+
+When the shell cannot update itself the item stays **visible and greyed with the
+reason as its label** rather than disappearing. A missing item reads as "this app
+has no updates"; `Updates come from your package manager` reads as what it is.
+
+#### Per platform
+
+| | Updates? | Notes |
+|-|-|-|
+| Windows (NSIS) | Yes | Works unsigned; signing improves the SmartScreen story, not the update path. |
+| macOS (zip) | **Only if signed** | Squirrel.Mac verifies the signature of the downloaded bundle and refuses an app whose own signature it cannot read. An ad-hoc build cannot auto-update at all — on/off, not a warning. That is why §6.4's Developer ID is a dependency and not a nicety, and why the `.zip` target in §6.1 is mandatory: a dmg-only build produces no `latest-mac.yml`. The error is classified `fatal` and stops the six-hourly retry for the session. |
+| Linux AppImage | Yes | Replaces itself in place. Detected by `process.env.APPIMAGE`, which the AppImage runtime sets — the only trustworthy runtime answer to "am I an AppImage". |
+| Linux .deb | **No, deliberately** | See below. |
+
+#### The .deb is not allowed near electron-updater
+
+This is the case where doing nothing would have been actively wrong rather than
+merely incomplete.
+
+Because a `publish` config is present, electron-builder's `FpmTarget` writes a
+`resources/package-type` marker containing `deb` into the package (it does this
+for deb, rpm and pacman; the AppImage gets no marker). `electron-updater`'s
+exported `autoUpdater` is a lazily-constructed singleton whose **class is chosen
+at first property access** from that marker — and inside a `.deb` it chooses a
+`DebUpdater` whose install path is `sudo dpkg -i <downloaded>`, falling back to
+`apt install -y --allow-unauthenticated`.
+
+The phase-2 note that preceded this work said to "make
+`allowUnverifiedLinuxPackages` deliberate rather than inherited". **That setting
+does not exist.** It was checked against electron-builder 26.15.3 and
+electron-updater 6.8.9 — grepped both published packages, zero occurrences — so
+the unverified install is not a default that can be turned off. The only way to
+make it deliberate is to decline the path, which is the right answer anyway: a
+package the system package manager installed is the package manager's to
+replace, and an app that raises a sudo prompt to update itself is one nobody
+should trust.
+
+So `updaterDisposition()` gates on `APPIMAGE` **before** the `require`, and the
+require is lazy for exactly that reason. A `.deb` install never touches the
+getter; it says `Updates come from your package manager` and stops.
+
+#### The knob
+
+`CALANDRIA_DESKTOP_AUTO_UPDATE` (documented in `.env.example`), read straight off
+`process.env` because that is how the whole desktop shell reads config — it has
+no `lib/config.ts` and deliberately does not load one, the same reason
+`supervisor.js` takes an injectable `env`. Default on; `off`/`0`/`false`/`no`
+stops the shell contacting the feed at all. Checked before packaging and before
+the platform, so it works everywhere including the platforms whose updater
+cannot otherwise be talked out of anything.
+
+`electron-updater` is this package's **first runtime dependency**, so it is in
+`dependencies` rather than `devDependencies`, and that is the *only* reason it
+gets packed. `electron-builder.cjs`'s `files` list does not mention
+`node_modules` and adding it would do nothing: app-builder-lib collects
+production dependencies through a separate mechanism and splices
+`!**/node_modules/**` into those globs unconditionally. Moving it to
+`devDependencies` would ship a shell that throws on the require the first time a
+packaged build reaches `startUpdater()`. `tests/desktopUpdater.test.ts` pins it.
+
 ## 7. Cost of going further (phase 2)
 
 Prices below were re-checked on 2026-08-29, when the signing work was wired up.
@@ -1265,7 +1417,7 @@ been the reason to hesitate turned out no longer to exist.
 | Apple Developer Program + notarization | $99/yr, **paid**. An **individual** membership is enough — D-U-N-S and organization enrolment are only for Organization accounts — and it grants up to five Developer ID Application certificates, which is the one thing this depends on. Notarization is included. |
 | Windows code signing | **Azure Artifact Signing, $9.99/month** (Basic, 5,000 signatures/month). Not yet purchased — see below. **Not EV, and not a traditional OV certificate either.** |
 | Three-OS build matrix | New CI lane; the payload's native addons are installed per platform (they follow the *bundled* Node, not Electron, under this architecture) |
-| Auto-update | `electron-updater` + a release channel; interacts with release-please and the existing edge/latest image publishing |
+| Auto-update | **Done, and free** — see §6.6. `electron-updater` reads the feed §6.5's `publish` block was already writing, so no hosting and no lane change. Windows and the Linux AppImage work as-is; macOS depends on the $99 above, since Squirrel.Mac will not install into an unsigned build. The `.deb` deliberately does not self-update. |
 | Security cadence | Chromium CVEs become our shipping obligation once binaries carry our name |
 | Support surface | "It won't start" reports from machines whose PATH, Node, or antivirus we cannot see |
 

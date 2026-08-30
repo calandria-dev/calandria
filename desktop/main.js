@@ -24,6 +24,17 @@ const {
   trayTooltip,
 } = require("./notifier");
 const { confirmTrayResidency } = require("./tray-residency");
+const {
+  CHECK_INTERVAL_MS,
+  FIRST_CHECK_DELAY_MS,
+  INSTALL_FALLBACK_MS,
+  classifyUpdaterError,
+  parseActiveTurns,
+  quitAction,
+  restartNotice,
+  updateMenuItem,
+  updaterDisposition,
+} = require("./updater");
 
 // Where the server payload lives — the thing supervisor.js runs `node server.js`
 // out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
@@ -78,6 +89,24 @@ let needsYouCount = 0;
 // `Notification.tag`; Electron's main-process Notification has no tag, so the
 // collapse is done by hand against the same id the server minted.
 const liveToasts = new Map();
+// The `electron-updater` singleton, or null when this install cannot update
+// itself. Deliberately not required at the top of the file: on Linux that
+// module's `autoUpdater` export picks its implementation on first property
+// access, and inside a .deb it picks one that installs with `sudo dpkg -i`. See
+// updater.js's linux-package case. Nothing here touches it before
+// `updateDisposition.enabled` says so.
+let updater = null;
+let updateDisposition = null;
+// phase: idle | checking | downloading | ready | none | error.
+let updateState = { phase: "idle", version: null, error: null };
+// Set only by the user answering the restart prompt. The drain reads it at the
+// very end (see finishQuit) — an install is never something a quit does by
+// itself.
+let installOnQuit = false;
+// A check the user started, so its outcome gets an answer instead of a silent
+// log line. Cleared by whichever updater event answers it.
+let manualCheck = false;
+let updateTimer = null;
 
 // One shell per machine. This mirrors, at the UI layer, the single-process rule
 // lib/db-lock.mjs enforces at the database layer: a second launch would spawn a
@@ -116,6 +145,11 @@ function main() {
     // to disappear with the process, and a toast raised during a shutdown is
     // one the user cannot act on.
     events?.stop();
+    // Same reasoning for the update clock: a check that lands mid-drain has
+    // nowhere to put its answer, and a download starting now would be thrown
+    // away with the process.
+    if (updateTimer) clearInterval(updateTimer);
+    updateTimer = null;
     showDraining();
     try {
       await supervisor.stop();
@@ -126,7 +160,9 @@ function main() {
       tray = null;
       trayHosted = false;
       trayResidencyKnown = false;
-      app.exit(0);
+      // The update install, if there is one, happens HERE and only here —
+      // after the drain, as the last thing the process does.
+      finishQuit();
     }
   });
 
@@ -345,6 +381,18 @@ async function boot() {
     // URL, and the event stream needs a server to subscribe to.
     createTray();
     startEvents();
+    // After the tray, because the tray menu is where an available update is
+    // advertised, and the first check is on a timer anyway.
+    //
+    // Its own try, INSIDE this one: everything from here down is a running app,
+    // and the catch below reports a failure to start. A bad require or a
+    // malformed feed config must not turn a working session into "Calandria
+    // could not start" — an app that cannot check for updates still works.
+    try {
+      startUpdater();
+    } catch (err) {
+      console.log(`[shell] auto-update unavailable: ${err?.message || err}`);
+    }
   } catch (err) {
     // `onExit` gets first claim when the failure was a sidecar dying, because
     // it knows WHICH one and whether the database was already held; this path
@@ -567,6 +615,14 @@ function rebuildTrayMenu() {
       { label: "Show Calandria", click: () => showWindow() },
       { label: "Open in browser", enabled: !!appUrl, click: () => appUrl && shell.openExternal(appUrl) },
       { type: "separator" },
+      // The update affordance that survives a hidden window, which is this
+      // app's usual state. Its label carries the whole status — "Check for
+      // updates…", "Downloading 0.5.0…", "Restart to update to 0.5.0", or the
+      // reason this install cannot update itself. This menu is already rebuilt
+      // on every badge change, and setUpdateState() rebuilds it whenever that
+      // label moves.
+      { ...trayUpdateItem(), click: () => void checkForUpdates(true) },
+      { type: "separator" },
       // `app.quit()`, never `app.exit()`: quitting has to go through
       // `before-quit`, which is the only place in-flight turns get drained.
       { label: "Quit Calandria", click: () => app.quit() },
@@ -675,6 +731,250 @@ function gotoTask(payload) {
     .catch(() => {});
 }
 
+/* ------------------------------------------------------------------------- *
+ * Auto-update.
+ *
+ * Two entry points, both explicit about which one is running: a check on a
+ * timer after launch (and every six hours a long-lived shell stays up), and a
+ * "Check for updates" item the user can press. Downloading is automatic;
+ * INSTALLING NEVER IS. See updater.js's header for why, and finishQuit() below
+ * for the mechanism.
+ * ------------------------------------------------------------------------- */
+
+function startUpdater() {
+  updateDisposition = updaterDisposition({
+    env: process.env,
+    platform: process.platform,
+    packaged: app.isPackaged,
+    // Set by the AppImage runtime to the path of the running image. The only
+    // artifact on Linux that can replace itself in place.
+    appImage: process.env.APPIMAGE || null,
+  });
+  // Paint the reason into both menus even when the answer is no — a greyed
+  // "Updates come from your package manager" is information; a missing item
+  // reads as an app that has no updates at all.
+  refreshUpdateMenus();
+  if (!updateDisposition.enabled) {
+    console.log(`[shell] auto-update off: ${updateDisposition.reason}`);
+    return;
+  }
+
+  updater = require("electron-updater").autoUpdater;
+  updater.logger = { info: logUpdate, warn: logUpdate, error: logUpdate, debug: () => {} };
+  updater.autoDownload = true;
+  // THE setting. electron-updater's default is true, which installs from an
+  // `app.on("quit")` handler — and `quit` fires after our `before-quit` has
+  // already drained and called app.exit(). That would either skip the install
+  // silently or run it over turns that were still settling. We own the moment
+  // instead: finishQuit() calls quitAndInstall() as the last act of the drain.
+  updater.autoInstallOnAppQuit = false;
+
+  updater.on("checking-for-update", () => setUpdateState({ phase: "checking" }));
+  updater.on("update-available", (info) => setUpdateState({ phase: "downloading", version: info?.version || null }));
+  updater.on("update-not-available", () => {
+    setUpdateState({ phase: "none" });
+    answerManualCheck("Calandria is up to date", `You are running ${app.getVersion()}.`);
+  });
+  updater.on("update-downloaded", (info) => {
+    setUpdateState({ phase: "ready", version: info?.version || null });
+    manualCheck = false;
+    announceUpdate();
+  });
+  updater.on("error", (err) => {
+    const { message, fatal } = classifyUpdaterError(err);
+    console.log(`[shell] update check failed: ${message}`);
+    setUpdateState({ phase: "error", error: message });
+    answerManualCheck("Could not check for updates", message);
+    if (!fatal) return;
+    // Squirrel.Mac cannot update an app whose signature it cannot read. That is
+    // a property of the build, not a transient, so stop asking.
+    if (updateTimer) clearInterval(updateTimer);
+    updateTimer = null;
+  });
+
+  setTimeout(() => void checkForUpdates(false), FIRST_CHECK_DELAY_MS).unref();
+  updateTimer = setInterval(() => void checkForUpdates(false), CHECK_INTERVAL_MS);
+  updateTimer.unref();
+}
+
+// One shape, two menus: label and enabled come from updater.js so the tray and
+// the application menu can never disagree about what the update state is.
+function trayUpdateItem() {
+  return updateMenuItem({ ...updateState, disposition: updateDisposition });
+}
+
+function logUpdate(message) {
+  if (message) console.log(`[updater] ${message}`);
+}
+
+function setUpdateState(patch) {
+  const before = updateMenuItem({ ...updateState, disposition: updateDisposition });
+  updateState = {
+    ...updateState,
+    ...patch,
+    // Only an error phase carries an error, so a later success clears the old
+    // one rather than leaving a stale sentence attached to a fine state.
+    error: patch.phase === "error" ? patch.error || null : null,
+  };
+  const after = updateMenuItem({ ...updateState, disposition: updateDisposition });
+  if (after.label === before.label && after.enabled === before.enabled) return;
+  refreshUpdateMenus();
+}
+
+// Both menus, because they cover different situations. The tray is the one that
+// works when the window is hidden — which is the normal resting state of this
+// app, so an update prompt that only exists inside the window is one nobody
+// sees. The application menu is the one that exists when there is no tray at
+// all (no status area, or the Tray constructor failed), where the window is by
+// definition still on screen.
+function refreshUpdateMenus() {
+  rebuildTrayMenu();
+  Menu.setApplicationMenu(buildMenu());
+}
+
+async function checkForUpdates(manual) {
+  if (!updater) {
+    if (manual) {
+      await messageBox({
+        type: "info",
+        message: "Automatic updates are off",
+        detail: updateDisposition?.reason || "This build does not update itself.",
+        buttons: ["OK"],
+      });
+    }
+    return;
+  }
+  // Already downloaded: the button the user just pressed means "get on with
+  // it", not "check again".
+  if (updateState.phase === "ready") {
+    if (manual) await requestInstall();
+    return;
+  }
+  if (updateState.phase === "checking" || updateState.phase === "downloading") return;
+  if (manual) manualCheck = true;
+  try {
+    await updater.checkForUpdates();
+  } catch (err) {
+    // Rejections and the "error" event overlap; whichever arrives first
+    // answers, and the classifier makes the two say the same thing.
+    const { message } = classifyUpdaterError(err);
+    console.log(`[shell] update check failed: ${message}`);
+    setUpdateState({ phase: "error", error: message });
+    answerManualCheck("Could not check for updates", message);
+  }
+}
+
+function answerManualCheck(message, detail) {
+  if (!manualCheck) return;
+  manualCheck = false;
+  void messageBox({ type: "info", message, detail, buttons: ["OK"] });
+}
+
+/**
+ * The update-is-ready announcement, for an app whose window is usually hidden.
+ *
+ * Three surfaces, in order of how likely they are to be seen: an OS
+ * notification (which survives a hidden window and carries a click), the tray
+ * item's label, and the application menu. Deliberately NOT a dialog — a modal
+ * raised against a window in the tray is a modal nobody sees, and on some
+ * platforms it is a modal nobody can dismiss either.
+ */
+function announceUpdate() {
+  console.log(`[shell] update ${updateState.version} downloaded and ready`);
+  if (!Notification.isSupported()) return;
+  const toast = new Notification({
+    title: `Calandria ${updateState.version || "update"} is ready`,
+    body: "Click to restart and install. In-flight turns are settled first.",
+  });
+  toast.on("click", () => {
+    showWindow();
+    void requestInstall();
+  });
+  toast.show();
+}
+
+/**
+ * The one path from "an update exists" to "the app restarts", and the only
+ * writer of `installOnQuit`.
+ *
+ * It ends in `app.quit()` — never `app.exit()`, and never
+ * `updater.quitAndInstall()` directly — so the restart goes through
+ * `before-quit` and gets the same drain a tray Quit gets. Routing an update
+ * around that drain is the specific failure this whole feature is written to
+ * avoid.
+ */
+async function requestInstall() {
+  if (!updater || updateState.phase !== "ready") return;
+  const active = await activeTurnCount();
+  const { response } = await messageBox({
+    type: "question",
+    buttons: ["Restart and update", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Calandria ${updateState.version || ""} is ready to install`.replace(/\s+/g, " "),
+    detail: restartNotice(active),
+  });
+  if (response !== 0) return;
+  installOnQuit = true;
+  app.quit();
+}
+
+/**
+ * How many turns are running, read-only.
+ *
+ * GET /api/instance/metrics rather than the drain endpoint, which is the other
+ * thing that knows and answers by aborting them. Best-effort by contract: a
+ * null just makes the restart prompt say less.
+ */
+async function activeTurnCount() {
+  if (!appUrl) return null;
+  const token = (supervisor?.effectiveEnv || process.env).SERVICE_TOKEN;
+  try {
+    const res = await fetch(`${appUrl}/api/instance/metrics`, {
+      headers: token ? { "x-service-token": token } : {},
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    return parseActiveTurns(await res.text());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The end of the drain, and the only place an update is ever installed.
+ *
+ * `quitAndInstall` calls `app.quit()` itself, which re-enters `before-quit` —
+ * harmless, because `quitting` is already true there and the handler returns
+ * without preventing it. If the handoff does not take the process down, the
+ * fallback does: a drained shell with no sidecars left is not something to
+ * leave on screen.
+ */
+function finishQuit() {
+  if (quitAction({ installRequested: installOnQuit, phase: updateState.phase }) !== "install") {
+    app.exit(0);
+    return;
+  }
+  console.log(`[shell] drained; installing ${updateState.version || "update"}`);
+  setTimeout(() => {
+    console.log("[shell] installer did not take the app down; exiting");
+    app.exit(0);
+  }, INSTALL_FALLBACK_MS).unref();
+  try {
+    // isSilent false so a Windows user sees the installer they are agreeing to;
+    // isForceRunAfter true so "restart and update" actually restarts.
+    updater.quitAndInstall(false, true);
+  } catch (err) {
+    console.log(`[shell] install failed: ${err?.message || err}`);
+    app.exit(0);
+  }
+}
+
+function messageBox(options) {
+  const parent = win && !win.isDestroyed() && win.isVisible() ? win : null;
+  return parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+}
+
 function buildMenu() {
   // Without an application menu, macOS loses Cmd+C/V/A entirely — the roles
   // below are what wire the system shortcuts, not decoration.
@@ -698,6 +998,11 @@ function buildMenu() {
           label: "Open in browser",
           click: () => appUrl && shell.openExternal(appUrl),
         },
+        { type: "separator" },
+        // Same item as the tray's, same function behind it. Here for the case
+        // the tray cannot cover: no status area at all, where the window is by
+        // definition the only surface there is.
+        { ...trayUpdateItem(), click: () => void checkForUpdates(true) },
       ],
     },
     { role: "windowMenu" },
