@@ -962,14 +962,19 @@ openssl req -new -key devid.key -out devid.certSigningRequest \
 #    the .cer. It contains only the certificate — the private key never left here.
 openssl x509 -inform DER -in developerID_application.cer -out devid.pem
 
-# 3. The intermediate, WITHOUT WHICH THIS SILENTLY FAILS. See below.
-curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-openssl x509 -inform DER -in DeveloperIDG2CA.cer -out DeveloperIDG2CA.pem
+# 3. The intermediates, WITHOUT WHICH THIS SILENTLY FAILS. See below.
+#    Both, not one: Apple runs two Developer ID CAs and you should not have to
+#    know which signed yours.
+curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer   # G2, to 2031
+curl -O https://www.apple.com/certificateauthority/DeveloperIDCA.cer     # G1, to 2027
+openssl x509 -inform DER -in DeveloperIDG2CA.cer  > apple-intermediates.pem
+openssl x509 -inform DER -in DeveloperIDCA.cer   >> apple-intermediates.pem
 
-# 4. Bundle key + leaf + intermediate. -legacy is not optional on OpenSSL 3.
-#    The export password it prompts for is CSC_KEY_PASSWORD.
+# 4. Bundle key + leaf + intermediates. -legacy is not optional on OpenSSL 3.
+#    It prompts twice for an export password: that is CSC_KEY_PASSWORD, and it
+#    should not be blank — see below.
 openssl pkcs12 -export -legacy -out devid.p12 \
-  -inkey devid.key -in devid.pem -certfile DeveloperIDG2CA.pem
+  -inkey devid.key -in devid.pem -certfile apple-intermediates.pem
 
 # 5. CSC_LINK, and the identity string.
 base64 -w0 devid.p12 > devid.p12.base64
@@ -986,12 +991,23 @@ line breaks rather than the bare string `CSC_LINK` wants. Use PowerShell —
 Two failure modes are worth naming because both produce a build that imports the
 certificate happily and then reports no identity at all:
 
-- **A `.p12` without the Developer ID G2 intermediate.** electron-builder imports
-  it into a temporary keychain and then runs `security find-identity -v`, and the
-  `-v` means *valid* — an identity whose chain cannot be built to a trusted root
-  is not listed. A hosted macOS runner has Apple's roots and not necessarily that
-  intermediate, so the leaf alone verifies on the machine that made it and
-  vanishes in CI.
+- **A `.p12` without the issuing intermediate.** electron-builder imports it into
+  a temporary keychain and then runs `security find-identity -v`, and the `-v`
+  means *valid* — an identity whose chain cannot be built to a trusted root is not
+  listed. A hosted macOS runner has Apple's roots and not necessarily the
+  Developer ID intermediate, so the leaf alone verifies on the machine that made
+  it and vanishes in CI.
+
+  Apple publishes **two** Developer ID CAs and they are not distinguishable by
+  name — both are `CN=Developer ID Certification Authority`, differing only in
+  `OU`. **G2** (`DeveloperIDG2CA.cer`, `OU=G2`) runs to 2031-09-17 and is the
+  current one; **G1** (`DeveloperIDCA.cer`, `OU=Apple Certification Authority`)
+  runs to 2027-02-01 and is the older. A certificate issued today should chain
+  through G2, but bundling both costs nothing, imports harmlessly — only the leaf
+  carries a private key, so only one identity is ever created — and removes a
+  guess from a step whose failure mode is silent. To see which one actually signed
+  yours, read the `OU` rather than the `CN`:
+  `openssl x509 -in devid.pem -noout -issuer`.
 - **OpenSSL 3's default PKCS#12 encryption.** It writes AES-256-CBC with PBKDF2,
   which macOS's `security import` does not read; the import appears to succeed and
   yields nothing. `-legacy` restores the SHA1/3DES encoding it expects.
@@ -1001,6 +1017,13 @@ Certificate From a Certificate Authority*, saved to disk), then exporting the
 certificate **together with its private key** — an export without the key has the
 same symptom as the two above. `security find-identity -v -p codesigning` prints
 the identity string.
+
+**Do not leave the export password blank.** OpenSSL accepts an empty one, and the
+`.p12` then lives base64-encoded in a GitHub secret as a bare private key: anyone
+who obtains that one secret holds the signing identity outright. With a password
+they need `CSC_LINK` *and* `CSC_KEY_PASSWORD`, which are separate secrets with
+separate exposure. Let OpenSSL prompt rather than passing `-passout` — a password
+given on the command line lands in shell history and in the process list.
 
 The App Store Connect API key is a pure web flow and needs no Mac either:
 *App Store Connect → Users and Access → Integrations → App Store Connect API →
