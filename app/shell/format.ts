@@ -322,6 +322,25 @@ export const isWithdrawn = (t: TaskRow) => !!t.suggested && t.status === "cancel
 // tray rather than hidden: the user still has to decide whether to agree.
 export const withdrawnLast = (a: TaskRow, b: TaskRow) => Number(isWithdrawn(a)) - Number(isWithdrawn(b));
 
+// A terminal task will never finish anything again: it is done, or it was
+// cancelled and won't be resumed. Mirrors `blocks()` in lib/autoStart.ts, which
+// is what actually decides whether a dependent may start.
+export const isTerminal = (t: { status: TaskRow["status"] }) => t.status === "done" || t.status === "cancelled";
+
+// Case-insensitive, locale-aware A→Z. Picker lists are scanned by eye for a
+// name the user already has in mind, so alphabetical beats any recency or
+// filing order there — "Auth" shouldn't sort after "auth migration".
+export const alphabetical = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" });
+
+// The tasks a "Blocked by" picker may offer. A terminal task can't block
+// anything by definition, so it isn't a choice — but one ALREADY selected stays
+// listed even after it finishes, or an edge drawn while the blocker was live
+// would become invisible and impossible to remove.
+export const blockerCandidates = (candidates: TaskRow[], selected: string[]): TaskRow[] =>
+  candidates
+    .filter((c) => !isTerminal(c) || selected.includes(c.id))
+    .sort((a, b) => alphabetical(a.title, b.title));
+
 // The titles of a task's unfinished blockers (dependencies not yet 'done'). A
 // task with any of these is "blocked" and can't be started until they complete.
 // A cancelled dependency doesn't block — it's terminal and will never finish,
@@ -329,7 +348,7 @@ export const withdrawnLast = (a: TaskRow, b: TaskRow) => Number(isWithdrawn(a)) 
 export const blockerTitles = (t: TaskRow, byId: Map<string, TaskRow>): string[] =>
   (t.depends_on ?? [])
     .map((id) => byId.get(id))
-    .filter((b): b is TaskRow => !!b && b.status !== "done" && b.status !== "cancelled")
+    .filter((b): b is TaskRow => !!b && !isTerminal(b))
     .map((b) => b.title);
 
 // add/del/ctx class for a diff line's sign — shared by the peek and full views.
