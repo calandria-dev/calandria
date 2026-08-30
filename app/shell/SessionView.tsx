@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
@@ -26,6 +26,7 @@ import { SessionRail } from "./SessionRail";
 import { PrChip } from "./PrChip";
 import { ReclaimButton } from "./ReclaimButton";
 import { ColResize, ColRail } from "./Layout";
+import { useOverflowRail } from "./useOverflowRail";
 import { jget, jsend } from "./api";
 
 // Non-blocking banner shown when a reopened task's worktree is behind its base
@@ -408,8 +409,10 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
-  // Mobile: the header rail shows only the essentials (Chat/Changes, status)
-  // until "More" expands it into wrapped rows with the full control set.
+  // The header rail keeps what fits and puts the rest behind "More", which
+  // expands it into wrapped rows carrying the full control set. What "fits"
+  // is measured, not assumed — see the railItems comment below.
+  const railRef = useRef<HTMLDivElement>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [priOpen, setPriOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -676,38 +679,21 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     </>
   );
 
-  // Header chips — rendered at the head of the tools rail on desktop, demoted
-  // to its tail on mobile (see the rail's comment). Read-only but for Reclaim,
-  // which sits with the PR chip because that is where "this landed" is shown.
-  const infoChips = (
-    <>
-      {/* Live PR state — number, state, check rollup, review decision — read off
-          the task row and kept fresh by lib/prState.ts. */}
-      <PrChip task={task} />
-      {/* The one exception to "read-only" here, and it belongs beside the chip
-          that reports the fact it acts on: once this task's work has LANDED, one
-          click frees the checkout, deletes the local branch and marks it done
-          (lib/reclaim.ts). Renders nothing until then. */}
-      <ReclaimButton task={task} />
-      {/* Which feature(s) this session is a step of — a task can carry several.
-          Clicking one lights that tag's chip in the list/board, the way the
-          row badges do. */}
-      <TagBadges tagIds={task.tag_ids} tagsById={tagsById} onSelect={(id) => selectOneTag(project.id, id)} />
-      <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
-      {(task.cost_usd > 0 || task.total_tokens > 0) && (
-        <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
-          {fmtTokens(usage.fresh)} tok
-          {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
-          {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
-        </span>
-      )}
-    </>
+  // Cumulative spend for the task. The first thing off the rail when the pane
+  // gets narrow: it answers a question nobody asks mid-turn.
+  const showUsage = task.cost_usd > 0 || task.total_tokens > 0;
+  const usageChip = (
+    <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
+      {fmtTokens(usage.fresh)} tok
+      {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
+      {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
+    </span>
   );
 
-  // The status picker, extracted because the two layouts place it differently:
-  // desktop keeps it inline between priority and snooze; mobile promotes it to
-  // the rail's always-visible row (it's the control that answers "what state is
-  // this task in" and flips it — the one thing a phone glance needs).
+  // The status picker: the control that answers "what state is this task in"
+  // and flips it. It is the one item pinned to the rail at every width, which
+  // is why a phone still shows it beside "More" with everything else collapsed
+  // — the same rule that keeps it on a desktop, not a second layout.
   const statusCtl = (
     <div style={{ position: "relative" }}>
       <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
@@ -729,6 +715,199 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     </div>
   );
 
+  // Chat / Changes, mobile only — where there is no room for the DIFF rail
+  // beside the transcript, this is how you get to it.
+  const viewSeg = (
+    <div className="viewseg">
+      <button className={`viewseg-btn ${view === "chat" ? "on" : ""}`} onClick={() => setView("chat")}>Chat</button>
+      <button className={`viewseg-btn ${view === "changes" ? "on" : ""}`} onClick={() => setView("changes")}>Changes</button>
+    </div>
+  );
+
+  const modelCtl = (
+    <div style={{ position: "relative" }}>
+      <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
+        {Icon.spark()}
+        {/* The chip says INHERIT_LABEL, never "Default" — the same word the
+            picker's head uses, so the two can't read as different states. */}
+        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? INHERIT_LABEL}</span>
+        {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
+        {Icon.chevDown()}
+      </button>
+      {modelOpen && (
+        <Popover onClose={() => setModelOpen(false)}>
+          {models.map((m, i) => (
+            <Fragment key={m.label}>
+              {/* Section header whenever the group changes — Claude Code's
+                  list runs to a dozen-plus pins, so it needs the structure. */}
+              {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
+              <div className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
+                <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
+                {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
+              </div>
+              {/* Rule under the inherit head: everything below it is the
+                  provider's own catalog, spelled the provider's way. */}
+              {m.value === null && <div className="divider" />}
+            </Fragment>
+          ))}
+        </Popover>
+      )}
+    </div>
+  );
+
+  const settingsCtl = (
+    <div style={{ position: "relative" }}>
+      <button className="status-ctl" title="Reasoning level & permission mode for this task" onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
+        {Icon.gear()}
+        <span className="cv">{reasoningOpts.find((r) => r.value === task.reasoning)?.label ?? INHERIT_LABEL}</span>
+        {Icon.chevDown()}
+      </button>
+      {settingsOpen && (
+        <Popover onClose={() => setSettingsOpen(false)}>
+          <div className="pop-sec">Reasoning</div>
+          {reasoningOpts.map((r) => (
+            <Fragment key={r.label}>
+              <div className="pop-item" onClick={() => { onSetReasoning(r.value); setSettingsOpen(false); }}>
+                <div><div>{r.label}</div><div className="pi-sub">{r.sub}</div></div>
+                {(task.reasoning ?? null) === r.value && <span className="pi-check">{Icon.check()}</span>}
+              </div>
+              {r.value === null && <div className="divider" />}
+            </Fragment>
+          ))}
+          <div className="divider" />
+          <div className="pop-sec">Permission</div>
+          {permissionOpts.map((p) => (
+            <Fragment key={p.label}>
+              <div className="pop-item" onClick={() => { onSetPermission(p.value); setSettingsOpen(false); }}>
+                <div><div>{p.label}</div><div className="pi-sub">{p.sub}</div></div>
+                {(task.permission_mode ?? null) === p.value && <span className="pi-check">{Icon.check()}</span>}
+              </div>
+              {/* Claude's own mode is spelled "default"; the rule keeps it
+                  from reading as a second copy of the inherit head. */}
+              {p.value === null && <div className="divider" />}
+            </Fragment>
+          ))}
+        </Popover>
+      )}
+    </div>
+  );
+
+  const priCtl = (
+    <div style={{ position: "relative" }}>
+      <button className="status-ctl" onClick={(e) => { e.stopPropagation(); setPriOpen((o) => !o); setStatusOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
+        {Icon.flag()} <span className="cv">{PLABEL[task.priority]}</span>
+      </button>
+      {priOpen && (
+        <Popover onClose={() => setPriOpen(false)}>
+          {PRIORITIES.map((p) => (
+            <div key={p} className="pop-item" onClick={() => { onSetPriority(p); setPriOpen(false); }}>
+              <span className={`pri ${p}`}>{PLABEL[p].toUpperCase()}</span>
+              {task.priority === p && <span className="pi-check">{Icon.check()}</span>}
+            </div>
+          ))}
+        </Popover>
+      )}
+    </div>
+  );
+
+  // Snoozing, beside the status it deliberately does NOT change — the status is
+  // the category this task drops back into when the deadline passes. While
+  // parked, the control becomes the wake button and says when it would have
+  // come back on its own.
+  const snoozeCtl = isSnoozed(task) ? (
+    <button className="status-ctl snz-on" title={`Snoozed: wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
+      onClick={onUnsnooze}>
+      {Icon.moon()} <span className="cv">Wakes {wakeLabel(task.snoozed_until)}</span>
+    </button>
+  ) : (
+    <SnoozeButton className="status-ctl" label="Snooze" onSnooze={onSnooze} />
+  );
+
+  // A started task queued to resume at the usage-window reset: the chip is the
+  // cancel, the way the snoozed chip is the wake.
+  const queuedCtl = (
+    <button className="status-ctl snz-on" title={`Resumes on its own ${wakeLabel(task.start_at)}, once the usage window resets. Click to cancel.`}
+      onClick={onCancelQueuedStart}>
+      {Icon.clock()} <span className="cv">Resumes {wakeLabel(task.start_at)}</span>
+    </button>
+  );
+
+  // The counterpart to TaskHero's Edit button, which only exists before the
+  // first session. Everything in that modal still applies to a task that has
+  // run — its title and description are the agent's task context on every
+  // future turn, its dependencies still gate it, and it can still be re-filed
+  // under another project (by discarding the worktree it cut from this one).
+  // Deliberately NOT disabled mid-turn: the transcript has replaced the only
+  // surface showing the description, so a live turn is exactly when "what did I
+  // actually ask for?" gets asked, and the modal is the sole way left to read
+  // or copy it. Nothing in there is unsafe against a running turn — the
+  // description is injected at SESSION start so an edit provably can't reach
+  // the turn in flight (which the field now says), the agent picker is already
+  // gated on `running`, Move is refused by the server with the reason shown
+  // inline, and Delete aborts the turn under the task lock before it tears the
+  // worktree down.
+  const editBtn = (
+    <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies; or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
+  );
+
+  const clearBtn = (
+    <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
+  );
+
+  // The header's control rail, in DOM order, each item carrying the order it
+  // comes OFF the rail when there isn't room for everything (`drop`: 1 goes
+  // first). An item with no `drop` is pinned: the status, because it is the one
+  // thing a glance at a session is for; Chat/Changes on a phone, which is the
+  // only way to the diff there; a queued resume, which is its own cancel; and
+  // Reclaim, which renders nothing at all until this task's work has landed.
+  //
+  // The collapse is progressive rather than a breakpoint, because there is no
+  // single width to pick one at: this pane is a 390px phone, a dragged-narrow
+  // middle column and a full-screen desktop, and its own content changes width
+  // underneath it. `useOverflowRail` measures instead, and whatever it drops
+  // stays one click away behind "More", which wraps the whole set into rows —
+  // the mechanism mobile already used, now driven by the fit rather than by
+  // being a phone.
+  const railItems: { key: string; node: ReactNode; drop?: number }[] = [];
+  if (mobile && hasSession) railItems.push({ key: "view", node: viewSeg });
+  // Live PR state — number, state, check rollup, review decision — read off the
+  // task row and kept fresh by lib/prState.ts.
+  if (task.pr_url) railItems.push({ key: "pr", node: <PrChip task={task} />, drop: 8 });
+  // Once this task's work has LANDED, one click frees the checkout, deletes the
+  // local branch and marks it done (lib/reclaim.ts). It sits beside the chip
+  // reporting the fact it acts on, and is never collapsed away: it is a
+  // one-shot action on a task that is finished with, not a standing control.
+  railItems.push({ key: "reclaim", node: <ReclaimButton task={task} /> });
+  if (showUsage) railItems.push({ key: "usage", node: usageChip, drop: 1 });
+  railItems.push({ key: "model", node: modelCtl, drop: 7 });
+  railItems.push({ key: "settings", node: settingsCtl, drop: 3 });
+  railItems.push({ key: "pri", node: priCtl, drop: 2 });
+  railItems.push({ key: "status", node: statusCtl });
+  railItems.push({ key: "snooze", node: snoozeCtl, drop: 5 });
+  if (hasSession && isQueuedStart(task) && !running) railItems.push({ key: "queued", node: queuedCtl });
+  // Ahead of Snooze in the collapse, and only just behind the model picker: on
+  // a task that has run, this modal is the ONLY surface left showing the
+  // description (see its comment above), so it is the last read-only route to
+  // "what did I actually ask for?" rather than one more control.
+  if (hasSession) railItems.push({ key: "edit", node: editBtn, drop: 6 });
+  if (hasSession && task.started === 1) railItems.push({ key: "clear", node: clearBtn, drop: 4 });
+
+  const dropOrder = railItems.filter((i) => i.drop !== undefined).sort((a, b) => a.drop! - b.drop!);
+  // What the rail is currently rendering, at the granularity that changes its
+  // width — which items are on it, and the LABELS they draw rather than the
+  // values behind them. `usage.fresh` moves on every streamed event and
+  // "64k tok" doesn't, and this string is what retires the widths
+  // useOverflowRail measured against.
+  const railSig = [
+    railItems.map((i) => i.key).join(","), task.status, awaiting, task.model ?? "", task.resolved_model ?? "",
+    task.reasoning ?? "", task.priority, isSnoozed(task) && wakeLabel(task.snoozed_until),
+    isQueuedStart(task) && wakeLabel(task.start_at), fmtTokens(usage.fresh), fmtTokens(usage.cacheRead),
+    cost.show && fmtCost(task.cost_usd), task.pr_state ?? "", task.pr_checks ?? "", task.pr_review ?? "",
+  ].join("|");
+  const hiddenCount = useOverflowRail(railRef, dropOrder.length, railSig, !toolsOpen);
+  const hiddenKeys = new Set(dropOrder.slice(0, hiddenCount).map((i) => i.key));
+  const railShown = toolsOpen ? railItems : railItems.filter((i) => !hiddenKeys.has(i.key));
+
   return (
       <div className="session">
         <div className="sess-head">
@@ -737,152 +916,35 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             <div className="crumb">
               <span className="pic" style={{ width: 16, height: 16, borderRadius: 5, background: project.color, display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700 }}>{project.name[0]}</span>
               {project.name} <span className="sep">/</span> task
+              {/* Tags and the agent are IDENTITY, not controls, and both came
+                  off the rail below, where they competed with the pickers for
+                  room on a narrow pane and were among the first things pushed
+                  out of it. Here they compete only with a fixed-length
+                  breadcrumb, and the line clips from the RIGHT, which is why
+                  the order is what it is: the tags say which feature this
+                  session is a step of and a task can carry several, while the
+                  agent is fixed for the life of the session, has nothing to do
+                  to it, and renders at all only on an instance with more than
+                  one agent connected. Clicking a tag still lights that tag's
+                  chip in the list/board exactly as the row badges do. */}
+              {task.tag_ids.length > 0 && <span className="sep">·</span>}
+              <TagBadges tagIds={task.tag_ids} tagsById={tagsById} max={mobile ? 1 : 2} onSelect={(id) => selectOneTag(project.id, id)} />
+              {multiAgent && <span className="sep">·</span>}
+              <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
             </div>
             <div className="sh-title">{task.title}</div>
           </div>
-          {/* Desktop: one row, everything inline, chips leading. Mobile: the
-              rail defaults to the essentials — Chat/Changes, status, "More" —
-              and More expands it into wrapped rows carrying the full control
-              set with the read-only chips (PR link, agent, usage) last. One
-              endless horizontal scroll of every control buried the core ones. */}
-          <div className={`sh-tools${mobile && toolsOpen ? " open" : ""}`}>
-            {mobile && hasSession && (
-              <div className="viewseg">
-                <button className={`viewseg-btn ${view === "chat" ? "on" : ""}`} onClick={() => setView("chat")}>Chat</button>
-                <button className={`viewseg-btn ${view === "changes" ? "on" : ""}`} onClick={() => setView("changes")}>Changes</button>
-              </div>
-            )}
-            {!mobile && infoChips}
-            {mobile && statusCtl}
-            {mobile && (
-              <button className={`status-ctl${toolsOpen ? " on" : ""}`} aria-expanded={toolsOpen} title={toolsOpen ? "Hide extra task controls" : "Model, reasoning, priority, snooze & more"}
+          {/* One rail at every width. It renders what fits and hands the rest
+              to "More", which wraps the whole set into rows. */}
+          <div ref={railRef} className={`sh-tools${toolsOpen ? " open" : ""}`}>
+            {railShown.map((i) => <Fragment key={i.key}>{i.node}</Fragment>)}
+            {(hiddenCount > 0 || toolsOpen) && (
+              <button className={`status-ctl${toolsOpen ? " on" : ""}`} aria-expanded={toolsOpen}
+                title={toolsOpen ? "Hide the controls that didn't fit" : "Show the controls that didn't fit"}
                 onClick={() => setToolsOpen((o) => !o)}>
                 {Icon.dots()} <span className="cv">{toolsOpen ? "Less" : "More"}</span>
               </button>
             )}
-            {(!mobile || toolsOpen) && <>
-            <div style={{ position: "relative" }}>
-              <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
-                {Icon.spark()}
-                {/* The chip says INHERIT_LABEL, never "Default" — the same word the
-                    picker's head uses, so the two can't read as different states. */}
-                <span className="cv">{models.find((m) => m.value === task.model)?.label ?? INHERIT_LABEL}</span>
-                {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
-                {Icon.chevDown()}
-              </button>
-              {modelOpen && (
-                <Popover onClose={() => setModelOpen(false)}>
-                  {models.map((m, i) => (
-                    <Fragment key={m.label}>
-                      {/* Section header whenever the group changes — Claude Code's
-                          list runs to a dozen-plus pins, so it needs the structure. */}
-                      {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
-                      <div className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
-                        <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
-                        {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
-                      </div>
-                      {/* Rule under the inherit head: everything below it is the
-                          provider's own catalog, spelled the provider's way. */}
-                      {m.value === null && <div className="divider" />}
-                    </Fragment>
-                  ))}
-                </Popover>
-              )}
-            </div>
-            <div style={{ position: "relative" }}>
-              <button className="status-ctl" title="Reasoning level & permission mode for this task" onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
-                {Icon.gear()}
-                <span className="cv">{reasoningOpts.find((r) => r.value === task.reasoning)?.label ?? INHERIT_LABEL}</span>
-                {Icon.chevDown()}
-              </button>
-              {settingsOpen && (
-                <Popover onClose={() => setSettingsOpen(false)}>
-                  <div className="pop-sec">Reasoning</div>
-                  {reasoningOpts.map((r) => (
-                    <Fragment key={r.label}>
-                      <div className="pop-item" onClick={() => { onSetReasoning(r.value); setSettingsOpen(false); }}>
-                        <div><div>{r.label}</div><div className="pi-sub">{r.sub}</div></div>
-                        {(task.reasoning ?? null) === r.value && <span className="pi-check">{Icon.check()}</span>}
-                      </div>
-                      {r.value === null && <div className="divider" />}
-                    </Fragment>
-                  ))}
-                  <div className="divider" />
-                  <div className="pop-sec">Permission</div>
-                  {permissionOpts.map((p) => (
-                    <Fragment key={p.label}>
-                      <div className="pop-item" onClick={() => { onSetPermission(p.value); setSettingsOpen(false); }}>
-                        <div><div>{p.label}</div><div className="pi-sub">{p.sub}</div></div>
-                        {(task.permission_mode ?? null) === p.value && <span className="pi-check">{Icon.check()}</span>}
-                      </div>
-                      {/* Claude's own mode is spelled "default"; the rule keeps it
-                          from reading as a second copy of the inherit head. */}
-                      {p.value === null && <div className="divider" />}
-                    </Fragment>
-                  ))}
-                </Popover>
-              )}
-            </div>
-            <div style={{ position: "relative" }}>
-              <button className="status-ctl" onClick={(e) => { e.stopPropagation(); setPriOpen((o) => !o); setStatusOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
-                {Icon.flag()} <span className="cv">{PLABEL[task.priority]}</span>
-              </button>
-              {priOpen && (
-                <Popover onClose={() => setPriOpen(false)}>
-                  {PRIORITIES.map((p) => (
-                    <div key={p} className="pop-item" onClick={() => { onSetPriority(p); setPriOpen(false); }}>
-                      <span className={`pri ${p}`}>{PLABEL[p].toUpperCase()}</span>
-                      {task.priority === p && <span className="pi-check">{Icon.check()}</span>}
-                    </div>
-                  ))}
-                </Popover>
-              )}
-            </div>
-            {!mobile && statusCtl}
-            {/* Snoozing, beside the status it deliberately does NOT change —
-                the status is the category this task drops back into when the
-                deadline passes. While parked, the control becomes the wake
-                button and says when it would have come back on its own. */}
-            {isSnoozed(task) ? (
-              <button className="status-ctl snz-on" title={`Snoozed: wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now.`}
-                onClick={onUnsnooze}>
-                {Icon.moon()} <span className="cv">Wakes {wakeLabel(task.snoozed_until)}</span>
-              </button>
-            ) : (
-              <SnoozeButton className="status-ctl" label="Snooze" onSnooze={onSnooze} />
-            )}
-            {/* A started task queued to resume at the usage-window reset: the
-                chip is the cancel, the way the snoozed chip is the wake. */}
-            {hasSession && isQueuedStart(task) && !running && (
-              <button className="status-ctl snz-on" title={`Resumes on its own ${wakeLabel(task.start_at)}, once the usage window resets. Click to cancel.`}
-                onClick={onCancelQueuedStart}>
-                {Icon.clock()} <span className="cv">Resumes {wakeLabel(task.start_at)}</span>
-              </button>
-            )}
-            {/* The counterpart to TaskHero's Edit button, which only exists
-                before the first session. Everything in that modal still applies
-                to a task that has run — its title and description are the
-                agent's task context on every future turn, its dependencies
-                still gate it, and it can still be re-filed under another
-                project (by discarding the worktree it cut from this one).
-                Deliberately NOT disabled mid-turn: the transcript has replaced
-                the only surface showing the description, so a live turn is
-                exactly when "what did I actually ask for?" gets asked, and the
-                modal is the sole way left to read or copy it. Nothing in there
-                is unsafe against a running turn — the description is injected
-                at SESSION start so an edit provably can't reach the turn in
-                flight (which the field now says), the agent picker is already
-                gated on `running`, Move is refused by the server with the
-                reason shown inline, and Delete aborts the turn under the task
-                lock before it tears the worktree down. */}
-            {hasSession && (
-              <button className="btn btn-line btn-sm" title="View & edit title, description, dependencies; or move this task to another project" onClick={onEdit}>{Icon.edit()} Edit</button>
-            )}
-            {hasSession && task.started === 1 && (
-              <button className="btn btn-line btn-sm" title="Save summary & start a fresh context window" onClick={onClear} disabled={running}>{Icon.clear()} /clear</button>
-            )}
-            {mobile && infoChips}
-            </>}
           </div>
         </div>
 
