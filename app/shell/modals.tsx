@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration, fmtJobCost } from "./format";
+import { relTime, duration, fmtJobCost, alphabetical, isTerminal } from "./format";
 import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
@@ -73,6 +73,9 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Alphabetical, not the strip's manual order: this is a lookup list, and the
+  // user is scanning it for a tag name they already have in mind.
+  const rows = useMemo(() => [...tags].sort((a, b) => alphabetical(a.name, b.name)), [tags]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const cancel = () => { setCreating(false); setName(""); setErr(null); };
   const create = async () => {
@@ -98,7 +101,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
       <div className="lab">{label} {hint && <span className="opt">{hint}</span>}</div>
       {tags.length > 0 ? (
         <div className="dep-list">
-          {tags.map((t) => (
+          {rows.map((t) => (
             <label key={t.id} className={`dep-row ${value.includes(t.id) ? "on" : ""}`}>
               <input type="checkbox" checked={value.includes(t.id)} onChange={() => toggle(t.id)} />
               <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: t.color ?? "var(--ink-4)", flex: "0 0 auto" }} />
@@ -156,7 +159,13 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
   const can = title.trim().length > 0;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
-  const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
+  // A blocker only holds this task back while it can still finish something —
+  // the same terminal rule blocks() enforces server-side, so the dialog and the
+  // board agree about a cancelled dependency (it never completes; waiting on it
+  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
+  // it may simply be one this list doesn't carry, and guessing "clear" would
+  // offer a Start the server then refuses.
+  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
   // Can't launch a session on an agent that isn't signed in — but the task can
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
@@ -876,7 +885,13 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // Same two gates the New-task dialog puts on "Start session immediately":
   // an unfinished blocker means the task isn't allowed to run yet, and a
   // disconnected agent has no session to launch.
-  const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
+  // A blocker only holds this task back while it can still finish something —
+  // the same terminal rule blocks() enforces server-side, so the dialog and the
+  // board agree about a cancelled dependency (it never completes; waiting on it
+  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
+  // it may simply be one this list doesn't carry, and guessing "clear" would
+  // offer a Start the server then refuses.
+  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   // Switching an unstarted task's agent invalidates a model chosen under the old

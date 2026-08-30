@@ -6,6 +6,7 @@ import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { SLABEL, type FsListing, type PickerOption, type TaskRow } from "./types";
 import { StatusDot, Skel, ErrNote } from "./shared";
+import { blockerCandidates } from "./format";
 
 // Tracks open modals so Escape only dismisses the topmost one when modals stack
 // (e.g. the folder picker opened over the project-context editor).
@@ -189,22 +190,25 @@ export function PrioritySeg({ value, onChange }: { value: Priority; onChange: (p
 }
 
 // "Blocked by" picker — choose the tasks that must reach Done before this one can
-// start. Candidates are the other tasks in the project (self excluded by caller).
+// start. Candidates are the other tasks in the project (self excluded by caller),
+// minus the terminal ones, which can't block anything and so aren't offered, and
+// listed alphabetically rather than in the caller's recency order.
 // With any blockers selected, offers the per-task "Start when unblocked" opt-in:
 // the last blocker flipping to Done launches this task's first turn by itself.
 export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart }: {
   candidates: TaskRow[]; value: string[]; onChange: (ids: string[]) => void;
   autoStart: boolean; onAutoStart: (on: boolean) => void;
 }) {
+  const rows = useMemo(() => blockerCandidates(candidates, value), [candidates, value]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className="field">
       <div className="lab">Blocked by <span className="opt">(must finish first)</span></div>
-      {candidates.length === 0 ? (
-        <div className="hlp">No other tasks in this project yet.</div>
+      {rows.length === 0 ? (
+        <div className="hlp">No unfinished tasks in this project to wait on.</div>
       ) : (
         <div className="dep-list">
-          {candidates.map((c) => (
+          {rows.map((c) => (
             <label key={c.id} className={`dep-row ${value.includes(c.id) ? "on" : ""}`}>
               <input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} />
               <StatusDot status={c.status} />
