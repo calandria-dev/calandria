@@ -936,9 +936,22 @@ and one complete set of notarization credentials:
 |-|-|
 | `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name. Unset or `-` means ad-hoc; this is the only switch. |
 | `CSC_LINK` / `CSC_KEY_PASSWORD` | The `.p12` electron-builder imports into a temporary keychain, base64-encoded, and its password. |
-| `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect API key — the preferred credential, being revocable on its own and not tied to the account password. |
+| `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect API key — the preferred credential, being revocable on its own and not tied to the account password. **`APPLE_API_KEY` is a FILE PATH**, not the key: `notarytool --key` takes a path and `@electron/notarize` passes it straight through. A CI secret therefore holds the `.p8`'s contents and the lane writes them to a file outside the checkout before setting this. |
 | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | The alternative, if a key is not available. |
 | `CALANDRIA_MAC_SKIP_NOTARIZE=1` | Sign without notarizing. For testing signing on its own; the result must not be published. |
+
+**Getting the certificate**, since the portal offers seven kinds and only one is
+right. It is **Developer ID Application** — under *Certificates, Identifiers &
+Profiles → Certificates → + → Software*. Not *Developer ID Installer*, which
+signs `.pkg` and this app does not ship one; not *Apple Development* or *Apple
+Distribution*, which are for Xcode and the App Store and which Gatekeeper will
+not accept for a direct download. Generate the CSR from Keychain Access on a Mac
+(*Certificate Assistant → Request a Certificate From a Certificate Authority*,
+saved to disk), upload it, install the issued `.cer`, then export the certificate
+**together with its private key** as a `.p12` — a certificate exported without
+the key produces a `CSC_LINK` electron-builder can import and cannot sign with.
+`security find-identity -v -p codesigning` prints the exact string
+`CALANDRIA_MAC_SIGN_IDENTITY` wants.
 
 Setting the identity with no notarization credentials **fails the build**. A
 Developer ID signature without notarization is still refused on a downloaded copy,
