@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
+import { Markdown } from "../Markdown";
 import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
@@ -275,7 +276,13 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
       <div className="h-ic">{Icon.bolt()}</div>
       <div className="h-status"><StatusDot status={task.status} /> {statusLine}</div>
       <h2>{task.title}</h2>
-      {task.description && <p className="h-desc">{task.description}</p>}
+      {/* Rendered as markdown, because most descriptions on this screen were
+          WRITTEN as markdown: suggest_task briefs arrive with bullets, bold
+          and fenced snippets, and as a plain <p> they read as literal `**`
+          and `-` noise. It's the same `.md` the transcript uses, left-aligned
+          against the centred hero — a bulleted list centred line by line is
+          unreadable, and the box below it is already left-aligned. */}
+      {task.description && <div className="h-desc"><Markdown>{task.description}</Markdown></div>}
       {/* The brief above IS the brief — this card must not restate it. It used
           to print "**title.** description" under an "initial prompt" header,
           which was both a near-verbatim repeat of the two lines above it and a
