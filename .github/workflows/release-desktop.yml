@@ -1,0 +1,585 @@
+# Build the Electron desktop shell on all three platforms and publish the
+# artifacts to the GitHub Release that release-please just cut.
+#
+# Until this existed, a release published a multi-arch Docker image and nothing
+# else: the desktop app built only when somebody ran `npm run dist:*` by hand, or
+# when a test lane packaged one to prove it packages and then threw it away. The
+# only way to obtain the app was to build it, and there was no release channel
+# for an updater to read.
+#
+# ELECTRON-BUILDER UPLOADS ITS OWN ARTIFACTS, AND THAT IS THE POINT. The
+# `github` publish provider (`publish` in desktop/electron-builder.cjs, driven by
+# `--publish always` below) attaches each artifact to the Release *and* writes
+# the per-platform update feed beside it — latest.yml, latest-mac.yml,
+# latest-linux.yml and the .blockmap files electron-updater needs for
+# differential downloads. A lane that built locally and then ran
+# `gh release upload` would produce artifacts with no feed, which is an updater
+# that silently never finds anything. Do not replace the provider with a manual
+# upload. The one thing uploaded by hand here is SHA256SUMS.txt, because
+# electron-builder does not produce it.
+#
+# THE GATE IS publish-image.yml's, NOT A SECOND ONE. Both call
+# .github/actions/require-green-test-run, which waits for the tagged commit's
+# push-to-main Test run to conclude and fails unless it succeeded. That action's
+# header carries the reasoning — why it waits rather than querying for a
+# completed run, why the filter is `event=push`, why `cancelled` is not a red
+# verdict, and why the 45-minute ceiling sits where it does. Read it there.
+#
+# SIGNING IS SUPPLIED HERE, NOT WRITTEN HERE. desktop/signing.js decides the
+# policy and desktop/electron-builder.cjs assembles it; this workflow only puts
+# credentials in the environment and then asserts the result. Which credentials
+# and how to obtain each is docs/DESKTOP_APP.md §6.4. Two properties of that
+# policy shape the job below:
+#
+#   - Signing is opt-in BY NAME. `CALANDRIA_MAC_SIGN_IDENTITY` is the only
+#     switch; unset or "-" is ad-hoc. So a fork, or this repository before the
+#     secrets existed, produces an unsigned build rather than a failure.
+#   - A HALF-configured request is an error, never a downgrade. Setting the
+#     identity without notarization credentials fails the build on purpose: a
+#     signed, un-notarized app is still refused on download, so that combination
+#     is the most plausible way to ship a broken release from a green run.
+#
+#     Which is why the `signing` job below decides all-or-nothing per platform
+#     and the build gets either the whole credential set or none of it. As of
+#     2026-08-30 the Apple secrets exist and the Azure ones do not, so macOS
+#     publishes signed and notarized while Windows publishes unsigned — and the
+#     release notes say so per platform rather than leaving people to find out.
+#
+# DO NOT COPY test.yml's `macos-desktop` ENVIRONMENT. That lane runs
+# `unset GITHUB_BASE_REF` in its shell and sets `CSC_IDENTITY_AUTO_DISCOVERY:
+# "false"`. This lane needs neither: it runs on a tag, where GITHUB_BASE_REF is
+# unset anyway, and it must NOT disable identity discovery. `CSC_FOR_PULL_REQUEST`
+# is gone from the repository and must not come back — it means "sign pull
+# requests with the real certificate", which is a real hazard now that a
+# certificate exists.
+#
+# THE spctl CHECK IS POINTED THE OTHER WAY from the test lane's. `macos-desktop`
+# asserts that Gatekeeper REFUSES what it built, because that lane is ad-hoc by
+# construction and an acceptance there would mean a certificate leaked into a
+# PR-triggered build. Here the same command is an ordinary assertion expecting
+# the opposite answer, plus `stapler validate` on both the .app and the .dmg.
+# Neither is satisfied by `codesign --verify`, which passes on ad-hoc bundles.
+#
+# NOTARIZATION IS SLOW AND MUST NOT BE RETRIED IMPATIENTLY. Apple documents
+# "most within 5 minutes, 98% within 15" against a guideline of 75 submissions
+# per day, but 2026 reports of Electron bundles sitting In Progress for hours are
+# common. Hence the macOS job's three-hour ceiling and `fail-fast: false`: a slow
+# Apple must not take the two artifacts that already built down with it.
+#
+# THERE IS NO UPDATER YET, AND THIS LANE IS WHAT THAT DECISION GATES. The
+# recorded position (2026-08-28) is that the update mechanism gates the RELEASE
+# LANE rather than the merge to main, because this is the first thing that puts a
+# binary in anybody's hands and a binary that cannot update itself is one people
+# keep. So the file can land; a release cut through it before electron-updater
+# exists ships downloads with an update feed nothing reads. The feed is written
+# either way — that is the provider's doing, not a choice made here — which is
+# what makes adding the updater afterwards a client-side change rather than a
+# re-cut release.
+#
+# WHAT STILL HAS TO HAPPEN AFTER THIS LANE'S FIRST REAL RUN, recorded because
+# both places say they are waiting on exactly this: the quarantine workaround in
+# docs/DESKTOP_APP.md §6.3 and desktop/README.md is the correct instruction for a
+# self-built or CI-pulled ad-hoc bundle and stays until a notarized artifact
+# exists AND somebody has confirmed it opens after a browser download on a
+# machine that has never seen it. A `curl` or an `scp` does not reproduce that —
+# only a browser attaches `com.apple.quarantine`.
+name: Publish desktop artifacts
+
+on:
+  # ON THE RELEASE TAG ONLY. This is the most expensive lane in the repository —
+  # three runners, one of them macOS, each doing a production `next build`, a
+  # production `npm ci` into a staging payload and an Electron package — and
+  # proving that the shell still builds is already the desktop / windows-desktop
+  # / macos-desktop lanes' job in test.yml. There is deliberately no `push:
+  # branches` trigger here.
+  push:
+    tags: ["v*"]
+  # The escape hatch, and it is not hypothetical: release-please.yml's header
+  # records that a tag pushed with GITHUB_TOKEN rather than RELEASE_PLEASE_TOKEN
+  # fires no `push: tags:` trigger at all. Dispatch this on the tag ref —
+  # `gh workflow run release-desktop.yml --ref vX.Y.Z` — and everything below
+  # behaves identically, gate included.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a publish mid-flight. A half-uploaded Release is worse than a
+  # queued rerun, and on the macOS leg a cancellation can land in the middle of a
+  # notarization round trip that has already cost Apple's clock.
+  group: release-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # THE VENDORED NODE IS PINNED HERE, and it is the one thing that separates this
+  # from a test lane. desktop/scripts/fetch-node.js defaults to the HOST's Node
+  # version, which is right when the question is "does it build on whatever this
+  # runner has" and wrong when the artifact is going to somebody's machine: two
+  # releases cut a week apart would ship different runtimes for no reason anybody
+  # chose. `.nvmrc` cannot serve — it says `22`, and fetch-node.js needs a full
+  # version to name a file on nodejs.org.
+  #
+  # setup-node is pinned to the SAME version below rather than reading .nvmrc, so
+  # the Node that installs the payload's node_modules and the Node the packaged
+  # app runs them under are one decision instead of two that happen to agree.
+  # build-payload.js's final check — running the vendored binary against
+  # `require('better-sqlite3'); require('node-pty')` — is what would catch them
+  # diverging.
+  CALANDRIA_DESKTOP_NODE_VERSION: "22.23.2"
+
+jobs:
+  # Everything that must be decided once, before three runners spend an hour
+  # each: is this commit releasable, and which platforms can sign.
+  gate:
+    name: Gate
+    runs-on: ubuntu-24.04
+    # Above the gate action's 2700-second wait, or the job timeout becomes the
+    # thing that fails releases. Same reasoning, same shape, as publish-image.yml's
+    # `prepare`.
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      # The gate polls test.yml's run history for this SHA.
+      actions: read
+    outputs:
+      mac_signing: ${{ steps.credentials.outputs.mac }}
+      win_signing: ${{ steps.credentials.outputs.win }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse a tag whose Test run is not green
+        if: github.ref_type == 'tag'
+        uses: ./.github/actions/require-green-test-run
+        with:
+          sha: ${{ github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          refusing: publish desktop artifacts for ${{ github.ref_name }}
+
+      # ALL OR NOTHING, PER PLATFORM, DECIDED ONCE. desktop/signing.js throws on a
+      # half-filled credential group — deliberately, because a partial set is how
+      # a green build ships an artifact that only misbehaves on somebody else's
+      # machine. That throw is the right answer for a developer who set four of
+      # six variables by hand; it is the wrong answer for a release lane, where a
+      # single lapsed secret would take the whole platform's artifact down
+      # instead of producing the unsigned one that is still worth having.
+      #
+      # So the decision is made here, from presence alone, and the build gets
+      # either the complete set or none of it. What is missing is named — a
+      # release that silently stopped signing is exactly the failure this whole
+      # chain is built against.
+      - name: Decide which platforms can sign
+        id: credentials
+        env:
+          CALANDRIA_MAC_SIGN_IDENTITY: ${{ secrets.CALANDRIA_MAC_SIGN_IDENTITY }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Non-secret by design: Azure Artifact Signing authenticates through
+          # OIDC workload-identity federation, so there is no certificate and no
+          # secret to store. Repository variables, not secrets.
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME }}
+          AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ vars.AZURE_CODE_SIGNING_PUBLISHER_NAME }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          set -euo pipefail
+
+          decide() {
+            local platform="$1"; shift
+            local missing=()
+            for name in "$@"; do
+              [ -n "${!name:-}" ] || missing+=("$name")
+            done
+            if [ ${#missing[@]} -eq 0 ]; then
+              echo "${platform}=true" >> "$GITHUB_OUTPUT"
+              echo "${platform}: signing configured"
+              return
+            fi
+            echo "${platform}=false" >> "$GITHUB_OUTPUT"
+            if [ ${#missing[@]} -eq $# ]; then
+              echo "::notice::${platform}: no signing credentials are configured; this release's ${platform} artifacts will be published unsigned. See docs/DESKTOP_APP.md §6.4."
+            else
+              # A partial set is a lapsed or mistyped secret, not a deliberate
+              # choice, and it is worth a warning rather than a notice.
+              echo "::warning::${platform}: signing is only PARTLY configured — missing ${missing[*]}. Publishing unsigned rather than failing the release. See docs/DESKTOP_APP.md §6.4."
+            fi
+          }
+
+          decide mac CALANDRIA_MAC_SIGN_IDENTITY CSC_LINK CSC_KEY_PASSWORD \
+                     APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER
+          decide win AZURE_CODE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT_NAME \
+                     AZURE_CODE_SIGNING_CERT_PROFILE_NAME AZURE_CODE_SIGNING_PUBLISHER_NAME \
+                     AZURE_CLIENT_ID AZURE_TENANT_ID
+
+  build:
+    name: ${{ matrix.label }}
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      # electron-builder's github provider attaches artifacts to the Release.
+      contents: write
+      # Azure Artifact Signing authenticates with an OIDC token minted here.
+      # Harmless on the legs that never ask for one.
+      id-token: write
+    strategy:
+      # A slow Apple, a flaky apt mirror or an Azure outage must not discard the
+      # platforms that already built. Every leg publishes independently; a
+      # missing one is a rerun of that leg, not of the release.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            label: Linux (deb, AppImage)
+            # `dir` is in electron-builder.cjs's target list for the test lanes to
+            # launch; it is not a thing anyone downloads, so it is not built here.
+            targets: --linux deb AppImage
+            timeout: 45
+          - os: macos-latest
+            platform: mac
+            # dmg is the download people expect; the zip is the one Squirrel.Mac
+            # — and so electron-updater — actually consumes, and a dmg-only build
+            # emits no latest-mac.yml at all. Both, always.
+            label: macOS (dmg, zip)
+            targets: --mac dmg zip
+            # Three hours. The build itself is under one; the rest is Apple's
+            # notarization queue, which happens twice — electron-builder
+            # notarizes and staples the .app inside MacPackager.sign(), and
+            # desktop/scripts/notarize-dmg.js notarizes and staples the .dmg from
+            # the artifactBuildCompleted hook. See this file's header.
+            timeout: 180
+          - os: windows-latest
+            platform: win
+            label: Windows (NSIS, zip)
+            targets: --win nsis zip
+            timeout: 90
+    defaults:
+      run:
+        # bash on all three, including Windows. GitHub's pwsh wrapper only
+        # propagates the LAST command's status, which the windows-desktop lane
+        # has to work around by exit-checking every line by hand; bash is `-e` and
+        # aborts on the first failure. There is no Windows-specific shell work in
+        # this job that would justify paying that cost again.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # Not `.nvmrc`. See CALANDRIA_DESKTOP_NODE_VERSION at the top: the Node
+          # that installs the payload and the Node the packaged app runs it under
+          # are one pinned decision on a release.
+          node-version: ${{ env.CALANDRIA_DESKTOP_NODE_VERSION }}
+          cache: npm
+
+      # THE VERSION IN THE ARTIFACT MUST BE THE VERSION IN THE TAG, and this is
+      # not cosmetic. electron-builder's github publisher looks the Release up BY
+      # TAG, and it derives that tag from desktop/package.json's `version` — so a
+      # desktop package still saying 0.3.0 during a v0.4.2 release would not fail:
+      # it would quietly create a DRAFT release called v0.3.0, upload every
+      # artifact into it, and leave the real Release empty. release-please keeps
+      # the two in step through `extra-files` in release-please-config.json;
+      # tests/desktopSigning.test.ts pins that they agree in the tree. This is the
+      # third check, and the only one that can see the tag actually being built.
+      - name: Check the artifact version matches the tag
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./desktop/package.json').version")
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::desktop/package.json is version ${version} but this is ${GITHUB_REF_NAME}. electron-builder would publish into a draft v${version} release instead of this one. Check release-please-config.json's extra-files entry for desktop/package.json."
+            exit 1
+          fi
+          echo "desktop/package.json is ${version}, matching ${GITHUB_REF_NAME}"
+
+      - run: npm ci
+
+      # The payload ships a production build of the app, so this is not optional
+      # scaffolding — it is the thing being packaged.
+      - name: Build the app the shell serves
+        run: npm run build
+
+      # desktop/ is its own private package so ~280 MB of Electron never lands in
+      # the app's node_modules or the Docker image. The install script passes
+      # --include=dev and then runs electron/install.js explicitly, because
+      # Electron is a devDependency and any environment exporting
+      # NODE_ENV=production makes npm report "up to date" and fetch nothing.
+      - name: Install Electron
+        run: npm run desktop:install
+
+      # Staged separately from the package step so a payload failure is reported
+      # as one. `--no-build` reuses the .next above rather than building twice.
+      # This is also where CALANDRIA_DESKTOP_NODE_VERSION is spent: the vendored
+      # runtime is downloaded and sha256-verified against nodejs.org's own
+      # SHASUMS256.txt here.
+      - name: Stage the server payload and vendor Node
+        working-directory: desktop
+        run: npm run payload -- --no-build
+
+      # APPLE_API_KEY IS A FILE PATH, NOT THE KEY. `notarytool --key` takes a
+      # path and @electron/notarize passes the value straight through, so a
+      # secret wired directly to APPLE_API_KEY fails at the notarization step —
+      # after the build has already spent its time. The secret holds the .p8's
+      # CONTENTS under a different name; this writes them to a file OUTSIDE the
+      # checkout (nothing under desktop/ may pick it up as packageable content)
+      # and the package step points APPLE_API_KEY at that path.
+      #
+      # base64 or raw, because both are easy to paste and only one is documented;
+      # verify-signing-credentials.yml accepts the same two forms.
+      - name: Write the App Store Connect key to a file
+        if: matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey.p8"
+          if printf '%s' "$APPLE_API_KEY_P8" | grep -q 'BEGIN PRIVATE KEY'; then
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$key"
+          else
+            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key" || {
+              echo "::error::APPLE_API_KEY_P8 is neither valid base64 nor a raw .p8. It should be the CONTENTS of AuthKey_<KEYID>.p8 — see docs/DESKTOP_APP.md §6.4."
+              exit 1
+            }
+          fi
+          chmod 600 "$key"
+
+      # No secret and no certificate: Entra ID's ambient credential chain, which
+      # on GitHub Actions is OIDC workload-identity federation. electron-builder
+      # reads none of these variables itself — the Azure signing library does,
+      # from the token this step writes.
+      - name: Authenticate to Azure for Artifact Signing
+        if: matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true'
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      # The provider does the upload, not a later step. See this file's header
+      # for why a `gh release upload` lane would be an updater that never finds
+      # anything.
+      #
+      # The credential expressions are the all-or-nothing decision from the gate
+      # job, applied: either the complete set reaches desktop/signing.js or none
+      # of it does, so its half-filled-group error can only fire on a genuine
+      # misconfiguration rather than on a lapsed secret. On the two legs that are
+      # not this platform every value is the empty string, which `signing.js`
+      # reads as unset.
+      - name: Package and publish
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          CALANDRIA_MAC_SIGN_IDENTITY: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CALANDRIA_MAC_SIGN_IDENTITY || '' }}
+          CSC_LINK: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && format('{0}/AuthKey.p8', runner.temp) || '' }}
+          APPLE_API_KEY_ID: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.APPLE_API_ISSUER || '' }}
+
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ENDPOINT || '' }}
+          AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ACCOUNT_NAME || '' }}
+          AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME || '' }}
+          AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_PUBLISHER_NAME || '' }}
+        #
+        # `never` off a tag: a workflow_dispatch on a branch is a dry run of the
+        # packaging, and `always` there would mint a draft release named after
+        # desktop/package.json's version and fill it with artifacts nobody asked
+        # for.
+        run: npx electron-builder ${{ matrix.targets }} --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
+
+      # THE OPPOSITE ANSWER TO THE TEST LANE'S. `macos-desktop` asserts that
+      # Gatekeeper REFUSES what it built; here it must ACCEPT, and the ticket must
+      # be stapled to both the bundle and the disk image. None of this is implied
+      # by `codesign --verify`, which passes on an ad-hoc bundle — that is exactly
+      # the pair §6.3 records: internally valid, and refused anyway.
+      #
+      # `stapler validate` on the .dmg is what proves notarize-dmg.js ran at all.
+      # It is a separate submission from the .app's, on a separate artifact, and
+      # it is the one the browser tags with com.apple.quarantine.
+      - name: Assert the macOS artifacts are signed, notarized and stapled
+        if: matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true'
+        run: |
+          set -euo pipefail
+          # Named for the arch (mac-arm64 on the current hosted image), so it is
+          # discovered rather than spelled.
+          app=$(find desktop/dist -maxdepth 2 -name '*.app' -type d | head -n 1)
+          test -n "$app" || { echo "::error::electron-builder produced no .app under desktop/dist"; exit 1; }
+          dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
+          test -n "$dmg" || { echo "::error::electron-builder produced no .dmg under desktop/dist"; exit 1; }
+
+          echo "--- codesign ---"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          echo "--- Gatekeeper assessment (must ACCEPT) ---"
+          if ! spctl --assess --type execute -vvv "$app"; then
+            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See docs/DESKTOP_APP.md §6.3."
+            exit 1
+          fi
+
+          echo "--- stapled ticket on the .app ---"
+          xcrun stapler validate "$app"
+
+          echo "--- stapled ticket on the .dmg ---"
+          if ! xcrun stapler validate "$dmg"; then
+            echo "::error::The .dmg carries no stapled ticket. desktop/scripts/notarize-dmg.js runs from electron-builder's artifactBuildCompleted hook; check it was not moved to afterAllArtifactBuild, which runs after the upload has begun."
+            exit 1
+          fi
+
+      # electron-builder publishes sha512 inside the update feed, which is for
+      # the updater rather than for a person. A SHA-256 manifest is the
+      # convention for checking a download by hand, and on Linux — where there is
+      # no signature at all and none is expected — it is the only integrity story
+      # there is.
+      #
+      # Only the artifacts a person downloads. The .blockmap files are the
+      # updater's differential-download index, and checksumming them would pad
+      # the manifest with lines nobody verifies.
+      - name: Checksum the published artifacts
+        id: checksums
+        run: |
+          set -euo pipefail
+          # macOS has no sha256sum; Git Bash on Windows and Ubuntu have no shasum
+          # worth relying on. Pick whichever exists.
+          sum() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+          }
+
+          out="$RUNNER_TEMP/release-notes-fragment"
+          mkdir -p "$out"
+
+          cd desktop/dist
+          files=$(find . -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' \) \
+            | sed 's|^\./||' | sort)
+          if [ -z "$files" ]; then
+            echo "::error::no distributable artifacts under desktop/dist — electron-builder published nothing"
+            exit 1
+          fi
+          echo "$files" | while IFS= read -r f; do sum "$f"; done \
+            > "$out/SHA256SUMS-${{ matrix.platform }}.txt"
+
+          echo "--- SHA256SUMS-${{ matrix.platform }}.txt ---"
+          cat "$out/SHA256SUMS-${{ matrix.platform }}.txt"
+
+          # The per-platform row of the release-notes table, written by the leg
+          # that actually knows what it did rather than inferred later from the
+          # secrets that happened to exist.
+          case "${{ matrix.platform }}" in
+            mac)
+              if [ "${{ needs.gate.outputs.mac_signing }}" = "true" ]; then
+                signing="Signed with a Developer ID Application certificate, notarized by Apple and stapled. Opens without a Gatekeeper warning."
+              else
+                signing="**Unsigned** (ad-hoc signature only). macOS will refuse a downloaded copy with \"Calandria is damaged and can't be opened\"; see \`desktop/README.md\` for the \`xattr\` workaround."
+              fi
+              ;;
+            win)
+              if [ "${{ needs.gate.outputs.win_signing }}" = "true" ]; then
+                signing="Signed with Azure Artifact Signing."
+              else
+                signing="**Unsigned.** Microsoft Defender SmartScreen will show \"Windows protected your PC\" on first run — choose More info, then Run anyway. The zip is not a way around it: Explorer propagates the mark of the web to what it extracts."
+              fi
+              ;;
+            linux)
+              signing="Unsigned by convention — Linux packaging has no code-signing story to enrol in. Verify with \`SHA256SUMS.txt\` below."
+              ;;
+          esac
+          printf '| %s | %s |\n' "${{ matrix.label }}" "$signing" > "$out/signing-${{ matrix.platform }}.md"
+
+      - name: Upload the checksum fragment
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes-fragment-${{ matrix.platform }}
+          path: ${{ runner.temp }}/release-notes-fragment/
+          if-no-files-found: error
+          retention-days: 7
+
+  # One SHA256SUMS.txt for the whole release, plus the paragraph that says which
+  # of these artifacts is signed and which is not. Both belong to the release as
+  # a whole rather than to any one platform, so they are a job rather than three.
+  notes:
+    name: Checksums and release notes
+    needs: [gate, build]
+    # `!cancelled()` rather than `success()`: if one platform fails, the release
+    # still has two artifacts and they still need checksums and an honest note
+    # saying which platform is missing.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-notes-fragment-*
+          merge-multiple: true
+          path: fragments
+
+      - name: Assemble and attach SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! ls fragments/SHA256SUMS-*.txt >/dev/null 2>&1; then
+            echo "::error::no checksum fragments — every platform's build failed"
+            exit 1
+          fi
+          # Sorted so the file is stable across reruns and across whichever
+          # platform finished first.
+          cat fragments/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # --clobber so a rerun of this job replaces the manifest rather than
+          # failing on an asset that already exists. This is the ONLY thing this
+          # workflow uploads by hand; electron-builder's provider owns the
+          # artifacts and their update feed.
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
+
+      # Appended to release-please's notes, not written over them: the changelog
+      # is its output and this section is ours. The marker makes a rerun replace
+      # its own section instead of stacking a second copy.
+      - name: Record what is signed and what is not
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          marker='<!-- desktop-artifacts -->'
+
+          gh release view "$GITHUB_REF_NAME" --json body --jq .body > body.md
+          # Everything from a previous run of this step onwards goes; what
+          # release-please wrote stays.
+          awk -v m="$marker" 'index($0, m) { exit } { print }' body.md > notes.md
+
+          {
+            echo "$marker"
+            echo
+            echo "### Desktop app"
+            echo
+            echo "| Platform | Signing |"
+            echo "|-|-|"
+            cat fragments/signing-*.md
+            echo
+            echo "Verify a download against \`SHA256SUMS.txt\`, attached to this release:"
+            echo
+            echo '```'
+            echo "sha256sum -c SHA256SUMS.txt --ignore-missing   # shasum -a 256 -c on macOS"
+            echo '```'
+            echo
+            echo "macOS ships \`.dmg\` for people and \`.zip\` for the updater — both hold the same app."
+            echo "Windows ships an NSIS installer that installs per-user, and a zip for anyone who would"
+            echo "rather unpack a folder. Linux ships \`.deb\` and \`.AppImage\`. Every platform is x64"
+            echo "except macOS, which is Apple silicon (arm64)."
+          } >> notes.md
+
+          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"

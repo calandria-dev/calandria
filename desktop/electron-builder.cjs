@@ -83,6 +83,37 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
   },
 
+  // WHERE A RELEASE'S ARTIFACTS GO, and — the half that is easy to miss — where
+  // the UPDATE FEED comes from. With a `github` provider configured,
+  // electron-builder's PublishManager both attaches each artifact to the Release
+  // and writes the per-platform feed beside it: latest.yml, latest-mac.yml,
+  // latest-linux.yml, plus the .blockmap files electron-updater uses for
+  // differential downloads. Building locally and uploading with
+  // `gh release upload` produces the artifacts and none of the feed, which is an
+  // updater that silently never finds anything.
+  //
+  // owner/repo are spelled out rather than inferred. electron-builder would fall
+  // back to parsing package.json's `repository` field, which this package does
+  // not have, and then to the CI environment — a chain whose failure mode is
+  // publishing into the wrong place rather than an error.
+  //
+  // THE TAG IS DERIVED FROM `version` IN package.json, not from the ref being
+  // built. That is why release-please-config.json's `extra-files` keeps
+  // desktop/package.json in step with the root manifest: a desktop package still
+  // reading 0.3.0 during a v0.4.2 release would not fail, it would quietly mint a
+  // DRAFT release named v0.3.0 and upload everything into that instead.
+  // .github/workflows/release-desktop.yml checks the two agree before it builds.
+  //
+  // Inert outside a release. Nothing publishes without `--publish always` or a
+  // tag plus a token, and no lane in test.yml has either.
+  publish: [
+    {
+      provider: "github",
+      owner: "calandria-dev",
+      repo: "calandria",
+    },
+  ],
+
   // Fires once per finished artifact and is awaited BEFORE the artifact is
   // announced to the publisher, which is the whole reason it is this hook and
   // not `afterAllArtifactBuild` — see the header of the module it calls. A
