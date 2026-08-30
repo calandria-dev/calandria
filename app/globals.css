@@ -1606,12 +1606,25 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .slash-item .cd{font-size:11.5px;color:var(--ink-3);margin-left:auto;padding-left:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 
 /* unstarted task hero */
-.hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;text-align:center;overflow-y:auto;}
+/* A column flex container shrinks its items to fit before it lets the box
+   scroll, so a tall hero squashed .h-prompt and its overflow:hidden (there for
+   the header strip's rounded corners) silently ate rows off the bottom of
+   "What the session starts with". Nothing in the hero shrinks; the pane
+   scrolls instead. Centring then has to be `safe`, or the overflow spills past
+   the scroll origin and the top of the card becomes unreachable — browsers
+   that can't parse it drop that one declaration and keep the plain `center`. */
+.hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;justify-content:safe center;padding:40px;text-align:center;overflow-y:auto;}
+.hero > *{flex:0 0 auto;max-width:100%;}
 .hero .h-ic{width:60px;height:60px;border-radius:18px;background:var(--surface-2);border:1px solid var(--line-2);display:grid;place-items:center;color:var(--accent);margin-bottom:20px;}
 .hero .h-ic svg{width:26px;height:26px;}
 .hero .h-status{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:14px;}
 .hero h2{font-family:var(--font-display);font-size:24px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);margin:0 0 10px;max-width:520px;}
-.hero .h-desc{font-size:14px;color:var(--ink-2);line-height:1.6;max-width:480px;margin:0 0 8px;}
+.hero .h-desc{max-width:480px;margin:0 0 8px;font-size:14px;color:var(--ink-2);line-height:1.6;text-align:left;}
+/* The description is a brief, not a document: markdown headings inside it are
+   section labels rather than a second title, so they sit at the body's size
+   instead of towering over the h2 above them. */
+.hero .h-desc .md h1,.hero .h-desc .md h2,.hero .h-desc .md h3,.hero .h-desc .md h4{font-size:14px;margin:14px 0 6px;}
+.hero .h-desc .md > :first-child{margin-top:0;}
 .hero .h-prompt{margin:20px 0 24px;max-width:520px;text-align:left;border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--surface);overflow:hidden;box-shadow:var(--sh-1);}
 .hero .h-prompt .hp-h{font-family:var(--mono);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);padding:9px 14px;border-bottom:1px solid var(--line-2);background:var(--surface-2);}
 .hero .h-prompt .hp-list{list-style:none;margin:0;padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:12.5px;line-height:1.45;color:var(--ink-2);}
