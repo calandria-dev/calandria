@@ -978,7 +978,9 @@ jobs:
       # the stub the spec plants with `launchctl setenv` is what the app reads.
       # What runs here is therefore the repair, not the inheritance that
       # triggers it; that premise stays a manual check on a real Mac, and the
-      # domain's own PATH is attached to every run as the evidence for it.
+      # domain's own PATH is printed every run as the evidence for it — to this
+      # job's log, not only to an attachment, since a green run uploads no
+      # artifacts. Grep for `[08-macos-launchd]`.
       # See the spec header and docs/DESKTOP_APP.md §5.
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window

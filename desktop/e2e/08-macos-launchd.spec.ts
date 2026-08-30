@@ -275,6 +275,15 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
   // Recorded before the assertions, because it is the one fact that decides how
   // to read a red run here: if the domain carried no override, this machine
   // would have produced the stub on its own and the plant was redundant.
+  //
+  // To STDOUT as well as to an attachment, and the duplication is the point.
+  // The lane uploads `test-results/` with `if-no-files-found: ignore`, and a
+  // green run leaves nothing there — so on precisely the runs where this
+  // reading is trustworthy, the attachment is never uploaded and the premise
+  // evidence is lost. The job log is kept either way.
+  console.log(
+    `[08-macos-launchd] launchd user-domain PATH before the plant: ${priorDomainPath ?? "(none)"}`
+  );
   await testInfo.attach("launchd-domain-path.txt", {
     body:
       `launchd user-domain PATH override before this spec planted the stub:\n` +

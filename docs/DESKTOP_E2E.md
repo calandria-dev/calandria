@@ -312,10 +312,13 @@ login-shell probe answer from a process with no controlling terminal, does the
 app then boot all the way with no `node` on PATH at all) and leaves the
 inheritance premise to the
 manual check in `docs/DESKTOP_APP.md` §5. The domain's pre-existing PATH is
-attached on every run, read with `launchctl getenv` before the plant goes in —
-an uncontaminated reading, unlike the draft's, since it comes from the domain
-rather than from a launch. A run whose attachment reports no override is a run
-on which the premise held. The spec also records how far beyond the stub the runner's own
+printed on every run, read with `launchctl getenv` before the plant goes in — an
+uncontaminated reading, unlike the draft's, since it comes from the domain
+rather than from a launch. A run reporting no override is a run on which the
+premise held. It goes to **stdout** as well as to an attachment, because the
+lane uploads `test-results/` with `if-no-files-found: ignore` and a green run
+leaves nothing there: on exactly the runs where this reading can be trusted, the
+attachment is never uploaded. Grep the job log for `[08-macos-launchd]`. The spec also records how far beyond the stub the runner's own
 login shell reaches — recorded, not asserted, since a bare image whose login
 shell has nothing past `/etc/paths` makes the repair a correct no-op. The
 packaged `.app` is ad-hoc signed (`codesign --sign -`) before either pass
