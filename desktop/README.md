@@ -287,14 +287,18 @@ exactly what an assertion can't answer and a human should look once on a
 green run. `e2e/08-macos-launchd.spec.ts` is darwin **and** packaged only,
 gated on `CALANDRIA_TEST_APP_BUNDLE`: a binary spawned directly, the way
 every other packaged spec launches it, inherits the spawning shell's PATH,
-but a `.app` opened by LaunchServices gets launchd's stub instead,
+but a `.app` double-clicked in Finder gets launchd's stub instead,
 `/usr/bin:/bin:/usr/sbin:/sbin`, with none of the user's own tooling on it — the reason
 `supervisor.js` repairs PATH from the login shell in the first place
 (`docs/DESKTOP_APP.md` §2). So the spec `open`s the bundle instead of
 spawning it, captures its stdout with `open --stdout`, and asserts the repair
 ran. It stays hermetic the way the other packaged specs do, `launchctl
-setenv`-ing `instanceEnv()`'s keys — PATH pointedly left out, since that's
-the variable under test — and unsets them in `afterAll`.
+setenv`-ing `instanceEnv()`'s keys — PATH included, since `open` is not the
+double-click its header once assumed and the domain has to be given a value
+worth reading — and unsets them in `afterAll`. The launch itself deletes PATH
+from the environment handed to `open`, which forwards its caller's; without
+that deletion the job's own PATH shadows the planted one and the spec measures
+nothing. See `docs/DESKTOP_E2E.md` §4.
 
 One environment gotcha it handles for you, worth knowing if you run the shell by
 hand on a headless box: on Linux with a session bus but **no** notification

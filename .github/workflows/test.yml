@@ -1172,9 +1172,14 @@ jobs:
       # CALANDRIA_TEST_APP_BUNDLE un-skips 08-macos-launchd.spec.ts, which
       # `open`s the bundle through LaunchServices to get the one launch no
       # child-process spec can produce: one whose environment comes from
-      # launchd rather than from this job. The stub PATH itself is planted with
-      # `launchctl setenv` — this image's launchd domain carries a wider one —
-      # so what runs here is the repair, not the inheritance that triggers it.
+      # launchd rather than from this job. Getting that required deleting PATH
+      # from the environment handed to `open`, which forwards its caller's — so
+      # the stub the spec plants with `launchctl setenv` is what the app reads.
+      # What runs here is therefore the repair, not the inheritance that
+      # triggers it; that premise stays a manual check on a real Mac, and the
+      # domain's own PATH is printed every run as the evidence for it — to this
+      # job's log, not only to an attachment, since a green run uploads no
+      # artifacts. Grep for `[08-macos-launchd]`.
       # See the spec header and docs/DESKTOP_APP.md §5.
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window
@@ -1239,31 +1244,36 @@ jobs:
           echo "--- spctl assessment (a refusal here is the documented state) ---"
           spctl --assess --type execute --verbose=4 "$dest"/*.app || true
 
-      # One spec, not the whole suite, and the reason is that the rest would
-      # measure nothing. The app inside the .dmg is a `ditto` copy of the very
-      # bundle the packaged pass just finished exercising — identical bytes. The
-      # only things the round trip through hdiutil can break are the signature
-      # (checked above) and whether the result still launches, so re-running
-      # twenty UI specs against the same bytes buys coverage that has already
-      # been paid for, on the priciest runner in this file.
+      # Two specs, not the whole suite, and the reason the rest are absent is
+      # that they would measure nothing. The app inside the .dmg is a `ditto`
+      # copy of the very bundle the packaged pass just finished exercising —
+      # identical bytes. The only things the round trip through hdiutil can
+      # break are the signature (checked above) and whether the result still
+      # launches, so re-running twenty UI specs against the same bytes buys
+      # coverage that has already been paid for, on the priciest runner in this
+      # file.
       #
-      # 06-packaged is that launch: it boots the artifact named by
+      # 06-packaged is one launch: it boots the artifact named by
       # CALANDRIA_TEST_BIN, which the step above re-pointed at the dmg copy, and
       # asserts it serves.
       #
-      # NOT 08-macos-launchd, though it is the better double-click analogue.
-      # That spec is independently red on this lane and was before this change
-      # (the same step 11 failed on `desktop-e2e`): a GUI launch there receives
-      # the caller's PATH rather than the planted launchd one, so the stub the
-      # spec depends on never arrives. Including it would paint the dmg check
-      # red for a reason that has nothing to do with the dmg. Put it back when
-      # that spec is fixed — it is the stronger test of the two.
+      # 08-macos-launchd is the other, and the better of the two, because it is
+      # the only spec in the suite that opens the bundle the way a user who just
+      # dragged it out of this .dmg would: through LaunchServices, with the
+      # environment coming from launchd. It was dropped from this step while it
+      # was independently red — `open` forwards its caller's environment, so the
+      # planted stub PATH was shadowed by this job's — and is restored now that
+      # the spec withholds PATH from `open` and reads launchd's value instead.
+      #
+      # Both come from CALANDRIA_TEST_APP_BUNDLE / CALANDRIA_TEST_BIN, which the
+      # unpack step re-pointed at the dmg copy. playwright.desktop.config.ts is
+      # `workers: 1`, so the two boots are sequential and cannot fight over the
+      # single-instance lock.
       - name: Launch the app from the dmg
-        # The packaged pass above carries that pre-existing failure, and a
-        # skipped dmg check reads as "fine" when it is really "never ran". This
-        # step's actual dependency is the packaging step, not the suite.
+        # This step's dependency is the packaging step, not the suite above: a
+        # skipped dmg check reads as "fine" when it is really "never ran".
         if: ${{ !cancelled() }}
-        run: npx playwright test --config playwright.desktop.config.ts 06-packaged
+        run: npx playwright test --config playwright.desktop.config.ts 06-packaged 08-macos-launchd
 
       # The .zip is the load-bearing macOS artifact even though nothing consumes
       # it yet: Squirrel.Mac, which electron-updater uses on macOS, updates from
