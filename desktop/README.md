@@ -60,8 +60,9 @@ inherited unchanged.
 | `notifier.js` | The notification/badge policy, Electron-free for the same reason `supervisor.js` is: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. It renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. |
 | `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (ImageMagick + a font — needed by nobody but whoever changes the mark). |
 | `tray-residency.js` | Whether a status area is really drawing the tray icon — the question `new Tray()` cannot answer, since on Linux the constructor succeeds whether or not the item ever reaches a status-notifier host. Asks the session over `gdbus`/`dbus-send`, three-valued (yes / no / could-not-ask), and is what the close handler consults instead of `tray` being truthy. Electron-free, like its two neighbours above. |
+| `updater.js` | The auto-update policy — which installs may update themselves, what the menu item says, what the restart prompt admits it will interrupt, and the predicate the drain consults before it installs anything. Electron-free like its three neighbours above, and pure: `main.js` owns every effect, including the `electron-updater` handle itself. See "Updates" below. |
 | `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
-| `test-supervisor.js` | 40 assertions over `supervisor.js`, `notifier.js` and `tray-residency.js` (plus two source checks on `main.js`'s wiring), against stub sidecars, a stub event stream and an injected D-Bus CLI. No deps, no display. |
+| `test-supervisor.js` | 43 assertions over `supervisor.js`, `notifier.js`, `tray-residency.js` and `updater.js` (plus three source checks on `main.js`'s wiring, one of them that an update installs only from inside the drain), against stub sidecars, a stub event stream and an injected D-Bus CLI. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). Three more files (`09`–`11`) run only under `CALANDRIA_DESKTOP_BENCH=1` on a machine with a real desktop session, and read their answers off the session bus and the window manager rather than out of Electron — see "On the bench" below and [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
 | `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
@@ -409,6 +410,46 @@ taking the runner's, so two releases a week apart ship the same runtime.
 [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.5 has the rest,
 including how signing credentials reach the build and what the lane asserts about
 the result.
+
+## Updates
+
+The shell reads the feed that lane publishes. Checked 45 seconds after boot and
+every six hours after; downloading is automatic, **installing never is**. A ready
+update announces itself as an OS notification and as a tray/menu item labelled
+`Restart to update to 0.5.0` — not a dialog, because the window is usually hidden
+to the tray and a modal nobody sees is not an answer. `Check for updates…` sits
+in the tray menu and the View menu, from one shared function.
+
+**The restart goes through the drain, and that is the whole point.**
+`electron-updater`'s `autoInstallOnAppQuit` default installs from
+`app.on("quit")`, which fires *after* `before-quit` has already drained and
+exited — so the default would either skip the install or run it over turns that
+were still settling. It is off. `main.js`'s `finishQuit()` calls
+`quitAndInstall()` as the last statement of the drain instead, and only when the
+user asked *and* something is downloaded. `tests/desktopUpdater.test.ts` and
+`test-supervisor.js` both pin that, including that `finishQuit` is the file's
+only install call site.
+
+Not every install can update itself, and the ones that cannot say so in the menu
+rather than failing oddly:
+
+| | Updates? |
+|-|-|
+| Windows NSIS | Yes, signed or not |
+| macOS | **Only when signed** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build has no update path at all |
+| Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
+| Linux `.deb` | No, deliberately — it is your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
+| `npm start` | No — a dev build updates by `git pull` |
+
+`CALANDRIA_DESKTOP_AUTO_UPDATE=off` stops the shell contacting the feed at all.
+[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §6.6 has the reasoning, including
+why the `.deb` gate has to run *before* `require("electron-updater")`.
+
+`electron-updater` is this package's one **runtime** dependency. It is packed
+because it is in `dependencies`, not because `electron-builder.cjs`'s `files`
+names it — that list cannot carry `node_modules` — so moving it to
+`devDependencies` would ship a shell that throws the first time a packaged build
+checks for updates.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

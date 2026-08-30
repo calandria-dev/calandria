@@ -30,7 +30,15 @@ module.exports = {
   directories: {
     output: "dist",
   },
-  files: ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "loading.html", "assets/**", "package.json"],
+  // Source files only. `node_modules` is deliberately absent and adding it
+  // would do nothing: app-builder-lib collects production dependencies through
+  // a separate mechanism (`getNodeModuleFileMatcher` +
+  // `computeNodeModuleFileSets`, out/platformPackager.js) and splices
+  // `!**/node_modules/**` into these globs unconditionally
+  // (out/fileMatcher.js). So `electron-updater`, this package's one runtime
+  // dependency, is packed because it is in `dependencies` — not because it is
+  // named here, and it must not be moved to `devDependencies`.
+  files: ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "loading.html", "assets/**", "package.json"],
   extraResources: [
     { from: "payload", to: "app-payload" },
     { from: "payload/node_modules", to: "app-payload/node_modules" },
@@ -58,6 +66,23 @@ module.exports = {
     notarize: mac.notarize,
   },
 
+  // ONLY THE AppImage SELF-UPDATES, and that is a decision, not an omission.
+  //
+  // Because a `publish` config is present, electron-builder's FpmTarget writes a
+  // `resources/package-type` marker containing "deb" into the .deb (it does this
+  // for deb, rpm and pacman; the AppImage gets no marker). electron-updater
+  // reads that marker the first time anything touches its exported `autoUpdater`
+  // and, on finding it, returns a DebUpdater whose install path is
+  // `sudo dpkg -i <downloaded .deb>`, falling back to
+  // `apt install --allow-unauthenticated`. There is no setting that turns the
+  // unverified-package install off — `allowUnverifiedLinuxPackages` was checked
+  // against electron-builder 26.15.3 and electron-updater 6.8.9 and exists in
+  // neither — so "make it deliberate" can only mean declining to be on that path.
+  //
+  // desktop/updater.js therefore gates on `process.env.APPIMAGE` BEFORE the
+  // require, and a .deb install says so in its menus instead of raising a sudo
+  // prompt the user has no reason to trust. Removing that gate is what would
+  // silently opt every .deb user into it.
   linux: {
     target: ["dir", "deb", "AppImage"],
     executableName: "calandria-desktop",

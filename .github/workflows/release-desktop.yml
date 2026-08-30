@@ -66,15 +66,23 @@
 # common. Hence the macOS job's three-hour ceiling and `fail-fast: false`: a slow
 # Apple must not take the two artifacts that already built down with it.
 #
-# THERE IS NO UPDATER YET, AND THIS LANE IS WHAT THAT DECISION GATES. The
-# recorded position (2026-08-28) is that the update mechanism gates the RELEASE
-# LANE rather than the merge to main, because this is the first thing that puts a
+# THIS LANE GATED THE UPDATER, AND THAT GATE IS NOW SATISFIED. The recorded
+# position (2026-08-28) was that the update mechanism gates the RELEASE LANE
+# rather than the merge to main, because this is the first thing that puts a
 # binary in anybody's hands and a binary that cannot update itself is one people
-# keep. So the file can land; a release cut through it before electron-updater
-# exists ships downloads with an update feed nothing reads. The feed is written
-# either way — that is the provider's doing, not a choice made here — which is
-# what makes adding the updater afterwards a client-side change rather than a
-# re-cut release.
+# keep. `electron-updater` landed on 2026-08-30 (desktop/updater.js,
+# docs/DESKTOP_APP.md §6.6), so a release cut through this lane now ships
+# downloads that read the feed it publishes.
+#
+# NOTHING HERE CHANGED TO MAKE THAT TRUE, which was the prediction and is worth
+# recording as confirmed: the feed is the `publish` provider's doing, written
+# either way, so the updater was a purely client-side addition. What that costs
+# this file is a rule rather than a step — the `--publish` below must stay, and
+# must never be replaced by a hand-rolled `gh release upload` of the artifacts.
+# That would still attach the downloads and would silently stop writing
+# latest.yml / latest-mac.yml / latest-linux.yml, which is an updater that never
+# finds anything and never says so. SHA256SUMS.txt is uploaded that way on
+# purpose; it is not part of the feed.
 #
 # WHAT STILL HAS TO HAPPEN AFTER THIS LANE'S FIRST REAL RUN, recorded because
 # both places say they are waiting on exactly this: the quarantine workaround in
