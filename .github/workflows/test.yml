@@ -1106,30 +1106,40 @@ jobs:
           # "-" whenever CALANDRIA_MAC_SIGN_IDENTITY is unset — as it is here,
           # and as it must stay here — so there is nothing to discover.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # WITHOUT THIS THE .dmg SHIPS AN APP THAT CANNOT EXEC. electron-builder
-          # skips macOS signing outright on any pull-request build
-          # (`isSignAllowed` in app-builder-lib), and the way it recognises one
-          # is `isPullRequest()` in builder-util, which treats a set, non-empty
-          # GITHUB_BASE_REF as "this is a PR". On the labelled-PR trigger that is
-          # most of this lane's runs, the ad-hoc signature would silently not
-          # happen — and arm64 macOS kills an unsigned Mach-O on launch.
-          # Emptying the variable is what `isSignAllowed` reads as "not a PR";
-          # `isSet("")` is falsy, so an empty string is not merely a different
-          # PR, it is no PR.
+        run: |
+          npm run payload -- --no-build
+
+          # WITHOUT THE NEXT LINE THE .dmg SHIPS AN APP THAT CANNOT EXEC.
+          # electron-builder skips macOS signing outright on any pull-request
+          # build (`isSignAllowed` in app-builder-lib), and the way it recognises
+          # one is `isPullRequest()` in builder-util, which treats a set,
+          # non-empty GITHUB_BASE_REF as "this is a PR". On the labelled-PR
+          # trigger that is most of this lane's runs, the ad-hoc signature would
+          # silently not happen — and arm64 macOS kills an unsigned Mach-O on
+          # launch. `isSet("")` is falsy, so an unset or empty GITHUB_BASE_REF is
+          # not merely a different PR, it is no PR.
+          #
+          # IT HAS TO BE UNSET HERE, IN THE SHELL, AND NOT IN THE STEP'S `env:`
+          # MAP. That was tried and it does not work: GitHub Actions reserves the
+          # GITHUB_ prefix and drops any assignment to it when it builds the
+          # process environment, while still echoing the declared value in the
+          # log's env group — so the run looks configured and electron-builder
+          # still logs "Current build is a part of pull request, code signing
+          # will be skipped", and every later step fails on a bundle that was
+          # never signed. Measured on this lane 2026-08-30.
           #
           # THIS REPLACED `CSC_FOR_PULL_REQUEST: "true"`, and the swap is the
           # point rather than a tidy-up. That flag means "sign pull requests with
           # the real certificate", and its documented hazard is exposing a
           # signing identity to a fork build. It was inapplicable while no
           # certificate existed anywhere; it stopped being inapplicable the
-          # moment one did. What is here instead re-enables signing without
+          # moment one did. Unsetting GITHUB_BASE_REF re-enables signing without
           # granting that permission, because `mac.identity: "-"` wins over
           # CSC_LINK in macCodeSign.findIdentity: even if a certificate somehow
           # reached this job's environment, the signature would still be ad-hoc.
           # The spctl gate below asserts exactly that.
-          GITHUB_BASE_REF: ""
-        run: |
-          npm run payload -- --no-build
+          unset GITHUB_BASE_REF
+
           npx electron-builder --mac dir dmg zip
 
       - name: Move the artifact out of the checkout

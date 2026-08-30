@@ -284,7 +284,28 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   }
 
   const win = await app.firstWindow({ timeout: 120_000 });
-  const firstUrl = win.url();
+
+  // The FIRST NON-EMPTY url, not the first one. `firstWindow()` resolves as soon
+  // as the BrowserWindow object exists, which can be before `main.js`'s
+  // `loadURL(loading.html)` has landed a navigation — `win.url()` then reads ""
+  // and 01-shell's boot-screen assertion fails on a race rather than on
+  // anything real. Measured flaky on both the macOS and the Windows lane
+  // (2026-08-29 and 2026-08-30, three occurrences interleaved with passes on
+  // unrelated branches).
+  //
+  // The loop is deliberately tight, and short. What we are recording is
+  // replaced by the app url within a second or two of the server answering
+  // /api/version, so a generous poll would trade one wrong answer for another;
+  // and because the window is CREATED on loading.html, the first non-empty
+  // value can only ever be that (or `about:blank`, which the assertion also
+  // accepts) and never the app. Staying "" past the deadline is a real failure
+  // and still fails.
+  let firstUrl = win.url();
+  const firstUrlDeadline = Date.now() + 5_000;
+  while (firstUrl === "" && Date.now() < firstUrlDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    firstUrl = win.url();
+  }
 
   // Read the boot screen while it still exists. `main.js` pushes each sidecar
   // log line into `<pre id="log">` with `executeJavaScript`, and the whole page

@@ -706,10 +706,20 @@ ad-hoc signature would silently not happen there.
 That flag means *sign pull requests with the real certificate*, and its documented
 hazard is exposing a signing identity to a fork build — inapplicable while no
 certificate existed anywhere, and no longer inapplicable now that the release
-lane holds one. What the packaging step sets instead is `GITHUB_BASE_REF: ""`.
+lane holds one. What the packaging step does instead is `unset GITHUB_BASE_REF`.
 `isPullRequest()` in `builder-util` tests each variable with `isSet`, which is
-falsy for the empty string, so an empty `GITHUB_BASE_REF` is not a different pull
+falsy for the empty string, so an unset `GITHUB_BASE_REF` is not a different pull
 request but no pull request, and signing proceeds as it does on a cron run.
+
+**It has to be unset in the shell, not in the step's `env:` map**, and the
+difference is invisible until you read the packaging output. GitHub Actions
+reserves the `GITHUB_` prefix and drops any assignment to it when it builds the
+process environment — while still echoing the declared value in the log's env
+group. So `GITHUB_BASE_REF: ""` under `env:` renders as configured, and
+electron-builder still logs *"Current build is a part of pull request, code
+signing will be skipped"*, and the next step fails with
+`code has no resources but signature indicates they must be present` on a bundle
+that was never signed. Measured on this lane, 2026-08-30.
 
 That re-enables **signing**, not **signing with a certificate**, and the
 difference is what makes it safe. `macCodeSign.findIdentity` takes the configured
