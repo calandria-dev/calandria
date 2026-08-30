@@ -1035,9 +1035,48 @@ they need `CSC_LINK` *and* `CSC_KEY_PASSWORD`, which are separate secrets with
 separate exposure. Let OpenSSL prompt rather than passing `-passout` — a password
 given on the command line lands in shell history and in the process list.
 
-The App Store Connect API key is a pure web flow and needs no Mac either:
-*App Store Connect → Users and Access → Integrations → App Store Connect API →
-Team Keys*, role **Developer**. The `.p8` downloads once.
+**The App Store Connect API key** is a pure web flow and needs no Mac either,
+but it has one trap that is easy to walk into because the wrong answer sits next
+to the right one in the UI.
+
+**It must be a TEAM key, not an Individual key.** Apple's own documentation says
+it outright: *"Individual keys aren't able to use Provisioning endpoints, access
+Sales and Finance, or `notaryTool`."* They are created in different places, so
+this is a wrong turn rather than a wrong checkbox — team keys are under *Users
+and Access → Integrations → App Store Connect API → **Team Keys***, while an
+individual key is generated from your own profile menu.
+
+1. *App Store Connect → Users and Access → **Integrations** tab* (this is what
+   used to be called "Keys") *→ App Store Connect API → Team Keys*.
+2. First time only, **Request Access** and accept the terms. This is
+   **Account Holder**-gated, which on an Individual membership is you by
+   definition — the enrolling person is the Account Holder.
+3. **Generate API Key**, name it, and give it the **Developer** role. Generating
+   a team key needs Account Holder or Admin, which again you are.
+4. The **Issuer ID** is a UUID shown at the top of the Team Keys page. It belongs
+   to the account, not to the key, so every key you make shares it →
+   `APPLE_API_ISSUER`.
+5. **Download the `.p8`. You get exactly one chance** — Apple keeps no copy, and
+   a lost key can only be revoked and replaced, never re-downloaded. The file
+   arrives named `AuthKey_<KEYID>.p8`, so the Key ID is in the filename →
+   `APPLE_API_KEY_ID`. Its *contents* are the secret; `APPLE_API_KEY` is the path
+   the lane writes them to.
+
+Role is the one thing here not confirmed from Apple's own text. Apple's
+permissions matrix does grade "Notarize software" by role, but does not spell out
+the minimum in prose; **Developer** is the consistent community answer and is the
+least privilege that plausibly works. If notarization ever fails with an
+authorization error rather than a validation one, regenerate the key as *App
+Manager* or *Admin* — the key is a CI secret, so start narrow and widen only on
+evidence.
+
+**If the API key route is blocked**, the fallback is an app-specific password
+(`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`), generated at
+**account.apple.com** → *Sign-In and Security → App-Specific Passwords*. Note the
+domain: most guides still say `appleid.apple.com`, and Apple moved it. It is the
+worse option — the password is tied to the account rather than revocable on its
+own, and it is invalidated wholesale whenever you change your Apple Account
+password.
 
 **What genuinely needs a Mac is the verification, not the credentials.** Signing
 and notarizing happen on CI's `macos-latest` runner. The one step that cannot be
