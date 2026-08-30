@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The ad-hoc counterpart of build/entitlements.mac.plist: what a local
+  `npm run dist:mac` and the `macos-desktop` CI lane sign with, neither of which
+  has a Developer ID.
+
+  Identical to the Developer ID list plus disable-library-validation, and that
+  one addition is the whole difference between the two files. Hardened runtime
+  enables library validation, which admits only libraries signed by the loading
+  binary's own Team ID (or by Apple). An ad-hoc signature carries NO Team ID, so
+  the vendored `resources/node/bin/node` could not dlopen the ad-hoc-signed
+  better-sqlite3 sitting beside it, and the failure would be a dlopen refusal at
+  the first database query rather than anything visible at launch.
+  electron-builder warns about exactly this pairing.
+
+  This file is therefore the reason the test lane can exercise hardened runtime
+  at all. What it verifies is real but partial: JIT, unsigned executable memory,
+  and that the app still boots and serves under a hardened runtime. It cannot
+  verify library validation, because it is the one thing it switches off. That
+  half is only provable on a Developer ID build.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

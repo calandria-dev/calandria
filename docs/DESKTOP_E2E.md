@@ -327,11 +327,12 @@ leaves nothing there: on exactly the runs where this reading can be trusted, the
 attachment is never uploaded. Grep the job log for `[08-macos-launchd]`. The spec also records how far beyond the stub the runner's own
 login shell reaches — recorded, not asserted, since a bare image whose login
 shell has nothing past `/etc/paths` makes the repair a correct no-op. The
-packaged `.app` is ad-hoc signed (`codesign --sign -`) before either pass
-launches it: arm64 macOS refuses to exec a Mach-O with no signature at all, and
-electron-builder invalidates whatever Electron's prebuilt arrived with. That is
-not Developer ID signing and it notarizes nothing — Gatekeeper and installers
-remain `docs/DESKTOP_APP.md` §6's separate decision.
+packaged `.app` is ad-hoc signed during packaging (`mac.identity: "-"`, not a
+`codesign` step afterwards — `docs/DESKTOP_APP.md` §6.2 has why) before either
+pass launches it: arm64 macOS refuses to exec a Mach-O with no signature at all,
+and electron-builder invalidates whatever Electron's prebuilt arrived with. That
+is not Developer ID signing and it notarizes nothing; the lane asserts that
+Gatekeeper refuses what it built, since signing belongs to the release lane.
 
 **The packaged-install run, concretely.** CI can package but cannot install, so
 the un-flagged sandbox run is the bench's. Verified there on 2026-08-27
@@ -604,9 +605,10 @@ Obsidian vault.
    (§4). `07-macos.spec.ts` settles the `hiddenInset` title bar and the menubar
    roles; `08-macos-launchd.spec.ts` settles the launchd PATH repair against a
    real `open` launch, which no `_electron` spec could ever observe. Both of
-   those were open questions in `docs/DESKTOP_APP.md` §5. Signing, notarization
-   and installers deliberately stay out: the lane ad-hoc signs only because
-   arm64 will not exec an unsigned binary at all.
+   those were open questions in `docs/DESKTOP_APP.md` §5. Developer ID signing
+   and notarization deliberately stay out: the lane ad-hoc signs only because
+   arm64 will not exec an unsigned binary at all, and it gates on Gatekeeper
+   REFUSING the result so that a certificate reaching it would be noticed.
 7. ~~Bench lane: the native-integration specs and the `.deb` install.~~
    **Landed** — `.github/workflows/desktop-bench.yml`, `workflow_dispatch` plus
    a nightly cron and no `pull_request` trigger at all (§4), running the whole

@@ -311,8 +311,9 @@ matters more here than anywhere else: on macOS `{ role: "editMenu" }` *is*
 Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
 
 What remains open is distribution, not behaviour. Signing + notarization are
-required for anything downloaded (Gatekeeper blocks unsigned apps by default),
-and that stays §6's decision. The build ad-hoc signs the bundle
+required for anything downloaded (Gatekeeper blocks unsigned apps by default);
+§6.4 is the configuration for both, waiting on the credentials themselves. The
+build ad-hoc signs the bundle
 (`mac.identity: "-"`) for one narrow reason with no bearing on that: arm64 macOS
 will not exec a Mach-O carrying no signature at all, and electron-builder
 invalidates the one Electron's prebuilt arrived with. §6.2 has why that sits in
@@ -628,8 +629,23 @@ npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip  (Win
 npm run dist:mac      # → dist/mac-arm64/Calandria.app, plus .dmg and .zip
 ```
 
-Signing with a real identity, notarization and auto-update are deliberately
-**not** wired into this — that is still phase 2 (§7).
+Signing with a real identity and notarization are wired up but switched off by
+default; §6.4 is how to turn them on and what they cost. Auto-update is still
+phase 2 (§7).
+
+The electron-builder configuration lives in **`desktop/electron-builder.cjs`**,
+not in `desktop/package.json`'s `build` field. It moved because signing has to be
+decided at build time and JSON cannot decide anything. Two traps come with that,
+both silent:
+
+- `app-builder-lib`'s loader reads package.json's `build` field **first** and only
+  scans for a standalone config when that field is absent. It does not merge them
+  and it does not warn. Putting a `build` key back would shadow the whole file.
+- The filenames it scans for are `electron-builder` + `.yml/.yaml/.json/.json5/.toml/.js/.cjs/.ts`.
+  `electron-builder.config.cjs`, the name most projects use, is **not** on that
+  list and would be ignored just as quietly.
+
+`tests/desktopSigning.test.ts` pins both.
 
 ### 6.1 The macOS targets, and which one matters
 
@@ -644,8 +660,8 @@ updater cannot work without. The feed itself arrives with the `publish` block in
 the auto-update work, not here.
 
 The dmg keeps electron-builder's default layout — app icon, `/Applications`
-symlink, no `dmg` block in `desktop/package.json`. There is nothing to brand
-until there is something to distribute.
+symlink, no `dmg` block in `desktop/electron-builder.cjs`. There is nothing to
+brand until there is something to distribute.
 
 **Measured on the `macos-desktop` lane, 2026-08-29** (macos-latest, arm64), so
 the sizes here are observations rather than estimates:
@@ -677,7 +693,8 @@ has by then been moved out of `desktop/dist` — reaches the copy CI tests and
 nothing else. Both installers would ship an app the kernel refuses to launch,
 while every step in the lane stayed green.
 
-So it moved into the build, as `mac.identity: "-"` in `desktop/package.json`.
+So it moved into the build, as `mac.identity: "-"` in
+`desktop/electron-builder.cjs`.
 That is electron-builder's own ad-hoc path (`MacTargetHelper.findSigningIdentity`
 special-cases `"-"` and hands `@electron/osx-sign` an identity-less signature),
 it runs before the targets are cut, and it means `npm run dist:mac` on a Mac
@@ -703,11 +720,68 @@ symptom is a signal kill rather than an error: **electron-builder skips macOS
 signing outright on pull-request builds.** `isSignAllowed()` in `app-builder-lib`
 treats a set `GITHUB_BASE_REF` as "this is a PR" and returns false before
 `identity` is even read. Since this lane's usual trigger is a labelled PR, the
-ad-hoc signature would silently not happen there. `CSC_FOR_PULL_REQUEST: "true"`
-on the packaging step is what re-enables it. The warning that flag carries is
-about exposing a real signing **certificate** to fork PRs, and there is no
-certificate here — but that stops being true the moment the signing task lands a
-Developer ID, and **that task must remove the flag**.
+ad-hoc signature would silently not happen there.
+
+`CSC_FOR_PULL_REQUEST: "true"` used to be what re-enabled it, and it is gone.
+That flag means *sign pull requests with the real certificate*, and its documented
+hazard is exposing a signing identity to a fork build — inapplicable while no
+certificate existed anywhere, and no longer inapplicable now that the release
+lane holds one. What the packaging step does instead is `unset GITHUB_BASE_REF`.
+`isPullRequest()` in `builder-util` tests each variable with `isSet`, which is
+falsy for the empty string, so an unset `GITHUB_BASE_REF` is not a different pull
+request but no pull request, and signing proceeds as it does on a cron run.
+
+**It has to be unset in the shell, not in the step's `env:` map**, and the
+difference is invisible until you read the packaging output. GitHub Actions
+reserves the `GITHUB_` prefix and drops any assignment to it when it builds the
+process environment — while still echoing the declared value in the log's env
+group. So `GITHUB_BASE_REF: ""` under `env:` renders as configured, and
+electron-builder still logs *"Current build is a part of pull request, code
+signing will be skipped"*, and the next step fails with
+`code has no resources but signature indicates they must be present` on a bundle
+that was never signed. Measured on this lane, 2026-08-30.
+
+That re-enables **signing**, not **signing with a certificate**, and the
+difference is what makes it safe. `macCodeSign.findIdentity` takes the configured
+qualifier ahead of anything a `CSC_LINK` import put in the keychain, so
+`mac.identity: "-"` wins: a certificate reaching this job's environment could not
+be used by it. The lane checks that rather than asserting it — its `spctl` step
+is a gate that fails if Gatekeeper **accepts** the bundle, which is the one
+symptom a signing identity leaking into a PR-triggered build would produce.
+
+#### 6.2.1 Hardened runtime is on in the ad-hoc build too
+
+`mac.hardenedRuntime` was `false`, against electron-builder's own default of
+`true`. It is now on in both branches, and the branch lives in the entitlements
+instead — `desktop/build/entitlements.mac.plist` for a Developer ID build,
+`desktop/build/entitlements.mac.adhoc.plist` for the ad-hoc one.
+
+The two files differ in exactly one key, and that key is the whole story.
+Hardened runtime turns on **library validation**, which admits only libraries
+signed by the loading binary's own Team ID or by Apple. The bundle ships a
+vendored Node (`resources/node/bin/node`) that runs the server and `dlopen`s
+`better-sqlite3` and `node-pty` out of `resources/app-payload/node_modules`. An
+ad-hoc signature carries no Team ID at all, so those loads cannot satisfy library
+validation and the ad-hoc entitlements carry
+`com.apple.security.cs.disable-library-validation` to switch it off.
+
+The Developer ID entitlements deliberately do **not**. `@electron/osx-sign` walks
+the whole of `Contents/` and signs every Mach-O deepest-first with the same
+identity, so the vendored Node and the addons beside it carry our Team ID and the
+load should succeed on that alone. **If a signed build ever needs that
+entitlement to start, something in the payload was signed by a different identity
+and the entitlement would be hiding it rather than fixing it.**
+`tests/desktopSigning.test.ts` fails if it appears in the Developer ID list.
+
+Hardening the ad-hoc build buys real but partial verification, and the partiality
+is worth stating: the `macos-desktop` lane now boots and exercises a bundle under
+a hardened runtime, so JIT, writable-executable memory and anything else the
+runtime forbids are covered on every run. Library validation is the one thing it
+cannot cover, because it is the one thing the ad-hoc entitlements switch off.
+That half is only provable on a Developer ID build, and the failure mode there is
+a `dlopen` refusal at the first database query rather than anything visible at
+launch — so it is verified by opening the app and letting it serve a page, not by
+watching it start.
 
 ### 6.3 What this does not achieve
 
@@ -718,14 +792,14 @@ runnable, not what makes it distributable.
 A `.app` downloaded from the internet is tagged `com.apple.quarantine`, and
 without a Developer ID plus notarization Gatekeeper refuses it — usually as
 **"Calandria is damaged and can't be opened. You should move it to the Trash"**,
-which reads like a corrupt download and is not one. The lane prints the
-`spctl --assess` refusal on every run so this stays an observed fact rather than
-an assumption — and on 2026-08-29 it duly printed `Calandria.app: rejected` for
-a bundle whose signature `codesign --verify --deep --strict` had just accepted.
-That pair is the whole distinction: internally valid, and refused anyway.
+which reads like a corrupt download and is not one. The `macos-desktop` lane
+asserts that refusal on every run (§6.2), and on 2026-08-29 it printed
+`Calandria.app: rejected` for a bundle whose signature
+`codesign --verify --deep --strict` had just accepted. That pair is the whole
+distinction: internally valid, and refused anyway.
 
-Until the signing work lands, an honest install instruction for a downloaded
-build is therefore:
+So an ad-hoc build — a local `npm run dist:mac`, or an artifact pulled off a CI
+run — carries a cost at every install on a machine that did not build it:
 
 ```bash
 # after dragging Calandria.app to /Applications
@@ -733,19 +807,25 @@ xattr -dr com.apple.quarantine /Applications/Calandria.app
 ```
 
 or right-click → Open and confirm the dialog. Either way it is **every install**,
-not once per machine. This is why the signing task is the real distribution
-work, and why §7's $99/yr is the price of the feature rather than a nicety.
+not once per machine.
 
-**Windows builds two targets, and neither is signed.** `nsis` is the installer
+**This is not the install instruction for a release.** A published build is
+Developer ID signed, notarized and stapled (§6.4) and needs none of it; the
+paragraph above describes what you get when you build it yourself. It stays here
+until the release lane exists and has published a notarized artifact, at which
+point it and its counterpart in `desktop/README.md` should go, because keeping
+them would teach people to strip quarantine off downloads as a habit.
+
+**Windows builds two targets, and neither is signed by default.** `nsis` is the installer
 proper: `oneClick: false` so it opens a wizard rather than installing wherever it
 likes the moment it is double-clicked, `allowToChangeInstallationDirectory: true`
 so that wizard is worth having, and `perMachine: false` so it installs under the
 user's own profile and never raises a UAC prompt. `zip` is the escape hatch for
 anyone who would rather unpack a folder than run an installer, and for the case
-where an installer is what the machine's policy objects to. There is no `win.sign`
-block and no certificate: electron-builder skips signing when it finds nothing to
-sign with, so the build succeeds and produces an unsigned artifact rather than
-failing. Buying a certificate and wiring it in is its own decision (§7).
+where an installer is what the machine's policy objects to. `win.azureSignOptions`
+is present only when all four `AZURE_CODE_SIGNING_*` variables are set (§6.4);
+without them electron-builder finds nothing to sign with and produces an unsigned
+artifact rather than failing, which is what every CI lane here does.
 
 **The `windows-desktop` CI lane installs that installer rather than trusting it.**
 It builds `--win nsis`, runs the result with `/S`, and points the window suite at
@@ -831,7 +911,7 @@ only the `node` binary is taken, not `npm` or the headers.
 
 **Native modules follow the bundled Node, not Electron.** `npmRebuild: false`
 and `nodeGypRebuild: false` stay set in the `electron-builder` config
-(`desktop/package.json`) so nothing rebuilds the addons against Electron's
+(`desktop/electron-builder.cjs`) so nothing rebuilds the addons against Electron's
 ABI — the addons are never loaded by Electron, only by the vendored Node the
 sidecars run under. `build-payload.js` ends with a real check rather than an
 assumption: it runs the vendored `node` with `require('better-sqlite3');
@@ -844,7 +924,7 @@ copies everything **except** `node_modules`. electron-builder manages app
 dependencies itself and filters that name out of `extraResources`, so the
 packaged app looks complete on disk and dies at first boot on an unresolved
 `next`. The second, explicit `payload/node_modules` entry in
-`desktop/package.json` is what actually carries it.
+`desktop/electron-builder.cjs` is what actually carries it.
 
 **`CALANDRIA_REPO_ROOT` still wins** over both the packaged payload and an
 unpackaged checkout — that is how a packaged binary gets pointed at a working
@@ -867,15 +947,241 @@ only in `desktop/package.json`'s `devDependencies` — not in the root
 `desktop/dist/` (electron-builder's output) are build intermediates and stay
 gitignored.
 
+### 6.4 Turning signing on
+
+Signing is **opt-in by name**, never by the presence of a secret, and a
+half-configured request is an error rather than a downgrade to unsigned. Both
+rules exist because the failure they prevent is invisible: a build that quietly
+skips signing goes green and produces an artifact that only misbehaves once it is
+on somebody else's machine. `desktop/signing.js` holds the policy and
+`tests/desktopSigning.test.ts` drives every branch of it, which is the only part
+of this that can be tested without a Mac, a Windows box and two paid identities.
+
+**macOS.** Set `CALANDRIA_MAC_SIGN_IDENTITY` to the full certificate name
+(`Developer ID Application: Name (TEAMID)`), plus a certificate for
+electron-builder to import (`CSC_LINK`, a base64 `.p12`, and `CSC_KEY_PASSWORD`)
+and one complete set of notarization credentials:
+
+| Variable | What it is |
+|-|-|
+| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name. Unset or `-` means ad-hoc; this is the only switch. |
+| `CSC_LINK` / `CSC_KEY_PASSWORD` | The `.p12` electron-builder imports into a temporary keychain, base64-encoded, and its password. |
+| `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect API key — the preferred credential, being revocable on its own and not tied to the account password. **`APPLE_API_KEY` is a FILE PATH**, not the key: `notarytool --key` takes a path and `@electron/notarize` passes it straight through. A CI secret therefore holds the `.p8`'s contents and the lane writes them to a file outside the checkout before setting this. |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | The alternative, if a key is not available. |
+| `CALANDRIA_MAC_SKIP_NOTARIZE=1` | Sign without notarizing. For testing signing on its own; the result must not be published. |
+
+**Getting the certificate**, since the portal offers seven kinds and only one is
+right. It is **Developer ID Application** — under *Certificates, Identifiers &
+Profiles → Certificates → + → Software*. Not *Developer ID Installer*, which
+signs `.pkg` and this app does not ship one; not *Apple Development* or *Apple
+Distribution*, which are for Xcode and the App Store and which Gatekeeper will
+not accept for a direct download.
+
+**No Mac is required to obtain it.** Every guide says to use Keychain Access, and
+that is convenience rather than a requirement: a CSR is a PKCS#10 request and the
+portal does not care what produced it. OpenSSL on Linux or Windows does the whole
+round trip, which also keeps a signing identity off a machine you do not own.
+
+```bash
+# 1. Key and CSR. Apple requires RSA 2048; the email should be the Apple ID.
+openssl genrsa -out devid.key 2048
+openssl req -new -key devid.key -out devid.certSigningRequest \
+  -subj "/emailAddress=you@example.com/CN=Your Name/C=US"
+
+# 2. Upload devid.certSigningRequest, pick Developer ID Application, download
+#    the .cer. It contains only the certificate — the private key never left here.
+openssl x509 -inform DER -in developerID_application.cer -out devid.pem
+
+# 3. The intermediates, WITHOUT WHICH THIS SILENTLY FAILS. See below.
+#    Both, not one: Apple runs two Developer ID CAs and you should not have to
+#    know which signed yours.
+curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer   # G2, to 2031
+curl -O https://www.apple.com/certificateauthority/DeveloperIDCA.cer     # G1, to 2027
+openssl x509 -inform DER -in DeveloperIDG2CA.cer  > apple-intermediates.pem
+openssl x509 -inform DER -in DeveloperIDCA.cer   >> apple-intermediates.pem
+
+# 4. Bundle key + leaf + intermediates. -legacy is not optional on OpenSSL 3.
+#    It prompts twice for an export password: that is CSC_KEY_PASSWORD, and it
+#    should not be blank — see below.
+openssl pkcs12 -export -legacy -out devid.p12 \
+  -inkey devid.key -in devid.pem -certfile apple-intermediates.pem
+
+# 5. CSC_LINK, and the identity string.
+base64 -w0 devid.p12 > devid.p12.base64
+openssl x509 -in devid.pem -noout -subject   # CN= is CALANDRIA_MAC_SIGN_IDENTITY
+```
+
+On Windows the OpenSSL that ships with Git Bash or WSL runs all of that
+unchanged, with one substitution: there is no `base64 -w0`, and `certutil
+-encode` is the wrong reach because it emits a PEM-wrapped block with headers and
+line breaks rather than the bare string `CSC_LINK` wants. Use PowerShell —
+`[Convert]::ToBase64String([IO.File]::ReadAllBytes('devid.p12'))`. On a Mac it is
+`base64 -i devid.p12`.
+
+Two failure modes are worth naming because both produce a build that imports the
+certificate happily and then reports no identity at all:
+
+- **A `.p12` without the issuing intermediate.** electron-builder imports it into
+  a temporary keychain and then runs `security find-identity -v`, and the `-v`
+  means *valid* — an identity whose chain cannot be built to a trusted root is not
+  listed. A hosted macOS runner has Apple's roots and not necessarily the
+  Developer ID intermediate, so the leaf alone verifies on the machine that made
+  it and vanishes in CI.
+
+  Apple publishes **two** Developer ID CAs and they are not distinguishable by
+  name — both are `CN=Developer ID Certification Authority`, differing only in
+  `OU`. **G2** (`DeveloperIDG2CA.cer`, `OU=G2`) runs to 2031-09-17 and is the
+  current one; **G1** (`DeveloperIDCA.cer`, `OU=Apple Certification Authority`)
+  runs to 2027-02-01 and is the older. A certificate issued today should chain
+  through G2, but bundling both costs nothing, imports harmlessly — only the leaf
+  carries a private key, so only one identity is ever created — and removes a
+  guess from a step whose failure mode is silent. To see which one actually signed
+  yours, read the `OU` rather than the `CN`:
+  `openssl x509 -in devid.pem -noout -issuer`.
+- **OpenSSL 3's default PKCS#12 encryption.** It writes AES-256-CBC with PBKDF2,
+  which macOS's `security import` does not read; the import appears to succeed and
+  yields nothing. `-legacy` restores the SHA1/3DES encoding it expects.
+
+On a Mac the equivalent is Keychain Access (*Certificate Assistant → Request a
+Certificate From a Certificate Authority*, saved to disk), then exporting the
+certificate **together with its private key** — an export without the key has the
+same symptom as the two above. `security find-identity -v -p codesigning` prints
+the identity string.
+
+**Do not leave the export password blank.** OpenSSL accepts an empty one, and the
+`.p12` then lives base64-encoded in a GitHub secret as a bare private key: anyone
+who obtains that one secret holds the signing identity outright. With a password
+they need `CSC_LINK` *and* `CSC_KEY_PASSWORD`, which are separate secrets with
+separate exposure. Let OpenSSL prompt rather than passing `-passout` — a password
+given on the command line lands in shell history and in the process list.
+
+**The App Store Connect API key** is a pure web flow and needs no Mac either,
+but it has one trap that is easy to walk into because the wrong answer sits next
+to the right one in the UI.
+
+**It must be a TEAM key, not an Individual key.** Apple's own documentation says
+it outright: *"Individual keys aren't able to use Provisioning endpoints, access
+Sales and Finance, or `notaryTool`."* They are created in different places, so
+this is a wrong turn rather than a wrong checkbox — team keys are under *Users
+and Access → Integrations → App Store Connect API → **Team Keys***, while an
+individual key is generated from your own profile menu.
+
+1. *App Store Connect → Users and Access → **Integrations** tab* (this is what
+   used to be called "Keys") *→ App Store Connect API → Team Keys*.
+2. First time only, **Request Access** and accept the terms. This is
+   **Account Holder**-gated, which on an Individual membership is you by
+   definition — the enrolling person is the Account Holder.
+3. **Generate API Key**, name it, and give it the **Developer** role. Generating
+   a team key needs Account Holder or Admin, which again you are.
+4. The **Issuer ID** is a UUID shown at the top of the Team Keys page. It belongs
+   to the account, not to the key, so every key you make shares it →
+   `APPLE_API_ISSUER`.
+5. **Download the `.p8`. You get exactly one chance** — Apple keeps no copy, and
+   a lost key can only be revoked and replaced, never re-downloaded. The file
+   arrives named `AuthKey_<KEYID>.p8`, so the Key ID is in the filename →
+   `APPLE_API_KEY_ID`. Its *contents* are the secret; `APPLE_API_KEY` is the path
+   the lane writes them to.
+
+Role is the one thing here not confirmed from Apple's own text. Apple's
+permissions matrix does grade "Notarize software" by role, but does not spell out
+the minimum in prose; **Developer** is the consistent community answer and is the
+least privilege that plausibly works. If notarization ever fails with an
+authorization error rather than a validation one, regenerate the key as *App
+Manager* or *Admin* — the key is a CI secret, so start narrow and widen only on
+evidence.
+
+**If the API key route is blocked**, the fallback is an app-specific password
+(`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`), generated at
+**account.apple.com** → *Sign-In and Security → App-Specific Passwords*. Note the
+domain: most guides still say `appleid.apple.com`, and Apple moved it. It is the
+worse option — the password is tied to the account rather than revocable on its
+own, and it is invalidated wholesale whenever you change your Apple Account
+password.
+
+**What genuinely needs a Mac is the verification, not the credentials.** Signing
+and notarizing happen on CI's `macos-latest` runner. The one step that cannot be
+delegated is opening a browser-downloaded artifact on a machine that has never
+seen it — and that involves no credentials, so a work machine, a borrowed one or
+a rented one all serve.
+
+Setting the identity with no notarization credentials **fails the build**. A
+Developer ID signature without notarization is still refused on a downloaded copy,
+so that combination looks signed and behaves unsigned, and it is the single most
+plausible way to ship a broken release from a green run.
+
+Notarization then happens twice, on two different artifacts, and both are needed:
+
+- electron-builder notarizes and staples **the `.app`** from inside
+  `MacPackager.sign()`, which is awaited before `packageInDistributableFormat()`.
+  So the `.dmg` and the `.zip` are cut from an already-stapled bundle — the same
+  ordering argument as §6.2, and the reason the `.zip` Squirrel.Mac consumes
+  contains a stapled app without anything extra being done to it.
+- `desktop/scripts/notarize-dmg.js`, wired in as **`artifactBuildCompleted`**,
+  notarizes and staples **the `.dmg` itself**. A disk image is its own notarizable
+  container and is what the browser tags with `com.apple.quarantine`; Apple's
+  guidance is to submit what you distribute, and a stapled ticket is what lets
+  Gatekeeper clear it with no network round trip on a machine that has never seen
+  it. The `.zip` is left alone — a zip has nowhere to hold a ticket, and the app
+  inside it is stapled.
+
+  The hook choice is load-bearing and is **not** `afterAllArtifactBuild`, which
+  is the obvious one. `PublishManager` schedules an upload from the
+  `artifactCreated` event, and `emitArtifactBuildCompleted` awaits this hook and
+  *then* emits it; `afterAllArtifactBuild` runs after `packager.build()` has
+  resolved, by which point a `--publish` run has already begun sending the
+  un-stapled bytes. Known and accepted alongside it: `DmgTarget.build()` computes
+  the dmg's blockmap and sha512 just before the hook runs, so both describe the
+  pre-staple file. That is inert — `electron-updater` uses the `.zip` on macOS,
+  never the `.dmg` — but it is why the dmg's entry in `latest-mac.yml` must not
+  become load-bearing for updates.
+
+Verification is `spctl --assess --type execute -vvv` **and** a download through a
+browser on a machine that has never seen the app. Only the second produces the
+quarantine attribute, so only the second reproduces what a user gets; a `curl` or
+an artifact copied over `scp` does not.
+
+Operationally, Apple documents a guideline of **75 notarizations per day** and
+states that notarization completes within 5 minutes for most software and 15 for
+98% of it. Reports through 2026 of Electron bundles sitting `In Progress` for
+hours are common enough that a release lane should treat the round trip as
+minutes-to-hours rather than seconds, and should not be retried impatiently.
+
+**Windows.** Azure Artifact Signing, configured by four variables, none of which
+is a secret:
+
+| Variable | What it is |
+|-|-|
+| `AZURE_CODE_SIGNING_ENDPOINT` | Regional endpoint, e.g. `https://eus.codesigning.azure.net/`. |
+| `AZURE_CODE_SIGNING_ACCOUNT_NAME` | The signing account. |
+| `AZURE_CODE_SIGNING_CERT_PROFILE_NAME` | The certificate profile inside it. |
+| `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The subject the signature must match, e.g. `CN=…, O=…, C=US`. |
+
+All four or none; three of four throws. electron-builder switches from `signtool`
+to `WindowsSignAzureManager` on the presence of `win.azureSignOptions` alone.
+Authentication is Entra ID's ambient credential chain, which on GitHub Actions is
+OIDC workload-identity federation — `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the
+token file `azure/login` writes. electron-builder reads none of those itself and
+neither does `desktop/signing.js`; the Azure signing library does. **There is no
+certificate and no secret to store**, which is most of why §7 recommends this
+route.
+
+**Where this runs.** In the release lane's *build*, not after it — for macOS the
+same ordering constraint as the ad-hoc signature (§6.2), and for Windows because
+the NSIS installer embeds the signed binaries. No CI lane in `test.yml` sets any
+of these variables and none should; `macos-desktop` asserts that Gatekeeper
+refuses what it built, precisely so that a certificate reaching the test lane is
+noticed.
+
 ## 7. Cost of going further (phase 2)
 
-Prices below were re-checked on 2026-08-28. Two things had moved since this table
-was first written, and both change what to buy.
+Prices below were re-checked on 2026-08-29, when the signing work was wired up.
+The Windows recommendation changed on that pass and the eligibility gate that had
+been the reason to hesitate turned out no longer to exist.
 
 | Item | Cost |
 |-|-|
-| Apple Developer Program + notarization | $99/yr. An **individual** membership is enough — D-U-N-S and organization enrolment are only for Organization accounts — and notarization is included. |
-| Windows code signing | Azure Trusted Signing at $9.99/month, or a traditional OV certificate at roughly $129/yr. **Not EV.** |
+| Apple Developer Program + notarization | $99/yr, **paid**. An **individual** membership is enough — D-U-N-S and organization enrolment are only for Organization accounts — and it grants up to five Developer ID Application certificates, which is the one thing this depends on. Notarization is included. |
+| Windows code signing | **Azure Artifact Signing, $9.99/month** (Basic, 5,000 signatures/month). Not yet purchased — see below. **Not EV, and not a traditional OV certificate either.** |
 | Three-OS build matrix | New CI lane; the payload's native addons are installed per platform (they follow the *bundled* Node, not Electron, under this architecture) |
 | Auto-update | `electron-updater` + a release channel; interacts with release-please and the existing edge/latest image publishing |
 | Security cadence | Chromium CVEs become our shipping obligation once binaries carry our name |
@@ -888,20 +1194,45 @@ says paying extra for EV solely to avoid SmartScreen warnings is not justified.
 The only thing EV still buys is kernel-mode driver signing, which this app will
 never do.
 
-The two remaining Windows routes differ on eligibility rather than price.
-**Azure Trusted Signing** (renamed Azure Artifact Signing) is the cheaper and
-far more CI-friendly one: `electron-builder` supports it directly through
-`win.sign.type: "azure"`, and it authenticates from GitHub Actions by OIDC
-workload-identity federation, so there is no key and no secret to store. But
-organizations must be a US or Canada legal entity with three or more years of
-verifiable business history, and the individual path is a limited preview — so
-eligibility is the first thing to check, not the last. Failing that, a
-**traditional OV certificate** has no such gate. Since the CA/Browser Forum's
-June 2023 rule the private key must live in FIPS 140-2 Level 2 hardware, which
-ended file-based certificates; budget for a cloud HSM signing service rather
-than a USB token, which is close to unusable from CI.
+**Take Azure Artifact Signing.** The two Windows routes were supposed to differ
+on eligibility rather than price, and on 2026-08-29 the eligibility gate turned
+out not to apply, which leaves price and operability — and Azure wins both by a
+wide margin.
 
-Until one of those is bought, **the Windows targets in §6 ship unsigned**, and the
+- **Azure Artifact Signing** (the service formerly called Azure Trusted Signing)
+  went **generally available on 2026-01-12** and the individual enrolment path
+  survived GA. The "three or more years of verifiable business history" rule that
+  made this look closed was an **organization-only, preview-only capacity gate**
+  from April 2025; it never applied to individuals, and a Microsoft moderator
+  confirmed on 2026-08-17 that post-GA there is no minimum organisation age
+  either. What remains for an individual is a **geographic** limit — United
+  States or Canada — plus identity verification against a government photo ID
+  through Microsoft Authenticator / Verified ID, taking 1–20 business days. The
+  Azure billing account's type is what selects individual validation, so it must
+  be an Individual account.
+
+  $9.99/month is $120/yr, and there is **no certificate and no secret**:
+  authentication from GitHub Actions is OIDC workload-identity federation. §6.4
+  has the four variables.
+
+- **A traditional OV certificate** is now the expensive option, not the fallback.
+  SSL.com's Individual Validated tier — the one that needs no registered business
+  — is $129/yr for one year, dropping to $96.75/yr on a five-year term. But since
+  the CA/Browser Forum's June 2023 rule the private key must live in FIPS 140-2
+  Level 2 hardware, and a physical USB token is close to unusable from CI, so the
+  real comparison includes a cloud HSM subscription: SSL.com's eSigner starts at
+  **$20/month** on top. That is roughly $369/yr against Azure's $120, for a
+  worse CI story and a certificate to guard. (A second 2026 change worth knowing:
+  from 2026-03-01 the CA/Browser Forum caps code-signing certificate validity at
+  458 days, so multi-year purchases now mean more reissues within the term.)
+
+Both routes produce the same SmartScreen outcome, which is the whole reason the
+cheap one is not a compromise: Microsoft's current documentation is explicit that
+a valid OV or EV certificate gets identical first-download treatment and that
+reputation accrues through download volume either way. Azure Artifact Signing is
+itself non-EV, and Microsoft's own page recommends it for non-Store distribution.
+
+Until it is bought, **the Windows targets in §6 ship unsigned**, and the
 SmartScreen interstitial in the row above is not a hypothetical cost — it is what
 every downloader of every release gets, since with no publisher identity the
 reputation that would eventually silence it accrues to nothing. §6 has what the
@@ -919,6 +1250,15 @@ Linux costs nothing and has nothing to enrol with. Publishing SHA-256 checksums
 beside the artifacts, and optionally a detached GPG signature, is the whole
 convention.
 
+**What is bought, and what is still owed.** The Apple Developer Program
+membership is active. Azure Artifact Signing is not yet enrolled, and its
+identity verification is a person with a phone and a passport rather than
+anything a build can do. Neither identity is in CI: the repository holds no
+`CALANDRIA_MAC_SIGN_IDENTITY`, no `CSC_LINK`, no `APPLE_API_KEY` and no Azure
+federated credential, so every artifact any lane produces today is ad-hoc on
+macOS and unsigned on Windows. §6.4 is the configuration those credentials drop
+into; the release lane is what will hold them.
+
 Against all of that: the wrapper removes a terminal and a URL from the daily loop, and
 adds reliable OS notifications. That's a real improvement for a daily driver and a thin
 one for an occasional user.
@@ -928,4 +1268,8 @@ one for an occasional user.
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
 2. Decide between window-first and tray-first for phase 1 (both use the same supervisor).
 3. ~~Native notifications + dock/taskbar badge wired to the existing "needs you" count~~ — done (§5.1), and with it the tray that lets the server outlive the window. Still to prove on a real desktop: that a toast reaches the OS, that the tray menu works under each status-area implementation, and that the badge renders — the bench's native-integration specs.
-4. Only then: signing, auto-update (packaging itself is done — §6).
+4. Enrol in Azure Artifact Signing and put the Apple Developer ID and App Store
+   Connect key into CI (§6.4, §7) — the last two things that are a person with a
+   phone and a passport rather than a build.
+5. Only then: the release lane, then auto-update (packaging and the signing
+   configuration are done — §6).

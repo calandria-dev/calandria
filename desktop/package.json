@@ -14,79 +14,9 @@
     "dist:win": "npm run payload && electron-builder --win nsis zip"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "dev.calandria.desktop",
-    "productName": "Calandria",
-    "copyright": "Copyright \u00a9 Calandria contributors",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main.js",
-      "supervisor.js",
-      "notifier.js",
-      "tray-residency.js",
-      "loading.html",
-      "assets/**",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "payload",
-        "to": "app-payload"
-      },
-      {
-        "from": "payload/node_modules",
-        "to": "app-payload/node_modules"
-      },
-      {
-        "from": "vendor/node",
-        "to": "node"
-      }
-    ],
-    "asar": true,
-    "npmRebuild": false,
-    "nodeGypRebuild": false,
-    "mac": {
-      "target": [
-        "dir",
-        "dmg",
-        "zip"
-      ],
-      "category": "public.app-category.developer-tools",
-      "icon": "../public/icons/icon-512.png",
-      "identity": "-",
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
-    },
-    "linux": {
-      "target": [
-        "dir",
-        "deb",
-        "AppImage"
-      ],
-      "executableName": "calandria-desktop",
-      "category": "Development",
-      "synopsis": "Run many Claude Code and Codex sessions in parallel, locally",
-      "maintainer": "Calandria contributors <calandria@example.invalid>",
-      "icon": "../public/icons/icon-512.png",
-      "syncDesktopName": true
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "zip"
-      ],
-      "icon": "../public/icons/icon-512.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true
-    }
   },
   "author": "Calandria contributors",
   "homepage": "https://github.com/calandria-dev/calandria",

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for a Developer ID build. Used for BOTH
+  `mac.entitlements` and `mac.entitlementsInherit`, which is what
+  electron-builder's own default does (its bundled template is the fallback for
+  both — app-builder-lib/out/mac/MacTargetHelper.js `getOptionsForFile`).
+
+  Two entitlements, and no more:
+
+  - allow-jit and allow-unsigned-executable-memory are V8's. Both Electron's
+    renderer and the vendored Node that runs the server need writable-executable
+    pages, and hardened runtime forbids them by default.
+
+  - com.apple.security.cs.disable-library-validation is DELIBERATELY ABSENT, and
+    that absence is a check rather than an omission. Hardened runtime turns on
+    library validation, so the vendored `resources/node/bin/node` may only
+    dlopen `.node` addons signed by the same Team ID. @electron/osx-sign walks
+    the whole of Contents/, Mach-O-detects every file and signs it deepest-first,
+    so better-sqlite3 and node-pty under resources/app-payload/node_modules
+    carry OUR Team ID by the time the vendored Node asks for them. If a signed
+    build ever needs this entitlement to start, something in the payload was
+    signed by a different identity — reaching for the entitlement would hide
+    that rather than fix it.
+
+  The ad-hoc variant (build/entitlements.mac.adhoc.plist) does carry it, because
+  an ad-hoc signature has no Team ID for library validation to match.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+  </dict>
+</plist>

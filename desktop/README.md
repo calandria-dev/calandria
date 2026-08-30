@@ -127,7 +127,7 @@ CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 
 # (see "Building a package" below); the suite runs against the unpacked `dir`
 # bundle. The build ad-hoc signs it via mac.identity "-" — no codesign step
 # here — which is what lets arm64 exec it at all. It is still unsigned in the
-# Developer ID sense.
+# Developer ID sense unless CALANDRIA_MAC_SIGN_IDENTITY is set.
 cd desktop && npm run dist:mac
 cd .. && mv desktop/dist/mac*/Calandria.app /tmp/calandria-app.app   # mac-arm64 or mac, by host arch
 codesign --verify --deep --strict /tmp/calandria-app.app             # should pass; if not, nothing will launch
@@ -337,34 +337,40 @@ and a dmg-only build emits no `latest-mac.yml` at all. The dmg keeps
 electron-builder's default layout — there is nothing to brand until there is
 something to distribute.
 
-All three are unsigned in the Developer ID sense, which stays a separate later
-decision (see the closing note below). What they *do* carry is an ad-hoc
-signature, because arm64 macOS refuses to `exec` a Mach-O carrying no signature
-whatsoever and electron-builder invalidates the one Electron's prebuilt arrived
-with. `mac.identity: "-"` asks electron-builder for exactly that, in the build,
-before the `dmg` and `zip` are cut from the bundle — which is why it is no
-longer a `codesign` you run afterwards. A signature applied to the `.app` after
-packaging never reaches the installers, so they would ship an app the kernel
-kills. `docs/DESKTOP_APP.md` §6.2 records the ordering in full, including the
-`CSC_FOR_PULL_REQUEST` trap that makes electron-builder skip signing on PR
-builds.
+All three are **ad-hoc signed** unless you ask for a Developer ID, and asking is
+one variable: `CALANDRIA_MAC_SIGN_IDENTITY`. Ad-hoc is not a placeholder for
+signing — it is what makes the file runnable at all, since arm64 macOS refuses to
+`exec` a Mach-O carrying no signature whatsoever and electron-builder invalidates
+the one Electron's prebuilt arrived with. `mac.identity: "-"` asks electron-builder
+for exactly that, in the build, before the `dmg` and `zip` are cut from the
+bundle — which is why it is no longer a `codesign` you run afterwards. A signature
+applied to the `.app` after packaging never reaches the installers, so they would
+ship an app the kernel kills. A Developer ID signature has the same constraint and
+lands in the same place. `docs/DESKTOP_APP.md` §6.2 records the ordering in full.
+
+The build is hardened-runtime in both cases; the branch is the entitlements.
+`build/entitlements.mac.adhoc.plist` carries
+`com.apple.security.cs.disable-library-validation` because an identity-less
+signature has no Team ID for library validation to match, and
+`build/entitlements.mac.plist` deliberately does not — if a Developer ID build
+ever needs it, something in the payload was signed by the wrong identity.
 
 Ad-hoc is still not distributable. A `.app` that arrives over the network carries
 the quarantine attribute, and Gatekeeper refuses an ad-hoc-signed bundle with
-"Calandria is damaged and can't be opened" — which is not a corrupt download.
-Until signing and notarization land, a downloaded build needs
+"Calandria is damaged and can't be opened" — which is not a corrupt download. So
+a build you made yourself, or an artifact pulled off a CI run, needs
 `xattr -dr com.apple.quarantine /Applications/Calandria.app`, or right-click →
-Open, on **every** install.
+Open, on **every** install on a machine that did not build it. A published
+release is signed, notarized and stapled and needs none of that; this paragraph
+goes when the release lane has published one.
 
-`dist:win` does build real installer targets, unlike `dist:mac`, because on
-Windows there is no signing decision blocking one — there is only an unsigned
-artifact and a warning. `nsis` is a wizard (`oneClick: false`) that installs
-per-user (`perMachine: false`, so no UAC prompt) and lets you pick the
-directory; `zip` is there for anyone who would rather unpack a folder. No
-certificate is configured, so electron-builder skips signing rather than
-failing, and **anything downloaded from a release will raise a SmartScreen
-interstitial** — *"Windows protected your PC"*, past which is **More info** →
-**Run anyway**. The zip does not avoid it (Explorer propagates the Mark of the
+`dist:win` builds real installer targets. `nsis` is a wizard (`oneClick: false`)
+that installs per-user (`perMachine: false`, so no UAC prompt) and lets you pick
+the directory; `zip` is there for anyone who would rather unpack a folder.
+Signing needs the four `AZURE_CODE_SIGNING_*` variables and nothing here sets
+them, so electron-builder skips signing rather than failing, and **anything
+downloaded from an unsigned release will raise a SmartScreen interstitial** —
+*"Windows protected your PC"*, past which is **More info** → **Run anyway**. The zip does not avoid it (Explorer propagates the Mark of the
 Web to extracted files), and a build you made yourself will never show it,
 because a file that was never downloaded carries no mark. The full account,
 including why this recurs with every release while unsigned, is in
@@ -494,7 +500,7 @@ before it is unpacked; only the `node` binary is taken, not `npm` or the
 headers.
 
 Native modules are never rebuilt against Electron's ABI — `npmRebuild: false`
-and `nodeGypRebuild: false` stay set in `package.json`'s `build` block, because
+and `nodeGypRebuild: false` stay set in `electron-builder.cjs`, because
 the addons are only ever loaded by the bundled Node, never by Electron.
 
 electron-builder 26.15.3 also warns on every Linux build that `desktopName` is
@@ -517,8 +523,13 @@ with the first.
 `desktop/payload/`, `desktop/vendor/` and `desktop/dist/` are build
 intermediates and gitignored — delete them freely, they're regenerated.
 
-Signing, notarization and auto-update are **not** wired up by any of this — that
-work, and its cost, is still future (`docs/DESKTOP_APP.md` §7).
+Signing and notarization ARE wired up, and are off unless asked for:
+`CALANDRIA_MAC_SIGN_IDENTITY` plus a certificate and App Store Connect key on
+macOS, four `AZURE_CODE_SIGNING_*` variables for Azure Artifact Signing on
+Windows. Setting half of either fails the build rather than producing a green,
+unsigned artifact. `desktop/signing.js` holds the policy and
+`docs/DESKTOP_APP.md` §6.4 documents every variable. No CI lane sets any of them;
+the release lane will. Auto-update is still future (`docs/DESKTOP_APP.md` §7).
 
 ## The one rule
 

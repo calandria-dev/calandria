@@ -1091,37 +1091,55 @@ jobs:
 
       # --- and now the same suite against what a user would download ---------
       #
-      # All three of `mac.target`, and still unsigned in the Developer ID sense:
-      # Gatekeeper and notarization stay a separate decision
-      # (docs/DESKTOP_APP.md §6). `dir` is what the packaged pass below launches
-      # and the only form the launchd spec can `open`; `dmg` and `zip` are what
-      # a person would actually download, and building them here is the only way
-      # to find out whether they open.
+      # All three of `mac.target`, and DELIBERATELY ad-hoc rather than
+      # Developer ID signed. This is the test lane; the release lane is what
+      # holds the certificate and notarizes (docs/DESKTOP_APP.md §6.2, §7).
+      # `dir` is what the packaged pass below launches and the only form the
+      # launchd spec can `open`; `dmg` and `zip` are what a person would
+      # actually download, and building them here is the only way to find out
+      # whether they open.
       - name: Package the desktop app
         working-directory: desktop
         env:
           # electron-builder otherwise scans the keychain for a Developer ID and
-          # narrates its absence. `mac.identity: "-"` asks for an ad-hoc
-          # signature rather than a real one, so there is nothing to discover.
+          # narrates its absence. desktop/signing.js resolves `mac.identity` to
+          # "-" whenever CALANDRIA_MAC_SIGN_IDENTITY is unset — as it is here,
+          # and as it must stay here — so there is nothing to discover.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # WITHOUT THIS THE .dmg SHIPS AN APP THAT CANNOT EXEC. electron-builder
-          # skips macOS signing outright on any pull-request build
-          # (`isSignAllowed` in app-builder-lib, which reads a set
-          # GITHUB_BASE_REF as "this is a PR"), so on the labelled-PR trigger
-          # that is most of this lane's runs the ad-hoc signature would silently
-          # not happen — and arm64 macOS kills an unsigned Mach-O on launch.
-          #
-          # The warning that flag carries is about exposing a real signing
-          # CERTIFICATE to fork PRs. There is no certificate here: an ad-hoc
-          # signature carries no identity and this job has no CSC_LINK secret.
-          # The lane also only fires on a maintainer-applied `macos` label,
-          # which a fork cannot set on its own PR.
-          #
-          # THE SIGNING TASK MUST REMOVE THIS when a real Developer ID lands, at
-          # which point the concern stops being inapplicable.
-          CSC_FOR_PULL_REQUEST: "true"
         run: |
           npm run payload -- --no-build
+
+          # WITHOUT THE NEXT LINE THE .dmg SHIPS AN APP THAT CANNOT EXEC.
+          # electron-builder skips macOS signing outright on any pull-request
+          # build (`isSignAllowed` in app-builder-lib), and the way it recognises
+          # one is `isPullRequest()` in builder-util, which treats a set,
+          # non-empty GITHUB_BASE_REF as "this is a PR". On the labelled-PR
+          # trigger that is most of this lane's runs, the ad-hoc signature would
+          # silently not happen — and arm64 macOS kills an unsigned Mach-O on
+          # launch. `isSet("")` is falsy, so an unset or empty GITHUB_BASE_REF is
+          # not merely a different PR, it is no PR.
+          #
+          # IT HAS TO BE UNSET HERE, IN THE SHELL, AND NOT IN THE STEP'S `env:`
+          # MAP. That was tried and it does not work: GitHub Actions reserves the
+          # GITHUB_ prefix and drops any assignment to it when it builds the
+          # process environment, while still echoing the declared value in the
+          # log's env group — so the run looks configured and electron-builder
+          # still logs "Current build is a part of pull request, code signing
+          # will be skipped", and every later step fails on a bundle that was
+          # never signed. Measured on this lane 2026-08-30.
+          #
+          # THIS REPLACED `CSC_FOR_PULL_REQUEST: "true"`, and the swap is the
+          # point rather than a tidy-up. That flag means "sign pull requests with
+          # the real certificate", and its documented hazard is exposing a
+          # signing identity to a fork build. It was inapplicable while no
+          # certificate existed anywhere; it stopped being inapplicable the
+          # moment one did. Unsetting GITHUB_BASE_REF re-enables signing without
+          # granting that permission, because `mac.identity: "-"` wins over
+          # CSC_LINK in macCodeSign.findIdentity: even if a certificate somehow
+          # reached this job's environment, the signature would still be ad-hoc.
+          # The spctl gate below asserts exactly that.
+          unset GITHUB_BASE_REF
+
           npx electron-builder --mac dir dmg zip
 
       - name: Move the artifact out of the checkout
@@ -1158,9 +1176,9 @@ jobs:
       # invalidates the one Electron's prebuilt arrived with.
       #
       # Verifying rather than re-signing is deliberate: a second signing path
-      # would paper over a build that quietly stopped signing (a dropped
-      # CSC_FOR_PULL_REQUEST, say) and leave the .dmg broken with every pass
-      # green. Failing here names the cause; failing later is a signal kill.
+      # would paper over a build that quietly stopped signing (a GITHUB_BASE_REF
+      # override lost in a refactor, say) and leave the .dmg broken with every
+      # pass green. Failing here names the cause; failing later is a signal kill.
       - name: Check the build ad-hoc signed the bundle
         run: |
           set -euo pipefail
@@ -1235,14 +1253,28 @@ jobs:
           echo "CALANDRIA_TEST_BIN=$bin" >> "$GITHUB_ENV"
           echo "CALANDRIA_TEST_APP_BUNDLE=$(find "$dest" -maxdepth 1 -name '*.app' -type d | head -n 1)" >> "$GITHUB_ENV"
 
-          # Informational, and expected to FAIL. `spctl` is the Gatekeeper
-          # assessment a downloaded copy gets, and an ad-hoc signature does not
-          # pass it — that is the honest state of macOS distribution until the
-          # signing task buys a Developer ID and notarizes. Printing the refusal
-          # keeps §6's install instructions grounded in something observed
-          # rather than assumed, so `|| true`: this is a report, not a gate.
-          echo "--- spctl assessment (a refusal here is the documented state) ---"
-          spctl --assess --type execute --verbose=4 "$dest"/*.app || true
+          # `spctl` is the Gatekeeper assessment a downloaded copy gets, and an
+          # ad-hoc signature does not pass it. A refusal here is therefore the
+          # EXPECTED result and not a finding — but the inverse is a finding, so
+          # this is a gate rather than the report it used to be, pointed the
+          # other way round.
+          #
+          # It asserts that this lane produced something Gatekeeper REFUSES. That
+          # reads oddly until you remember what it replaces: the packaging step
+          # above no longer carries CSC_FOR_PULL_REQUEST, and the property that
+          # made removing it safe is that a certificate reaching this job could
+          # not be used — `mac.identity: "-"` wins over CSC_LINK. This is that
+          # property, checked rather than asserted in a comment. An acceptance
+          # here means a real signing identity got into a PR-triggered build,
+          # which is precisely the thing nobody would otherwise notice.
+          #
+          # The release lane runs the same command as an ordinary assertion, on
+          # a notarized artifact, and expects the opposite answer.
+          echo "--- spctl assessment (a refusal here is the expected result) ---"
+          if spctl --assess --type execute --verbose=4 "$dest"/*.app; then
+            echo "::error::Gatekeeper ACCEPTED an app this lane is supposed to sign ad-hoc. A Developer ID reached the test lane; signing belongs in the release lane only. See docs/DESKTOP_APP.md §6.2."
+            exit 1
+          fi
 
       # Two specs, not the whole suite, and the reason the rest are absent is
       # that they would measure nothing. The app inside the .dmg is a `ditto`
