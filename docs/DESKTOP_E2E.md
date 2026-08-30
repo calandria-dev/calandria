@@ -303,10 +303,16 @@ than assume it; run 33195354526 came back un-repaired and this document
 concluded the runner image provisions a wider domain PATH. It does not follow:
 that run read the caller's PATH through the shadowing above, so it was never
 evidence about the image either way. `needsPathRepair()` was not at fault — it is
-unchanged since the spike and unit-pinned on exactly that string. The plant
-stays regardless, and is now load-bearing rather than redundant, because
-asserting on whatever PATH the image happens to supply would make the lane's
-colour a property of a runner nobody here controls. So the lane asserts the
+unchanged since the spike and unit-pinned on exactly that string. **Measured
+since (run 33286261089): the domain carries no override at all** — `launchctl
+getenv PATH` comes back empty on `macos-latest`, so the image never widened
+anything and the premise holds there. The draft would have worked; only `open`
+was in the way.
+
+The plant stays regardless, because asserting on whatever PATH an image happens
+to supply would make the lane's colour a property of a runner nobody here
+controls, and "empty today" is not a promise about next month's image. So the
+lane asserts the
 repair (does a GUI-launched app reach the check with launchd's PATH, can a
 login-shell probe answer from a process with no controlling terminal, does the
 app then boot all the way with no `node` on PATH at all) and leaves the
