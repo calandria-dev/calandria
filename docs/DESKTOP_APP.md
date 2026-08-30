@@ -945,13 +945,72 @@ right. It is **Developer ID Application** — under *Certificates, Identifiers &
 Profiles → Certificates → + → Software*. Not *Developer ID Installer*, which
 signs `.pkg` and this app does not ship one; not *Apple Development* or *Apple
 Distribution*, which are for Xcode and the App Store and which Gatekeeper will
-not accept for a direct download. Generate the CSR from Keychain Access on a Mac
-(*Certificate Assistant → Request a Certificate From a Certificate Authority*,
-saved to disk), upload it, install the issued `.cer`, then export the certificate
-**together with its private key** as a `.p12` — a certificate exported without
-the key produces a `CSC_LINK` electron-builder can import and cannot sign with.
-`security find-identity -v -p codesigning` prints the exact string
-`CALANDRIA_MAC_SIGN_IDENTITY` wants.
+not accept for a direct download.
+
+**No Mac is required to obtain it.** Every guide says to use Keychain Access, and
+that is convenience rather than a requirement: a CSR is a PKCS#10 request and the
+portal does not care what produced it. OpenSSL on Linux or Windows does the whole
+round trip, which also keeps a signing identity off a machine you do not own.
+
+```bash
+# 1. Key and CSR. Apple requires RSA 2048; the email should be the Apple ID.
+openssl genrsa -out devid.key 2048
+openssl req -new -key devid.key -out devid.certSigningRequest \
+  -subj "/emailAddress=you@example.com/CN=Your Name/C=US"
+
+# 2. Upload devid.certSigningRequest, pick Developer ID Application, download
+#    the .cer. It contains only the certificate — the private key never left here.
+openssl x509 -inform DER -in developerID_application.cer -out devid.pem
+
+# 3. The intermediate, WITHOUT WHICH THIS SILENTLY FAILS. See below.
+curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+openssl x509 -inform DER -in DeveloperIDG2CA.cer -out DeveloperIDG2CA.pem
+
+# 4. Bundle key + leaf + intermediate. -legacy is not optional on OpenSSL 3.
+#    The export password it prompts for is CSC_KEY_PASSWORD.
+openssl pkcs12 -export -legacy -out devid.p12 \
+  -inkey devid.key -in devid.pem -certfile DeveloperIDG2CA.pem
+
+# 5. CSC_LINK, and the identity string.
+base64 -w0 devid.p12 > devid.p12.base64
+openssl x509 -in devid.pem -noout -subject   # CN= is CALANDRIA_MAC_SIGN_IDENTITY
+```
+
+On Windows the OpenSSL that ships with Git Bash or WSL runs all of that
+unchanged, with one substitution: there is no `base64 -w0`, and `certutil
+-encode` is the wrong reach because it emits a PEM-wrapped block with headers and
+line breaks rather than the bare string `CSC_LINK` wants. Use PowerShell —
+`[Convert]::ToBase64String([IO.File]::ReadAllBytes('devid.p12'))`. On a Mac it is
+`base64 -i devid.p12`.
+
+Two failure modes are worth naming because both produce a build that imports the
+certificate happily and then reports no identity at all:
+
+- **A `.p12` without the Developer ID G2 intermediate.** electron-builder imports
+  it into a temporary keychain and then runs `security find-identity -v`, and the
+  `-v` means *valid* — an identity whose chain cannot be built to a trusted root
+  is not listed. A hosted macOS runner has Apple's roots and not necessarily that
+  intermediate, so the leaf alone verifies on the machine that made it and
+  vanishes in CI.
+- **OpenSSL 3's default PKCS#12 encryption.** It writes AES-256-CBC with PBKDF2,
+  which macOS's `security import` does not read; the import appears to succeed and
+  yields nothing. `-legacy` restores the SHA1/3DES encoding it expects.
+
+On a Mac the equivalent is Keychain Access (*Certificate Assistant → Request a
+Certificate From a Certificate Authority*, saved to disk), then exporting the
+certificate **together with its private key** — an export without the key has the
+same symptom as the two above. `security find-identity -v -p codesigning` prints
+the identity string.
+
+The App Store Connect API key is a pure web flow and needs no Mac either:
+*App Store Connect → Users and Access → Integrations → App Store Connect API →
+Team Keys*, role **Developer**. The `.p8` downloads once.
+
+**What genuinely needs a Mac is the verification, not the credentials.** Signing
+and notarizing happen on CI's `macos-latest` runner. The one step that cannot be
+delegated is opening a browser-downloaded artifact on a machine that has never
+seen it — and that involves no credentials, so a work machine, a borrowed one or
+a rented one all serve.
 
 Setting the identity with no notarization credentials **fails the build**. A
 Developer ID signature without notarization is still refused on a downloaded copy,
