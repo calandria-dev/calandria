@@ -100,15 +100,40 @@ every platform; `desktop/e2e/05-windows-quit.spec.ts` pins the `taskkill` half. 
 of it covers is a real shutdown or logout: Electron emits neither `before-quit` nor
 `will-quit` for `WM_QUERYENDSESSION`, and no test here claims otherwise.
 
-That lane packages too, the same way the Ubuntu one does: `electron-builder --win dir`,
-the artifact moved out of the checkout, and the window suite run again against it with no
-`CALANDRIA_REPO_ROOT`, so what is exercised is the payload the build laid down rather than
-the repo it was built in. (`desktop/e2e/fixtures.ts` refuses to launch a binary under the
+That lane packages too, and goes one step further than the Ubuntu one: it builds the
+`nsis` installer `npm run dist:win` produces, **installs it silently** (`/S`, which
+electron-builder's assisted installer honours), and runs the window suite against the
+installed `Calandria.exe` with no `CALANDRIA_REPO_ROOT`. So what is exercised is the
+payload the installer laid down rather than the repo it was built in — and the installer
+itself, which is the half `--dir` could never reach.
+
+There is no "move the artifact out of the checkout" step here, unlike on Ubuntu, and the
+absence is the point. `desktop/e2e/fixtures.ts` refuses to launch a binary under the
 source tree — anything resolving upward would find this checkout and pass on a machine
-that has one, which is the false green being guarded against.) It builds `--dir` rather
-than the `nsis` installer `npm run dist:win` produces, because the unpacked tree is both
-what the suite can launch and what NSIS wraps, while the one thing the installer adds that
-a user will certainly notice is invisible to CI by construction — see below.
+that has one — and an installed app is outside the tree by construction, while `--dir`
+output never leaves `desktop/dist`.
+
+Four facts about the installer are asserted, none of which the unpacked tree can show.
+The **install location** is read back from the uninstall registry entry (the one
+Settings → Apps reads) and checked to be `%LOCALAPPDATA%\Programs\Calandria`, which is
+what `perMachine: false` is for; no `/D=` is passed, since pinning the directory would
+only prove the flag works. The **payload** is there — `resources\app-payload\server.js`,
+`.next`, and the vendored `resources\node` — so a half-written install fails naming the
+file it lost rather than as a shell that boots and never becomes ready. Both **shortcuts**
+exist, in the user's Start Menu and on the desktop. And the **uninstaller**, invoked
+through the registry's own `QuietUninstallString`, takes all of it away again: executable,
+payload, both shortcuts, registry entry.
+
+One guard is worth knowing about: the lane kills any stray `Calandria` process between the
+install and the suite. `runAfterFinish` defaults true, and while for an assisted installer
+that is a checkbox on a finish page `/S` never renders, an instance that did start would
+hold `requestSingleInstanceLock()` and the database lock and wedge every spec behind a
+timeout naming neither.
+
+`zip`, the other `dist:win` target, is left unbuilt — it is the same tree in a container
+Explorer unpacks, and this lane already launches that tree. And the one thing about the
+installer a user will certainly notice remains invisible to CI by construction — see
+below.
 
 A separate workflow, `.github/workflows/node-current.yml`, installs on the latest Node
 **Current** rather than `.nvmrc`'s 22, on `ubuntu-24.04` and `windows-latest`, and does
@@ -243,7 +268,10 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
   make this recurring rather than a one-off: with no publisher identity, SmartScreen
   reputation attaches to each file, so every release re-earns the warning from zero; and a
   file that was never downloaded has no mark, so neither a local `dist:win` nor the CI lane
-  above can see it. Signing is the fix and is priced, not bought:
+  above can see it. That last point survived the lane learning to install the installer:
+  it runs a `.exe` it built itself seconds earlier, which no browser ever touched, so the
+  interstitial has nothing to fire on. Everything else about the installer is now tested;
+  this is the part that cannot be. Signing is the fix and is priced, not bought:
   [DESKTOP_APP.md](DESKTOP_APP.md#7-cost-of-going-further-phase-2) §7 — Azure Trusted
   Signing at $9.99/month or an OV certificate at roughly $129/yr, and explicitly not EV,
   which stopped buying instant reputation in March 2024.

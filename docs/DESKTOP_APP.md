@@ -727,6 +727,21 @@ block and no certificate: electron-builder skips signing when it finds nothing t
 sign with, so the build succeeds and produces an unsigned artifact rather than
 failing. Buying a certificate and wiring it in is its own decision (§7).
 
+**The `windows-desktop` CI lane installs that installer rather than trusting it.**
+It builds `--win nsis`, runs the result with `/S`, and points the window suite at
+the installed `Calandria.exe` — which also satisfies `desktop/e2e/fixtures.ts`'s
+refusal to launch a binary from inside the checkout without any relocation step,
+since an installed app is outside the source tree by construction. Around that
+pass it asserts the four things only a real install can show: that a
+`perMachine: false` build lands in `%LOCALAPPDATA%\Programs\Calandria` (read back
+from the uninstall registry entry, not dictated with `/D=`), that the payload and
+the vendored Node arrived under `resources\`, that both shortcuts were laid down,
+and that the uninstaller — invoked through the registry's own
+`QuietUninstallString`, exactly as Settings → Apps would — removes all of it. That
+is possible on a hosted runner only because the install is per-user and needs no
+elevation; the Linux equivalent has to be the bench lane's `.deb`, because only a
+real install there runs the postinst that sets up the sandbox.
+
 The cost of that is **Microsoft Defender SmartScreen**, and it is worth stating
 plainly because the first person to download a release will meet it. Windows
 attaches a `Zone.Identifier` alternate data stream — the Mark of the Web — to
@@ -742,8 +757,11 @@ reputation attaches to a *file* when there is no publisher to attach it to, so
 every release re-earns the warning from zero, forever, as long as the artifacts are
 unsigned. And a locally built installer will never show it — a file that was never
 downloaded has no MotW — so neither a developer's own `dist:win` nor the CI lane
-can observe the thing a user hits first. Signing is what removes it; §7 prices
-that, and the March 2024 change to what EV buys is the important half.
+can observe the thing a user hits first. The lane installing the installer does
+not change that: it runs an `.exe` it built itself seconds earlier, which no
+browser ever touched. Everything else about the installer is tested now; this is
+the one part that cannot be. Signing is what removes it; §7 prices that, and the
+March 2024 change to what EV buys is the important half.
 
 **Layout of the packaged app:**
 
