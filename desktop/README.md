@@ -382,6 +382,34 @@ the installed `Calandria.exe`, and then checks the install landed under
 `%LOCALAPPDATA%\Programs\Calandria`, carries its payload, laid down both
 shortcuts, and uninstalls cleanly. SmartScreen is the only part it cannot see.
 
+## Releases
+
+`npm run dist:*` is for building one yourself. What people download comes from
+`.github/workflows/release-desktop.yml`, which runs on the `v*` tag
+release-please cuts: three runners in parallel, each building and publishing its
+own platform's targets straight to the GitHub Release, plus one `SHA256SUMS.txt`
+for all of them and a note in the release body saying what is signed and what is
+not, per platform.
+
+The upload is **electron-builder's own** `github` publish provider, not a
+`gh release upload` step, and that is load-bearing rather than tidy: the provider
+writes the update feed — `latest.yml`, `latest-mac.yml`, `latest-linux.yml` and
+the `.blockmap` files — beside each artifact as it goes. Uploading by hand
+produces the downloads and no feed, which is an updater that silently never finds
+anything.
+
+Two consequences reach this directory. `desktop/package.json`'s `version` is the
+tag the publisher looks the Release up by, so release-please rewrites it on every
+bump (`extra-files` in `release-please-config.json`) and
+`tests/desktopRelease.test.ts` fails if it drifts — a stale version does not error,
+it quietly uploads everything into a draft release nobody looks at. And the
+vendored Node is pinned there with `CALANDRIA_DESKTOP_NODE_VERSION` rather than
+taking the runner's, so two releases a week apart ship the same runtime.
+
+[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.5 has the rest,
+including how signing credentials reach the build and what the lane asserts about
+the result.
+
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports
 "up to date", installs neither, and `dist:dir` then fails with

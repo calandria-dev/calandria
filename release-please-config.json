@@ -8,6 +8,13 @@
     ".": {
       "exclude-paths": [
         "website"
+      ],
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "desktop/package.json",
+          "jsonpath": "$.version"
+        }
       ]
     }
   }

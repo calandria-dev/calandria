@@ -1172,6 +1172,88 @@ of these variables and none should; `macos-desktop` asserts that Gatekeeper
 refuses what it built, precisely so that a certificate reaching the test lane is
 noticed.
 
+### 6.5 The release lane
+
+`.github/workflows/release-desktop.yml` is what puts a binary in anybody's hands.
+Everything above it produces artifacts that are then thrown away: `npm run dist:*`
+on somebody's laptop, or a test lane packaging one to prove it packages. This runs
+on the `v*` tag release-please cuts, three runners in parallel, each building and
+publishing its own platform's targets.
+
+| Runner | Targets | Signing, as of 2026-08-30 |
+|-|-|-|
+| `ubuntu-24.04` | `.deb`, `.AppImage` | None, by convention. SHA-256 checksums are the whole story. |
+| `macos-latest` | `.dmg`, `.zip` | Developer ID, notarized and stapled. |
+| `windows-latest` | NSIS installer, `.zip` | None yet — Azure Artifact Signing is not enrolled (§7). |
+
+Six things about it are decisions rather than mechanics.
+
+**electron-builder uploads its own artifacts.** The `publish` block in
+`desktop/electron-builder.cjs` plus `--publish always` is what attaches each file
+to the Release — *and* what writes the per-platform update feed beside it:
+`latest.yml`, `latest-mac.yml`, `latest-linux.yml`, and the `.blockmap` files
+`electron-updater` uses for differential downloads. A lane that built locally and
+then ran `gh release upload` would produce every artifact and none of the feed,
+which is an updater that silently never finds anything. The only thing this lane
+uploads by hand is `SHA256SUMS.txt`, because electron-builder does not produce it.
+
+**The version has to match the tag, and nothing about that is cosmetic.** The
+publisher looks the Release up **by tag**, and derives that tag from `version` in
+`desktop/package.json`. A desktop package left at `0.3.0` during a `v0.4.2`
+release does not fail: it mints a *draft* release called `v0.3.0`, uploads
+everything into it, and leaves the real Release holding nothing but the image.
+release-please keeps them in step through `extra-files` in
+`release-please-config.json`; `tests/desktopRelease.test.ts` pins that they agree
+in the tree, and the lane re-checks against the actual tag before it builds.
+
+**The gate is `publish-image.yml`'s, not a second one.** Both call
+`.github/actions/require-green-test-run`, which the release gate was extracted
+into for exactly this reason. It waits for the tagged commit's *push-to-main* Test
+run to conclude — tag pushes do not retrigger `test.yml` — and refuses the release
+unless it succeeded. Its header carries the reasoning: why it waits rather than
+querying for an already-completed run, why the filter is `event=push`, why
+`cancelled` is not a red verdict, and why the ceiling is 45 minutes.
+
+**Signing is all-or-nothing per platform, decided once.** `desktop/signing.js`
+throws on a half-filled credential group, which is right for a developer who set
+four variables of six by hand and wrong for a release, where one lapsed secret
+would take a whole platform's artifact down instead of producing the unsigned one
+that is still worth having. So the lane's `gate` job decides from presence alone
+and hands the build either the complete set or none of it, naming what was missing
+in the log. `APPLE_API_KEY` is set to a path the lane writes the `.p8` to, outside
+the checkout — it is a **file path**, not the key (§6.4).
+
+**The `spctl` check points the opposite way from the test lane's.**
+`macos-desktop` asserts that Gatekeeper *refuses* what it built, because that lane
+is ad-hoc by construction and an acceptance there would mean a certificate leaked
+into a PR-triggered build. Here `spctl --assess --type execute -vvv` must
+**accept**, and `xcrun stapler validate` must pass on the `.app` **and** on the
+`.dmg` — the second is what proves `notarize-dmg.js` ran at all, since it is a
+separate submission on a separate artifact. None of this is implied by
+`codesign --verify`, which passes on an ad-hoc bundle; that pair is §6.3's whole
+point.
+
+**The macOS job gets three hours and `fail-fast: false`.** Apple documents
+notarization completing within 5 minutes for most software and 15 for 98% of it,
+against a guideline of 75 submissions per day — but 2026 reports of Electron
+bundles sitting `In Progress` for hours are common enough that this must be
+budgeted for rather than retried. `fail-fast: false` is the other half: a slow
+Apple, a flaky apt mirror or an Azure outage must not discard the platforms that
+already published.
+
+Two things it deliberately does not copy from `macos-desktop`: that lane's
+`unset GITHUB_BASE_REF` (pointless on a tag, where the variable is unset anyway)
+and its `CSC_IDENTITY_AUTO_DISCOVERY: "false"` (which would defeat the whole
+lane). And the vendored Node is **pinned** with `CALANDRIA_DESKTOP_NODE_VERSION`
+rather than defaulting to the runner's, which is right for a test lane and wrong
+for an artifact somebody keeps: two releases a week apart would otherwise ship
+different runtimes for no reason anybody chose. `setup-node` is pinned to the same
+version, so the Node that installs the payload and the Node that runs it are one
+decision.
+
+Each platform is one architecture: x64 on Linux and Windows, arm64 on macOS
+(`macos-latest` is Apple silicon). The release notes say so.
+
 ## 7. Cost of going further (phase 2)
 
 Prices below were re-checked on 2026-08-29, when the signing work was wired up.
@@ -1250,14 +1332,24 @@ Linux costs nothing and has nothing to enrol with. Publishing SHA-256 checksums
 beside the artifacts, and optionally a detached GPG signature, is the whole
 convention.
 
-**What is bought, and what is still owed.** The Apple Developer Program
-membership is active. Azure Artifact Signing is not yet enrolled, and its
-identity verification is a person with a phone and a passport rather than
-anything a build can do. Neither identity is in CI: the repository holds no
-`CALANDRIA_MAC_SIGN_IDENTITY`, no `CSC_LINK`, no `APPLE_API_KEY` and no Azure
-federated credential, so every artifact any lane produces today is ad-hoc on
-macOS and unsigned on Windows. §6.4 is the configuration those credentials drop
-into; the release lane is what will hold them.
+**What is bought, and what is still owed** (checked 2026-08-30). The Apple
+Developer Program membership is active and its credentials are now in CI:
+`CALANDRIA_MAC_SIGN_IDENTITY`, `CSC_LINK`, `CSC_KEY_PASSWORD`,
+`APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` are repository
+secrets, and `verify-signing-credentials.yml` is the two-minute check that they
+work rather than merely exist. So a release publishes a signed, notarized macOS
+build.
+
+Azure Artifact Signing is **not** enrolled, and its identity verification is a
+person with a phone and a passport rather than anything a build can do. Until it
+is, the four `AZURE_CODE_SIGNING_*` repository variables are unset, the release
+lane's `gate` job says so in the log, and Windows artifacts publish unsigned with
+the release notes stating it. Nothing else changes: `desktop/signing.js` reads
+"none of the four" as "do not sign", not as an error.
+
+Every artifact `test.yml` produces stays ad-hoc on macOS and unsigned on Windows,
+which is deliberate — §6.2 and the `macos-desktop` lane's inverted `spctl` gate
+are what keep a certificate out of a PR-triggered build.
 
 Against all of that: the wrapper removes a terminal and a URL from the daily loop, and
 adds reliable OS notifications. That's a real improvement for a daily driver and a thin
@@ -1268,8 +1360,15 @@ one for an occasional user.
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
 2. Decide between window-first and tray-first for phase 1 (both use the same supervisor).
 3. ~~Native notifications + dock/taskbar badge wired to the existing "needs you" count~~ — done (§5.1), and with it the tray that lets the server outlive the window. Still to prove on a real desktop: that a toast reaches the OS, that the tray menu works under each status-area implementation, and that the badge renders — the bench's native-integration specs.
-4. Enrol in Azure Artifact Signing and put the Apple Developer ID and App Store
-   Connect key into CI (§6.4, §7) — the last two things that are a person with a
-   phone and a passport rather than a build.
-5. Only then: the release lane, then auto-update (packaging and the signing
-   configuration are done — §6).
+4. ~~Put the Apple Developer ID and App Store Connect key into CI~~ — done
+   (§6.4, §7); `verify-signing-credentials.yml` checks them on demand. Still
+   owed: **enrol in Azure Artifact Signing**, which is a person with a phone and
+   a passport rather than a build, and until which Windows artifacts publish
+   unsigned.
+5. ~~The release lane~~ — done (§6.5): `release-desktop.yml` builds and publishes
+   all three platforms off the `v*` tag. Two things it cannot do for itself:
+   **auto-update**, which is next, and the one manual confirmation nothing in CI
+   can produce — downloading a published `.dmg` **through a browser** on a Mac
+   that has never seen the app, and opening it. Only a browser attaches
+   `com.apple.quarantine`; a `curl` or an `scp` does not. That check is what
+   retires the workaround in §6.3 and its counterpart in `desktop/README.md`.

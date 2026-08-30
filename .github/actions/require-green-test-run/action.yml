@@ -1,0 +1,156 @@
+# Refuse to release from a commit whose push-to-main Test run is not green.
+#
+# This is publish-image.yml's release gate, lifted out of it verbatim so that
+# release-desktop.yml can run the SAME gate rather than a second one that drifts.
+# Every paragraph below is the reasoning that was in that workflow; it moved
+# here with the code because the code is what it explains.
+#
+# WHY IT WAITS rather than demanding a run that is already `completed`: on the
+# release path it is ALWAYS too early to ask. Measured on v0.2.0: main push
+# 15:52:22Z -> tag + Release 15:52:28Z -> the publish workflow starts 15:52:33Z
+# -> the gate failed 15:52:40Z with "no run found" -> that same Test run
+# concluded green at 16:01:34Z. The merge commit's run is always the slow one
+# (test.yml gates e2e to main pushes, ~10-15 minutes) and the tag is always cut
+# seconds after the merge, so a `status=completed` query did not lose that race
+# occasionally — it lost it on every release, which made a manual
+# `gh workflow run … --ref vX.Y.Z` a mandatory step again (issue #12).
+#
+# Waiting keeps the property this exists for: a run that concludes RED, or a tag
+# whose commit has no push-to-main run at all, still fails hard and publishes
+# nothing. `cancelled` is the one conclusion that is neither — see the loop.
+#
+# `event=push` is load-bearing, not tidiness (issue #12, defect 3). A
+# `pull_request` run for the same SHA is green with **e2e skipped**, so without
+# the filter a rebase-merged release PR — whose head SHA becomes main's tip —
+# would satisfy this gate having never run e2e, and the merge method would
+# silently decide whether the gate means anything. test.yml's push trigger is
+# `branches: [main]`, so an `event=push` run for this SHA is by construction the
+# push-to-main run, e2e included.
+#
+# Tag pushes do not retrigger test.yml — it only listens on
+# `push: branches: [main]` — which is why this watches the run the push-to-main
+# of the tagged commit already started (release-please tags a merge commit).
+#
+# The caller needs `permissions: actions: read` and a job timeout ABOVE
+# wait-seconds, or the job timeout becomes the thing that fails releases.
+name: Require a green Test run
+description: Wait for this commit's push-to-main Test workflow run to conclude, and fail unless it succeeded.
+
+inputs:
+  sha:
+    description: The commit whose Test run must be green.
+    required: true
+  token:
+    description: A token that can read this repository's Actions run history.
+    required: true
+  refusing:
+    description: What is being refused, for the error message ("publish v1.2.3").
+    required: false
+    default: publish
+  wait-seconds:
+    # A ceiling, not an expectation (~10 minutes end to end is typical):
+    # test.yml's e2e job alone is capped at 30 minutes and the run can sit queued
+    # for minutes before that. Expiring here is a hard failure, so it must sit
+    # above the slowest legitimate run rather than near it.
+    description: How long to wait for the run to conclude, in seconds.
+    required: false
+    default: "2700"
+  absent-grace-seconds:
+    # A hand-pushed tag on a commit that never landed on main has no
+    # push-to-main run and never will, so absence fails fast instead of burning
+    # the full wait. This grace covers only the gap between the tag push and the
+    # run row becoming visible to the API.
+    description: How long to tolerate no run existing at all, in seconds.
+    required: false
+    default: "180"
+  poll-seconds:
+    description: Interval between polls, in seconds.
+    required: false
+    default: "30"
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for the Test workflow to succeed for this commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SHA: ${{ inputs.sha }}
+        REFUSING: ${{ inputs.refusing }}
+        WAIT_SECONDS: ${{ inputs.wait-seconds }}
+        ABSENT_GRACE_SECONDS: ${{ inputs.absent-grace-seconds }}
+        POLL_SECONDS: ${{ inputs.poll-seconds }}
+      run: |
+        set -euo pipefail
+
+        fail() {
+          echo "::error::Refusing to ${REFUSING}: the Test workflow has not succeeded for ${SHA} ($1). A release must be cut from a commit whose push-to-main Test run is green — see .github/CLAUDE.md and issue #12."
+          exit 1
+        }
+
+        # Echoes "<status> <conclusion> <run id>" for the newest push-event Test
+        # run on this SHA, or "absent - -" when there is none yet. A transient
+        # API error echoes nothing, which the loop reads as one more reason to
+        # keep waiting rather than as grounds to fail a release. The id is here
+        # so a cancelled run's recovery is a copyable command rather than a hunt
+        # through the Actions tab.
+        probe() {
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
+            --jq '(.workflow_runs[0] // {}) | "\(.status // "absent") \(.conclusion // "-") \(.id // "-")"' 2>/dev/null || true
+        }
+
+        deadline=$(( SECONDS + WAIT_SECONDS ))
+        absent_deadline=$(( SECONDS + ABSENT_GRACE_SECONDS ))
+        announced=""
+
+        while :; do
+          line=$(probe)
+          [ -n "$line" ] || line="unreadable - -"
+          read -r status conclusion run_id <<<"$line"
+
+          case "$status" in
+            completed)
+              case "$conclusion" in
+                success)
+                  echo "Test workflow succeeded for ${SHA}; proceeding to ${REFUSING}"
+                  exit 0
+                  ;;
+                # `cancelled` is the ABSENCE of a verdict, not a red one, and it
+                # is the failure this step actually meets in the wild: it sank
+                # v0.3.0 and v0.4.0 (issue #48), where a stray `pull_request` run
+                # killed main's before a single test ran. Failing on it made the
+                # recovery two manual steps — rerun the Test run, then
+                # re-dispatch — when a rerun lands as a later ATTEMPT on the same
+                # run id, so the very next poll would have seen it. So wait, on
+                # the same budget `in_progress` gets. A red run still fails
+                # instantly below; nothing unverified becomes publishable, the
+                # gate just stops discarding a release over a question that was
+                # never answered.
+                cancelled) ;;
+                *) fail "found: ${conclusion}" ;;
+              esac
+              ;;
+            absent)
+              [ "$SECONDS" -lt "$absent_deadline" ] || fail "found: no run found"
+              ;;
+          esac
+
+          if [ "$SECONDS" -ge "$deadline" ]; then
+            [ "$conclusion" != "cancelled" ] \
+              || fail "run ${run_id} was cancelled and no rerun landed within $(( WAIT_SECONDS / 60 )) minutes; \`gh run rerun ${run_id}\` and then rerun this workflow"
+            fail "still ${status} after $(( WAIT_SECONDS / 60 )) minutes"
+          fi
+
+          # Only on a transition, so a 45-minute wait doesn't produce 90 lines of
+          # identical log. Keyed on status AND conclusion, or the cancelled case
+          # (which stays `completed`) would announce nothing at all.
+          if [ "${status} ${conclusion}" != "$announced" ]; then
+            if [ "$conclusion" = "cancelled" ]; then
+              echo "Test run ${run_id} for ${SHA} was cancelled — no verdict. Waiting for a rerun; start one with \`gh run rerun ${run_id}\`."
+            else
+              echo "Test run for ${SHA} is ${status}; waiting for it to conclude…"
+            fi
+            announced="${status} ${conclusion}"
+          fi
+          sleep "$POLL_SECONDS"
+        done
