@@ -505,11 +505,20 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   refresh rides `runbooks_changed`, a project-keyed global event alongside `task_deleted`; it skips
   `/api/events`'s re-read enrichment more completely than its siblings, since no task row is
   involved at all and its publishers key the bus with `""`.
-- **Scheduled tasks** (`lib/scheduler.ts`, `lib/schedule/`) are the app's only server-owned
-  periodic *work*. The retention prune shares the ticker but launches nothing, and the recap sweep
-  that resembles one is a browser `setInterval`, so it does nothing with no tab open. A `schedules`
-  row owns a prompt and a project; each firing MINTS A FRESH TASK (tagged `tasks.schedule_id`) and
-  launches its first turn the way `lib/autoStart.ts` does. `lib/schedule/time.ts` is `Intl`-only
+- **Scheduled tasks** (`lib/scheduler.ts`, `lib/schedule/`) are the largest of **three**
+  server-owned periodic tickers, and the only one `CALANDRIA_SCHEDULER` governs. The other two also
+  launch turns, so turning schedules off does NOT mean nothing runs unattended.
+  `lib/deferredStart.ts` sweeps `tasks.start_at` on its own `setInterval` at the same
+  `SCHEDULE_TICK_MS`, launching or resuming each task queued for the usage-window reset; it is
+  deliberately ungated, because it isn't a schedule and `CALANDRIA_SCHEDULER=off` must not silently
+  disable a button the task hero offers. `lib/prState.ts` polls open PRs
+  (`CALANDRIA_PR_POLL_MS`, self-stopping when none are open), and a merge it observes reaches
+  `maybeAutoReclaim`, which can auto-start dependents. All three start from the one boot ping
+  below. What rides the SCHEDULER's ticker launches nothing (retention prune, worktree sweep, disk
+  warning), and the recap sweep that resembles one is a browser `setInterval`, so it does nothing
+  with no tab open. A `schedules` row owns a prompt and a project; each firing MINTS A FRESH TASK
+  (tagged `tasks.schedule_id`) and launches its first turn the way `lib/autoStart.ts` does.
+  `lib/schedule/time.ts` is `Intl`-only
   wall-clock math: an IANA zone, never an offset, with both DST edges decided (a nonexistent wall
   time fires when the gap closes; an ambiguous one fires once, on the earlier pass).
   `UNIQUE(schedule_id, scheduled_for)` on `schedule_runs` is the durable claim that makes a double
@@ -527,9 +536,10 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   clears. Without it a success landed on running=0 / awaiting_input=0 / `in_progress` and nothing
   ever moved it, so every firing left another permanent "In progress" row.
 
-  The ticker starts from a boot self-ping to `/api/instance/scheduler`, its own route because
-  `/api/instance/services-restore` is PINNED SDK-free while the scheduler reaches the runner. The
-  editor (`app/shell/Schedules.tsx`) validates a slash prompt against the project's real command
+  The ticker — and the other two above with it — starts from a boot self-ping to
+  `/api/instance/scheduler`, its own route because `/api/instance/services-restore` is PINNED
+  SDK-free while the scheduler reaches the runner. The editor (`app/shell/Schedules.tsx`)
+  validates a slash prompt against the project's real command
   registry before saving, via `POST /api/schedules/validate` (`lib/schedule/commands.ts`), since an
   unknown command is a SUCCESS at run time ("Unknown command: /x") and this is the only cheap place
   to catch it; `fireSchedule` re-checks at FIRE time, where an unknown command settles the run
