@@ -25,44 +25,76 @@
  * evidence here is the process's stdout (`open --stdout`) and its HTTP surface,
  * not `app.evaluate()`.
  *
- * HOW THE INSTANCE STAYS HERMETIC WITHOUT AN ENV. `open` deliberately does not
- * forward the caller's environment — that is the whole point — so the usual
- * `electron.launch({ env })` route is unavailable. `launchctl setenv` is the
- * matching mechanism: it writes into the user's launchd domain, which is what
- * GUI apps started after it inherit. The full `instanceEnv()` shape goes in and
- * comes back out in `afterAll`, so the app under test gets the same temp
- * directories, ports and mock agent as every other spec in this suite.
+ * HOW THE INSTANCE STAYS HERMETIC, AND WHY `open` IS RUN WITHOUT A PATH.
+ *
+ * `electron.launch({ env })` is unavailable here, so the instance goes into the
+ * user's launchd domain with `launchctl setenv` — that domain is what GUI apps
+ * started afterwards inherit. The full `instanceEnv()` shape goes in and comes
+ * back out in `afterAll`, so the app under test gets the same temp directories,
+ * ports and mock agent as every other spec in this suite.
+ *
+ * That much always worked. What did not, and what this file got wrong for its
+ * first three runs, is the assumption that `open` contributes nothing of its
+ * own. It contributes everything it has: `open(1)` states that "opened
+ * applications inherit environment variables just as if you had launched the
+ * application directly through its full path", behaviour it dates to Tiger. So
+ * the app's environment is the launchd domain OVERLAID WITH `open`'S OWN, and
+ * for any key both of them hold, the caller wins.
+ *
+ * Which is exactly why the instance keys arrived and PATH did not. Nothing in
+ * CI has a `CALANDRIA_DB_DIR`, so the domain's value was the only one and it
+ * came through — the app really did boot on the planted port against the
+ * planted database. Every process has a PATH, so the domain's stub was
+ * shadowed by `npm run test:desktop:window`'s, node_modules/.bin and the
+ * hostedtoolcache Node and all, and the supervisor correctly reported it was
+ * not looking at launchd's stub.
+ *
+ * The repair is to withhold PATH from `open` rather than to plant it harder:
+ * with no PATH in the caller's environment there is nothing to overlay, and the
+ * domain's value — the only other source — is what the app is handed. That
+ * keeps LaunchServices in the launch, which is the reason this spec exists at
+ * all, while making launchd the genuine and sole origin of the variable under
+ * test. It also fails safe: if a future `open` stopped forwarding absent keys
+ * from the domain too, the app would start with no PATH whatsoever, which
+ * `needsPathRepair()` treats as needing repair for the same reason.
  *
  * WHY PATH IS PLANTED RATHER THAN OBSERVED — and what that costs.
  *
  * The first draft of this spec set every key EXCEPT PATH, on the theory that
  * launchd would supply the stub by itself and the run would therefore measure
- * the premise instead of assuming it. On a hosted `macos-latest` runner it does
- * not: run 33195354526 / job 98930976811 booted the bundle all the way and took
- * the *un*-repaired branch, so LaunchServices handed the app a PATH with at
- * least one directory outside `/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin`.
- * That is a property of GitHub's image — which provisions the runner's launchd
- * domain — and not a regression: `needsPathRepair()` is byte-identical to the
- * version the spike shipped (`f21f174`, the only commit that has ever touched
- * it) and `desktop/test-supervisor.js` pins it returning true for exactly that
- * string. A plain double-click on a real Mac is still the stub.
+ * the premise instead of assuming it. It came back un-repaired (run
+ * 33195354526 / job 98930976811 booted the bundle all the way and took the
+ * *not*-a-stub branch), and this file concluded from that the runner image
+ * provisions a wide PATH into its launchd domain.
  *
- * So the environment that triggers the repair is not reproducible here, and
- * this lane asserts the repair itself instead: the stub goes into the launchd
- * user domain alongside the rest of `instanceEnv()`, and the app inherits it
- * through the same LaunchServices → launchd path a Finder launch uses. What
- * that still covers is everything downstream of the trigger — that a real GUI
- * launch reaches `needsPathRepair()` with the PATH launchd gave it, that the
- * login-shell probe can run and answer from inside a GUI process (no
- * controlling terminal, no inherited shell), and that the app then boots all
- * the way with no `node` on PATH at all. What it no longer covers is the
- * premise in
- * `docs/DESKTOP_APP.md` §2 — that launchd hands a double-clicked `.app` the
- * stub unprompted. Nothing on a hosted runner can: it is a claim about an
- * un-provisioned user's login session. It is a documented manual check on a
- * real Mac instead (`docs/DESKTOP_APP.md` §5), and the domain's pre-existing
- * PATH is recorded on every run so the day a runner image stops widening it is
- * visible rather than inferred.
+ * That conclusion does not survive the inheritance fact above. The PATH that
+ * run observed was `open`'s caller's, not the domain's; the draft's measurement
+ * ran through the same shadowing that later broke the planted one, so it says
+ * nothing either way about what GitHub's image puts in the launchd domain. It
+ * was never a regression in the app: `needsPathRepair()` is byte-identical to
+ * the version the spike shipped (`f21f174`, the only commit that has ever
+ * touched it) and `desktop/test-supervisor.js` pins it returning true for
+ * exactly that string.
+ *
+ * The plant STAYS anyway, and is now load-bearing rather than redundant: with
+ * PATH withheld from `open`, the domain is the only source the app has, so
+ * planting the stub there is what puts the app in the state under test. The
+ * alternative — leaving the domain alone and asserting on whatever the image
+ * happens to provide — would make this lane's colour a property of a runner
+ * image nobody here controls.
+ *
+ * So this spec asserts the repair, not the inheritance that triggers it: that a
+ * real GUI launch reaches `needsPathRepair()` with the PATH launchd gave it,
+ * that the login-shell probe can run and answer from inside a GUI process (no
+ * controlling terminal, no inherited shell), and that the app then boots all the
+ * way with no `node` on PATH at all. What it does not cover is the premise in
+ * `docs/DESKTOP_APP.md` §2 — that launchd hands a double-clicked `.app` the stub
+ * unprompted — which remains a documented manual check on a real Mac
+ * (`docs/DESKTOP_APP.md` §5). But the evidence for it is now collected rather
+ * than guessed at: the domain's pre-existing PATH is read before the plant and
+ * attached to every run, and unlike the draft's reading it is uncontaminated,
+ * because it comes from `launchctl getenv` rather than from a launch. A run
+ * whose attachment reports no override is a run on which the premise held.
  *
  * Packaged-only. The dev shell is `electron .` with no bundle for LaunchServices
  * to open, and an unpackaged run would also find its server through
@@ -109,6 +141,8 @@ let logFile = "";
 let env: Record<string, string> = {};
 /** The domain's own PATH override before this spec planted the stub, restored in `afterAll`. */
 let priorDomainPath: string | null = null;
+/** Whether the process that ran `open` had a PATH of its own to withhold. Recorded, not asserted. */
+let callerHadPath = false;
 
 function launchctl(args: string[]): void {
   execFileSync("launchctl", args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -158,12 +192,31 @@ test.beforeAll(() => {
   priorDomainPath = domainPath();
   launchctl(["setenv", "PATH", STUB_PATH]);
 
+  // The environment handed to `open`, which is also most of the environment
+  // handed to the app — see the header. PATH is REMOVED rather than set,
+  // because a value here would shadow the domain's and this spec would be back
+  // to measuring what it typed in. Removing it leaves launchd as the only
+  // source the app has for the one variable under test.
+  //
+  // `CALANDRIA_REPO_ROOT` goes for the reason the planted copy does: it would
+  // let a packaged app find its server through the checkout, which is the
+  // crutch this lane exists to remove. It is not normally set in a CI shell;
+  // deleting it costs nothing and closes the path by which a developer running
+  // this suite locally would silently weaken it.
+  const openEnv: NodeJS.ProcessEnv = { ...process.env };
+  callerHadPath = typeof openEnv.PATH === "string" && openEnv.PATH.length > 0;
+  delete openEnv.PATH;
+  delete openEnv.CALANDRIA_REPO_ROOT;
+
+  // `/usr/bin/open`, by absolute path: the environment above has no PATH to
+  // resolve a bare `open` with.
   // `-n`: a fresh instance even if a Calandria is already running (the
   // single-instance lock is 01-shell's subject, not this file's).
   // `--stdout`/`--stderr`: the supervisor narrates its own PATH decision on
   // stdout, and with no CDP connection that narration is the entire evidence.
-  execFileSync("open", ["-n", "-a", BUNDLE!, "--stdout", logFile, "--stderr", logFile], {
+  execFileSync("/usr/bin/open", ["-n", "-a", BUNDLE!, "--stdout", logFile, "--stderr", logFile], {
     stdio: ["ignore", "ignore", "pipe"],
+    env: openEnv,
   });
 });
 
@@ -226,23 +279,31 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
     body:
       `launchd user-domain PATH override before this spec planted the stub:\n` +
       `${priorDomainPath ?? "(none — a GUI launch on this machine gets launchd's stub unprompted)"}\n\n` +
-      `planted for the app under test: ${STUB_PATH}\n`,
+      `planted for the app under test: ${STUB_PATH}\n` +
+      `PATH withheld from open(1)'s environment: ${callerHadPath ? "yes" : "no — the caller had none to withhold"}\n\n` +
+      `Read the first line as the premise check docs/DESKTOP_APP.md §2 asks for:\n` +
+      `"none" means this machine would have handed a double-clicked .app the\n` +
+      `stub on its own and the plant was redundant. Any other value means the\n` +
+      `plant is what put the app in the state the assertions below measure.\n`,
     contentType: "text/plain",
   });
 
   // (1) A GUI-launched app really does reach `needsPathRepair()` with the PATH
   // launchd gave it, and that function still recognises the stub. The
   // supervisor logs this line only on that branch, so its presence IS the
-  // measurement. Failing here means one of two things, and open.log now
-  // distinguishes them: a `PATH is not launchd's stub` line means the planted
-  // value did not survive LaunchServices, anything else means the supervisor
-  // never got as far as the decision.
+  // measurement. Failing here means one of three things, and open.log
+  // distinguishes them: a `PATH is not launchd's stub` line whose value is this
+  // JOB's PATH means `open` forwarded a caller environment again (the failure
+  // this spec was rewritten to fix — check that the launch below still deletes
+  // PATH); one carrying some other wide value means the launchd domain, not the
+  // plant, is what the app read; anything else means the supervisor never got
+  // as far as the decision.
   //
   // What this does NOT prove is that launchd would have supplied the stub by
   // itself — see the header; that premise is a manual check on a real Mac.
   expect(
     log,
-    "the supervisor did not report a stub PATH. Either the planted launchd PATH did not reach the app (read open.log for the 'PATH is not' line), or needsPathRepair() no longer recognises it."
+    "the supervisor did not report a stub PATH. Read open.log for the 'PATH is not launchd's stub, using it as-is:' line — the value it prints names which environment reached the app."
   ).toContain("PATH looked like launchd's stub");
 
   // (2) …and the probe succeeded rather than falling through to the warning.

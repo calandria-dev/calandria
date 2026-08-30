@@ -72,7 +72,7 @@ Every row was run on this machine (Linux x64, Node 22.18.0, Electron 44.0.0), no
 | An Electron binary is not a Node binary | `electron ./script.js` boots a Chromium app (here: aborts on the SUID sandbox check). `ELECTRON_RUN_AS_NODE=1 electron ./script.js` prints the script's output. |
 | **Hosting the server in Electron would break Codex turns** | `lib/agents/codex/driver.ts:58,74` registers the MCP tool bridge as `command: process.execPath, args: [calandria-mcp.mjs]` with a closed four-key env (`CALANDRIA_TASK_ID`, `CALANDRIA_PROJECT_ID`, `CALANDRIA_BASE_URL`, `SERVICE_TOKEN`). Inside Electron, `execPath` is the Electron binary and the child inherits no `ELECTRON_RUN_AS_NODE`, so every Codex turn would launch a GUI process instead of the bridge. |
 | Two independent port searches collide | With 3000 and 3001 both busy, the first draft of `pickPorts` gave both sidecars 3002. One lost the bind; the readiness probe talked to whichever won, since `pty-server.js` answers every path with a 200 banner, so `/api/version` "succeeded." Fixed with a shared claim set; the probe now insists on the app's JSON shape. Found by booting the real server, not the stubs. |
-| macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin`, not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. **This row is the one finding here that CI cannot re-measure** — a hosted `macos-latest` provisions its launchd domain with a wider PATH, so a GUI launch there is handed that instead (measured: run 33195354526, the app took the un-repaired branch). §5 has the manual check; the lane covers the repair rather than the inheritance. |
+| macOS GUI apps get launchd's PATH | A `.app` opened from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin`, not the user's shell PATH. `codex` (spawned bare, `lib/agents/codex/mcp.ts:38`), `gh` (probed on PATH, `lib/github.ts:35`) and an nvm-managed `node` are invisible to a double-clicked Calandria while working in the same user's terminal. The supervisor detects the stub PATH and re-reads it from the login shell. **This row is the one finding here that CI cannot re-measure**, though not for the reason this table gave until 2026-08-29: it blamed a launchd domain the runner image had widened, on the strength of run 33195354526 taking the un-repaired branch. That reading was contaminated. `open(1)` forwards its caller's environment ("opened applications inherit environment variables just as if you had launched the application directly through its full path"), so what that run measured was the CI job's PATH, not launchd's, and it says nothing about the image. The lane now withholds PATH from `open` and reads the domain's value instead, and records it every run. What stays out of CI's reach is narrower than "the inheritance": it is an *un-provisioned* user's login session, which no hosted image can promise to be. §5 has the manual check; the lane covers the repair rather than the inheritance. |
 | The real server boots under the shell's supervisor | `node desktop/test-real-boot.js`: **919 ms** to `/api/version`, on ports 3002/3003 (stepped past the live instance), app HTML served, `/pty` proxied to the sidecar chosen, `CALANDRIA_DB_DIR` honored, both sidecars drained on SIGTERM with no SIGKILL. |
 | Electron's size is not the dominant term | Electron 44 linux-x64 unpacks to **282 MB**. The payload it would wrap, `.next` (127 MB) plus a pruned `node_modules`, is larger; the container carrying the same payload with Debian, git, gh and both agent CLIs is **3.99 GB**. |
 | **…and the packaged app confirms it** | `npm run dist:linux` (2026-08-27, this machine, before the payload trim below): `dist/linux-unpacked` **2.1 GB**, AppImage **653 MB**, deb **485 MB**. Electron is ~13% of it. The payload's `node_modules` is **1.6 GB** on its own. |
@@ -260,19 +260,35 @@ with no controlling terminal, which is a claim no other spec can make. Every
 `_electron` launch is a child of the test process and inherits its PATH, the
 environment where the repair does nothing.
 
-The **inheritance** half is not CI's to prove. A hosted `macos-latest` hands a
-GUI app a launchd domain its image has already widened, so the lane plants the
-stub with `launchctl setenv` and asserts what happens next; it records the
-domain's own PATH on every run, so the day an image stops widening it is
-visible. The premise itself — a `.app` double-clicked by a real user gets
-`/usr/bin:/bin:/usr/sbin:/sbin` — is a **manual check on a real Mac**, and takes
-one launch:
+The **inheritance** half is not CI's to prove, and the reason is worth stating
+precisely, because a wrong version of it stood here until 2026-08-29 and cost a
+permanently red check. It is *not* that hosted images widen the launchd domain —
+that was inferred from a launch which, it turned out, never read the domain at
+all. `open(1)` forwards its caller's environment, so a PATH planted with
+`launchctl setenv` is shadowed by the PATH of whatever shell ran `open`. The
+lane deletes PATH from that environment, which leaves the domain as the only
+source the app has; the stub then goes in with `launchctl setenv` and the lane
+asserts what happens next. It still records the domain's own PATH every run, now
+read with `launchctl getenv` rather than inferred from a boot. What remains
+outside CI's reach is a runner whose login session nobody provisioned, which is
+not something a hosted image can promise to be.
+
+The premise itself — a `.app` double-clicked by a real user gets
+`/usr/bin:/bin:/usr/sbin:/sbin` — is a **manual check on a real Mac**, and it
+has to be an actual double-click. Launch Calandria from Finder, Spotlight or the
+Dock, then read what it logged:
 
 ```bash
-open -n -a /Applications/Calandria.app --stdout /tmp/calandria-gui.log \
-  --stderr /tmp/calandria-gui.log
-grep '^\[shell\] PATH' /tmp/calandria-gui.log
+launchctl getenv PATH   # empty is the premise: nothing has widened your domain
+open -a Console         # or read ~/Library/Logs, per §1's log destination
 ```
+
+Do **not** substitute `open -n -a /Applications/Calandria.app` from a Terminal
+for the double-click. It looks like the same launch and is not: `open` hands the
+app the Terminal's PATH, which is exactly the value the repair exists to avoid
+needing, so the app takes the un-repaired branch every time and the check reports
+a failure that is really the harness. Run it under `env -u PATH` if you want the
+command-line form.
 
 `PATH looked like launchd's stub — took the login shell's instead` is the
 premise holding and the repair firing. `PATH is not launchd's stub, using it

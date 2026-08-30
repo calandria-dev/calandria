@@ -281,22 +281,41 @@ precisely the environment in which the launchd repair is a no-op. This one
 does, captures its stdout with `open --stdout` (there is no CDP connection to
 evaluate into), and reads back whether `supervisor.js` reported the stub PATH and
 recovered a real one from the login shell. `launchctl setenv` is what keeps that
-instance hermetic, since `open` forwards no environment — the whole
-`instanceEnv()` shape goes into the user's launchd domain and comes back out in
-`afterAll`.
+instance hermetic: the whole `instanceEnv()` shape goes into the user's launchd
+domain and comes back out in `afterAll`.
 
-**PATH is planted there too, and that is a deliberate retreat.** The spec
-originally left PATH out so the run would measure launchd's stub rather than
-assume it; run 33195354526 showed a hosted `macos-latest` handing the app a
-wider PATH than the stub, because the image provisions the runner's launchd
-domain. `needsPathRepair()` was not at fault — it is unchanged since the spike
-and unit-pinned on exactly that string — so the lane now asserts the repair
-(does a GUI-launched app reach the check with launchd's PATH, can a login-shell
-probe answer from a process with no controlling terminal, does the widened PATH
-reach the sidecars) and leaves the inheritance premise to the manual check in
-`docs/DESKTOP_APP.md` §5. The domain's pre-existing PATH is attached on every
-run, so a runner image that stops widening it shows up as evidence rather than
-as a lucky pass. The spec also records how far beyond the stub the runner's own
+**`open` forwards its caller's environment, and getting that wrong is what kept
+this spec red for three runs.** The man page is explicit — "opened applications
+inherit environment variables just as if you had launched the application
+directly through its full path" — so the app's environment is the launchd domain
+overlaid with `open`'s own, and the caller wins every key both hold. That is
+exactly why the instance arrived and PATH did not: nothing in CI carries a
+`CALANDRIA_DB_DIR`, so the domain's value was unopposed and the app really did
+boot on the planted port against the planted database, while the planted stub
+PATH was shadowed by `npm run test:desktop:window`'s. The fix is to withhold PATH
+from `open` rather than plant it harder — with nothing to overlay, the domain is
+the only source the app has for the one variable under test, and LaunchServices
+stays in the launch, which is the whole reason the spec exists.
+
+**PATH is planted in the domain too, and that is a deliberate retreat.** The
+spec originally left PATH out so the run would measure launchd's stub rather
+than assume it; run 33195354526 came back un-repaired and this document
+concluded the runner image provisions a wider domain PATH. It does not follow:
+that run read the caller's PATH through the shadowing above, so it was never
+evidence about the image either way. `needsPathRepair()` was not at fault — it is
+unchanged since the spike and unit-pinned on exactly that string. The plant
+stays regardless, and is now load-bearing rather than redundant, because
+asserting on whatever PATH the image happens to supply would make the lane's
+colour a property of a runner nobody here controls. So the lane asserts the
+repair (does a GUI-launched app reach the check with launchd's PATH, can a
+login-shell probe answer from a process with no controlling terminal, does the
+app then boot all the way with no `node` on PATH at all) and leaves the
+inheritance premise to the
+manual check in `docs/DESKTOP_APP.md` §5. The domain's pre-existing PATH is
+attached on every run, read with `launchctl getenv` before the plant goes in —
+an uncontaminated reading, unlike the draft's, since it comes from the domain
+rather than from a launch. A run whose attachment reports no override is a run
+on which the premise held. The spec also records how far beyond the stub the runner's own
 login shell reaches — recorded, not asserted, since a bare image whose login
 shell has nothing past `/etc/paths` makes the repair a correct no-op. The
 packaged `.app` is ad-hoc signed (`codesign --sign -`) before either pass
