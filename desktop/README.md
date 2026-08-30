@@ -147,6 +147,28 @@ CALANDRIA_TEST_BIN=/tmp/calandria-dmg.app/Contents/MacOS/Calandria \
   npx playwright test --config playwright.desktop.config.ts 06-packaged
 ```
 
+Windows is the one platform where CI runs the **installer** rather than the
+unpacked tree, because `perMachine: false` means a silent install needs no
+elevation. In PowerShell:
+
+```powershell
+# what the windows-desktop lane does: build the nsis installer, install it
+# silently, and run the suite against the installed exe. No move out of the
+# checkout is needed — an installed app is outside the source tree already.
+cd desktop; npm run payload -- --no-build; npx electron-builder --win nsis; cd ..
+Start-Process (Get-ChildItem desktop/dist -Filter '*.exe' -File)[0].FullName '/S' -Wait
+Get-Process -Name Calandria -ErrorAction SilentlyContinue | Stop-Process -Force
+$env:CALANDRIA_TEST_BIN = "$env:LOCALAPPDATA\Programs\Calandria\Calandria.exe"
+npm run test:desktop:window
+
+# and back out again, the way Settings -> Apps would
+& "$env:LOCALAPPDATA\Programs\Calandria\Uninstall Calandria.exe" /S
+```
+
+The `Stop-Process` is not optional theatre: `runAfterFinish` defaults true, and
+an instance the installer started would hold `requestSingleInstanceLock()` and
+the database lock and wedge the suite.
+
 `CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
 `CALANDRIA_TEST_BIN` and `CALANDRIA_DESKTOP_SANDBOX` above: it points at the
 `.app` itself rather than the binary inside it, which is what
@@ -343,6 +365,12 @@ Web to extracted files), and a build you made yourself will never show it,
 because a file that was never downloaded carries no mark. The full account,
 including why this recurs with every release while unsigned, is in
 [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.
+
+Everything else about that installer is exercised in CI: the `windows-desktop`
+lane builds `--win nsis`, installs it with `/S`, runs the window suite against
+the installed `Calandria.exe`, and then checks the install landed under
+`%LOCALAPPDATA%\Programs\Calandria`, carries its payload, laid down both
+shortcuts, and uninstalls cleanly. SmartScreen is the only part it cannot see.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

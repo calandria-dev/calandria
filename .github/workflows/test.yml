@@ -701,9 +701,10 @@ jobs:
     # bench, and remain so.
     runs-on: windows-latest
     # Twice the Ubuntu `desktop` job's 45: the same two passes that job makes
-    # (dev shell, then the packaged artifact, with a payload stage in between)
-    # on a runner where every process spawn costs more, plus Electron's ~100 MB
-    # download.
+    # (dev shell, then the packaged app, with a payload stage in between) on a
+    # runner where every process spawn costs more, plus Electron's ~100 MB
+    # download. The install and uninstall this lane adds on top of the Ubuntu
+    # one cost a couple of minutes between them, not a budget line.
     timeout-minutes: 90
     steps:
       # Same pair, same reasons, as the `windows` job — see there. They govern
@@ -752,23 +753,35 @@ jobs:
       - name: Run the desktop suite
         run: npm run test:desktop
 
-      # --- and now the same window suite against what a user downloads -----
+      # --- and now the same window suite against what a user INSTALLS --------
       #
       # The Ubuntu lane's reasoning applies here unchanged: everything above
       # tests the shell running out of this checkout, which is the developer's
       # path and not anybody's install. The payload staging, the asar, the
       # vendored Node and the extraResources layout are untested by it.
       #
-      # `--dir`, not the `nsis` and `zip` targets `dist:win` builds. The
-      # unpacked tree is what the suite can launch, and it is also the payload
-      # NSIS wraps, so this pass covers everything an installed Calandria
-      # actually runs. What NSIS adds on top — a per-user install directory,
-      # shortcuts, an uninstaller — is not what these specs assert, and the one
-      # Windows-specific thing that IS worth knowing about the installer cannot
-      # be observed from a runner at all: SmartScreen fires on the
-      # `Zone.Identifier` stream a DOWNLOAD attaches, so an unsigned installer
-      # built locally never trips the interstitial a user gets. That cost is
-      # documented (docs/WINDOWS.md, docs/DESKTOP_APP.md §7) rather than tested.
+      # `nsis`, not the `--dir` this lane used to build. Those two carry the
+      # same bytes — NSIS wraps the unpacked tree — so as a test of the PAYLOAD
+      # the swap changes nothing, and the pass below is the same pass. What it
+      # adds is the installer's own behaviour, which nothing checked: whether a
+      # silent install even succeeds, where a `perMachine: false` build lands,
+      # what shortcuts it lays down, and whether the uninstaller takes them away
+      # again. Windows can do that on a hosted runner precisely BECAUSE the
+      # install is per-user and needs no elevation. Linux cannot, which is why
+      # the `.deb` install is the bench lane's job there: only a real install
+      # runs the postinst that sets up the sandbox, and that needs a machine.
+      #
+      # `zip`, the other `dist:win` target, is left unbuilt. It is the same tree
+      # in a container Explorer unpacks, and this lane already launches that
+      # tree.
+      #
+      # The one Windows-specific thing about the installer that STILL cannot be
+      # observed from a runner is SmartScreen. It fires on the `Zone.Identifier`
+      # stream a DOWNLOAD attaches, so an installer built here carries no mark
+      # and never trips the interstitial a user gets. That cost is documented
+      # (docs/WINDOWS.md "Known limits", docs/DESKTOP_APP.md §6/§7) rather than
+      # tested, and stays that way until the artifacts are signed.
+      #
       # Each command is exit-checked by hand because this job's shell is pwsh,
       # and GitHub's pwsh wrapper only propagates the LAST command's status:
       # `$ErrorActionPreference = 'stop'` governs cmdlet errors, not a native
@@ -787,26 +800,212 @@ jobs:
         run: |
           npm run payload -- --no-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx electron-builder --win dir
+          npx electron-builder --win nsis
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # An installed app is never inside a source tree. Leaving the artifact at
-      # desktop/dist/ would let anything that resolves upward — a module, a
-      # lockfile, a relative path — find this repo and pass on a machine that
-      # has one, which is precisely the false green being guarded against.
-      # desktop/e2e/fixtures.ts refuses to launch a binary under the checkout,
-      # so this move is a requirement rather than tidiness.
-      - name: Move the artifact out of the checkout
-        run: Move-Item desktop/dist/win-unpacked "$env:RUNNER_TEMP/calandria-app"
+      # There is no "move the artifact out of the checkout" step on this lane
+      # any more, and the absence is the point rather than an omission.
+      # desktop/e2e/fixtures.ts refuses to launch a binary under the source tree
+      # — anything resolving upward would find this repo and pass on a machine
+      # that has one — and an INSTALLED app satisfies that guard by
+      # construction, since NSIS puts it under the user's own profile. The
+      # Ubuntu lane still needs the move because `--dir` output never leaves
+      # desktop/dist.
+      #
+      # `/S` is NSIS's own silent switch and electron-builder's assisted
+      # installer honours it. Deliberately no `/D=`: pinning the directory would
+      # test that the flag works, where the interesting fact is where a
+      # `perMachine: false` build goes when nobody tells it — the per-user
+      # location §6 documents. So the path is READ BACK from the uninstall
+      # registry entry the installer wrote (the same entry Settings → Apps
+      # reads, found by DisplayName because electron-builder keys it under a
+      # GUID derived from appId) and then asserted against
+      # %LOCALAPPDATA%\Programs\Calandria.
+      #
+      # The kill is defensive rather than observed. `runAfterFinish` defaults
+      # true; for an assisted installer that is a checkbox on a finish page `/S`
+      # never renders, so nothing should launch — but a stray instance would
+      # hold `requestSingleInstanceLock()` and the database lock and wedge every
+      # spec below behind a timeout naming neither. Killing costs three seconds
+      # and keeps the product's finish-page checkbox, which setting
+      # `runAfterFinish: false` would have removed for CI's convenience.
+      - name: Install it silently, the way a user would
+        run: |
+          $ErrorActionPreference = 'Stop'
 
-      # The executable takes its name from electron-builder's productName, and
-      # there is no sandbox flag to think about on this side: fixtures.ts gates
-      # `--no-sandbox` on `process.platform === "linux"`, so the packaged pass
-      # here runs sandboxed exactly as the dev pass above did.
-      - name: Run the desktop suite against the package
-        env:
-          CALANDRIA_TEST_BIN: ${{ runner.temp }}\calandria-app\Calandria.exe
+          $setup = Get-ChildItem desktop/dist -Filter '*.exe' -File | Select-Object -First 1
+          if (-not $setup) {
+            Write-Output "::error::electron-builder produced no installer under desktop/dist"
+            Get-ChildItem desktop/dist | Format-Table -AutoSize | Out-String | Write-Output
+            exit 1
+          }
+          "installer: $($setup.Name) ($([math]::Round($setup.Length / 1MB, 1)) MB)"
+
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Output "::error::the silent install exited $($p.ExitCode)"
+            exit $p.ExitCode
+          }
+
+          Start-Sleep -Seconds 3
+          $stray = @(Get-Process -Name Calandria -ErrorAction SilentlyContinue)
+          if ($stray.Count -gt 0) {
+            "the installer launched the app ($($stray.Count) process(es)) — killing it before the suite runs"
+            $stray | Stop-Process -Force
+            Start-Sleep -Seconds 3
+          }
+
+          # `-like`, not `-eq`. electron-builder's `uninstallDisplayName` defaults
+          # to "${productName} ${version}" (NsisTarget.ts), so the entry reads
+          # "Calandria 0.3.0" and an exact match finds nothing.
+          function Find-CalandriaEntry($hive) {
+            Get-ChildItem "${hive}:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |
+              Where-Object { $_.DisplayName -like 'Calandria*' }
+          }
+
+          # Polled rather than read once: `-Wait` returning is the installer
+          # process exiting, and an installer that relaunched itself would have
+          # exited long before it finished writing.
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            $entry = Find-CalandriaEntry HKCU | Select-Object -First 1
+            if (-not $entry) { Start-Sleep -Seconds 2 }
+          } while (-not $entry -and (Get-Date) -lt $deadline)
+
+          if (-not $entry) {
+            # Say WHERE it went, not just that it isn't here. The runner's shell
+            # is an administrator, and `assistedInstaller.nsh` resolves the
+            # install mode itself when `/S` skips the page that would otherwise
+            # ask — so a per-machine install is the interesting way for this to
+            # fail, and `/S /currentuser` would be the fix.
+            $hklm = @(Find-CalandriaEntry HKLM)
+            if ($hklm.Count -gt 0) {
+              Write-Output "::error::the silent install went PER-MACHINE (HKLM: $($hklm[0].DisplayName), $($hklm[0].UninstallString)) — a perMachine:false build should not need elevation"
+            } else {
+              Write-Output "::error::the silent install registered no uninstall entry for Calandria in either hive"
+            }
+            foreach ($root in @((Join-Path $env:LOCALAPPDATA 'Programs'), $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+              if ($root -and (Test-Path $root)) {
+                "--- $root"
+                Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Write-Output
+              }
+            }
+            exit 1
+          }
+          "uninstall entry: $($entry.PSChildName)  name='$($entry.DisplayName)'  version=$($entry.DisplayVersion)"
+
+          # NOT $entry.InstallLocation: `registryAddInstallInfo` writes that
+          # under `Software\<APP_GUID>`, and the Uninstall key it writes
+          # alongside carries only the two uninstall strings. The uninstaller
+          # sits in the install directory, so its path IS the location — parsed
+          # out of the quotes rather than stripped of them, since the string is
+          # `"<dir>\Uninstall Calandria.exe" /currentuser` and stripping would
+          # leave the switch attached.
+          $uninstallString = $entry.UninstallString
+          if ($uninstallString -match '^\s*"(?<exe>[^"]+)"') { $uninstaller = $Matches.exe }
+          else { $uninstaller = ($uninstallString -split '\s+')[0] }
+          $dir = Split-Path -Parent $uninstaller
+          $expected = Join-Path $env:LOCALAPPDATA 'Programs\Calandria'
+          if ($dir.TrimEnd('\') -ne $expected.TrimEnd('\')) {
+            Write-Output "::error::a perMachine:false install should land in $expected, not $dir"
+            exit 1
+          }
+
+          # The executable takes its name from electron-builder's productName.
+          # The other three are the extraResources layout the payload depends
+          # on: naming them makes a half-written install fail with the file it
+          # lost, rather than as a shell that boots and never becomes ready.
+          $exe = Join-Path $dir 'Calandria.exe'
+          foreach ($f in @(
+            $exe,
+            $uninstaller,
+            (Join-Path $dir 'resources\app-payload\server.js'),
+            (Join-Path $dir 'resources\app-payload\.next'),
+            (Join-Path $dir 'resources\node')
+          )) {
+            if (-not (Test-Path $f)) {
+              Write-Output "::error::the install is missing $f"
+              Get-ChildItem $dir | Format-Table -AutoSize | Out-String | Write-Output
+              exit 1
+            }
+          }
+
+          # Both shortcuts are electron-builder defaults for an assisted
+          # installer, and both are per-user because the install is.
+          $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Calandria.lnk'
+          $desktopLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Calandria.lnk'
+          foreach ($lnk in @($startMenu, $desktopLnk)) {
+            if (-not (Test-Path $lnk)) {
+              Write-Output "::error::the installer laid down no shortcut at $lnk"
+              exit 1
+            }
+          }
+
+          $quiet = $entry.QuietUninstallString
+          if (-not $quiet) { $quiet = "`"$uninstaller`" /S" }
+
+          "installed to: $dir"
+          Add-Content -Path $env:GITHUB_ENV -Value "CALANDRIA_INSTALL_DIR=$dir"
+          Add-Content -Path $env:GITHUB_ENV -Value "CALANDRIA_TEST_BIN=$exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "CALANDRIA_UNINSTALL_CMD=$quiet"
+
+      # CALANDRIA_TEST_BIN comes from the step above rather than from an `env:`
+      # block here, because the path is now discovered rather than dictated.
+      # There is no sandbox flag to think about on this side either: fixtures.ts
+      # gates `--no-sandbox` on `process.platform === "linux"`, so the installed
+      # pass runs sandboxed exactly as the dev pass above did.
+      - name: Run the desktop suite against the installed app
         run: npm run test:desktop:window
+
+      # `!cancelled()`, not the default: a red suite above is no reason to leave
+      # the uninstaller unexercised and say nothing about it. This step's real
+      # dependency is the install, not the specs.
+      #
+      # The registry's own `QuietUninstallString` is invoked rather than a
+      # hand-built command line, because that string is exactly what Windows
+      # runs from Settings → Apps. It is also why the wait is a poll: an NSIS
+      # uninstaller copies itself to %TEMP% and returns immediately, so the
+      # process `-Wait` waits on is not the one doing the work.
+      - name: Uninstall it, and check it took itself with it
+        if: ${{ !cancelled() }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CALANDRIA_INSTALL_DIR
+          if (-not $dir) { "nothing was installed — nothing to uninstall"; exit 0 }
+
+          Get-Process -Name Calandria -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          $cmd = $env:CALANDRIA_UNINSTALL_CMD
+          if ($cmd -match '^\s*"(?<exe>[^"]+)"\s*(?<rest>.*)$') { $exe = $Matches.exe; $rest = $Matches.rest }
+          else { $exe = $cmd; $rest = '' }
+          "uninstalling: $exe $rest"
+          # Not $args: that is an automatic variable at script scope.
+          $uargs = @($rest -split '\s+' | Where-Object { $_ })
+          if ($uargs.Count -gt 0) { Start-Process -FilePath $exe -ArgumentList $uargs -Wait | Out-Null }
+          else { Start-Process -FilePath $exe -Wait | Out-Null }
+
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Test-Path (Join-Path $dir 'Calandria.exe')) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+          }
+
+          $left = @()
+          if (Test-Path (Join-Path $dir 'Calandria.exe')) { $left += "the executable under $dir" }
+          if (Test-Path (Join-Path $dir 'resources')) { $left += "the payload under $dir" }
+          if (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Calandria.lnk')) { $left += 'the Start Menu shortcut' }
+          if (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Calandria.lnk')) { $left += 'the desktop shortcut' }
+          $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |
+            Where-Object { $_.DisplayName -like 'Calandria*' }
+          if ($entry) { $left += 'the uninstall registry entry' }
+
+          if ($left.Count -gt 0) {
+            Write-Output "::error::the uninstaller left behind: $($left -join ', ')"
+            exit 1
+          }
+          "the uninstaller removed the executable, the payload, both shortcuts and the registry entry"
 
       - name: Upload desktop artifacts
         if: failure()
