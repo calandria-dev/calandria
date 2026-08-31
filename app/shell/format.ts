@@ -41,17 +41,33 @@ export function fmtJobCost(e: InternalUsageEstimate): string {
 // in/out plus cache WRITES, which are billed above input rate) and carries cache
 // reads as secondary detail. Defensive ?? 0s: a task row can predate the fields.
 export interface UsageSplit {
-  total: number;      // every bucket summed — what task.total_tokens holds
-  fresh: number;      // in/out + cache writes: material the model processed anew
+  total: number;      // every bucket summed, subagent sidechains included
+  fresh: number;      // main-session in/out + cache writes: material processed anew
   inOut: number;      // prompt + completion tokens, uncached
   cacheWrite: number; // context written into the cache (billed ~1.25× input)
   cacheRead: number;  // context re-read from the cache (billed ~0.1× input)
+  subagent: number;   // of `total`, tokens burned inside Task-tool sidechains
 }
-export function usageSplit(t: Pick<TaskRow, "total_tokens" | "cache_read_tokens" | "cache_creation_tokens">): UsageSplit {
-  const total = t.total_tokens ?? 0;
+export function usageSplit(
+  t: Pick<TaskRow, "total_tokens" | "cache_read_tokens" | "cache_creation_tokens"> & Partial<Pick<TaskRow, "subagent_tokens">>
+): UsageSplit {
+  // The four stored buckets are the MAIN SESSION's alone — the Claude result
+  // message excludes sidechains from its token counts while folding them into
+  // its cost, so `subagent_tokens` is additional rather than a slice of
+  // `total_tokens`. Adding it here is what makes the tooltip's grand total
+  // describe the same turn the dollar figure beside it does.
+  const main = t.total_tokens ?? 0;
+  const subagent = t.subagent_tokens ?? 0;
   const cacheRead = t.cache_read_tokens ?? 0;
   const cacheWrite = t.cache_creation_tokens ?? 0;
-  return { total, cacheRead, cacheWrite, inOut: Math.max(0, total - cacheRead - cacheWrite), fresh: Math.max(0, total - cacheRead) };
+  return {
+    total: main + subagent,
+    subagent,
+    cacheRead,
+    cacheWrite,
+    inOut: Math.max(0, main - cacheRead - cacheWrite),
+    fresh: Math.max(0, main - cacheRead),
+  };
 }
 
 /**
@@ -101,8 +117,19 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
     `${n(split.fresh)} new tokens this task: ${n(split.inOut)} in/out · ${n(split.cacheWrite)} written to cache`,
   ];
   if (split.cacheRead > 0) {
-    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request: each tool call is one, by the main session and any subagents; billed at ~10% of the input rate)`);
+    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request: each tool call is one; billed at ~10% of the input rate)`);
+  }
+  // The grand total is worth stating whenever it exceeds the headline `fresh`
+  // figure — either because context was re-read, or because work happened in a
+  // sidechain. It has to precede the subagent line for "of those" to refer to
+  // anything.
+  if (split.cacheRead > 0 || split.subagent > 0) {
     lines.push(`${n(split.total)} tokens total`);
+  }
+  // Absent for Codex and the mock driver, which don't report the split: no
+  // line rather than a "0 in subagents" that reads as a measured claim.
+  if (split.subagent > 0) {
+    lines.push(`${n(split.subagent)} of those in subagents (their own windows, not this session's context)`);
   }
   if (cost.show && costUsd > 0) {
     lines.push(`${cost.approx ? "~" : ""}${fmtCost(costUsd)}${cost.note ? ` ${cost.note}` : " billed"}`);

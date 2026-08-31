@@ -469,12 +469,21 @@ export interface TurnUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  // Tokens burned inside subagent sidechains, which the four counts above do
+  // NOT include: the Claude result message's usage covers only the main
+  // session's own API requests, while its cost covers everything. Undefined
+  // means "not measured" (Codex, the mock driver, any turn before this shipped)
+  // and is stored as NULL, distinct from a measured zero.
+  subagent_tokens?: number;
 }
 
 // Cumulative usage totals across one task (or project): summed turn usage plus
 // `total_tokens` (the four token counts combined) and the turn count.
+// `total_tokens` stays main-session-only, matching the four buckets it sums;
+// `subagent_tokens` is additional, and the two are combined for display.
 export interface UsageTotals extends TurnUsage {
   total_tokens: number;
+  subagent_tokens: number;
   turns: number;
 }
 

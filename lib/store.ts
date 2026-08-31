@@ -331,6 +331,7 @@ export type TaskWithUsage = Task & {
   total_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  subagent_tokens: number;
   context_tokens: number;
   context_pct: number;
   context_estimated: boolean;
@@ -377,6 +378,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
                    FROM task_usage u WHERE u.task_id = t.id), 0) AS total_tokens,
          COALESCE((SELECT SUM(u.cache_read_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_read_tokens,
          COALESCE((SELECT SUM(u.cache_creation_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_creation_tokens,
+         COALESCE((SELECT SUM(u.subagent_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS subagent_tokens,
          ${CONTEXT_TOKENS_SQL("t")} AS context_tokens,
          ${CONTEXT_ESTIMATED_SQL("t")} AS context_estimated
        FROM tasks t WHERE t.project_id = ?
@@ -387,6 +389,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     total_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
+    subagent_tokens: number;
     context_tokens: number;
     context_estimated: number;
   })[];
@@ -1882,12 +1885,14 @@ export function addUsage(input: {
   getDb()
     .prepare(
       `INSERT INTO task_usage
-         (id, project_id, task_id, generation, agent, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, project_id, task_id, generation, agent, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, subagent_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude",
       u.cost_usd, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens,
+      // NULL, not 0, for a driver that doesn't report it — see TurnUsage.
+      u.subagent_tokens ?? null,
       Date.now()
     );
 }
@@ -1909,7 +1914,7 @@ export function recordTaskMerge(input: {
 }
 
 const ZERO_USAGE: UsageTotals = {
-  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, turns: 0,
+  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0,
 };
 
 // Sum a usage query into cumulative totals (NULLs → 0 when no rows exist yet).
@@ -1922,6 +1927,7 @@ function sumUsage(where: string, param: string): UsageTotals {
          COALESCE(SUM(output_tokens), 0) AS output_tokens,
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+         COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
          COUNT(*) AS turns
        FROM task_usage WHERE ${where}`
     )

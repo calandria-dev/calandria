@@ -23,6 +23,14 @@ A task may show a chip such as `250k tok · 3.5M cached · ~$4.20`.
 Cache reads can dominate the raw count in a long task but aren't millions of tokens of new
 work. Hover the chip for exact counts and the full breakdown.
 
+Both counts describe the **main session only**. A turn that fans out to subagents runs each one
+in its own context window, and Claude reports those sidechains separately from the session that
+launched them — so the two figures above never included them, while the dollar figure always did.
+Where a task has fanned out, the tooltip states the sidechain share on its own line
+(`1,200,000 of those in subagents`) and adds it to the total, so the tokens and the dollars are
+describing the same work. Agents that don't report the split omit the line rather than claim a
+zero.
+
 ## Cost versus price equivalent
 
 On a Max, Pro, or ChatGPT subscription login, turns consume plan quota. The displayed dollar

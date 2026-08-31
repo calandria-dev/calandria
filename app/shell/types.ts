@@ -77,6 +77,10 @@ export interface TaskRow {
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
+  // NOT part of total_tokens: Task-tool sidechains run in their own context
+  // windows and the Claude result message excludes them from its token counts
+  // (while including them in its cost). 0 when the driver never measured it.
+  subagent_tokens: number;
   depends_on: string[]; // task ids this task is blocked by until they're done
   tag_ids: string[]; // the tags this task carries, in tag order (see TagChips.tsx); [] = untagged
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done

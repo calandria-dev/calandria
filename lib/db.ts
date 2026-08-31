@@ -1034,6 +1034,13 @@ export function migrate(db: Database.Database) {
     db.exec("ALTER TABLE task_usage ADD COLUMN agent TEXT NOT NULL DEFAULT ''");
     db.exec("UPDATE task_usage SET agent = COALESCE((SELECT t.agent FROM tasks t WHERE t.id = task_usage.task_id), 'claude') WHERE agent = ''");
   }
+  // Subagent (Task-tool sidechain) tokens, which the other four columns never
+  // counted. Deliberately NULLable with no backfill: old rows were written
+  // before the figure was measured, and defaulting them to 0 would assert every
+  // historical fan-out spent nothing rather than admitting it wasn't recorded.
+  if (!usageCols.includes("subagent_tokens")) {
+    db.exec("ALTER TABLE task_usage ADD COLUMN subagent_tokens INTEGER");
+  }
 
   // The agent thread's last reported CUMULATIVE token counters, as JSON. Only
   // drivers whose usage reporting is cumulative-per-thread need it (Codex

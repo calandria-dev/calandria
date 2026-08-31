@@ -25,6 +25,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // "fresh work" from re-read context instead of showing one inflated number.
     cache_read_tokens: usage.cache_read_tokens,
     cache_creation_tokens: usage.cache_creation_tokens,
+    // Additional to `total_tokens`, not part of it: sidechain spend the four
+    // buckets above never counted, so the chip can name it rather than let a
+    // fan-out read as this session's own work.
+    subagent_tokens: usage.subagent_tokens,
     context_tokens: ctx.context_tokens,
     context_pct: ctx.context_pct,
     context_estimated: ctx.context_estimated,
