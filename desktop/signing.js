@@ -94,6 +94,62 @@ function notarizeCredentials(env) {
   return null;
 }
 
+// The certificate TYPES electron-builder refuses to see in `mac.identity`,
+// copied verbatim from app-builder-lib's `appleCertificatePrefixes`
+// (out/codeSign/macCodeSign.js, 26.15.3).
+const APPLE_CERTIFICATE_PREFIXES = [
+  "Developer ID Application:",
+  "Developer ID Installer:",
+  "3rd Party Mac Developer Application:",
+  "3rd Party Mac Developer Installer:",
+];
+
+/**
+ * `mac.identity` is a QUALIFIER, not a certificate name, and the difference is
+ * a hard error rather than a nuance.
+ *
+ * Everything that tells a human what CALANDRIA_MAC_SIGN_IDENTITY is asks for
+ * the full name — docs/DESKTOP_APP.md §6.4 says "the full certificate name
+ * (`Developer ID Application: Name (TEAMID)`)", the certificate's own CN reads
+ * that way, and verify-signing-credentials.yml greps `security find-identity`
+ * output for it, which prints it that way too. But app-builder-lib's
+ * `findIdentity` runs every configured qualifier through `checkPrefix` against
+ * the list above and THROWS on a match: "Please remove prefix
+ * "Developer ID Application:" from the specified name — appropriate certificate
+ * will be chosen automatically". That is the whole of the first signed release
+ * lane's failure; it happened before a single byte was packaged.
+ *
+ * Fixing it in the secret would have been the smaller diff and the wrong one:
+ * the value people are told to store, the value `openssl x509 -noout -subject`
+ * prints, and the value the credential check greps for are all the full name,
+ * so a stripped secret is a footgun re-armed every time someone rotates the
+ * certificate. Strip it here instead, once, where the value stops being a name
+ * and starts being an argument.
+ *
+ * Stripping is safe because the qualifier is matched as a SUBSTRING of the
+ * `find-identity` line (`_findIdentity`: `line.includes(qualifier)`), and the
+ * type is matched separately on the same line — so "Example (AB12CD34EF)"
+ * selects exactly the certificate "Developer ID Application: Example
+ * (AB12CD34EF)" and nothing else. A bare type with no name after it is refused
+ * rather than passed on as "", which electron-builder would read as "nothing
+ * configured" and answer with keychain auto-discovery.
+ */
+function certificateQualifier(identity) {
+  for (const prefix of APPLE_CERTIFICATE_PREFIXES) {
+    if (!identity.startsWith(prefix)) continue;
+    const qualifier = identity.slice(prefix.length).trim();
+    if (qualifier === "") {
+      throw new Error(
+        `CALANDRIA_MAC_SIGN_IDENTITY is "${identity}", a certificate type with no name after it. Set it to ` +
+          'the full certificate name, e.g. "Developer ID Application: Example (AB12CD34EF)" — the CN that ' +
+          "`security find-identity -v -p codesigning` prints."
+      );
+    }
+    return qualifier;
+  }
+  return identity;
+}
+
 /**
  * The macOS half. Returns the `mac` fields electron-builder.cjs spreads in, plus
  * a `signed` flag the rest of the build reads.
@@ -126,6 +182,10 @@ function macSigning(env) {
     };
   }
 
+  // Before the credential check, so a malformed identity is reported as the
+  // malformed identity it is rather than as whatever it is missing next.
+  const qualifier = certificateQualifier(identity);
+
   // Throws on a half-filled group; null means none was attempted at all.
   const credentials = notarizeCredentials(env);
 
@@ -145,7 +205,7 @@ function macSigning(env) {
     // continues when it finds no credentials, and the guard above has already
     // decided this question with an error instead.
     notarize: Boolean(credentials) && !skipNotarize,
-    identity,
+    identity: qualifier,
     hardenedRuntime: true,
     entitlements: "build/entitlements.mac.plist",
     entitlementsInherit: "build/entitlements.mac.plist",

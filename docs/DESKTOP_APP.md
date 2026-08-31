@@ -964,11 +964,21 @@ and one complete set of notarization credentials:
 
 | Variable | What it is |
 |-|-|
-| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name. Unset or `-` means ad-hoc; this is the only switch. |
+| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name, **with** the `Developer ID Application: ` prefix. Unset or `-` means ad-hoc; this is the only switch. |
 | `CSC_LINK` / `CSC_KEY_PASSWORD` | The `.p12` electron-builder imports into a temporary keychain, base64-encoded, and its password. |
 | `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect API key — the preferred credential, being revocable on its own and not tied to the account password. **`APPLE_API_KEY` is a FILE PATH**, not the key: `notarytool --key` takes a path and `@electron/notarize` passes it straight through. A CI secret therefore holds the `.p8`'s contents and the lane writes them to a file outside the checkout before setting this. |
 | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | The alternative, if a key is not available. |
 | `CALANDRIA_MAC_SKIP_NOTARIZE=1` | Sign without notarizing. For testing signing on its own; the result must not be published. |
+
+**Store the full name, prefix included** — that is what the CN reads, what
+`security find-identity -v -p codesigning` prints, and what the credential check
+below greps for. electron-builder is the odd one out: `mac.identity` is a
+*qualifier*, and app-builder-lib's `findIdentity` throws
+`Please remove prefix "Developer ID Application:" from the specified name` on
+anything carrying a certificate type. `desktop/signing.js` strips it on the way
+into the config, in one place, so the value people rotate and verify stays the
+one Apple gave them. The first signed release lane failed on exactly this, before
+packaging a single file.
 
 **Getting the certificate**, since the portal offers seven kinds and only one is
 right. It is **Developer ID Application** — under *Certificates, Identifiers &
