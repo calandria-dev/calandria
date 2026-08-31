@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.5.2](https://github.com/calandria-dev/calandria/compare/v0.5.1...v0.5.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **desktop:** hand electron-builder a signing qualifier, not a certificate name ([#87](https://github.com/calandria-dev/calandria/issues/87)) ([96f38c5](https://github.com/calandria-dev/calandria/commit/96f38c5fff471f4c49e4e178ffe6caa30bf22673))
+
 ## [0.5.1](https://github.com/calandria-dev/calandria/compare/v0.5.0...v0.5.1) (2026-08-30)
 
 
