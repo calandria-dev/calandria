@@ -160,6 +160,33 @@ describe("VAPID", () => {
     expect(vapidKeys().publicKey).toBe(first.publicKey);
   });
 
+  // `ecdh.getPrivateKey()` returns OpenSSL's minimal bignum, so a scalar with a
+  // zero top byte came back 31 bytes and the 32-byte read-back check then threw
+  // the key away and re-minted — losing every subscription made under it, and
+  // failing this suite roughly one run in 250.
+  it("mints the private scalar zero-padded to 32 bytes, never OpenSSL's short form", () => {
+    // ~1 in 250 keys is short, so this is all but certain to catch a regression
+    // and can never fail against a correct implementation.
+    for (let i = 0; i < 2000; i++) {
+      expect(b64url.decode(generateVapidKeys().privateKey)).toHaveLength(32);
+    }
+  });
+
+  it("adopts a short scalar left by an older build instead of re-minting over it", () => {
+    // A leading zero byte makes this both a valid scalar and one OpenSSL would
+    // have trimmed; the 31-byte form is the same key, so the subscriptions
+    // signed under it must survive the upgrade.
+    const padded = Buffer.concat([Buffer.alloc(1), randomBytes(31)]);
+    const file = path.join(DB_DIR, "vapid.json");
+    fs.writeFileSync(file, JSON.stringify({ privateKey: b64url.encode(padded.subarray(1)), publicKey: "BOGUS" }));
+    resetVapidCache();
+    const keys = vapidKeys();
+    expect(keys.privateKey).toBe(b64url.encode(padded));
+    expect(keys.publicKey).toBe(publicKeyFor(b64url.encode(padded)));
+    // Same key, so the file is left alone rather than replaced.
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).publicKey).toBe("BOGUS");
+  });
+
   it("caches one token per push service and scopes it to that origin", () => {
     const a = vapidAuthorization("https://fcm.googleapis.com/fcm/send/abc");
     const b = vapidAuthorization("https://fcm.googleapis.com/fcm/send/def");

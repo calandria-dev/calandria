@@ -41,10 +41,26 @@ export function publicKeyFor(privateKey: string): string {
   return b64url.encode(ecdh.getPublicKey());
 }
 
+/** Left-pad a raw scalar to the 32 bytes P-256 coordinates are, or null if it
+ *  can't be one. `ecdh.getPrivateKey()` hands back OpenSSL's *minimal* big-endian
+ *  bignum, so a scalar whose top byte is zero comes back 31 bytes (measured: 798
+ *  of 200,000 keys, ~1 in 250). It is the same scalar — `setPrivateKey` accepts
+ *  either — and RFC 7518 §6.2.2.1 wants `d` zero-padded to the coordinate size,
+ *  so the short form is a mis-encoding to fix rather than a key to reject. */
+function padScalar(raw: Buffer): Buffer | null {
+  if (raw.length === 0 || raw.length > 32) return null;
+  return raw.length === 32 ? raw : Buffer.concat([Buffer.alloc(32 - raw.length), raw]);
+}
+
 export function generateVapidKeys(): VapidKeys {
   const ecdh = createECDH("prime256v1");
   ecdh.generateKeys();
-  return { publicKey: b64url.encode(ecdh.getPublicKey()), privateKey: b64url.encode(ecdh.getPrivateKey()) };
+  const d = padScalar(ecdh.getPrivateKey());
+  // Unreachable: the curve fixes the width, so the only variable is how many
+  // leading zeros OpenSSL trimmed. Assert rather than coerce — a scalar this
+  // isn't would be a key we can't sign with.
+  if (!d) throw new Error("generated VAPID scalar is not a P-256 private key");
+  return { publicKey: b64url.encode(ecdh.getPublicKey()), privateKey: b64url.encode(d) };
 }
 
 declare global {
@@ -52,8 +68,18 @@ declare global {
   var __calandriaVapid: { keys: VapidKeys; source: "env" | "file" } | undefined;
 }
 
-function validScalar(s: string): boolean {
-  try { return b64url.decode(s).length === 32 && !!publicKeyFor(s); } catch { return false; }
+/** The canonical 32-byte base64url form of a raw P-256 scalar, or null if it
+ *  isn't one. Padding on the way IN as well as on the way out is what keeps a
+ *  key minted by an older build usable: rejecting a short-but-valid scalar
+ *  re-mints the file, and every subscription made under the old key goes quiet
+ *  with nothing in the UI to say why. */
+function normalizeScalar(s: string): string | null {
+  try {
+    const d = padScalar(b64url.decode(s));
+    if (!d) return null;
+    const out = b64url.encode(d);
+    return publicKeyFor(out) ? out : null;
+  } catch { return null; }
 }
 
 /**
@@ -63,19 +89,21 @@ function validScalar(s: string): boolean {
 export function vapidKeys(): VapidKeys {
   if (global.__calandriaVapid) return global.__calandriaVapid.keys;
   if (VAPID_PRIVATE_KEY) {
-    if (!validScalar(VAPID_PRIVATE_KEY)) throw new Error("VAPID_PRIVATE_KEY is not a base64url-encoded 32-byte P-256 private key");
-    const keys = { privateKey: VAPID_PRIVATE_KEY, publicKey: publicKeyFor(VAPID_PRIVATE_KEY) };
+    const env = normalizeScalar(VAPID_PRIVATE_KEY);
+    if (!env) throw new Error("VAPID_PRIVATE_KEY is not a base64url-encoded 32-byte P-256 private key");
+    const keys = { privateKey: env, publicKey: publicKeyFor(env) };
     global.__calandriaVapid = { keys, source: "env" };
     return keys;
   }
   const file = path.join(DB_DIR, KEY_FILE);
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<VapidKeys>;
-    if (typeof parsed.privateKey === "string" && validScalar(parsed.privateKey)) {
+    const stored = typeof parsed.privateKey === "string" ? normalizeScalar(parsed.privateKey) : null;
+    if (stored) {
       // The public half is re-derived rather than trusted: a hand-edited file
       // with a mismatched pair would sign with one key and advertise another,
       // and every subscription made under the advertised one would be rejected.
-      const keys = { privateKey: parsed.privateKey, publicKey: publicKeyFor(parsed.privateKey) };
+      const keys = { privateKey: stored, publicKey: publicKeyFor(stored) };
       global.__calandriaVapid = { keys, source: "file" };
       return keys;
     }
