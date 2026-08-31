@@ -964,11 +964,21 @@ and one complete set of notarization credentials:
 
 | Variable | What it is |
 |-|-|
-| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name. Unset or `-` means ad-hoc; this is the only switch. |
+| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name, **with** the `Developer ID Application: ` prefix. Unset or `-` means ad-hoc; this is the only switch. |
 | `CSC_LINK` / `CSC_KEY_PASSWORD` | The `.p12` electron-builder imports into a temporary keychain, base64-encoded, and its password. |
 | `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect API key — the preferred credential, being revocable on its own and not tied to the account password. **`APPLE_API_KEY` is a FILE PATH**, not the key: `notarytool --key` takes a path and `@electron/notarize` passes it straight through. A CI secret therefore holds the `.p8`'s contents and the lane writes them to a file outside the checkout before setting this. |
 | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | The alternative, if a key is not available. |
 | `CALANDRIA_MAC_SKIP_NOTARIZE=1` | Sign without notarizing. For testing signing on its own; the result must not be published. |
+
+**Store the full name, prefix included** — that is what the CN reads, what
+`security find-identity -v -p codesigning` prints, and what the credential check
+below greps for. electron-builder is the odd one out: `mac.identity` is a
+*qualifier*, and app-builder-lib's `findIdentity` throws
+`Please remove prefix "Developer ID Application:" from the specified name` on
+anything carrying a certificate type. `desktop/signing.js` strips it on the way
+into the config, in one place, so the value people rotate and verify stays the
+one Apple gave them. The first signed release lane failed on exactly this, before
+packaging a single file.
 
 **Getting the certificate**, since the portal offers seven kinds and only one is
 right. It is **Developer ID Application** — under *Certificates, Identifiers &
@@ -1186,7 +1196,7 @@ publishing its own platform's targets.
 | `macos-latest` | `.dmg`, `.zip` | Developer ID, notarized and stapled. |
 | `windows-latest` | NSIS installer, `.zip` | None yet — Azure Artifact Signing is not enrolled (§7). |
 
-Six things about it are decisions rather than mechanics.
+Eight things about it are decisions rather than mechanics.
 
 **electron-builder uploads its own artifacts.** The `publish` block in
 `desktop/electron-builder.cjs` plus `--publish always` is what attaches each file
@@ -1196,6 +1206,34 @@ to the Release — *and* what writes the per-platform update feed beside it:
 then ran `gh release upload` would produce every artifact and none of the feed,
 which is an updater that silently never finds anything. The only thing this lane
 uploads by hand is `SHA256SUMS.txt`, because electron-builder does not produce it.
+
+**And it declines by logging, so the lane asserts the upload happened.** Every
+release from `v0.2.0` to `v0.5.1` has **zero assets attached**. The provider
+defaults to `releaseType: "draft"`; release-please has already cut a *published*
+release for the tag; the provider found the two incompatible, wrote
+`GitHub release not created  reason=existing type not compatible with publishing
+type  existingType=release publishingType=draft`, wrote one `skipped publishing`
+line per artifact — installers and `latest*.yml` alike — and **exited 0**. Three
+green legs, six empty releases, nothing red anywhere. Two settings close the
+declines we have hit: `releaseType: "release"` in `desktop/electron-builder.cjs`,
+and `EP_GH_IGNORE_TIME=true` in the lane, which disables a second refusal for any
+release published more than two hours earlier (a slow notarization or a re-run of
+one leg the next morning both cross it). Neither is trustworthy on its own, so
+the lane also asks GitHub what is actually on the release — *Assert the artifacts
+actually reached the release*, which compares the attached asset names against
+what the leg built plus its update feed. A publisher that logs and continues
+cannot be checked by an exit code.
+
+**A dry run is how the signed path gets exercised before a tag exists.**
+Dispatching the lane (`gh workflow run release-desktop.yml --ref <ref>`) builds,
+signs, notarizes, staples and runs every assertion, publishes nothing, and
+attaches the installers to the run as workflow artifacts you can download and
+open. This matters because signing needs the real secrets and no pull-request
+lane may have them — `test.yml`'s `macos-desktop` job deliberately leaves
+`CALANDRIA_MAC_SIGN_IDENTITY` unset and signs ad-hoc — so without a dry run a
+release is the first execution of its own signing code, which is how a rejected
+certificate prefix reached `v0.5.1`. Tick `publish` only to stand in for a tag
+push that never fired; on a non-tag ref the gate refuses it.
 
 **The version has to match the tag, and nothing about that is cosmetic.** The
 publisher looks the Release up **by tag**, and derives that tag from `version` in

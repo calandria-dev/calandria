@@ -47,6 +47,8 @@ const signing = require(path.join(DESKTOP, "signing.js")) as {
 const { macSigning, windowsSigning, notarizeCredentials } = signing;
 
 const IDENTITY = "Developer ID Application: Example (AB12CD34EF)";
+// What electron-builder must be handed instead — see `certificateQualifier`.
+const QUALIFIER = "Example (AB12CD34EF)";
 const API_KEY = {
   APPLE_API_KEY: "/tmp/AuthKey_T9GPZ92M7K.p8",
   APPLE_API_KEY_ID: "T9GPZ92M7K",
@@ -92,9 +94,41 @@ describe("macOS signing policy", () => {
     const mac = macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: IDENTITY, ...API_KEY });
     expect(mac.signed).toBe(true);
     expect(mac.notarize).toBe(true);
-    expect(mac.identity).toBe(IDENTITY);
+    expect(mac.identity).toBe(QUALIFIER);
     expect(mac.entitlements).toBe("build/entitlements.mac.plist");
     expect(mac.entitlementsInherit).toBe("build/entitlements.mac.plist");
+  });
+
+  // The first signed release lane died here, before packaging anything:
+  // app-builder-lib's findIdentity throws InvalidConfigurationError on a
+  // qualifier that carries a certificate type. Everything that documents,
+  // stores or verifies this value uses the full name, so the strip lives in
+  // macSigning rather than in the secret.
+  it("hands electron-builder a qualifier, not a certificate type", () => {
+    const cases: Array<[string, string]> = [
+      ["Developer ID Application: Example (AB12CD34EF)", "Example (AB12CD34EF)"],
+      ["Developer ID Installer: Example (AB12CD34EF)", "Example (AB12CD34EF)"],
+      ["3rd Party Mac Developer Application: Example (AB12CD34EF)", "Example (AB12CD34EF)"],
+      ["3rd Party Mac Developer Installer: Example (AB12CD34EF)", "Example (AB12CD34EF)"],
+      // Already a qualifier, or a name no prefix matches: passed through, since
+      // `_findIdentity` matches it as a substring of the find-identity line.
+      ["Example (AB12CD34EF)", "Example (AB12CD34EF)"],
+      ["Example Developer ID Application: Ltd", "Example Developer ID Application: Ltd"],
+    ];
+    for (const [configured, expected] of cases) {
+      expect(macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: configured, ...API_KEY }).identity).toBe(expected);
+    }
+  });
+
+  it("refuses a certificate type with no name after it, rather than passing on an empty qualifier", () => {
+    // "" would read to electron-builder as nothing configured, and it would
+    // answer with keychain auto-discovery — signing with whatever it finds.
+    expect(() => macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: "Developer ID Application:", ...API_KEY })).toThrow(
+      /certificate type with no name/i
+    );
+    expect(() => macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: "Developer ID Application:   ", ...API_KEY })).toThrow(
+      /certificate type with no name/i
+    );
   });
 
   it("refuses to sign without notarizing — a signed, un-notarized build is still refused on download", () => {
