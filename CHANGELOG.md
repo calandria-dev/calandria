@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.6.1](https://github.com/calandria-dev/calandria/compare/v0.6.0...v0.6.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **desktop:** give the macOS titlebar the two jobs hiddenInset handed it ([#96](https://github.com/calandria-dev/calandria/issues/96)) ([2bd92bd](https://github.com/calandria-dev/calandria/commit/2bd92bd80fff0176b12d126782c4b755985c5b2c))
+
 ## [0.6.0](https://github.com/calandria-dev/calandria/compare/v0.5.2...v0.6.0) (2026-08-31)
 
 
