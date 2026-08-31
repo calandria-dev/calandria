@@ -14,3 +14,60 @@ export function claudeUsage(message: {
     cache_creation_tokens: u.cache_creation_input_tokens ?? 0,
   };
 }
+
+// Per-model rollup the CLI attaches to its result message. Optional in practice
+// (older CLIs, the `--print` JSON path), so every read of it is defensive.
+type ModelUsage = Record<string, {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+}>;
+
+/**
+ * Tokens this turn spent inside SUBAGENT sidechains — Task-tool fan-outs, each
+ * running in its own context window.
+ *
+ * Verified against the live CLI (two scripted turns, one fanning out to two
+ * Explore agents and one to three): the result message's own `usage` counts
+ * ONLY the main session's API requests. Its input/cache figures equal the sum
+ * over exactly the assistant messages with `parent_tool_use_id == null`, to the
+ * token (18/36,808/4,957 against 18/36,808/4,957). Subagents are absent from it
+ * entirely — so the task's stored token total has never included them, while
+ * `total_cost_usd` always has (measured 0.06117225 = the haiku sidechains'
+ * 0.0198921 + the sonnet main session's 0.04128015, exactly). Tokens and
+ * dollars on the same chip were describing different turns.
+ *
+ * `modelUsage` is the whole turn, subagents included — that cost identity is
+ * the proof — so the difference between it and `usage` is precisely sidechain
+ * spend. Subtracting is also model-agnostic: a subagent running the SAME model
+ * as its parent still nets out, where reading "the non-main model's row" would
+ * silently report zero.
+ *
+ * Summing the subagent assistant messages instead does NOT work, which is worth
+ * recording because it's the obvious approach. They arrive one message per
+ * content block, sharing a `message.id` and repeating identical usage on every
+ * copy (five copies of one 16,318-token cache read in the measured turn), so
+ * any sum needs deduping by id first; `output_tokens` on them is a partial
+ * mid-stream snapshot (4 against the 773 actually billed); and only a
+ * sidechain's last message per tool call reaches the stream at all — 29,089
+ * cache-read tokens visible against 56,876 billed. It undercounts by half.
+ */
+export function claudeSubagentTokens(message: {
+  usage?: Record<string, number> | null;
+  modelUsage?: ModelUsage | null;
+}): number {
+  const models = message.modelUsage;
+  if (!models || typeof models !== "object") return 0;
+  let all = 0;
+  for (const m of Object.values(models)) {
+    if (!m || typeof m !== "object") continue;
+    all += (m.inputTokens ?? 0) + (m.outputTokens ?? 0) + (m.cacheReadInputTokens ?? 0) + (m.cacheCreationInputTokens ?? 0);
+  }
+  const u = message.usage ?? {};
+  const main =
+    (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+  // A turn that never fanned out nets to 0. Clamped because a CLI that ever
+  // folds the main session into neither side must not bill it as subagent work.
+  return Math.max(0, all - main);
+}

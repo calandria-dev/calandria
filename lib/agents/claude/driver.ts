@@ -94,7 +94,7 @@ import {
   cancelClaudeLogin,
   verifyTurn,
 } from "../../claude-auth";
-import { claudeUsage } from "./usage";
+import { claudeUsage, claudeSubagentTokens } from "./usage";
 
 // Which on-disk setting sources every Claude query loads, pinned explicitly
 // rather than left to the SDK default (sdk.d.ts: "when omitted, all sources
@@ -1279,6 +1279,13 @@ async function* runTurn(
           // token counts, but a cumulative session dollar total — delta it
           // against the previous result (see costBaseline above).
           const usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+          // ...and those token counts are the MAIN SESSION's alone, while the
+          // dollar figure beside them covers the subagents too. Measure the
+          // gap so the chip can say so instead of quietly reporting a fan-out
+          // as if this session had burned it (claudeSubagentTokens documents
+          // how that was verified against the live CLI).
+          const subagent = claudeSubagentTokens(message as unknown as Parameters<typeof claudeSubagentTokens>[0]);
+          if (subagent > 0) usage.subagent_tokens = subagent;
           if (usage.cost_usd >= costBaseline) {
             const total = usage.cost_usd;
             usage.cost_usd = total - costBaseline;

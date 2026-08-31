@@ -65,6 +65,26 @@ describe("listTasks", () => {
     expect(row.cache_read_tokens).toBe(18_000);
     expect(row.cache_creation_tokens).toBe(800);
     expect(usageSplit(row).fresh).toBe(1_100);
+    // Never measured on these turns: SUM over NULLs coalesces to 0, and the
+    // grand total is unchanged from what it was before the column existed.
+    expect(row.subagent_tokens).toBe(0);
+    expect(usageSplit(row).total).toBe(19_100);
+  });
+
+  it("sums sidechain tokens across turns, leaving unmeasured rows at zero", () => {
+    const project = createProject({ name: `p-${Math.random().toString(36).slice(2, 8)}`, repo_path: tmpDir() });
+    const task = createTask({ project_id: project.id, title: "t", description: "" });
+    const turn = { cost_usd: 1, input_tokens: 100, output_tokens: 50, cache_read_tokens: 9_000, cache_creation_tokens: 400 };
+    // One turn fanned out, one didn't, one predates the measurement (NULL).
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, usage: { ...turn, subagent_tokens: 50_000 } });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, usage: { ...turn, subagent_tokens: 7_000 } });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, usage: turn });
+
+    const row = listTasks(project.id).find((t) => t.id === task.id)!;
+    expect(row.subagent_tokens).toBe(57_000);
+    // The four buckets stay main-session-only; the split is additional.
+    expect(row.total_tokens).toBe(28_650);
+    expect(usageSplit(row).total).toBe(85_650);
   });
 });
 
@@ -113,5 +133,41 @@ describe("usageTooltip", () => {
   it("drops the cache lines when nothing was cached", () => {
     const text = usageTooltip(usageSplit({ total_tokens: 900, cache_read_tokens: 0, cache_creation_tokens: 0 }), 0, costDisplay(undefined));
     expect(text).toBe("900 new tokens this task: 900 in/out · 0 written to cache");
+  });
+
+  // A turn that fans out to five Explore agents used to read as if this session
+  // had burned the lot: the sidechains' tokens were in the dollar figure and
+  // nowhere in the token figure, so the two described different turns.
+  it("names the sidechain share and folds it into the grand total", () => {
+    const text = usageTooltip(usageSplit({ ...real, subagent_tokens: 1_200_000 }), 4.2, costDisplay(undefined));
+    // The headline stays this session's own work — subagents have their own windows.
+    expect(text).toContain("253,000 new tokens");
+    // The total grows by exactly the sidechain share, so "of those" is true.
+    expect(text).toContain("4,953,000 tokens total");
+    expect(text).toContain("1,200,000 of those in subagents");
+    expect(text).toContain("not this session's context");
+  });
+
+  it("states the total for a fan-out even when nothing was cached", () => {
+    const text = usageTooltip(
+      usageSplit({ total_tokens: 900, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 100 }),
+      0, costDisplay(undefined)
+    );
+    // No cache-read line, but the total line still has to precede the subagent
+    // one or "of those" refers to nothing.
+    expect(text).not.toContain("cache reads");
+    expect(text.split("\n")).toEqual([
+      "900 new tokens this task: 900 in/out · 0 written to cache",
+      "1,000 tokens total",
+      "100 of those in subagents (their own windows, not this session's context)",
+    ]);
+  });
+
+  // Codex and the mock driver never report the split. Absent means unmeasured,
+  // so the line is omitted rather than claiming a measured zero.
+  it("says nothing at all when the driver doesn't report a split", () => {
+    expect(usageTooltip(usageSplit(real), 4.2, costDisplay(undefined))).not.toContain("subagents");
+    expect(usageSplit(real).subagent).toBe(0);
+    expect(usageSplit(real).total).toBe(3_753_000);
   });
 });
