@@ -214,6 +214,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
     >
       <div className="bc-top">
         <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
+        <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={!mini && agents.agents.length > 1} />
         <h3 className="bc-title">{task.title}</h3>
         {!mini && <PriPill p={task.priority} />}
       </div>

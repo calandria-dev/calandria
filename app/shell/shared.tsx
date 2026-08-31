@@ -67,12 +67,28 @@ export function Avatar({ who, agent }: { who: "user" | "cc"; agent?: string | nu
   return <span className={`av cc${mark ? ` ${agent}` : ""}`}>{mark ? mark() : Icon.bolt()}</span>;
 }
 
-// Which agent driver a task runs under (Claude Code / Codex …). Hidden when only
-// one agent is available (nothing to disambiguate) so single-agent workspaces
-// stay clutter-free. `multi` is passed by the caller from the agents bundle.
-export function AgentBadge({ label, multi }: { label: string; multi: boolean }) {
+// Which agent driver a task runs under (Claude Code / Codex …), as the brand
+// mark alone, sat left of the title it qualifies. Hidden when only one agent is
+// available (nothing to disambiguate) so single-agent workspaces stay
+// clutter-free. `multi` is passed by the caller from the agents bundle.
+//
+// The label moved to the tooltip. A word of prose was spending chip-width the
+// title beside it wanted, to say what a 14px logo says at a glance, and unlike
+// the tags it used to sit with there is nothing to DO with the agent: it's
+// fixed for the life of the session and clicking it filters nothing. An agent
+// with no mark of its own (a third driver, the e2e mock) KEEPS the text pill
+// rather than falling back to a generic glyph the way `Avatar` does — on a
+// card the mark is the whole identity, and one bolt standing for every
+// unmarked agent would say less than the name it replaced.
+export function AgentBadge({ agent, label, multi }: { agent?: string | null; label: string; multi: boolean }) {
   if (!multi) return null;
-  return <span className="agent-badge" title={`Runs on ${label}`}>{label}</span>;
+  const mark = agent ? AgentMark[agent] : undefined;
+  if (!mark) return <span className="agent-badge" title={`Runs on ${label}`}>{label}</span>;
+  return (
+    <span className={`agent-badge mark ${agent}`} role="img" aria-label={`Runs on ${label}`} title={`Runs on ${label}`}>
+      {mark()}
+    </span>
+  );
 }
 
 // ---- async-state primitives (pair with the .spinner/.load-note/.skel/.err-note

@@ -1225,8 +1225,26 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .status-ctl svg{width:14px;height:14px;}
 /* Live "which model actually ran" badge inside the model picker control. */
 .model-badge{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1;padding:2px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent-ink);}
-/* Which agent (Claude Code / Codex …) a task runs under — task cards + header. */
+/* Which agent (Claude Code / Codex …) a task runs under — task cards + header.
+   The bare rule is the FALLBACK, worn only by a driver with no mark of its own;
+   .mark is what Claude and Codex get, and it's a logo left of the title rather
+   than a pill of prose beside it. Colours follow the chat avatar's: Claude
+   wears its clay in both themes, the monochrome Codex mark follows the ink —
+   here at --ink-2, since next to a title the mark is metadata and --ink would
+   read as loud as the words it qualifies. inline-flex so it sits on the
+   session header's single title LINE (which clips with an ellipsis) and still
+   blockifies into a flex item on the two cards' title rows. */
 .agent-badge{font-family:var(--mono);font-size:10.5px;font-weight:500;line-height:1;letter-spacing:.02em;padding:2px 8px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--dim);white-space:nowrap;flex:0 0 auto;}
+.agent-badge.mark{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:var(--ink-2);}
+.agent-badge.mark svg{width:14px;height:14px;}
+.agent-badge.mark.claude{color:#D97757;}
+/* Nudge the mark onto the first line of a title that wraps (both cards clamp to
+   two lines, so their rows are top-aligned like the status dot beside them). */
+.task-top .agent-badge.mark,.bc-top .agent-badge.mark{margin-top:2px;}
+/* The header title is one 17px line, so the mark scales with it and rides the
+   baseline rather than the flex cross-axis. */
+.sess-head .sh-title .agent-badge.mark{vertical-align:-3px;margin-right:8px;}
+.sess-head .sh-title .agent-badge.mark svg{width:16px;height:16px;}
 
 .btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;transition:background .12s,filter .12s;}
 .btn svg{width:15px;height:15px;}

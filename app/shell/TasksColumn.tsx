@@ -98,6 +98,11 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
           <PickBox picked={picked} pickable={pickable} onPick={(range) => onPick(task.id, range)} />
         </span>
+        {/* Left of the title, where a logo costs a line-height's width. The
+            name used to sit in the footer instead, because inline here the
+            badge + pill took half the width the title exists to use — the
+            mark doesn't, so the agent can qualify the title it belongs to. */}
+        <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         <span className="ttitle">{task.title}</span>
         {/* Which feature(s) this is a step of — a task can carry several. After
             the title, per the tags spec; clicking one lights that tag alone. */}
@@ -152,9 +157,6 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
       <div className="task-foot">
         <span className={`activity${idle ? " idle" : ""}`} title={idle ? IDLE_TITLE : undefined}>{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>
         <span className="spacer" />
-        {/* Lower right, not the title row: inline there, the badge + pill took
-            half the width the title exists to use. */}
-        <AgentBadge label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
       {/* The gone-quiet mark's one affordance, directly under the activity line
