@@ -18,7 +18,7 @@ import { GET as eventsRoute } from "@/app/api/events/route";
 import { claimRun, createSchedule, settleRun, startRun } from "@/lib/schedule/store";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 import { POST as testNotification } from "@/app/api/notifications/test/route";
-import { classifyNotificationSupport, isDesktopShell, shouldDisplay } from "@/app/shell/useNotifications";
+import { classifyNotificationSupport, isDesktopShell, isMacDesktopShell, shouldDisplay } from "@/app/shell/useNotifications";
 
 // Every notification published while `fn` runs, in order.
 function notificationsDuring(fn: () => void): NotificationPayload[] {
@@ -552,5 +552,25 @@ describe("spotting the desktop shell from the user agent", () => {
     // The word boundary matters: a UA carrying an unrelated product whose name
     // merely ENDS in one of ours is not the shell.
     expect(isDesktopShell(`${CHROME} NotElectron/1.0 MyCalandria-Desktop/1.0`)).toBe(false);
+  });
+
+  // The macOS narrowing, which decides whether the app's own titlebar has to
+  // stand in for a native one it no longer has (padding for the traffic lights,
+  // and a drag region). Both halves have to be true, and neither implies the
+  // other: the shell on Windows keeps its native frame, and a Mac browser tab
+  // has a real window around it.
+  it("narrows to the macOS shell, where hiddenInset takes the native bar away", () => {
+    const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+    const WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+    expect(isMacDesktopShell(`${MAC} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(true);
+    // Native frame intact — padding it would inset the logo for nothing.
+    expect(isMacDesktopShell(`${WIN} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(false);
+    expect(isMacDesktopShell(`${CHROME} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(false);
+    // A Mac browser tab is a page, not a window.
+    expect(isMacDesktopShell(MAC)).toBe(false);
+    // An iPhone's "like Mac OS X" reaches this predicate only through a shell
+    // that can't run there, but the platform half must not be what lets it in.
+    expect(isMacDesktopShell("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1")).toBe(false);
   });
 });

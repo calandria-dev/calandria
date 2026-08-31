@@ -188,6 +188,15 @@ function createWindow() {
     // on Windows/Linux the native frame stays, since the app has no custom
     // window controls of its own to replace it with.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // With no native bar there is nowhere for the traffic lights to go but on
+    // top of the page, so their position is a layout constant the WEB side has
+    // to know: the app's titlebar reserves a matching left inset for them
+    // (`.app.mac-chrome .titlebar` in app/globals.css) or the logo sits under
+    // the buttons. Pinning it here rather than taking hiddenInset's default
+    // makes that inset a number both sides can agree on — and y centres the
+    // ~16px cluster in the 50px titlebar instead of the 28px bar Electron
+    // assumes. tests/desktopWindowChrome.test.ts holds the two in step.
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 17 } } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

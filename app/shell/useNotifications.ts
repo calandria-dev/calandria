@@ -49,6 +49,27 @@ export function isDesktopShell(userAgent: string): boolean {
 }
 
 /**
+ * The narrower question the app shell's chrome asks: is this the desktop shell
+ * running on macOS, where `titleBarStyle: "hiddenInset"` (desktop/main.js) has
+ * taken the native title bar away?
+ *
+ * That platform alone is the one where the page's own titlebar has to stand in
+ * for the window's: it must leave room for the traffic lights floating over its
+ * top-left corner, and it must declare itself a drag region, since nothing else
+ * is left to move the window by. Windows and Linux keep their native frame, so
+ * the browser layout is already correct there and must not be padded.
+ *
+ * Platform off the same UA string, for the reason above it: the server can be
+ * open in the shell on a Mac and in a Windows browser tab at the same moment,
+ * so `process.platform` on the sidecar answers one of them with the other's
+ * truth. Being wrong here is cosmetic in one direction (an inset nobody needs)
+ * and a collision in the other, never a broken window.
+ */
+export function isMacDesktopShell(userAgent: string): boolean {
+  return isDesktopShell(userAgent) && /\bMac OS X\b|\bMacintosh\b/.test(userAgent);
+}
+
+/**
  * The pure classifier behind notificationPermission(), pinned by a test.
  *
  * The desktop shell comes first and outranks every browser signal, because

@@ -306,7 +306,21 @@ rectangle (under `default` macOS steals a strip for the title bar, so they are
 not), the traffic lights are asserted to survive, and the lane uploads a
 screenshot on a green run so the one thing an assertion cannot judge — the
 buttons sitting over the app's own titlebar row — is in front of a human rather
-than in this paragraph. Menu roles run under a real menubar there too, which
+than in this paragraph.
+
+That review found what it was for. Taking the native bar away hands the page two
+of the window's jobs, and the shell had done neither: the traffic lights landed
+on top of the Calandria logo, and with no native bar left there was nothing to
+drag the window by at all. Both are fixed in the page, because both are layout —
+`.app.mac-chrome` in `app/globals.css` reserves the buttons' inset and declares
+the titlebar a drag region, with every control in it opting back out. That makes
+the buttons' position a constant the *web* side depends on, so `main.js` states
+it (`trafficLightPosition`) instead of inheriting `hiddenInset`'s default, and
+`tests/desktopWindowChrome.test.ts` fails if the two numbers drift apart. The
+class is a user-agent read (`isMacDesktopShell`), not a build flag: one server
+serves the shell and ordinary browser tabs at the same moment.
+
+Menu roles run under a real menubar there too, which
 matters more here than anywhere else: on macOS `{ role: "editMenu" }` *is*
 Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
 
