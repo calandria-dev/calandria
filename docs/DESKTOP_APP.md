@@ -128,8 +128,10 @@ Working and tested (`desktop/test-supervisor.js`, 34 assertions; `desktop/test-r
   identically where SIGTERM is not deliverable.
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported
   as "another Calandria is already running," not as a crash.
-- A boot screen that streams sidecar logs, because a cold first launch is otherwise
-  indistinguishable from a hang.
+- A boot screen: a spinner, and — because a cold first launch is otherwise
+  indistinguishable from a hang — a line that appears on its own once the wait
+  passes 12s. The sidecar logs still stream into it, off screen, where the tests
+  read them and a `--inspect` session can see them.
 - The notification and badge policy (§5.1): which events raise a toast, what the instance-wide "needs you" count adds up to, when a toast would be redundant, and a reconnecting subscription to `/api/events` driven against a stub server.
 
 Also working and tested, since 2026-08-27, by the Playwright `_electron` suite in
@@ -137,10 +139,12 @@ Also working and tested, since 2026-08-27, by the Playwright `_electron` suite i
 `.github/workflows/test.yml` runs it on every push to main and on any PR
 carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
 
-- The window appears on the boot screen, the boot screen streams the supervisor's
-  log, and the window swaps to the app's own origin. (It did not stream anything
+- The window appears on the boot screen, the boot screen receives the supervisor's
+  log, and the window swaps to the app's own origin. (It did not receive anything
   before this suite existed: `loading.html`'s CSP blocked its own inline script,
-  silently. Fixed.)
+  silently. Fixed.) The pane is off screen now — the boot screen shows a spinner —
+  but it is still written and still asserted on, since it is where the
+  supervisor's earliest lines survive.
 - The application menu and its roles, and the two items the View menu owns.
 - The renderer is still a hardened browser tab — `contextIsolation`, `sandbox`,
   no `nodeIntegration`, no preload.

@@ -374,7 +374,12 @@ async function boot() {
     resourcesPath: app.isPackaged ? process.resourcesPath : null,
     onLog: (line) => {
       // Two consumers: the terminal a developer launched us from, and the
-      // loading screen (so a slow first boot shows progress instead of a spinner).
+      // loading screen's off-screen `#log`. The boot screen shows a spinner
+      // rather than these lines — a scrolling wall of sidecar output is not
+      // what someone waiting for the window wants to read — but they are still
+      // pushed across, because that element is the only place the supervisor's
+      // FIRST lines survive: Electron stdout capture starts after launch has
+      // resolved, so desktop/e2e reads them back off the page instead.
       console.log(line);
       // executeJavaScript rather than IPC: the boot screen is the only consumer
       // and adding a preload for it would mean shipping a bridge into every
