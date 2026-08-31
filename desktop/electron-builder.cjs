@@ -129,8 +129,6 @@ module.exports = {
   // DRAFT release named v0.3.0 and upload everything into that instead.
   // .github/workflows/release-desktop.yml checks the two agree before it builds.
   //
-  // Inert outside a release. Nothing publishes without `--publish always` or a
-  // tag plus a token, and no lane in test.yml has either.
   // `releaseType: "release"` IS LOAD-BEARING, and its absence is why every
   // release from v0.2.0 to v0.5.1 has zero assets attached.
   //
@@ -161,6 +159,35 @@ module.exports = {
   // second refusal turned off, and it is set there rather than here because it
   // is only correct for a lane whose release was minted minutes earlier by
   // release-please.
+  //
+  // NOT INERT OUTSIDE A RELEASE EITHER, and assuming it was is what turned main's
+  // Windows desktop lane permanently red between v0.4.x and v0.5.0. The
+  // superseded claim here — "nothing publishes without `--publish always` or a
+  // tag plus a token" — is not how electron-builder decides. With no `--publish`
+  // flag, PublishManager fills the policy in itself: `always` when
+  // npm_lifecycle_event is "release", `onTag` when a CI tag is visible, and
+  // otherwise, ON ANY CI AT ALL, `onTagOrDraft` — which is a publishing policy,
+  // because it still has to ask GitHub whether a draft release is waiting. So
+  // `npx electron-builder --win nsis` on a hosted runner constructs a
+  // GitHubPublisher, and that constructor throws before it looks at anything:
+  //
+  //   Error: GitHub Personal Access Token is not set, neither programmatically,
+  //   nor using env "GH_TOKEN"
+  //
+  // The one thing that did suppress it is an accident of the event. electron-
+  // publish's isPullRequest() counts a non-empty GITHUB_BASE_REF, which only a
+  // `pull_request` run has, and skips the whole publish path for it. Every
+  // desktop lane is label-gated, so on a PR it either did not run or ran with
+  // publishing disabled for free; the first push to main that packaged a real
+  // target found the policy with nothing to suppress it. That is also why the
+  // macOS lane is exposed rather than lucky: it `unset GITHUB_BASE_REF`s to
+  // re-enable ad-hoc signing, which re-enables this at the same time.
+  //
+  // Hence `--publish never` on EVERY invocation outside .github/workflows/
+  // release-desktop.yml, pinned by tests/desktopRelease.test.ts. The flag is the
+  // only load-bearing part; a `dir`-only lane survives without it merely because
+  // `dir` announces no artifact to publish, which stops being true the moment
+  // anyone adds a real target to that lane.
   publish: [
     {
       provider: "github",
