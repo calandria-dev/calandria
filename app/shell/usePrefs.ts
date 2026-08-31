@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { LS, loadPersist } from "./persist";
+import { LS, loadPersist, selectionToPersist, type StoredSel } from "./persist";
 import { reconcileHistory, closeOneLevel, type NavSel } from "./navHistory";
 import {
   DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH, MONO_FONTS, PROMPT_FONTS,
@@ -42,11 +42,18 @@ const MOBILE_QUERY = "(max-width: 760px)";
 // are passed in so the Back button (popstate) can close one pane level — on
 // mobile this is the only way to step session → tasks → projects (and project
 // home → tasks, the level the Runbooks/Schedules pane adds).
-export function usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj, setSelTask, setProjectHome }: {
+export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSelRef, setSelProj, setSelTask, setProjectHome }: {
   selProj: string | null;
   selTask: string | null;
   /** The project home pane is showing — its own Back level (see navHistory). */
   projectHome: boolean;
+  /**
+   * Boot has applied the landing selection, so `selProj`/`selTask` mean something.
+   * Until it flips they are null only because the project fetch is still in the
+   * air, and mirroring that out would erase the remembered project — see
+   * `selectionToPersist`.
+   */
+  selectionReady: boolean;
   urlSelRef: MutableRefObject<{ project?: string; task?: string; view?: string; home?: boolean } | null>;
   setSelProj: (id: string | null) => void;
   setSelTask: (id: string | null) => void;
@@ -64,9 +71,15 @@ export function usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj,
   const selRef = useRef<NavSel>({ proj: selProj, task: selTask, home: projectHome, view });
   selRef.current = { proj: selProj, task: selTask, home: projectHome, view };
 
+  // The selection as it was on disk when this tab started, re-written verbatim by
+  // every persist pass until boot lands. Populated by the hydrate effect below,
+  // which runs before the persist effect can (it is what sets `hydrated`).
+  const storedSelRef = useRef<StoredSel>({});
+
   // hydrate persisted prefs once
   useEffect(() => {
     const p = loadPersist();
+    storedSelRef.current = { selProj: p.selProj, selTask: p.selTask };
     if (p.appearance) setAppearance(migrateAppearance(p.appearance));
     if (p.settings) setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
     if (p.layout) setLayout({ ...DEFAULT_LAYOUT, ...p.layout });
@@ -94,13 +107,20 @@ export function usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj,
     };
     applyTheme();
 
-    localStorage.setItem(LS, JSON.stringify({ selProj, selTask, appearance, settings, layout, taskView }));
+    // Prefs always persist — a theme picked on the boot-error screen should still
+    // stick — but the selection only once boot has one to state.
+    const sel = selectionToPersist(selectionReady, { selProj, selTask }, storedSelRef.current);
+    localStorage.setItem(LS, JSON.stringify({ ...sel, appearance, settings, layout, taskView }));
 
     // Mirror the open project/task + active view into the URL (refresh-restore)
     // and, on mobile, keep a single Back-trap entry on top while a pane is open
     // so the device Back button steps session → tasks → projects. (See navHistory.)
-    const armTrap = window.matchMedia(MOBILE_QUERY).matches;
-    reconcileHistory(window.history, window.location.pathname, { proj: selProj, task: selTask, home: projectHome, view }, armTrap);
+    // Gated on the same readiness: pre-boot there is no selection to mirror, only
+    // nulls that would strip ?project/?task off a deep link still being loaded.
+    if (selectionReady) {
+      const armTrap = window.matchMedia(MOBILE_QUERY).matches;
+      reconcileHistory(window.history, window.location.pathname, { proj: selProj, task: selTask, home: projectHome, view }, armTrap);
+    }
 
     // "system" mode tracks the OS live — re-resolve dark/light on every flip
     // without waiting for the user to touch a setting.
@@ -108,7 +128,7 @@ export function usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj,
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     mq.addEventListener("change", applyTheme);
     return () => mq.removeEventListener("change", applyTheme);
-  }, [appearance, settings, layout, taskView, selProj, selTask, projectHome, view, hydrated]);
+  }, [appearance, settings, layout, taskView, selProj, selTask, projectHome, view, hydrated, selectionReady]);
 
   // Back button: consume the trap and close exactly one pane level. The setState
   // calls re-run the persist effect, which re-arms the trap if a pane is still
