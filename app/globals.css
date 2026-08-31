@@ -1591,6 +1591,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .msg-attachments .file-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-2);text-decoration:none;padding:6px 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);}
 .msg-attachments .file-chip:hover{border-color:var(--line-strong);color:var(--ink);}
 .msg-attachments .file-chip svg{width:12px;height:12px;opacity:.7;}
+/* Chips carry the user's own filename now that any type can be attached — cap it rather than let one stretch the row. */
+.msg-attachments .file-chip svg{flex:none;}
+.msg-attachments .file-chip span{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* slash menu */
 /* Wide + scroll-capped: the list is the agent's real command set (skills,

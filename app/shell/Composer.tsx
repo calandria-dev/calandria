@@ -5,6 +5,7 @@ import { Icon } from "../icons";
 import { attachmentMarker, fileAttachmentMarker } from "./format";
 import { useCoarsePointer } from "./shared";
 import { PASTE_ATTACH_THRESHOLD } from "@/lib/promptLimits";
+import { isImageExt, maxUploadBytes, uploadExtension } from "@/lib/uploadTypes";
 import type { AgentCommand } from "@/lib/agents/types";
 import type { TaskRow } from "./types";
 
@@ -39,13 +40,16 @@ const saveDraft = (taskId: string, v: string) => {
   } catch { /* private mode / quota — drafts just won't persist */ }
 };
 
-// An attachment on the draft — an image (drop/paste/pick) or a large text paste
+// An attachment on the draft. ANY file type is accepted (drop/paste/pick) — a
+// screenshot, a log bundle, a spreadsheet, a PDF — plus a large text paste
 // diverted to a .txt file (see PASTE_ATTACH_THRESHOLD) so it never bloats the
 // prompt and poisons the session. Uploaded eagerly on attach so send stays
 // instant; on send its server path is appended to the message as a marker line
-// (attachmentMarker for images, fileAttachmentMarker for text). Not persisted
-// with the draft — object URLs don't survive a remount, and an unsent upload is
-// just an orphaned file that the task's hard delete sweeps away.
+// (attachmentMarker for images, fileAttachmentMarker for everything else). The
+// bytes never enter the prompt either way: the agent gets a staged path and
+// decides how to open it. Not persisted with the draft — object URLs don't
+// survive a remount, and an unsent upload is just an orphaned file that the
+// task's hard delete sweeps away.
 type Attachment = {
   key: string;
   kind: "image" | "file";
@@ -129,15 +133,22 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
 
   const addFiles = (files: File[]) => {
     if (disabled) return;
+    const cap = maxUploadBytes();
     for (const f of files) {
-      const isImage = f.type.startsWith("image/");
-      const isText = f.type.startsWith("text/plain");
-      if (!isImage && !isText) continue;
+      // Extension-first, matching the server (lib/uploadTypes.ts): a dragged
+      // .png whose MIME the OS didn't fill in is still a picture.
+      const isImage = f.type.startsWith("image/") || isImageExt(uploadExtension(f.name || "", f.type || ""));
       const key = `att-${++attSeq.current}`;
       const kind = isImage ? "image" : "file";
-      const name = f.name || (isImage ? "image" : "pasted-text.txt");
-      // Only images get a local object-URL thumbnail; text chips render a label.
+      const name = f.name || (isImage ? "image" : "attachment");
+      // Only images get a local object-URL thumbnail; file chips render a label.
       const preview = isImage ? URL.createObjectURL(f) : "";
+      // Refuse an oversized file here rather than pushing it over the wire for
+      // the route to reject — the chip is the same either way, the upload isn't.
+      if (f.size > cap) {
+        setAtts((prev) => [...prev, { key, kind, name, preview, path: "", status: "error", error: `Too large (max ${Math.round(cap / 1024 / 1024)} MB).` }]);
+        continue;
+      }
       setAtts((prev) => [...prev, { key, kind, name, preview, path: "", status: "uploading" }]);
       const body = new FormData();
       body.append("file", f, name);
@@ -378,8 +389,10 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
                 if (e.key === "Escape") setSlash(false);
               }}
               onPaste={(e) => {
-                const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
-                if (imgs.length) { e.preventDefault(); addFiles(imgs); return; }
+                // Any pasted file attaches — a screenshot from the clipboard, or
+                // a file copied out of a file manager.
+                const files = Array.from(e.clipboardData?.files ?? []);
+                if (files.length) { e.preventDefault(); addFiles(files); return; }
                 // A huge text paste would balloon the prompt and can permanently
                 // poison the session ("Prompt is too long"). Divert anything over
                 // the threshold to a .txt attachment instead of inlining it.
@@ -418,11 +431,11 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             )}
             <span className="spacer" />
             <input
-              ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
+              ref={fileRef} type="file" multiple hidden
               onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
             />
             {!disabled && (
-              <button className="hint" style={{ cursor: "pointer" }} title="Attach an image (or drag & drop / paste one)" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>{Icon.clip()} image</button>
+              <button className="hint" style={{ cursor: "pointer" }} title="Attach a file of any type (or drag & drop / paste one). It's staged on disk for the agent to open — never inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>{Icon.clip()} attach</button>
             )}
             <button className="hint" style={{ cursor: "pointer" }} onMouseDown={(e) => { e.preventDefault(); onClear(); }}>{Icon.clear()} /clear</button>
           </div>

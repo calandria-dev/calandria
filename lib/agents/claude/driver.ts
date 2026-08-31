@@ -675,13 +675,14 @@ async function* runTurn(
   const model = task.model ?? getSetting(`default_model:${task.agent}`);
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
-  // "[Attached file: /abs/path]" (a large text paste diverted to a file) marker
-  // lines in the message text (composed in app/shell/format.ts; files
-  // live outside the worktree, see lib/uploads.ts). The Read tool renders images
-  // natively and reads text files as text — this nudge makes Claude actually
-  // open them. Prompt-only: the persisted transcript keeps the bare markers.
+  // "[Attached file: /abs/path]" (any other type) marker lines in the message
+  // text (composed in app/shell/format.ts; files live outside the worktree, see
+  // lib/uploads.ts). The bytes are deliberately NOT in the prompt — the nudge
+  // hands over a staged path and leaves the how to Claude, since Read renders
+  // images and text natively but a PDF, an archive or a spreadsheet needs a
+  // shell tool. Prompt-only: the persisted transcript keeps the bare markers.
   const prompt = /^\[Attached (image|file): .+\]$/m.test(userText)
-    ? `${userText}\n\n(Read each attached image/file with the Read tool before responding.)`
+    ? `${userText}\n\nEach attachment above is a file staged on disk at that absolute path, outside the worktree. Inspect the ones you need before responding — the Read tool handles images and text; for any other format use whatever shell tooling suits it. Don't assume the contents from the filename.`
     : userText;
 
   const permissionMode = permissionModeFor(permission);

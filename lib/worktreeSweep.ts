@@ -29,6 +29,16 @@
 //      so a log line about a skipped checkout and a refused discard-move say the
 //      same thing rather than inventing a second vocabulary for one question.
 //
+// The task's staged CHAT ATTACHMENTS go with the checkout. Any file type can be
+// attached (lib/uploads.ts), so an instance can be sitting on gigabytes of PDFs
+// and log bundles that outlive every worktree they were staged for. They are
+// swept here rather than in one of the other teardowns because this is the only
+// one whose licence is "this task has been terminal and untouched for weeks":
+// a reclaim fires the instant a PR lands, on a task the user may still be
+// reading, and a project MOVE keeps the task alive with its transcript intact —
+// deleting its uploads in either would break marker links under a live task.
+// Hard delete and the transcript prune already cover their own cases.
+//
 // The branch is always KEPT (`keepBranch: true`, as the Storage sweep's safe
 // path does). A worktree can be re-cut; a deleted branch takes the task's diff
 // with it, and this sweep fires on a CLOCK — "cold for fourteen days" is not
@@ -62,8 +72,10 @@ import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
 import { heldHandleHint } from "@/lib/paths";
 import { hasTurn } from "@/lib/abort";
+import { removeTaskUploads, taskUploadsDir } from "@/lib/uploads";
 
-/** One reclaimed checkout. `bytes` is what it was costing before removal. */
+/** One reclaimed checkout. `bytes` is what it was costing before removal —
+ *  the working tree plus the task's staged chat attachments, which go with it. */
 export interface ReclaimedWorktree {
   taskId: string;
   bytes: number;
@@ -158,8 +170,12 @@ export async function sweepWorktrees(
           return;
         }
         clearTaskWorktreePath(id);
-        result.reclaimed.push({ taskId: id, bytes });
-        result.bytes += bytes;
+        // Best-effort and after the checkout is confirmed gone, so a skipped
+        // worktree never loses its attachments (see the header).
+        const uploadBytes = await worktreeDiskUsage(taskUploadsDir(id));
+        const total = bytes + (removeTaskUploads(id) ? uploadBytes : 0);
+        result.reclaimed.push({ taskId: id, bytes: total });
+        result.bytes += total;
       });
     });
   }

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { PUBLIC_BASE_URL } from "@/lib/config";
+import { MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
 import { fontVariables } from "./fonts";
 
@@ -58,9 +58,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             the app is not installable. Served by app/site.webmanifest/route.ts. */}
         <link rel="manifest" href="/site.webmanifest" crossOrigin="use-credentials" />
         {/* Hand the instance's public origin to client code (Terminal builds its
-            ws(s):// URL from it). Empty = same-origin via window.location. */}
+            ws(s):// URL from it). Empty = same-origin via window.location.
+            __MAX_UPLOAD_MB rides along so the composer can refuse an oversized
+            attachment before uploading it; the route is still the authority. */}
         <script
-          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};` }}
+          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};` }}
         />
         {/* Fonts are self-hosted via next/font (app/fonts.ts) — no Google Fonts
             CDN request at runtime. Their CSS variables land on <html> via the

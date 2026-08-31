@@ -402,6 +402,7 @@ Verify the copy (the database and `projects/` are there) before
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
 | `CALANDRIA_WORKTREES_DIR` | `~/.calandria/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
+| `CALANDRIA_MAX_UPLOAD_MB` | `25` | Largest single chat attachment. Any file type may be attached; it is staged under `<CALANDRIA_DB_DIR>/uploads/<taskId>` and only its path goes into the message, so the cap bounds disk and the server's heap rather than the model's context |
 | `CALANDRIA_BACKUP_DIR` | `<CALANDRIA_DB_DIR>/backups` | Where `npm run backup` writes its archives. Read by [`scripts/backup.mjs`](../scripts/backup.mjs), not by the app; point it at a different volume than the one being backed up. See **Backup & restore** below |
 | `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
@@ -496,7 +497,7 @@ app from booting.
 | What | Where | In the backup |
 |-|-|-|
 | Projects, tasks, transcripts, summaries, usage, schedules, runbooks, permission rules | `<CALANDRIA_DB_DIR>/calandria.db` (+ `-wal`/`-shm`) | `db/` (one snapshot, no sidecars) |
-| Chat attachments | `<CALANDRIA_DB_DIR>/uploads/<taskId>` | `db-dir/` |
+| Chat attachments (any file type) | `<CALANDRIA_DB_DIR>/uploads/<taskId>` | `db-dir/` |
 | Web Push signing key | `<CALANDRIA_DB_DIR>/vapid.json` | `db-dir/` |
 | A persisted API key (only if you used the wizard's key path) | `<CALANDRIA_DB_DIR>/anthropic-api-key`, `openai-api-key` | `db-dir/` |
 | Boot mutex | `<CALANDRIA_DB_DIR>/*.lock.db`, `*.lock.json` | **excluded**: a pure lock holding no data; restoring one restores a stale claim |

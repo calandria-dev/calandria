@@ -150,6 +150,11 @@ already queued. The transcript records that it was sent.
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
   conflicts, merge, or open a GitHub PR from the same screen.
+- **Attach any file:** drag, paste or pick a screenshot, a log bundle, a
+  spreadsheet, a PDF — up to 25 MB (`CALANDRIA_MAX_UPLOAD_MB`). The file is
+  staged on disk outside the worktree and the message carries only its path,
+  so nothing lands in the model's context until the agent decides to open it,
+  and nothing lands in your diff. Staged files are swept with the task.
 - **Collaborate on documents:** open a file the agent wrote as a document
   (mermaid fences render as diagrams), edit the text, attach comments to
   passages, and send it all back as one message. Comments are saved as you
@@ -277,7 +282,7 @@ would overwrite each other's running tasks. Give a second instance its own
 
 The database does not grow forever. A retention sweep runs on the schedule
 ticker and removes the record of **finished** tasks: transcripts, review
-comments, retired sessions, and uploaded attachments after 180 days, spend
+comments, retired sessions, and staged attachments after 180 days, spend
 rows after 400 (longer, so Insights keeps its full 180-day range). It then
 checkpoints the WAL so the space is reclaimed. Live tasks are never touched.
 `CALANDRIA_RETENTION=off` keeps everything. The windows and the opt-in

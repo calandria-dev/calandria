@@ -4,6 +4,7 @@ import { readEnv } from "./env.mjs";
 import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
+import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
  * Per-instance configuration, driven entirely by environment variables so an
@@ -47,6 +48,23 @@ export const BACKUP_DIR = readEnv("CALANDRIA_BACKUP_DIR") || path.join(dbLocatio
 
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
 export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");
+
+/**
+ * Largest single chat attachment, in megabytes (default 25).
+ *
+ * The cap is about DISK and the request buffer, not the context window: an
+ * attachment is staged under `<DB_DIR>/uploads/<task>/` and only its path is
+ * put in the message, so its bytes never reach the model unless the agent
+ * chooses to open it (lib/uploads.ts). What 25 MB buys is a log bundle, a
+ * design PDF or a small archive; what it stops is the multipart body being
+ * buffered whole in the server's heap, which is why the route also rejects on
+ * Content-Length before parsing. Raise it if your instance has the memory.
+ *
+ * Injected to the client as `window.__MAX_UPLOAD_MB` (app/layout.tsx) so the
+ * composer can refuse an oversized drop without uploading it first; the server
+ * check is the authority either way.
+ */
+export const MAX_UPLOAD_MB = Math.max(1, Number(readEnv("CALANDRIA_MAX_UPLOAD_MB")) || DEFAULT_MAX_UPLOAD_MB);
 
 /**
  * Path to the user's logged-in `claude` binary (Max subscription). The SDK
