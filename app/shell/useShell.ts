@@ -6,7 +6,7 @@ import type { ResolveResult } from "../TaskChanges";
 import { jget, jsend } from "./api";
 import { isAwaiting, needsYou, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
-import { loadPersist, readUrlSel } from "./persist";
+import { loadPersist, readUrlSel, landingSelection, type StoredSel, type UrlSel } from "./persist";
 import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TagRow } from "./types";
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
@@ -149,8 +149,17 @@ export function useShell() {
   // runs (once `hydrated` flips) before the async project fetch applies selection,
   // and would wipe the query string while selProj/selTask are still null — so we
   // must read ?project/?task before that happens, not inside the fetch callback.
-  const urlSelRef = useRef<{ project?: string; task?: string; view?: string; home?: boolean } | null>(null);
+  const urlSelRef = useRef<UrlSel | null>(null);
   if (urlSelRef.current === null) urlSelRef.current = readUrlSel();
+
+  // And the persisted selection, synchronously, for exactly the same reason: the
+  // persist effect fires the moment prefs hydrate, which is before this fetch can
+  // resolve, so reading localStorage inside the boot callback reads back the null
+  // selection that effect had already written. That is what sent every restart to
+  // the first project rather than the last one open. (usePrefs stops writing that
+  // null too — see selectionToPersist — but the read must not depend on it.)
+  const storedSelRef = useRef<StoredSel | null>(null);
+  if (storedSelRef.current === null) storedSelRef.current = loadPersist();
 
   // selProjRef tracks selProj for callbacks/intervals that must read the latest
   // value without re-subscribing (the live stream handler + the recap sweep).
@@ -280,7 +289,7 @@ export function useShell() {
 
   // ---------- prefs (appearance/settings/layout/view) + persistence ----------
   const { view, setView, taskView, setTaskView, appearance, setAppearance, settings, setSetting, setSettings, layout, setLayout, hydrated } =
-    usePrefs({ selProj, selTask, projectHome, urlSelRef, setSelProj, setSelTask, setProjectHome });
+    usePrefs({ selProj, selTask, projectHome, selectionReady: booted, urlSelRef, setSelProj, setSelTask, setProjectHome });
 
   // ---------- project recaps + landing decision ----------
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -337,24 +346,15 @@ export function useShell() {
     setBootError(null);
     jget<ProjectRow[]>("/api/projects").then((ps) => {
       setProjects(ps);
-      const persisted = loadPersist();
-      const url = urlSelRef.current ?? {};
-      const active = ps.filter((p) => !p.deprecated);
-      const wantProj = url.project ?? persisted.selProj;
-      const wantTask = url.task ?? persisted.selTask;
-      // Never land on a deprecated project — it must be restored before building.
-      const persistedActive = active.find((p) => p.id === wantProj)?.id;
-      const landProj = persistedActive ?? active[0]?.id ?? null;
-      setSelProj(landProj);
-      // Restore the task only if it belongs to the project we actually land on.
-      // (If wantProj was missing/deprecated we fell back to active[0] — don't
-      // carry over a task from a different project.) Validity within the project
-      // is checked once its tasks load, below.
-      if (wantTask && landProj === wantProj) setSelTask(wantTask);
-      // ?home=1 restores the project-home pane (Runbooks/Schedules) — on mobile
-      // that pane is a route of its own, so a refresh must land back on it
-      // rather than dropping to the task list.
-      else if (url.home && landProj && landProj === wantProj) setHomeProj(landProj);
+      // The last project open wins over the first one in the list; the remembered
+      // task rides along only when we landed on the project it belongs to, and
+      // ?home=1 restores the project-home pane (Runbooks/Schedules), which on
+      // mobile is a route of its own. Task validity WITHIN the project is checked
+      // once its tasks load, below.
+      const land = landingSelection(ps.filter((p) => !p.deprecated), urlSelRef.current ?? {}, storedSelRef.current ?? {});
+      setSelProj(land.proj);
+      if (land.task) setSelTask(land.task);
+      else if (land.home && land.proj) setHomeProj(land.proj);
       setBooted(true);
     }).catch((e) => {
       setBootError(e instanceof Error ? e.message : String(e));
