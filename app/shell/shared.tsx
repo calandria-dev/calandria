@@ -75,18 +75,20 @@ export function Avatar({ who, agent }: { who: "user" | "cc"; agent?: string | nu
 // The label moved to the tooltip. A word of prose was spending chip-width the
 // title beside it wanted, to say what a 14px logo says at a glance, and unlike
 // the tags it used to sit with there is nothing to DO with the agent: it's
-// fixed for the life of the session and clicking it filters nothing. An agent
-// with no mark of its own (a third driver, the e2e mock) KEEPS the text pill
-// rather than falling back to a generic glyph the way `Avatar` does — on a
-// card the mark is the whole identity, and one bolt standing for every
-// unmarked agent would say less than the name it replaced.
+// fixed for the life of the session and clicking it filters nothing.
+//
+// An agent with no mark of its own (a third driver, the e2e mock) falls back to
+// the generic bolt exactly as `Avatar` does, rather than to the name. The slot
+// has to stay a FIXED, non-shrinking glyph: the title beside it is
+// `flex:1;min-width:0`, so a nowrap text chip in this row squeezes it to zero
+// width on a narrow column — which is the very crowding that had banished the
+// old chip to the card footer. The name is a hover away either way.
 export function AgentBadge({ agent, label, multi }: { agent?: string | null; label: string; multi: boolean }) {
   if (!multi) return null;
   const mark = agent ? AgentMark[agent] : undefined;
-  if (!mark) return <span className="agent-badge" title={`Runs on ${label}`}>{label}</span>;
   return (
-    <span className={`agent-badge mark ${agent}`} role="img" aria-label={`Runs on ${label}`} title={`Runs on ${label}`}>
-      {mark()}
+    <span className={`agent-badge${mark ? ` ${agent}` : ""}`} role="img" aria-label={`Runs on ${label}`} title={`Runs on ${label}`}>
+      {mark ? mark() : Icon.bolt()}
     </span>
   );
 }
