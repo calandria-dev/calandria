@@ -8,6 +8,21 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.6.0](https://github.com/calandria-dev/calandria/compare/v0.5.2...v0.6.0) (2026-08-31)
+
+
+### Features
+
+* **ui:** show the agent as its brand mark, left of the title ([#93](https://github.com/calandria-dev/calandria/issues/93)) ([1715d28](https://github.com/calandria-dev/calandria/commit/1715d2878698e5335eb0af6a70beb6605108164f))
+* **uploads:** accept any file type as a staged chat attachment ([#92](https://github.com/calandria-dev/calandria/issues/92)) ([8093e52](https://github.com/calandria-dev/calandria/commit/8093e5236fba0e39cbfc2cb59cfd4d449bf5124d))
+* **usage:** split cumulative token spend into main session and subagents ([#91](https://github.com/calandria-dev/calandria/issues/91)) ([9b984b8](https://github.com/calandria-dev/calandria/commit/9b984b826f064ed12854060002cba59397103df0))
+
+
+### Bug Fixes
+
+* **push:** zero-pad the VAPID private scalar to 32 bytes ([#95](https://github.com/calandria-dev/calandria/issues/95)) ([4931777](https://github.com/calandria-dev/calandria/commit/49317778266902e3fca4ad02604e9032d705478d))
+* **shell:** return to the last project open, not the first ([#90](https://github.com/calandria-dev/calandria/issues/90)) ([6ab916b](https://github.com/calandria-dev/calandria/commit/6ab916bb77594a8c100bcf2b5c5a4cc51d77b804))
+
 ## [0.5.2](https://github.com/calandria-dev/calandria/compare/v0.5.1...v0.5.2) (2026-08-31)
 
 
