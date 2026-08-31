@@ -14,25 +14,46 @@
       }
       h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .2px; }
       .sub { color: #8b939c; font-size: 12.5px; }
-      .dot { width: 7px; height: 7px; border-radius: 50%; background: #4c9aff; animation: pulse 1.2s ease-in-out infinite; }
-      @keyframes pulse { 0%,100% { opacity: .25; transform: scale(.85);} 50% { opacity: 1; transform: scale(1);} }
-      pre {
-        margin: 0; padding: 12px 14px; width: min(760px, 84vw); height: 190px; overflow: auto;
-        background: #12151a; border: 1px solid #1e232b; border-radius: 8px;
-        font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9aa4ae; white-space: pre-wrap;
+      .spinner {
+        width: 26px; height: 26px; border-radius: 50%;
+        border: 2.5px solid #1e232b; border-top-color: #4c9aff;
+        animation: spin .9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      /* The spinner is the only thing on screen that says "still going", so
+         when it can't turn, fall back to something that still changes. */
+      @media (prefers-reduced-motion: reduce) {
+        .spinner { animation: pulse 1.6s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
+      }
+      /* A cold Next boot is a few seconds; a first-ever launch can be much
+         longer, and a spinner alone in that window reads as a hang. Rather than
+         narrate the whole boot to say so, say it only once the wait is long
+         enough to worry about — a delayed, non-repeating animation, so no
+         script is needed (this page's CSP blocks its own inline <script>). */
+      .slow {
+        color: #6b737c; font-size: 12px; opacity: 0;
+        animation: appear .4s ease-out 12s forwards;
+      }
+      @keyframes appear { to { opacity: 1; } }
+      /* main.js appends sidecar output here with executeJavaScript, which is not
+         subject to this page's CSP. It is deliberately off screen: the lines are
+         diagnostics, not something to read while waiting, and they are the only
+         surviving copy of the supervisor's FIRST lines (desktop/e2e reads them
+         back through this element, since Electron stdout capture starts too
+         late to see them). Hidden by clipping rather than `display: none` so it
+         is still rendered and still has innerText. */
+      #log {
+        position: absolute; width: 1px; height: 1px;
+        overflow: hidden; clip-path: inset(50%); white-space: pre-wrap;
       }
     </style>
   </head>
   <body>
-    <div class="dot"></div>
+    <div class="spinner"></div>
     <h1>Starting Calandria</h1>
     <div class="sub">Booting the local server and terminal sidecar…</div>
-    <!-- main.js appends sidecar output to #log with executeJavaScript, which is
-         not subject to this page's CSP. A cold Next boot is a few seconds; a
-         first-ever launch can be longer, and a silent spinner in that window is
-         indistinguishable from a hang. There is deliberately no script in this
-         page to receive it: `default-src 'none'` above blocks inline script, so
-         a helper defined here would never run. -->
+    <div class="slow">Still working — the first launch after an update takes longer.</div>
     <pre id="log"></pre>
   </body>
 </html>

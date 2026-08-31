@@ -48,6 +48,14 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   expect(shell.bootScreenLog, "the boot screen never received a supervisor log line").toMatch(
     /\[shell] node: /
   );
+  // Received, not displayed. What someone waiting for the window sees is a
+  // spinner; the lines go into a pane clipped out of the layout, which is the
+  // only reason the assertion above (and 06-packaged's) can read them at all.
+  expect(shell.bootScreen.spinner, "the boot screen showed no spinner").toBe(true);
+  expect(
+    shell.bootScreen.logWidth,
+    "the log pane is back on screen — the boot screen is meant to be a spinner"
+  ).toBeLessThanOrEqual(2);
   expect(shell.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(shell.win.url().startsWith(shell.origin)).toBe(true);
 
