@@ -1,5 +1,8 @@
 # Build the Electron desktop shell on all three platforms and publish the
-# artifacts to the GitHub Release that release-please just cut.
+# artifacts to the GitHub Release that release-please just cut. Dispatched by
+# hand it does everything except the publishing, which is the only way to
+# exercise the signed path before a tag exists — see the `workflow_dispatch`
+# comment below.
 #
 # Until this existed, a release published a multi-arch Docker image and nothing
 # else: the desktop app built only when somebody ran `npm run dist:*` by hand, or
@@ -17,6 +20,17 @@
 # that silently never finds anything. Do not replace the provider with a manual
 # upload. The one thing uploaded by hand here is SHA256SUMS.txt, because
 # electron-builder does not produce it.
+#
+# ...AND IT DECLINES BY LOGGING, WHICH IS WHY THIS FILE ASSERTS. v0.2.0 through
+# v0.5.1 all have ZERO assets attached. The provider defaults to publishing into
+# a *draft*, found the published release release-please had already cut, decided
+# the types were incompatible, and emitted one `skipped publishing` warning per
+# artifact — installers and update feeds alike — before exiting 0. Three green
+# legs, six empty releases, no failure anywhere. `releaseType: "release"` in
+# desktop/electron-builder.cjs and EP_GH_IGNORE_TIME below close the two
+# declines we have hit; "Assert the artifacts actually reached the release"
+# closes the class, by asking GitHub what is on the release rather than trusting
+# an exit code. If you add a publishing step, assert it landed.
 #
 # THE GATE IS publish-image.yml's, NOT A SECOND ONE. Both call
 # .github/actions/require-green-test-run, which waits for the tagged commit's
@@ -102,12 +116,31 @@ on:
   # branches` trigger here.
   push:
     tags: ["v*"]
-  # The escape hatch, and it is not hypothetical: release-please.yml's header
-  # records that a tag pushed with GITHUB_TOKEN rather than RELEASE_PLEASE_TOKEN
-  # fires no `push: tags:` trigger at all. Dispatch this on the tag ref —
-  # `gh workflow run release-desktop.yml --ref vX.Y.Z` — and everything below
-  # behaves identically, gate included.
+  # TWO JOBS, AND THE DEFAULT IS THE SAFE ONE.
+  #
+  # A DRY RUN is what you get by default, and it is the only way to exercise the
+  # signed path before a tag exists. Dispatch on any ref and this builds, signs,
+  # notarizes, staples and asserts all of it, then stops short of publishing and
+  # uploads the installers as workflow artifacts you can download and actually
+  # open. Every signing bug this repository has shipped was one that only the
+  # release lane could reach, because signing needs the real secrets and no
+  # pull-request lane may have them: test.yml's macos-desktop job deliberately
+  # leaves CALANDRIA_MAC_SIGN_IDENTITY unset and signs ad-hoc. Run this before
+  # tagging and the release stops being the first execution of its own code.
+  #
+  # THE ESCAPE HATCH is the same dispatch with `publish` ticked, and it is not
+  # hypothetical: release-please.yml's header records that a tag pushed with
+  # GITHUB_TOKEN rather than RELEASE_PLEASE_TOKEN fires no `push: tags:` trigger
+  # at all. `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`
+  # then behaves exactly like the missing tag push, gate included. Ticking it off
+  # a tag is refused by the gate rather than left to mint a stray release.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Attach the artifacts to the release for this tag (leave off for a dry run)"
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -153,7 +186,39 @@ jobs:
     outputs:
       mac_signing: ${{ steps.credentials.outputs.mac }}
       win_signing: ${{ steps.credentials.outputs.win }}
+      publish: ${{ steps.mode.outputs.publish }}
     steps:
+      # DECIDED ONCE, HERE, rather than re-derived in each of the three build
+      # legs and again in `notes`. Publishing is the irreversible half of this
+      # workflow and four copies of the condition is four chances to disagree
+      # about it.
+      #
+      # Publishing off a tag is refused rather than tolerated: electron-builder
+      # derives its target release from desktop/package.json's version, so a
+      # dispatch on `main` with the box ticked would not fail, it would mint a
+      # release named after whatever version main is carrying and fill it with
+      # artifacts built from an unreleased commit.
+      - name: Decide whether this run publishes
+        id: mode
+        run: |
+          set -euo pipefail
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            publish=true
+          elif [ "${{ inputs.publish }}" = "true" ]; then
+            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+              echo "::error::publish was requested on ${GITHUB_REF_NAME}, which is not a tag. Re-dispatch on the release tag (gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true), or leave publish off for a dry run."
+              exit 1
+            fi
+            publish=true
+          fi
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          if [ "$publish" = "true" ]; then
+            echo "::notice::Publishing to the ${GITHUB_REF_NAME} release."
+          else
+            echo "::notice::DRY RUN — building, signing and notarizing, publishing nothing. The installers are attached to this run as workflow artifacts."
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -250,6 +315,12 @@ jobs:
             # `dir` is in electron-builder.cjs's target list for the test lanes to
             # launch; it is not a thing anyone downloads, so it is not built here.
             targets: --linux deb AppImage
+            # The update feed this platform's artifacts are useless without. The
+            # publish assertion below checks for it BY NAME, because a release
+            # with every installer attached and no feed is an updater that
+            # silently never finds anything — the exact failure this file's
+            # publish comment warns about, and one no download test would catch.
+            feed: latest-linux.yml
             timeout: 45
           - os: macos-latest
             platform: mac
@@ -258,6 +329,7 @@ jobs:
             # emits no latest-mac.yml at all. Both, always.
             label: macOS (dmg, zip)
             targets: --mac dmg zip
+            feed: latest-mac.yml
             # Three hours. The build itself is under one; the rest is Apple's
             # notarization queue, which happens twice — electron-builder
             # notarizes and staples the .app inside MacPackager.sign(), and
@@ -268,6 +340,7 @@ jobs:
             platform: win
             label: Windows (NSIS, zip)
             targets: --win nsis zip
+            feed: latest.yml
             timeout: 90
     defaults:
       run:
@@ -389,6 +462,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+          # THE SECOND SILENT SKIP. electron-publish's getOrCreateRelease also
+          # refuses a release that was published more than two hours ago —
+          # `reason: "existing release published more than 2 hours ago"`, one
+          # warning per artifact, exit 0, nothing uploaded. The window is meant
+          # to stop a stale local build from overwriting an old release; here it
+          # is only ever measured from a release release-please minted minutes
+          # before this run, so what it actually catches is a macOS leg that
+          # spent three hours in Apple's notarization queue, or one leg re-run
+          # the next morning after a transient failure. Both are the cases where
+          # we most need the upload to work.
+          EP_GH_IGNORE_TIME: "true"
+
           CALANDRIA_MAC_SIGN_IDENTITY: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CALANDRIA_MAC_SIGN_IDENTITY || '' }}
           CSC_LINK: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_KEY_PASSWORD || '' }}
@@ -401,11 +486,11 @@ jobs:
           AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME || '' }}
           AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_PUBLISHER_NAME || '' }}
         #
-        # `never` off a tag: a workflow_dispatch on a branch is a dry run of the
-        # packaging, and `always` there would mint a draft release named after
-        # desktop/package.json's version and fill it with artifacts nobody asked
-        # for.
-        run: npx electron-builder ${{ matrix.targets }} --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
+        # `never` on a dry run. Everything up to this point is identical either
+        # way — the same signing, the same notarization, the same assertions —
+        # which is the point: the dry run has to be the release lane, not a
+        # cheaper thing that resembles it.
+        run: npx electron-builder ${{ matrix.targets }} --publish ${{ needs.gate.outputs.publish == 'true' && 'always' || 'never' }}
 
       # THE OPPOSITE ANSWER TO THE TEST LANE'S. `macos-desktop` asserts that
       # Gatekeeper REFUSES what it built; here it must ACCEPT, and the ticket must
@@ -444,6 +529,80 @@ jobs:
             echo "::error::The .dmg carries no stapled ticket. desktop/scripts/notarize-dmg.js runs from electron-builder's artifactBuildCompleted hook; check it was not moved to afterAllArtifactBuild, which runs after the upload has begun."
             exit 1
           fi
+
+      # THE STEP THAT WOULD HAVE CAUGHT SIX EMPTY RELEASES.
+      #
+      # `npx electron-builder --publish always` exiting 0 does not mean anything
+      # was uploaded. Its publisher declines by LOGGING — one
+      # `skipped publishing` line per artifact — and returns normally, so the
+      # step goes green having attached nothing. That is how v0.2.0 through
+      # v0.5.1 all ended up with zero assets while this lane reported success.
+      # `releaseType` and EP_GH_IGNORE_TIME above close the two declines we know
+      # about; this closes the class, by asking GitHub what is actually on the
+      # release instead of trusting an exit code.
+      #
+      # Derived from what this leg BUILT rather than from a hardcoded list, so a
+      # target added to the matrix is covered without anyone remembering to come
+      # back here — the same reasoning as the checksum step below, which globs
+      # the same set.
+      - name: Assert the artifacts actually reached the release
+        if: needs.gate.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job checks out the repo, so `gh` could infer this — but it is
+          # spelled anyway, because the `notes` job's identical calls failed on
+          # v0.5.1 for exactly the lack of it.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # `find <dir>` and strip the path, rather than `cd <dir> && find .`:
+          # a `cd` inside a command substitution prints the directory under any
+          # shell with CDPATH set, and that string lands in the list as if it
+          # were a filename.
+          built=$(find desktop/dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' \) \
+            | sed 's|.*/||')
+
+          # electron-builder renames on upload: the NSIS installer is
+          # `Calandria Setup 0.5.1.exe` on disk and `Calandria-Setup-0.5.1.exe`
+          # on the release. Spaces become dashes, so the comparison is on that
+          # form rather than on the local filename.
+          #
+          # The feed is appended by hand: it is not a distributable, so the glob
+          # above does not find it, and a release with every installer and no
+          # `${{ matrix.feed }}` is an updater that silently never finds
+          # anything — the one missing file no download test would notice.
+          expected=$(printf '%s\n%s\n' "$built" "${{ matrix.feed }}" \
+            | sed '/^[[:space:]]*$/d' | tr ' ' '-' | sort)
+          attached=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)
+
+          echo "--- built by this leg ---"; echo "$expected"
+          echo "--- attached to $GITHUB_REF_NAME ---"; echo "$attached"
+
+          missing=$(comm -23 <(echo "$expected") <(echo "$attached") || true)
+          if [ -n "$missing" ]; then
+            echo "::error::Built but NOT attached to ${GITHUB_REF_NAME}: $(echo "$missing" | tr '\n' ' '). electron-builder's publisher logs a warning and exits 0 when it declines to upload — read the Package and publish step for 'GitHub release not created' or 'skipped publishing' and the reason it gives."
+            exit 1
+          fi
+          echo "every ${{ matrix.platform }} artifact and its update feed are on the release"
+
+      # A dry run's whole point is that somebody can open the thing. Without
+      # this the run proves only that packaging did not throw, which is the level
+      # of assurance that produced this file's last three fixes.
+      - name: Upload the installers for a dry run
+        if: needs.gate.outputs.publish != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.deb
+            desktop/dist/*.AppImage
+            desktop/dist/*.exe
+            desktop/dist/latest*.yml
+          if-no-files-found: error
+          retention-days: 7
 
       # electron-builder publishes sha512 inside the update feed, which is for
       # the updater rather than for a person. A SHA-256 manifest is the
@@ -522,11 +681,19 @@ jobs:
     # `!cancelled()` rather than `success()`: if one platform fails, the release
     # still has two artifacts and they still need checksums and an honest note
     # saying which platform is missing.
-    if: ${{ !cancelled() && needs.gate.result == 'success' && github.ref_type == 'tag' }}
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      # THIS JOB HAS NO CHECKOUT, and `gh` resolves the repository from git
+      # remotes unless it is told. Every `gh` call below therefore died on
+      # v0.5.1 with `failed to run git: fatal: not a git repository`, after
+      # correctly assembling a SHA256SUMS.txt it then could not upload. GH_REPO
+      # is the fix rather than adding a checkout: this job wants three artifacts
+      # and an API, not a source tree.
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

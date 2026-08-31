@@ -372,7 +372,13 @@ describe("electron-updater has to actually be in the package", () => {
     const configPath = path.join(DESKTOP, "electron-builder.cjs");
     delete require.cache[configPath];
     const config = require(configPath) as { publish?: unknown };
-    expect(config.publish).toEqual([{ provider: "github", owner: "calandria-dev", repo: "calandria" }]);
+    expect(config.publish).toEqual([
+      // `releaseType` belongs to this test too: the feed files are skipped by
+      // the same refusal that skips the installers, so a draft-typed publish
+      // leaves the updater with nothing to read even when downloads exist.
+      // tests/desktopRelease.test.ts carries the full account.
+      { provider: "github", owner: "calandria-dev", repo: "calandria", releaseType: "release" },
+    ]);
   });
 });
 

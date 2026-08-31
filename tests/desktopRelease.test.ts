@@ -3,7 +3,7 @@
 // every failure mode is silent — nothing throws, nothing goes red, the artifacts
 // simply end up somewhere nobody looks.
 //
-// Three facts are pinned:
+// Four facts are pinned:
 //
 //   1. desktop/package.json's version equals the release manifest's. This is not
 //      tidiness. electron-builder's github publisher looks the Release up BY TAG
@@ -19,6 +19,15 @@
 //      latest-linux.yml and the .blockmap files beside each artifact — the feed
 //      electron-updater reads. Without it a release publishes downloads that no
 //      updater can ever discover.
+//   4. That block says `releaseType: "release"`. This one is not hypothetical:
+//      v0.2.0 through v0.5.1 every one have ZERO assets attached. electron-
+//      publish defaults the type to "draft"; release-please has already cut a
+//      PUBLISHED release for the tag; the publisher found them incompatible,
+//      logged `GitHub release not created … existingType=release
+//      publishingType=draft`, logged `skipped publishing` once per artifact —
+//      installers and update feeds alike — and EXITED 0. Six empty releases
+//      behind three green legs. The lane now also asserts the assets really
+//      landed, because this publisher's way of refusing is to keep going.
 //
 // tests/desktopSigning.test.ts pins the other half of this config: that it is
 // found at all, and that signing is off unless asked for.
@@ -74,10 +83,10 @@ describe("desktop release publishing", () => {
       const configPath = path.join(DESKTOP, "electron-builder.cjs");
       delete require.cache[configPath];
       const config = require(configPath) as {
-        publish: Array<{ provider: string; owner: string; repo: string }>;
+        publish: Array<{ provider: string; owner: string; repo: string; releaseType: string }>;
       };
       expect(config.publish).toEqual([
-        { provider: "github", owner: "calandria-dev", repo: "calandria" },
+        { provider: "github", owner: "calandria-dev", repo: "calandria", releaseType: "release" },
       ]);
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];

@@ -131,11 +131,42 @@ module.exports = {
   //
   // Inert outside a release. Nothing publishes without `--publish always` or a
   // tag plus a token, and no lane in test.yml has either.
+  // `releaseType: "release"` IS LOAD-BEARING, and its absence is why every
+  // release from v0.2.0 to v0.5.1 has zero assets attached.
+  //
+  // electron-publish's GitHubPublisher defaults this to "draft"
+  // (out/gitHubPublisher.js: `this.releaseType = options.draft === false ?
+  // "release" : "draft"`). release-please has already created a PUBLISHED
+  // release for the tag by the time this workflow starts, and the publisher
+  // refuses to write into a release whose type does not match what it is
+  // publishing:
+  //
+  //   • GitHub release not created  reason=existing type not compatible with
+  //     publishing type  tag=v0.5.1 existingType=release publishingType=draft
+  //   • skipped publishing  file=Calandria-Setup-0.5.1.exe  reason=…
+  //   • skipped publishing  file=latest.yml                 reason=…
+  //
+  // It then EXITS 0. Every artifact and every update feed is skipped, one
+  // warning apiece, and the lane goes green having uploaded nothing — which is
+  // how this survived six releases unnoticed. Declaring the type we are actually
+  // publishing into makes the publisher adopt the existing release instead
+  // (`getOrCreateRelease` only takes the refuse branch when releaseType is
+  // "draft").
+  //
+  // The workflow asserts the assets really landed rather than trusting the exit
+  // code, because "logs a warning and continues" is this publisher's house
+  // style: the same function ALSO refuses a release published more than two
+  // hours ago, which a slow notarization or a re-run of one leg will cross.
+  // EP_GH_IGNORE_TIME=true in .github/workflows/release-desktop.yml is that
+  // second refusal turned off, and it is set there rather than here because it
+  // is only correct for a lane whose release was minted minutes earlier by
+  // release-please.
   publish: [
     {
       provider: "github",
       owner: "calandria-dev",
       repo: "calandria",
+      releaseType: "release",
     },
   ],
 
