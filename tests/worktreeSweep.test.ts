@@ -1,10 +1,12 @@
 import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db";
 import { createProject, createTask, getTask, updateTask } from "@/lib/store";
 import { ensureWorktree } from "@/lib/git";
 import { registerTurn, unregisterTurn } from "@/lib/abort";
 import { sweepWorktrees } from "@/lib/worktreeSweep";
+import { taskUploadsDir } from "@/lib/uploads";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -50,7 +52,41 @@ async function sweep(taskId: string, retentionDays = 14) {
   };
 }
 
+/** Stage a chat attachment for a task, the way POST /uploads does. */
+function attach(taskId: string, name = "q3-report.pdf") {
+  const dir = taskUploadsDir(taskId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), "x".repeat(4096));
+  return dir;
+}
+
 describe("scheduled worktree sweep", () => {
+  it("reclaims the task's staged attachments along with its checkout", async () => {
+    // Any file type can be attached now, so an instance can be sitting on
+    // gigabytes of PDFs and log bundles outliving the worktrees they were
+    // staged for. This sweep is the one teardown licensed to take them: the
+    // task has been terminal and untouched for weeks.
+    const { taskId } = await coldTask();
+    const dir = attach(taskId);
+
+    const result = await sweep(taskId);
+
+    expect(result.reclaimed.map((r) => r.taskId)).toEqual([taskId]);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("keeps the attachments of a checkout it refused to reclaim", async () => {
+    const { taskId, wt } = await coldTask();
+    writeFile(wt.path, "scratch.txt", "unsaved work");
+    const dir = attach(taskId);
+
+    const result = await sweep(taskId);
+
+    expect(result.reclaimed).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
   it("reclaims a cold finished task's checkout and keeps its branch", async () => {
     const { repo, taskId, wt } = await coldTask();
 

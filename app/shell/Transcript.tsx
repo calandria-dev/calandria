@@ -7,6 +7,7 @@ import { Markdown } from "../Markdown";
 import { jget } from "./api";
 import { PriPill } from "./shared";
 import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
+import { displayFileName } from "@/lib/uploadTypes";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
@@ -426,8 +427,11 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
 }
 
 // Attachment chips parsed out of a user message's markers: image thumbnails
-// (click opens full size) and text-file chips (a big paste diverted to a file;
-// click opens it). Both are served from the task's uploads dir.
+// (click opens full size) and file chips for every other type (click opens or
+// downloads it, per lib/uploadTypes.ts servedType). Both are served from the
+// task's uploads dir. The chip shows the user's own filename — the staged name
+// minus its unique prefix — since with any type accepted "attached file" no
+// longer says anything.
 function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
   if (!items.length) return null;
   return (
@@ -439,8 +443,8 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
             <img src={a.url} alt="attached image" loading="lazy" />
           </a>
         ) : (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="file-chip" title={`Open ${a.name}`}>
-            {Icon.clip()} <span>attached file</span>
+          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="file-chip" title={`Open ${displayFileName(a.name)}`}>
+            {Icon.clip()} <span>{displayFileName(a.name)}</span>
           </a>
         )
       )}

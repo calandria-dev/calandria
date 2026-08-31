@@ -55,6 +55,8 @@ const PINNED = [
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
   "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
+  "lib/uploads.ts", //           where chat attachments are staged + swept; node:fs + config only, and the worktree sweep sits on it
+  "lib/uploadTypes.ts", //       what an attachment may be and is served as; zero imports, and the client bundles it alongside the routes that enforce it
   "lib/metrics.ts", //           the /metrics series; imported BY lib/runner.ts and by a route entry, so it must never reach an SDK itself
   "lib/schedule/store.ts", //    schedules + run ledger; DB only, no driving
   "lib/schedule/due.ts", //      fire/miss/skip adjudication; store + time math only

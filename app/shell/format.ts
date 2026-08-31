@@ -372,13 +372,14 @@ export function buildSessions(messages: Msg[]) {
 
 // ---------- chat attachments (images + large text pastes) ----------
 // An upload travels inside the message text as one marker line per file:
-// "[Attached image: /abs/path.png]" for images, "[Attached file: /abs/path.txt]"
-// for a big text paste diverted to a file (see PASTE_ATTACH_THRESHOLD). The
-// same string serves both sides — Claude Code opens the absolute path with its
-// Read tool (rendering images natively, reading text files as text), and the
-// transcript strips the marker back out to render an inline thumbnail (image)
-// or a file chip (text). The serving URL is derived from the path's
-// uploads/<task>/<file> tail, so no extra columns or event fields are needed.
+// "[Attached image: /abs/path.png]" for images, "[Attached file: /abs/path.ext]"
+// for every other type (any file may be attached; a big text paste is also
+// diverted here, see PASTE_ATTACH_THRESHOLD). The same string serves both
+// sides — the agent gets an absolute path to a file staged outside the worktree
+// and decides how to open it, and the transcript strips the marker back out to
+// render an inline thumbnail (image) or a named file chip. The serving URL is
+// derived from the path's uploads/<task>/<file> tail, so no extra columns or
+// event fields are needed.
 export const attachmentMarker = (absPath: string) => `[Attached image: ${absPath}]`;
 export const fileAttachmentMarker = (absPath: string) => `[Attached file: ${absPath}]`;
 const ATTACHMENT_RE = /^\[Attached (image|file): (.+)\]$/;

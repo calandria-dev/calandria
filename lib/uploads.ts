@@ -1,43 +1,24 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DB_DIR } from "@/lib/config";
+import { DB_DIR, MAX_UPLOAD_MB } from "@/lib/config";
 
-// Chat attachments (images + large text pastes). Uploaded files live under the
-// DB dir, deliberately OUTSIDE the task's git worktree — a pasted screenshot or
-// a 500 KB log dump must never show up in the task's diff or get swept into a
-// merge. The message text carries a marker line with the absolute path (see
-// attachmentMarker / fileAttachmentMarker in app/shell/format.ts);
-// Claude Code opens it with its Read tool (rendering images natively, reading
-// text files as text), so no SDK content-block plumbing is needed and
-// queued/pending messages keep working as plain text.
+// Chat attachments. Uploaded files live under the DB dir, deliberately OUTSIDE
+// the task's git worktree — a pasted screenshot, a 500 KB log dump or a vendor
+// PDF must never show up in the task's diff or get swept into a merge. The
+// message text carries a marker line with the absolute path (see
+// attachmentMarker / fileAttachmentMarker in app/shell/format.ts), so the bytes
+// never enter the prompt: the agent is told a file is staged at a path and
+// decides for itself how to open it — Read for text and images, a shell tool
+// for anything else. That also keeps queued/pending messages working as plain
+// text, with no SDK content-block plumbing anywhere.
+//
+// ANY file type is accepted. What a file IS lives in lib/uploadTypes.ts (shared
+// with the client); what it costs is bounded by MAX_UPLOAD_BYTES below.
 
 export const UPLOADS_DIR = path.join(DB_DIR, "uploads");
 
-// Image types Claude Code's Read tool can render. Keys are browser MIME types,
-// values the on-disk extension (also the URL-safe serving whitelist).
-export const IMAGE_EXT_BY_MIME: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-};
-
-// Everything the upload route accepts: images plus plain text (a big paste the
-// composer diverts to a file instead of inlining, see PASTE_ATTACH_THRESHOLD).
-export const UPLOAD_EXT_BY_MIME: Record<string, string> = {
-  ...IMAGE_EXT_BY_MIME,
-  "text/plain": "txt",
-};
-
-export const MIME_BY_EXT: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  txt: "text/plain; charset=utf-8",
-};
-
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
+/** Hard cap on a single attachment, from CALANDRIA_MAX_UPLOAD_MB (default 25 MB). */
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 export function taskUploadsDir(taskId: string): string {
   return path.join(UPLOADS_DIR, taskId);
@@ -45,9 +26,12 @@ export function taskUploadsDir(taskId: string): string {
 
 /**
  * Best-effort removal of a task's attachment dir. Fires on task/project hard
- * delete, and on the retention sweep (lib/retention.ts) for a finished task
- * whose transcript has aged out — the marker lines that pointed at these files
- * live in those messages, so the two go together.
+ * delete; on the retention sweep (lib/retention.ts) for a finished task whose
+ * transcript has aged out — the marker lines that pointed at these files live
+ * in those messages, so the two go together; and on the worktree sweep
+ * (lib/worktreeSweep.ts), which reclaims the disk of a long-dead task and has
+ * no reason to keep its staged uploads once the checkout they were staged for
+ * is gone.
  *
  * Returns whether a directory was actually there to remove, so the sweep can
  * count what it reclaimed instead of reporting every task it considered.
