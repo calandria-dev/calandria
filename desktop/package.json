@@ -1,6 +1,6 @@
 {
   "name": "calandria-desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Spike: Electron shell around the local Calandria server. Deliberately its own package so Electron (~280 MB unpacked) never lands in the app's node_modules, the Docker build, or CI.",
   "main": "main.js",
