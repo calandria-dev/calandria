@@ -27,6 +27,7 @@ import { NeedsYouMenu } from "./shell/NeedsYouMenu";
 import { PlanUsagePill } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
+import { isMacDesktopShell } from "./shell/useNotifications";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
 // one pane at a time (projects → tasks → session) with back affordances. matchMedia
@@ -43,6 +44,20 @@ function useIsMobile() {
     return () => mq.removeEventListener("change", sync);
   }, []);
   return mobile;
+}
+
+// On macOS the desktop shell hides the native title bar, so the app's own
+// titlebar inherits both of its jobs — leaving room for the traffic lights that
+// now float over its top-left corner, and being the thing you drag the window
+// by. Both are CSS; this only decides whether to ask for them.
+//
+// Same SSR contract as useIsMobile: the server renders the browser layout
+// (false) and the effect corrects on mount, because the UA this depends on is a
+// fact about the client and one server serves both (see isMacDesktopShell).
+function useMacDesktopChrome() {
+  const [macChrome, setMacChrome] = useState(false);
+  useEffect(() => setMacChrome(isMacDesktopShell(navigator.userAgent)), []);
+  return macChrome;
 }
 
 // Which side columns the window is too narrow to keep open, per
@@ -125,6 +140,7 @@ export default function Shell() {
   // slide-over) need it.
   const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
+  const macChrome = useMacDesktopChrome();
 
   // Auto-collapse: the shed set the window width implies, plus the columns the
   // user has re-opened from their spine in spite of it. The override is what
@@ -597,7 +613,7 @@ export default function Shell() {
   );
 
   return (
-    <div className={`app${isMobile ? " mobile" : ""}`}>
+    <div className={`app${isMobile ? " mobile" : ""}${macChrome ? " mac-chrome" : ""}`}>
       <div className="titlebar">
         <div className="tb-left">
           <div className="tb-logo" title="Calandria">

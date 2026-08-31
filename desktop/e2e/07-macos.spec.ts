@@ -94,16 +94,17 @@ test("hiddenInset gives the page the whole window, with the traffic lights intac
 });
 
 test("the traffic lights land on the app's own titlebar row", async ({}, testInfo) => {
-  // Where macOS puts the buttons under `hiddenInset`: inset from the top-left,
-  // in window points, which are CSS pixels at the renderer's default zoom. The
-  // numbers are AppKit's, not ours — nothing in this repo can move them — so
-  // they are a probe, not a contract. What the probe answers is whether the
-  // app painted anything underneath them.
+  // Where the buttons are, in window points — CSS pixels at the renderer's
+  // default zoom. These used to be AppKit's numbers and a probe rather than a
+  // contract; they are now main.js's, because the page has to reserve room for
+  // them and cannot reserve room for a position it does not know
+  // (`trafficLightPosition: { x: 18, y: 17 }`, three 12px buttons on a 20px
+  // pitch, so centres at 24/44/64 and a cluster ending at 70).
   const probes = [
-    { name: "close", x: 20, y: 24 },
-    { name: "minimise", x: 40, y: 24 },
-    { name: "zoom", x: 60, y: 24 },
-    { name: "past the lights", x: 100, y: 24 },
+    { name: "close", x: 24, y: 23 },
+    { name: "minimise", x: 44, y: 23 },
+    { name: "zoom", x: 64, y: 23 },
+    { name: "past the lights", x: 100, y: 23 },
   ];
 
   const hits = await shell.win.evaluate((points) => {
@@ -145,8 +146,56 @@ test("the traffic lights land on the app's own titlebar row", async ({}, testInf
   const topRow = hits.find((h) => h.name === "past the lights")!;
   expect(
     topRow.stack.length,
-    `nothing but html/body is laid out at (100, 24) — the window has a dead band across its top: ${JSON.stringify(topRow.stack)}`
+    `nothing but html/body is laid out at (100, 23) — the window has a dead band across its top: ${JSON.stringify(topRow.stack)}`
   ).toBeGreaterThan(2);
+});
+
+// The two jobs the page inherited when hiddenInset took the native bar away.
+// Both were missing until a user reported them (docs/DESKTOP_APP.md §5), and
+// neither is visible from anywhere else: tests/desktopWindowChrome.test.ts pins
+// the numbers agreeing across main.js and globals.css, but only a real packaged
+// launch can say whether the class that applies them ever reached the page —
+// it hangs off a user-agent read, and the token behind it is set by main.js.
+test("the page reserves the traffic lights' corner and is draggable", async () => {
+  const chrome = await shell.win.evaluate(() => {
+    const app = document.querySelector(".app");
+    const bar = document.querySelector(".titlebar");
+    const logo = document.querySelector(".tb-logo");
+    const button = document.querySelector(".titlebar button");
+    // Chromium exposes the prefixed property through getPropertyValue (it is
+    // how the Window Controls Overlay API is read in an ordinary tab too), so
+    // this is the real computed cascade rather than a re-reading of the source.
+    const region = (el: Element | null) =>
+      el ? getComputedStyle(el).getPropertyValue("-webkit-app-region") : null;
+    return {
+      macChrome: !!app?.classList.contains("mac-chrome"),
+      barTop: bar?.getBoundingClientRect().top ?? null,
+      logoLeft: logo?.getBoundingClientRect().left ?? null,
+      barRegion: region(bar),
+      buttonRegion: region(button),
+      sawButton: !!button,
+    };
+  });
+
+  // The whole feature hangs off this one class, so it is asserted before
+  // anything it turns on: without it every check below reads as "no padding,
+  // no drag region" and the diagnosis would be the CSS rather than the UA.
+  expect(chrome.macChrome, "the shell's own UA token never reached the page — isMacDesktopShell() said no").toBe(true);
+
+  // The bar starts at the very top of the window (hiddenInset gave it those
+  // rows) and its content starts clear of the buttons: 18 + 52 = 70 is the
+  // right edge of the zoom button, and anything left of that is underneath it.
+  expect(chrome.barTop).toBe(0);
+  expect(
+    chrome.logoLeft,
+    "the Calandria logo is underneath the traffic lights — the titlebar's left inset is too small"
+  ).toBeGreaterThanOrEqual(70);
+
+  // And the bar moves the window, because nothing else can. A button inside a
+  // drag region does not fire, so the opt-out is half of the same fact.
+  expect(chrome.barRegion).toBe("drag");
+  expect(chrome.sawButton).toBe(true);
+  expect(chrome.buttonRegion, "a titlebar button sits inside the drag region and would move the window instead of firing").toBe("no-drag");
 });
 
 test("the menubar's submenus carry the roles the system shortcuts come from", async () => {

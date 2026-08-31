@@ -178,6 +178,27 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
   padding:0 16px;background:var(--topbar);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-bottom:1px solid var(--line);z-index:30;
 }
+
+/* The macOS desktop shell (titleBarStyle:"hiddenInset") has no native title bar,
+   so this one does both of its jobs. Its traffic lights are placed at x:18 by
+   desktop/main.js and the cluster is 52px wide (three 12px buttons on a 20px
+   pitch), so 86px leaves the logo exactly the 16px clear of them that it
+   normally sits from the window edge —
+   tests/desktopWindowChrome.test.ts fails if the two numbers drift apart. And
+   the bar is the window's drag handle, because with the native one gone there
+   is nothing else to move the window by; everything clickable in it opts back
+   out, or a button press would drag the window instead of firing. The .mobile
+   selector is the same rule at higher specificity: the phone titlebar overrides
+   padding-left later in this file, and a Mac window can be dragged below 760px.
+   Both are inert in a browser, which ignores -webkit-app-region and never gets
+   the class anyway (see isMacDesktopShell). */
+.app.mac-chrome .titlebar,
+.app.mac-chrome.mobile .titlebar{padding-left:86px;-webkit-app-region:drag;}
+.app.mac-chrome .titlebar button,
+.app.mac-chrome .titlebar a,
+.app.mac-chrome .titlebar input,
+.app.mac-chrome .titlebar .ny-menu{-webkit-app-region:no-drag;}
+
 .tb-left{grid-column:1;justify-self:start;display:flex;align-items:center;gap:14px;min-width:0;}
 /* Logomark + wordmark — see app/Logo.tsx. Lockup gap ≈ 0.3× the 14px wordmark
    size; the glyph is colored via currentColor through this wrapper. */
