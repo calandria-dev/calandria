@@ -67,12 +67,30 @@ export function Avatar({ who, agent }: { who: "user" | "cc"; agent?: string | nu
   return <span className={`av cc${mark ? ` ${agent}` : ""}`}>{mark ? mark() : Icon.bolt()}</span>;
 }
 
-// Which agent driver a task runs under (Claude Code / Codex …). Hidden when only
-// one agent is available (nothing to disambiguate) so single-agent workspaces
-// stay clutter-free. `multi` is passed by the caller from the agents bundle.
-export function AgentBadge({ label, multi }: { label: string; multi: boolean }) {
+// Which agent driver a task runs under (Claude Code / Codex …), as the brand
+// mark alone, sat left of the title it qualifies. Hidden when only one agent is
+// available (nothing to disambiguate) so single-agent workspaces stay
+// clutter-free. `multi` is passed by the caller from the agents bundle.
+//
+// The label moved to the tooltip. A word of prose was spending chip-width the
+// title beside it wanted, to say what a 14px logo says at a glance, and unlike
+// the tags it used to sit with there is nothing to DO with the agent: it's
+// fixed for the life of the session and clicking it filters nothing.
+//
+// An agent with no mark of its own (a third driver, the e2e mock) falls back to
+// the generic bolt exactly as `Avatar` does, rather than to the name. The slot
+// has to stay a FIXED, non-shrinking glyph: the title beside it is
+// `flex:1;min-width:0`, so a nowrap text chip in this row squeezes it to zero
+// width on a narrow column — which is the very crowding that had banished the
+// old chip to the card footer. The name is a hover away either way.
+export function AgentBadge({ agent, label, multi }: { agent?: string | null; label: string; multi: boolean }) {
   if (!multi) return null;
-  return <span className="agent-badge" title={`Runs on ${label}`}>{label}</span>;
+  const mark = agent ? AgentMark[agent] : undefined;
+  return (
+    <span className={`agent-badge${mark ? ` ${agent}` : ""}`} role="img" aria-label={`Runs on ${label}`} title={`Runs on ${label}`}>
+      {mark ? mark() : Icon.bolt()}
+    </span>
+  );
 }
 
 // ---- async-state primitives (pair with the .spinner/.load-note/.skel/.err-note

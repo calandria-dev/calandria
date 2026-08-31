@@ -103,11 +103,15 @@ test("the status is the one control the rail never drops", async ({ page }) => {
   await expect(rail(page).locator(".status-ctl .cv").first()).toBeVisible();
 });
 
-test("tags and the agent sit on the breadcrumb, not on the rail", async ({ page }) => {
+test("tags sit on the breadcrumb and the agent on the title, neither on the rail", async ({ page }) => {
   await openTask(page);
-  // Both are identity rather than controls, and both used to be chips here —
-  // where they were among the first things a narrow pane pushed off.
+  // Both are identity rather than controls, and both used to be chips on the
+  // rail — where they were among the first things a narrow pane pushed off.
   await expect(page.locator(".sess-head .crumb .gbadge")).toHaveCount(1);
   await expect(page.locator(".sh-tools .gbadge")).toHaveCount(0);
   await expect(page.locator(".sh-tools .agent-badge")).toHaveCount(0);
+  // The agent left the crumb too: as a mark it costs the title a glyph rather
+  // than a word, so it qualifies the title instead of clipping beside the tags.
+  await expect(page.locator(".sess-head .crumb .agent-badge")).toHaveCount(0);
+  await expect(page.locator(".sess-head .sh-title .agent-badge")).toHaveCount(1);
 });

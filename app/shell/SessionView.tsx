@@ -923,23 +923,25 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             <div className="crumb">
               <span className="pic" style={{ width: 16, height: 16, borderRadius: 5, background: project.color, display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700 }}>{project.name[0]}</span>
               {project.name} <span className="sep">/</span> task
-              {/* Tags and the agent are IDENTITY, not controls, and both came
-                  off the rail below, where they competed with the pickers for
-                  room on a narrow pane and were among the first things pushed
-                  out of it. Here they compete only with a fixed-length
-                  breadcrumb, and the line clips from the RIGHT, which is why
-                  the order is what it is: the tags say which feature this
-                  session is a step of and a task can carry several, while the
-                  agent is fixed for the life of the session, has nothing to do
-                  to it, and renders at all only on an instance with more than
-                  one agent connected. Clicking a tag still lights that tag's
+              {/* Tags are IDENTITY, not controls, and came off the rail below,
+                  where they competed with the pickers for room on a narrow pane
+                  and were among the first things pushed out of it. Here they
+                  compete only with a fixed-length breadcrumb, and the line
+                  clips from the RIGHT. Clicking one still lights that tag's
                   chip in the list/board exactly as the row badges do. */}
               {task.tag_ids.length > 0 && <span className="sep">·</span>}
               <TagBadges tagIds={task.tag_ids} tagsById={tagsById} max={mobile ? 1 : 2} onSelect={(id) => selectOneTag(project.id, id)} />
-              {multiAgent && <span className="sep">·</span>}
-              <AgentBadge label={agentLabel(agents, task.agent)} multi={multiAgent} />
             </div>
-            <div className="sh-title">{task.title}</div>
+            {/* The agent used to share the crumb with the tags and, on a narrow
+                pane, was the half of that pair the clip ate first. It belongs
+                on the title line instead: it is a property of the session the
+                title names, it renders at all only on an instance with more
+                than one agent connected, and as a mark it costs the title a
+                logo's width rather than a word's. */}
+            <div className="sh-title">
+              <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={multiAgent} />
+              {task.title}
+            </div>
           </div>
           {/* One rail at every width. It renders what fits and hands the rest
               to "More", which wraps the whole set into rows. */}
