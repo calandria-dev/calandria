@@ -2031,6 +2031,7 @@ export function getInstanceUsage(): InstanceUsage {
          COALESCE(SUM(output_tokens), 0) AS output_tokens,
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+         COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
          COUNT(*) AS turns
        FROM task_usage`
     )

@@ -101,10 +101,26 @@ describe("internal agent usage", () => {
       cost_usd: 0.25,
       total_tokens: 100,
       turns: 1,
+      subagent_tokens: 0,
       internal_cost_usd: 1.5,
       internal_tokens: 10,
       internal_jobs: 1,
     });
+  });
+
+  // InstanceUsage extends UsageTotals, so the rollup PROMISES this field. Its
+  // query is hand-written rather than sharing sumUsage(), which is exactly how
+  // a new column gets declared in the type and never selected — undefined at
+  // runtime under a signature saying number.
+  it("carries sidechain tokens in the instance rollup, not just the per-task one", () => {
+    const project = createProject({ name: "Sidechains" });
+    const task = createTask({ project_id: project.id, title: "Task", description: "" });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: { ...USAGE, subagent_tokens: 4_000 } });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: USAGE });
+
+    const rollup = getInstanceUsage();
+    expect(typeof rollup.subagent_tokens).toBe("number");
+    expect(rollup.subagent_tokens).toBe(4_000);
   });
 
   it("groups the settings readout by job and excludes usage older than 30 days", () => {
