@@ -16,6 +16,9 @@ describe("modelLabel", () => {
     expect(modelLabel("claude-opus-4-8-20251101", claude)).toBe("Opus 4.8");
     expect(modelLabel("claude-sonnet-5", claude)).toBe("Sonnet 5");
     expect(modelLabel("claude-fable-5", claude)).toBe("Fable 5");
+    // The pinned 5.1 id must not be shadowed by the shorter `claude-fable-5`
+    // reading, and must not drag the plain 5 id up to it either.
+    expect(modelLabel("claude-fable-5-1", claude)).toBe("Fable 5.1");
     expect(modelLabel("claude-haiku-4-5", claude)).toBe("Haiku 4.5");
   });
 
@@ -61,6 +64,7 @@ describe("claude model list", () => {
     expect(contextWindowOf("opus", claude)).toBe(200_000);
     expect(contextWindowOf("opus[1m]", claude)).toBe(1_000_000);
     expect(contextWindowOf("fable", claude)).toBe(1_000_000);
+    expect(contextWindowOf("claude-fable-5-1", claude)).toBe(1_000_000);
   });
 
   // Issue #39: the two misses are different questions. An inherited (null)
