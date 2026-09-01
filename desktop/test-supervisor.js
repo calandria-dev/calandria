@@ -15,6 +15,7 @@ const os = require("node:os");
 const fs = require("node:fs");
 const http = require("node:http");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
+const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
 const {
   AppEvents,
   NeedsYou,
@@ -109,6 +110,7 @@ function hold(port) {
       env: { PATH: "/usr/bin", ELECTRON_RUN_AS_NODE: "1", ELECTRON_IS_DEV: "1", HOME: "/home/x" },
       port: 4123,
       ptyPort: 4124,
+      nodeEnv: "production",
     });
     assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
     assert.equal(env.ELECTRON_IS_DEV, undefined);
@@ -117,6 +119,16 @@ function hold(port) {
     assert.equal(env.PTY_HOST, "127.0.0.1");
     assert.equal(env.NODE_ENV, "production");
     assert.equal(env.HOME, "/home/x");
+  });
+
+  await test("sidecarEnv sets NODE_ENV only when the caller names one, and deletes an inherited one otherwise", async () => {
+    // issue #102 §2: the pty sidecar (and, through it, every agent turn) must
+    // not inherit NODE_ENV=production just because the launching shell had it —
+    // only the caller building the APP sidecar's env asks for it by name.
+    const named = sidecarEnv({ env: {}, port: 1, ptyPort: 2, nodeEnv: "production" });
+    assert.equal(named.NODE_ENV, "production");
+    const unnamed = sidecarEnv({ env: { NODE_ENV: "production" }, port: 1, ptyPort: 2 });
+    assert.equal("NODE_ENV" in unnamed, false, "an inherited NODE_ENV must be dropped, not merely left unset");
   });
 
   await test("sidecarEnv never invents a SHELL — the pty sidecar probes a better one", async () => {
@@ -132,6 +144,80 @@ function hold(port) {
     assert.equal(win.SHELL, undefined, "COMSPEC is not promoted to SHELL");
     assert.equal(noComspec.SHELL, undefined, "and nothing is invented when neither is set");
     assert.equal(preset.SHELL, "C:\\ProgramData\\nu\\nu.exe", "an inherited SHELL is never overwritten");
+  });
+
+  // ---------------------------------------------------------------------------
+  // The desktop launch env file (env-file.js, issue #102 §1) — the desktop
+  // app's only substitute for a launcher script that sources a file and
+  // `exec npm start`s.
+  // ---------------------------------------------------------------------------
+
+  await test("envFilePath resolves CALANDRIA_ENV_FILE, then XDG_CONFIG_HOME, then the ~/.config default", async () => {
+    assert.equal(envFilePath({ CALANDRIA_ENV_FILE: "/custom/path/env" }), "/custom/path/env");
+    // Set alongside XDG_CONFIG_HOME/HOME to prove the explicit override still wins.
+    assert.equal(
+      envFilePath({ CALANDRIA_ENV_FILE: "/custom/path/env", XDG_CONFIG_HOME: "/xdg", HOME: "/home/x" }),
+      "/custom/path/env",
+    );
+    assert.equal(envFilePath({ XDG_CONFIG_HOME: "/xdg" }), path.join("/xdg", "calandria", "env"));
+    const home = os.homedir();
+    assert.equal(envFilePath({}), path.join(home, ".config", "calandria", "env"));
+  });
+
+  await test("parseEnvFile: comments, export, quoting, and the deliberately dumb rules", async () => {
+    const text = [
+      "# a comment",
+      "",
+      "   ",
+      "export FOO=bar",
+      "URL=https://x/y?a=1=2", // '=' inside the value; split on the FIRST '=' only
+      'DOUBLE="line one\\nline two\\ttabbed \\"quoted\\" \\\\ done"',
+      "SINGLE='no $expansion or \\n here'",
+      "HASHY=abc#def", // unquoted '#' is part of the value, not a comment
+      "9BAD=nope", // invalid identifier
+      "NOEQUALS", // no '=' at all
+      "FOO=later-wins", // later line wins over the earlier export
+    ].join("\n");
+    const { vars, skipped } = parseEnvFile(text);
+    assert.equal(vars.FOO, "later-wins");
+    assert.equal(vars.URL, "https://x/y?a=1=2");
+    assert.equal(vars.DOUBLE, 'line one\nline two\ttabbed "quoted" \\ done');
+    assert.equal(vars.SINGLE, "no $expansion or \\n here");
+    assert.equal(vars.HASHY, "abc#def");
+    assert.equal("9BAD" in vars, false);
+    assert.equal("NOEQUALS" in vars, false);
+    assert.deepEqual(
+      skipped.map((s) => s.reason),
+      ["invalid name", "no ="],
+    );
+    // Line numbers are 1-indexed and point at the real lines.
+    assert.equal(skipped[0].line, 9);
+    assert.equal(skipped[1].line, 10);
+  });
+
+  await test("parseEnvFile strips a leading UTF-8 BOM", async () => {
+    const { vars } = parseEnvFile("﻿FOO=bar\n");
+    assert.equal(vars.FOO, "bar");
+  });
+
+  await test("loadEnvFile: found:false for a missing path, and a real read for one that exists", async () => {
+    const missing = loadEnvFile({ file: "/nonexistent/calandria-env-does-not-exist" });
+    assert.equal(missing.found, false);
+    assert.deepEqual(missing.vars, {});
+    assert.deepEqual(missing.skipped, []);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-envfile-"));
+    const file = path.join(dir, "env");
+    try {
+      fs.writeFileSync(file, "FOO=bar\nBAD\n");
+      const loaded = loadEnvFile({ file });
+      assert.equal(loaded.found, true);
+      assert.equal(loaded.path, file);
+      assert.deepEqual(loaded.vars, { FOO: "bar" });
+      assert.equal(loaded.skipped.length, 1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   await test("needsPathRepair fires on launchd's stub PATH and not on a real one", async () => {
@@ -975,6 +1061,34 @@ function hold(port) {
       start.indexOf('require("electron-updater")') > start.indexOf("if (!updateDisposition.enabled)"),
       "electron-updater must be required after the disposition gate",
     );
+  });
+
+  await test("every local module the desktop entrypoints require is one electron-builder packs", async () => {
+    // electron-builder.cjs's `files` is an explicit whitelist, and asar packs
+    // exactly what it names. A new sibling module — env-file.js was the one
+    // that prompted this — resolves fine from a checkout under `npm start` and
+    // from `node test-supervisor.js`, and then throws MODULE_NOT_FOUND inside
+    // the packaged .app, at boot, with a stack nobody can reproduce locally.
+    // Nothing else catches it: the unit tests run from source and the packaged
+    // e2e (06-packaged.spec.ts) only runs on a labelled CI lane.
+    const { files } = require("./electron-builder.cjs");
+    const packed = new Set(files.filter((f) => f.endsWith(".js")));
+    const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js"];
+    for (const entry of entrypoints) {
+      const src = fs.readFileSync(path.join(__dirname, entry), "utf8");
+      for (const m of src.matchAll(/require\(["']\.\/([^"']+)["']\)/g)) {
+        const target = m[1].endsWith(".js") ? m[1] : `${m[1]}.js`;
+        assert.ok(
+          packed.has(target),
+          `${entry} requires ./${m[1]} but electron-builder.cjs's files list does not pack ${target}`,
+        );
+      }
+    }
+    // And the whitelist must not name a file that no longer exists, or it
+    // stops being readable as the answer to "what ships".
+    for (const f of packed) {
+      assert.ok(fs.existsSync(path.join(__dirname, f)), `files names ${f}, which is not in desktop/`);
+    }
   });
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

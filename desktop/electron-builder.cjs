@@ -38,7 +38,21 @@ module.exports = {
   // (out/fileMatcher.js). So `electron-updater`, this package's one runtime
   // dependency, is packed because it is in `dependencies` — not because it is
   // named here, and it must not be moved to `devDependencies`.
-  files: ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "loading.html", "assets/**", "package.json"],
+  // An explicit whitelist, so a new module supervisor.js requires has to be
+  // added HERE too or the packaged app dies on the require with a stack nobody
+  // can reproduce from a checkout — `npm start` resolves it from disk either
+  // way. desktop/test-supervisor.js pins this list against exactly that.
+  files: [
+    "main.js",
+    "supervisor.js",
+    "env-file.js",
+    "notifier.js",
+    "tray-residency.js",
+    "updater.js",
+    "loading.html",
+    "assets/**",
+    "package.json",
+  ],
   extraResources: [
     { from: "payload", to: "app-payload" },
     { from: "payload/node_modules", to: "app-payload/node_modules" },

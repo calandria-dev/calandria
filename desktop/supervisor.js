@@ -27,6 +27,7 @@ const { spawn } = require("node:child_process");
 const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+const { loadEnvFile } = require("./env-file");
 
 const MIN_NODE_MAJOR = 22; // package.json engines: >=22
 
@@ -166,23 +167,41 @@ function nodeVersion(bin, env = process.env) {
  * invoke into a headless node, and ELECTRON_IS_DEV / _RUN_AS_NODE showing up in
  * a user's terminal is confusing at best.
  *
- * SET — ports and NODE_ENV, and nothing else. There used to be a win32 SHELL
- * fallback here, from when pty-server.js's unset-$SHELL default was "/bin/zsh";
- * the Windows-support work replaced that with a real probe (CALANDRIA_PTY_SHELL
- * -> $SHELL -> pwsh.exe -> powershell.exe -> COMSPEC, docs/WINDOWS.md), which
- * turned the mitigation into a DOWNGRADE: $SHELL is checked before the probe, so
- * injecting COMSPEC handed every desktop terminal tab cmd.exe on a box where the
- * server on its own would have picked PowerShell. Measured on Windows 11 with
- * pwsh 7 installed. An inherited SHELL is still passed through untouched, which
- * is the case the removal does not change.
+ * SET — ports, PTY_HOST, and (optionally) NODE_ENV. There used to be a win32
+ * SHELL fallback here, from when pty-server.js's unset-$SHELL default was
+ * "/bin/zsh"; the Windows-support work replaced that with a real probe
+ * (CALANDRIA_PTY_SHELL -> $SHELL -> pwsh.exe -> powershell.exe -> COMSPEC,
+ * docs/WINDOWS.md), which turned the mitigation into a DOWNGRADE: $SHELL is
+ * checked before the probe, so injecting COMSPEC handed every desktop terminal
+ * tab cmd.exe on a box where the server on its own would have picked
+ * PowerShell. Measured on Windows 11 with pwsh 7 installed. An inherited SHELL
+ * is still passed through untouched, which is the case the removal does not
+ * change.
+ *
+ * NODE_ENV is now the CALLER's choice (`nodeEnv`), not unconditionally
+ * "production", because one env object used to feed both sidecars and
+ * pty-server.js has nothing to do with Next: it handed NODE_ENV=production to
+ * every terminal tab and, through the app sidecar, to every agent turn spawned
+ * from it — where it makes `npm install` in a user's project skip
+ * devDependencies and still exit 0 (issue #102 §2). The app-sidecar half of
+ * that is still required, not a bug: the sidecar ships a prebuilt `.next` and
+ * server.js:118 keys `dev` off NODE_ENV, so the app sidecar still gets
+ * `nodeEnv: "production"` from its caller below. What is NOT fixed here is the
+ * agent-TURN half — a turn is a child of the app sidecar, which legitimately
+ * keeps NODE_ENV=production for Next's sake, so a turn inheriting it is a
+ * separate leak with a separate fix: lib/agentEnv.ts strips it back out of the
+ * env each turn's own subprocess gets. Getting that cross-reference right
+ * matters, because the issue's own suggested fix (drop NODE_ENV here) would
+ * have broken the app sidecar instead of fixing the turn.
  */
-function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, extra = {} } = {}) {
+function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, nodeEnv = null, extra = {} } = {}) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {
     if (k.startsWith("ELECTRON_")) continue;
     if (v !== undefined) out[k] = v;
   }
-  out.NODE_ENV = "production";
+  if (nodeEnv) out.NODE_ENV = nodeEnv;
+  else delete out.NODE_ENV;
   if (port) out.PORT = String(port);
   if (ptyPort) out.PTY_PORT = String(ptyPort);
   out.PTY_HOST = env.PTY_HOST || "127.0.0.1";
@@ -235,15 +254,23 @@ function loginShellPath({ env = process.env, timeoutMs = 5000 } = {}) {
   }
 }
 
-/** Poll GET /api/version until it answers 200, or give up. */
-async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal = null } = {}) {
+/**
+ * Poll GET /api/version until it answers 200, or give up.
+ *
+ * `env` is the env the SIDECARS were given, not this process's, for the same
+ * reason drainApp() reads it that way: SERVICE_TOKEN can now arrive from the
+ * desktop env file (desktop/env-file.js), which Electron's own process.env
+ * never sees. Reading process.env here would poll an authenticated instance
+ * with no token and time the boot out on a 401.
+ */
+async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal = null, env = process.env } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("readiness wait aborted");
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
-        headers: process.env.SERVICE_TOKEN ? { "x-service-token": process.env.SERVICE_TOKEN } : {},
+        headers: env.SERVICE_TOKEN ? { "x-service-token": env.SERVICE_TOKEN } : {},
         // Also on the fetch, not just the loop head: an abort arriving while a
         // probe is in flight should end the wait now rather than after this
         // request and the next sleep.
@@ -362,13 +389,61 @@ class Supervisor {
       // like a wrapper bug. Say the real thing instead.
       throw new Error(`no production build found at ${next} — run \`npm run build\` in ${this.repoRoot} first`);
     }
-    // PATH repair comes FIRST: it decides whether `node`, `git`, `gh` and
-    // `codex` are findable at all, and resolveNode below is one of its readers.
     this.effectiveEnv = this.env;
-    if (needsPathRepair(this.env)) {
-      const repaired = loginShellPath({ env: this.env });
+
+    // The desktop app is the one Calandria launch path with no wrapper script
+    // in front of it. `npm start`/`npm run dev` inherit whatever exported the
+    // shell that ran them, and a self-hosted deployment is expected to write a
+    // launcher that sources a file and `exec npm start`s (docs/SELF_HOSTING.md)
+    // — but a Finder double-click, a Dock click or a Login Item hands main.js
+    // launchd's own minimal environment, with nothing sourced and nothing
+    // exported. This is the desktop replacement for that launcher (issue #102
+    // §1): a small, predictable file (desktop/env-file.js) read before either
+    // sidecar spawns. It deliberately does NOT strip ANTHROPIC_API_KEY and
+    // friends here — both sidecars already call stripInheritedAgentKeys() on
+    // their own process.env at boot (pty-server.js:237, server.js), and doing
+    // it here first would break the CALANDRIA_ALLOW_API_KEY_ENV opt-in that the
+    // env file itself is allowed to set.
+    const loaded = loadEnvFile({ env: this.env });
+    if (loaded.found) {
+      const names = Object.keys(loaded.vars);
+      if (names.length) this.effectiveEnv = { ...this.effectiveEnv, ...loaded.vars };
+      // Names only, never values: this log is shown verbatim on the failure
+      // screen, and this is the one file people put tokens in.
+      this.log(`[env] ${loaded.path}: ${names.length} variable(s) — ${names.join(", ")}`);
+      for (const s of loaded.skipped) this.log(`[env] WARN: ${loaded.path}:${s.line} ignored (${s.reason})`);
+    } else {
+      this.log(`[env] no env file at ${loaded.path}`);
+    }
+
+    // PATH repair comes next: it decides whether `node`, `git`, `gh` and
+    // `codex` are findable at all, and resolveNode below is one of its readers.
+    // Both reads now go through effectiveEnv rather than this.env, so an env
+    // file that sets SHELL or PATH is honoured by the probe itself.
+    //
+    // CALANDRIA_DESKTOP_PATH_PROBE is the escape hatch for the smaller trap
+    // needsPathRepair() has on its own: it fires only when EVERY PATH entry is
+    // in the launchd stub set, so a machine whose GUI PATH happens to carry one
+    // extra plausible directory gets no repair AND no warning (issue #102 §1,
+    // "a second, smaller trap"). Unconditional probing does not become the
+    // default, because the repair costs a full login-shell startup (rc files,
+    // version managers) on every launch, and "auto" already covers the
+    // documented failure mode.
+    const probeMode = String(this.effectiveEnv.CALANDRIA_DESKTOP_PATH_PROBE || "auto").toLowerCase();
+    let wantProbe;
+    if (probeMode === "off") wantProbe = false;
+    else if (probeMode === "always") wantProbe = true;
+    else wantProbe = needsPathRepair(this.effectiveEnv);
+
+    if (Object.prototype.hasOwnProperty.call(loaded.vars, "PATH")) {
+      // An operator who wrote PATH into the env file means it — probing over
+      // the top of an explicit value would silently overwrite what they asked
+      // for with the login shell's PATH instead.
+      this.log(`[env] PATH supplied by ${loaded.path} — skipping the launchd-stub probe`);
+    } else if (wantProbe) {
+      const repaired = loginShellPath({ env: this.effectiveEnv });
       if (repaired) {
-        this.effectiveEnv = { ...this.env, PATH: repaired };
+        this.effectiveEnv = { ...this.effectiveEnv, PATH: repaired };
         this.log(`[shell] PATH looked like launchd's stub — took the login shell's instead`);
       } else {
         this.log(`[shell] WARN: PATH looks minimal and the login-shell probe failed; git/gh/codex may not resolve`);
@@ -379,7 +454,7 @@ class Supervisor {
       // desktop/e2e/08-macos-launchd.spec.ts unable to tell "the repair is
       // broken" from "this machine was never handed the stub". One line, on the
       // branch that is about to decide whether every agent CLI resolves.
-      this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.env.PATH}`);
+      this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.effectiveEnv.PATH}`);
     }
 
     const node = resolveNode({ env: this.effectiveEnv, resourcesPath: this.resourcesPath });
@@ -392,7 +467,12 @@ class Supervisor {
     if (this.port !== this.preferredPort) {
       this.log(`[shell] port ${this.preferredPort} busy — using ${this.port}`);
     }
-    const env = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
+    const ptyEnv = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
+    // The app sidecar alone keeps NODE_ENV=production: it ships a prebuilt
+    // `.next` and server.js:118 keys its own dev/prod branch off it. The pty
+    // sidecar (and, through it, every terminal tab and agent turn) gets none —
+    // see the NODE_ENV paragraph on sidecarEnv above.
+    const appEnv = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir, nodeEnv: "production" });
 
     // The readiness wait races against this: it resolves the moment either
     // sidecar exits, which is a boot that has already failed no matter how long
@@ -404,8 +484,8 @@ class Supervisor {
 
     // pty first: server.js proxies /pty and logs its target at boot, so having
     // the sidecar already listening keeps the first terminal open from racing.
-    this.spawnChild("pty", this.ptyScript, env);
-    this.spawnChild("app", this.serverScript, env);
+    this.spawnChild("pty", this.ptyScript, ptyEnv);
+    this.spawnChild("app", this.serverScript, appEnv);
 
     // The timeout stays the backstop for the OTHER failure — a sidecar that is
     // alive and simply never answers (a wedged Next build, a half-migrated db).
@@ -413,8 +493,9 @@ class Supervisor {
     // running, so there the deadline is the only evidence there is.
     const abort = new AbortController();
     const ready = waitForReady(this.port, {
-      timeoutMs: Number(this.env.CALANDRIA_READY_TIMEOUT_MS || 90_000),
+      timeoutMs: Number(this.effectiveEnv.CALANDRIA_READY_TIMEOUT_MS || 90_000),
       signal: abort.signal,
+      env: this.effectiveEnv,
     }).then(
       (version) => ({ version }),
       (error) => ({ error })

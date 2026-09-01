@@ -31,6 +31,7 @@ import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
+import { agentTurnEnv } from "../../agentEnv";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -206,6 +207,10 @@ async function* runTurn(
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
     config: calandriaMcpConfig(project, task, await inheritedServerOverrides()),
+    // Drops NODE_ENV and repoints PORT at the project's own port — see
+    // lib/agentEnv.ts for why the CLI subprocess can't just inherit the
+    // server's own env.
+    env: agentTurnEnv(project),
   });
   const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
 

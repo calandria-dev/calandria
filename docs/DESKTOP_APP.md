@@ -631,6 +631,75 @@ cover the policy and `desktop/e2e` covers the permission handler and the
 close-then-quit sequence; the notification, tray and badge calls themselves are
 what the desktop bench's native-integration specs are for.
 
+### 5.2 Launch environment: the env file, NODE_ENV scoping, and agent turns (issue #102)
+
+Every other Calandria launch path has something in front of it that can export
+variables: `npm start` / `npm run dev` inherit whatever exported the shell that
+ran them, and a self-hosted deployment is expected to write a launcher that
+sources a file and `exec npm start`s (see "Configuration" in
+[`SELF_HOSTING.md`](SELF_HOSTING.md)). The desktop app has none of that — a
+Finder double-click, a Dock click or a Login Item hands `main.js` launchd's own
+minimal environment, with nothing sourced and nothing exported, so a Homebrew
+`PATH` addition or an `ANTHROPIC_API_KEY` a user's shell profile sets is
+invisible to it.
+
+**The env file** (`desktop/env-file.js`) is the desktop replacement for that
+launcher. `Supervisor.start()` reads a plain `KEY=VALUE` file before spawning
+either sidecar and layers it OVER the inherited environment and UNDER the
+app-owned vars (`PORT`, `PTY_PORT`, `PTY_HOST`, `CALANDRIA_DB_DIR`) the
+supervisor sets afterward — an operator's file can widen what the app sees, but
+can't repoint the ports the supervisor itself just picked. `CALANDRIA_ENV_FILE`
+names the file explicitly; empty defaults to
+`$XDG_CONFIG_HOME/calandria/env` or `~/.config/calandria/env`, the same path on
+every platform on purpose — one documented convention beats a per-OS guess. A
+missing file is not an error; the boot log says so and launch continues.
+
+The format is deliberately dumb on purpose: comments (`#`), an optional
+`export ` prefix, single- and double-quoted values (only double-quoted ones
+unescape `\n`/`\r`/`\t`/`\\`/`\"`), and an unquoted value taken whole — a `#`
+inside it is part of the value, not a comment, since tokens routinely contain
+one. No variable expansion, no command substitution, no `source`d files: that
+is not a missing feature, it's what makes reading this file thirty seconds of
+work instead of auditing a shell script for what it might do. **Values are
+never logged, only variable names** — the boot log naming what an env file set
+is shown verbatim on the failure screen, and this is the one file people put
+tokens in.
+
+Reading the file first does **not** re-run key stripping: both sidecars already
+call `stripInheritedAgentKeys()` on their own `process.env` at boot
+(`pty-server.js:237`, `server.js`), and stripping again here, before those
+calls, would break the `CALANDRIA_ALLOW_API_KEY_ENV` opt-in the env file itself
+is allowed to set.
+
+**`CALANDRIA_DESKTOP_PATH_PROBE`** governs the PATH repair in §5 above.
+`needsPathRepair()` only fires when *every* PATH entry is in launchd's stub set,
+so a machine whose GUI PATH happens to carry one extra plausible directory gets
+no repair and no warning — a second, smaller trap than the stub case itself.
+`auto` (default) keeps today's behavior: probe only when the stub is detected.
+`always` probes on every launch regardless (costing a real login-shell startup
+— rc files, version managers — every time), and `off` never probes. If the env
+file itself sets `PATH`, the probe is skipped outright and the boot log says
+so: an operator who wrote `PATH` down means it, and a probe would silently
+overwrite it with the login shell's value instead.
+
+**NODE_ENV scoping.** `sidecarEnv()` used to set `NODE_ENV=production`
+unconditionally for both sidecars, because `pty-server.js` doesn't distinguish
+"a terminal tab" from "the process an agent turn is a child of" — it's the same
+environment either way. That meant every desktop terminal tab, and every agent
+turn spawned from the app sidecar, inherited `NODE_ENV=production`, which makes
+`npm install` in a user's project quietly skip `devDependencies` and still exit
+0 — test runners and linters vanish with no error. `sidecarEnv()` now takes
+`NODE_ENV` as the caller's explicit choice: the **app** sidecar still gets
+`nodeEnv: "production"` (it ships a prebuilt `.next` and `server.js` keys its
+dev/prod branch off it), and the **pty** sidecar gets none. That fixes the
+terminal-tab case, but a turn's own subprocess is a child of the app sidecar,
+which still legitimately runs with `NODE_ENV=production` — so the turn-level
+leak is fixed one layer down: `lib/agentEnv.ts` builds the environment each
+main-turn `query()`/`Codex` process gets, dropping `NODE_ENV` again and
+repointing `PORT` at the task's own project port (`buildProjectContext()` tells
+every agent to bind its dev server to `$PORT`, and an unedited inherited `PORT`
+would point that dev server at Calandria's own listening port instead).
+
 ## 6. Packaging
 
 The prototype now produces a real artifact, not just a `desktop/` checkout:

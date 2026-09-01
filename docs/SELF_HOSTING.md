@@ -324,6 +324,16 @@ copyable form. Export variables in the environment that launches `npm run dev`
 before Next boots, so a `.env` file alone doesn't cover `PORT`,
 `CALANDRIA_HOSTNAME`, or `PTY_*`.
 
+The desktop app is the one exception, and it's desktop-only: `server.js` and
+`pty-server.js` still read only `process.env`, exactly as above, so this
+contract is unchanged for every self-hosted deployment. What's different is
+that the desktop app has no launcher script sourcing anything in front of it —
+a Finder/Dock/Login Item launch hands it launchd's own minimal environment — so
+it reads `$CALANDRIA_ENV_FILE` (default `~/.config/calandria/env`) as its own
+substitute for the launcher this section assumes. See
+[`DESKTOP_APP.md`](DESKTOP_APP.md) §5.2 for the file format and how it layers
+with the app's own env.
+
 Variables below were renamed from an earlier `ORCH_*` naming. Every old name
 still works as a fallback (a `CALANDRIA_*` value wins if both are set), and
 the server prints one boot-time warning naming whichever old names are still
