@@ -34,6 +34,7 @@ const PINNED = [
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
+  "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only

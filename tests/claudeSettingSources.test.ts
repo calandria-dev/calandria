@@ -66,7 +66,7 @@ import type { Project, Task } from "@/lib/types";
 // settingSources "must include 'project' to load CLAUDE.md files".
 const TURN_SOURCES = ["user", "project"];
 
-const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
+const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "", port: 4301 } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null } as unknown as Task;
 
 // Drive a real turn to completion. query() is mocked to an empty stream, so the
@@ -137,6 +137,14 @@ describe("claude driver setting sources", () => {
     expect(options.skills).toBeUndefined();
     // Turns are resumed by session id across a task's whole lineage.
     expect(options.persistSession).toBeUndefined();
+  });
+
+  it("scopes the turn's own process env: no NODE_ENV, PORT pinned to the project (issue #102)", async () => {
+    await runTurn();
+    const env = optionsOfCall(0).env as Record<string, string>;
+    expect(env).toBeDefined();
+    expect("NODE_ENV" in env).toBe(false);
+    expect(env.PORT).toBe(String(project.port));
   });
 });
 

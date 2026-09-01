@@ -95,6 +95,7 @@ import {
   verifyTurn,
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens } from "./usage";
+import { agentTurnEnv } from "../../agentEnv";
 
 // Which on-disk setting sources every Claude query loads, pinned explicitly
 // rather than left to the SDK default (sdk.d.ts: "when omitted, all sources
@@ -977,6 +978,9 @@ async function* runTurn(
     prompt: promptStream(),
     options: {
       cwd,
+      // Drops NODE_ENV and repoints PORT at the project's own port — see
+      // lib/agentEnv.ts for why a turn can't just inherit the server's env.
+      env: agentTurnEnv(project),
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.
