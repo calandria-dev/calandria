@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.6.2](https://github.com/calandria-dev/calandria/compare/v0.6.1...v0.6.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* **desktop:** read a launch env file, and stop leaking NODE_ENV into turns ([#103](https://github.com/calandria-dev/calandria/issues/103)) ([86446c1](https://github.com/calandria-dev/calandria/commit/86446c1d6b230f8be1baac847619e605fc8eaaf1))
+
 ## [0.6.1](https://github.com/calandria-dev/calandria/compare/v0.6.0...v0.6.1) (2026-08-31)
 
 
