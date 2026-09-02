@@ -200,6 +200,10 @@ export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart 
   autoStart: boolean; onAutoStart: (on: boolean) => void;
 }) {
   const rows = useMemo(() => blockerCandidates(candidates, value), [candidates, value]);
+  // blockerCandidates only lists a suggestion that's already an edge, so in
+  // practice every suggested row here is ticked — the `value` check is what
+  // keeps the notice honest if that ever stops being true.
+  const pendingSuggestions = useMemo(() => rows.filter((c) => c.suggested && value.includes(c.id)).length, [rows, value]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className="field">
@@ -213,9 +217,17 @@ export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart 
               <input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} />
               <StatusDot status={c.status} />
               <span className="dep-title">{c.title}</span>
+              {c.suggested ? <span className="dep-sugg" title="Still in the Suggested tray — it blocks until it's accepted and finished, dismissed, or unticked here">Suggested</span> : null}
               <span className="dep-status">{SLABEL[c.status]}</span>
             </label>
           ))}
+        </div>
+      )}
+      {pendingSuggestions > 0 && (
+        <div className="hlp">
+          {pendingSuggestions === 1 ? "One blocker is" : `${pendingSuggestions} blockers are`} still an unreviewed suggestion. Accept
+          {pendingSuggestions === 1 ? " it" : " them"} from the Suggested tray to work through the plan in order, or untick
+          {pendingSuggestions === 1 ? " it" : " them"} here to start now.
         </div>
       )}
       {value.length > 0 ? (
