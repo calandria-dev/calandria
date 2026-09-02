@@ -88,8 +88,8 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // thing worth saying and stops.
   if (st.baseMissing)
     return (
-      <div className="sync-banner conflict" data-sync-state="base-missing" title={`Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`}>
-        <span className="sync-msg">{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</span>
+      <div className="sync-banner conflict" data-sync-state="base-missing" title={st.baseBranch ? `Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.` : "This task inherits its base branch from the project, and the project's is blank, so there is nothing to compare against, sync with or merge into. Set one in Settings → Project."}>
+        <span className="sync-msg">{st.baseBranch ? <>{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</> : <>This project has no base branch set — set one in Settings → Project</>}</span>
         <span className="sync-spacer" />
       </div>
     );

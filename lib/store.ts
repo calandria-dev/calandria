@@ -256,7 +256,7 @@ export function createProject(input: {
       `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch?.trim() || "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
@@ -285,6 +285,13 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const cur = getProject(id);
   if (!cur) return undefined;
   const n = { ...cur, ...patch };
+  // A blank branch KEEPS the current one. Every task falls through to this
+  // column for its base (task -> tag -> project, lib/baseBranch.ts), and
+  // branchExists() reports false for a falsy name without running git, so one
+  // cleared field in the Context dialog put every task in the project behind a
+  // "'' isn't a branch in this repository" banner that named nothing. Creation
+  // defaults to "main", so only an edit can produce it.
+  const branch = (typeof n.branch === "string" ? n.branch.trim() : "") || cur.branch;
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
@@ -292,7 +299,7 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
       // agent_env is normalized, not trusted, for the same reason: the allowlist
       // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
       // whatever a PATCH body (object or JSON text) carried.
