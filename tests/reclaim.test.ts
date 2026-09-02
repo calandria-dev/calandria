@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/tasks/[id]/reclaim/route";
-import { ensureWorktree } from "../lib/git";
+import { ensureWorktree, unpushedCommits } from "../lib/git";
 import { getDb } from "../lib/db";
 import { landedVia, maybeAutoReclaim, reclaimPreview, reclaimTask } from "../lib/reclaim";
 import { createProject, createTask, getTask, updateProject, updateTask } from "../lib/store";
@@ -25,7 +25,7 @@ import { commitFile, git, makeRepo, makeRepoWithOrigin, pushFromColleague, write
  * permanently "ahead" of its base afterwards.
  */
 async function taskAwaitingItsPr(opts: { autoReclaim?: boolean } = {}) {
-  const { repo, colleague } = await makeRepoWithOrigin();
+  const { origin, repo, colleague } = await makeRepoWithOrigin();
   const project = createProject({ name: `reclaim-${Math.random()}`, repo_path: repo, branch: "main" });
   if (opts.autoReclaim) updateProject(project.id, { auto_reclaim: 1 });
   const task = createTask({ project_id: project.id, title: "a landed task" });
@@ -41,7 +41,35 @@ async function taskAwaitingItsPr(opts: { autoReclaim?: boolean } = {}) {
     base_sha: wt.baseSha,
   });
   const land = () => pushFromColleague(colleague, "feature.txt", "the work\n", "main");
-  return { repo, colleague, project, task, wt, land };
+  return { origin, repo, colleague, project, task, wt, land };
+}
+
+/** What the Sync button does: catch the local base up, then merge it in. */
+async function sync(repo: string, worktree: string) {
+  await git(repo, "fetch", "origin");
+  await git(repo, "merge", "--ff-only", "origin/main");
+  await git(worktree, "merge", "--no-ff", "-m", "sync: base into the task branch", "main");
+}
+
+/**
+ * The shape reported against PR #110: squash-merged with `--delete-branch`,
+ * then the base synced back into the task branch twice as sibling PRs landed on
+ * the same integration branch. `git diff <base>` is empty and nothing was ever
+ * withheld from the remote, yet the branch sits four commits beyond its
+ * upstream — which is what the preview turned into "4 commits never pushed".
+ */
+async function squashedThenSynced(opts: { deleteRemoteBranch?: boolean; autoReclaim?: boolean } = {}) {
+  const f = await taskAwaitingItsPr({ autoReclaim: opts.autoReclaim });
+  await f.land(); // this task's own PR squashes onto the base
+  if (opts.deleteRemoteBranch)
+    // GitHub's `--delete-branch`. Done inside the bare remote rather than with
+    // `git push origin --delete`, which would take the clone's mirror of the
+    // branch down with it — and that surviving stale mirror IS the defect.
+    await git(f.origin, "update-ref", "-d", `refs/heads/${f.wt.branch}`);
+  await sync(f.repo, f.wt.path);
+  await pushFromColleague(f.colleague, "sibling.txt", "a sibling PR\n", "main");
+  await sync(f.repo, f.wt.path);
+  return f;
 }
 
 /** Mark the PR merged the way lib/prState.ts's refresh does. */
@@ -175,6 +203,42 @@ describe("reclaiming a task merged locally", () => {
     expect(res).toMatchObject({ ok: true, landing: "merge", baseAdvanced: false });
     expect(fs.existsSync(wt.path)).toBe(false);
     expect(await branchExists(repo, wt.branch)).toBe(false);
+  });
+});
+
+describe("a squash-merged PR whose branch was deleted, then synced", () => {
+  it("doesn't count the commits a Sync brought in as work the PR missed", async () => {
+    const { repo, wt } = await squashedThenSynced();
+
+    // The premise, and why `ahead` can't be read literally here: four commits
+    // sit beyond the upstream — this task's squash, a sibling's, and the two
+    // Sync merges that pulled them in — over an empty diff against the base.
+    expect(parseInt(await git(repo, "rev-list", "--count", `origin/${wt.branch}..${wt.branch}`), 10)).toBe(4);
+    expect(await git(repo, "diff", "--name-only", "main", wt.branch)).toBe("");
+
+    expect(await unpushedCommits(repo, wt.branch, "main")).toBe(0);
+  });
+
+  it("has nothing to compare once the remote branch is gone", async () => {
+    const { repo, wt } = await squashedThenSynced({ deleteRemoteBranch: true });
+
+    // The local mirror of the deleted branch survives and still resolves —
+    // nothing in the app prunes — so only asking the remote finds out.
+    expect(await git(repo, "rev-parse", "--verify", `refs/remotes/origin/${wt.branch}^{commit}`)).toBeTruthy();
+    expect(await git(repo, "ls-remote", "--heads", "origin", `refs/heads/${wt.branch}`)).toBe("");
+
+    expect(await unpushedCommits(repo, wt.branch, "main")).toBeNull();
+  });
+
+  it("no longer stalls the silent auto-reclaim", async () => {
+    const { task, wt } = await squashedThenSynced({ deleteRemoteBranch: true, autoReclaim: true });
+    prMerged(task.id);
+
+    maybeAutoReclaim(task.id);
+    for (let i = 0; i < 100 && getTask(task.id)!.status !== "done"; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
+    expect(fs.existsSync(wt.path)).toBe(false);
   });
 });
 

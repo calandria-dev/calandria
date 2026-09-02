@@ -42,9 +42,11 @@
 //     permanently ahead of its base and gating on that would refuse every
 //     reclaim this feature exists to perform. What replaces it is
 //     unpushedCommits(): commits the remote never received were not in the
-//     thing GitHub merged, whichever strategy it used. When the upstream ref is
-//     gone (delete_branch_on_merge, then a pruning fetch) there is nothing left
-//     to compare and GitHub's own "merged" verdict stands.
+//     thing GitHub merged, whichever strategy it used. It asks the REMOTE
+//     whether the branch is still there rather than trusting the local mirror,
+//     which delete_branch_on_merge leaves behind untouched, and it discounts
+//     what a base-branch Sync dragged across; when the remote branch is gone
+//     there is nothing left to compare and GitHub's "merged" verdict stands.
 //
 // UPDATED_AT. The worktree columns are cleared through clearTaskWorktreePath()
 // rather than updateTask(), which stamps `updated_at` — the board's sort key
@@ -164,7 +166,8 @@ async function blockingWork(
   landing: Landing,
   safety: { isDirty: boolean; ahead: number | null; reason?: string },
   repoPath: string,
-  workBranch: string
+  workBranch: string,
+  baseBranch: string
 ): Promise<string | null> {
   if (safety.isDirty) return safety.reason ?? "uncommitted changes not saved to any branch";
   if (safety.ahead === 0) return null;
@@ -176,7 +179,7 @@ async function blockingWork(
   if (landing === "merge")
     return safety.reason ?? (safety.ahead === null ? "the base branch could not be compared" : `${safety.ahead} commits not yet in the base branch`);
 
-  const unpushed = await unpushedCommits(repoPath, workBranch);
+  const unpushed = await unpushedCommits(repoPath, workBranch, baseBranch);
   if (unpushed === null) return null; // nothing to compare — GitHub's verdict stands
   if (unpushed === 0) return null;
   return `${unpushed} commit${unpushed === 1 ? "" : "s"} never pushed, so the merged pull request did not include ${unpushed === 1 ? "it" : "them"}`;
@@ -207,7 +210,7 @@ export async function reclaimPreview(taskId: string): Promise<ReclaimPreview | n
     workBranch: task.work_branch,
     baseBranch,
   });
-  const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch);
+  const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
   return {
     ...empty,
     bytes: task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0,
@@ -270,7 +273,7 @@ export async function reclaimTask(
           workBranch: task.work_branch,
           baseBranch,
         });
-        const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch);
+        const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
         if (blocking && !opts.discardUnsafe)
           return { ok: false, unsafe: true, landing, reason: `${UNSAFE_DISCARD_REASON}: ${blocking}` };
 
