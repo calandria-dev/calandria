@@ -3,6 +3,7 @@ import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
+import { LOCAL_MODEL_BASE_URL } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,10 @@ export async function GET() {
     // show the EFFECTIVE choice — and flag it as a fallback when the configured
     // agent isn't connected. `id: null` means nothing is connected at all.
     utility: resolveUtilityAgent(),
+    // Where the "Local model" preset in a project's settings points by default
+    // (CALANDRIA_LOCAL_MODEL_BASE_URL). The client can't read the env, and the
+    // preset must write the instance's answer, not the form's guess.
+    local_base_url: LOCAL_MODEL_BASE_URL,
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
       // Effective-credential overlay (issue #4): the settings record says how

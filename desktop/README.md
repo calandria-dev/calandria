@@ -61,7 +61,7 @@ inherited unchanged.
 | `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (ImageMagick + a font — needed by nobody but whoever changes the mark). |
 | `tray-residency.js` | Whether a status area is really drawing the tray icon — the question `new Tray()` cannot answer, since on Linux the constructor succeeds whether or not the item ever reaches a status-notifier host. Asks the session over `gdbus`/`dbus-send`, three-valued (yes / no / could-not-ask), and is what the close handler consults instead of `tray` being truthy. Electron-free, like its two neighbours above. |
 | `updater.js` | The auto-update policy — which installs may update themselves, what the menu item says, what the restart prompt admits it will interrupt, and the predicate the drain consults before it installs anything. Electron-free like its three neighbours above, and pure: `main.js` owns every effect, including the `electron-updater` handle itself. See "Updates" below. |
-| `loading.html` | Boot screen; `main.js` pushes sidecar log lines into it. |
+| `loading.html` | Boot screen: a spinner, and a hint that appears on its own after 12s so a long first launch doesn't read as a hang. `main.js` pushes sidecar log lines into its **off-screen** `#log` — diagnostics rather than something to read while waiting, and the only surviving copy of the supervisor's first lines (`desktop/e2e/` reads them back from there). |
 | `test-supervisor.js` | 43 assertions over `supervisor.js`, `notifier.js`, `tray-residency.js` and `updater.js` (plus three source checks on `main.js`'s wiring, one of them that an update installs only from inside the drain), against stub sidecars, a stub event stream and an injected D-Bus CLI. No deps, no display. |
 | `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
 | `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, and one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty`. Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). Three more files (`09`–`11`) run only under `CALANDRIA_DESKTOP_BENCH=1` on a machine with a real desktop session, and read their answers off the session bus and the window manager rather than out of Electron — see "On the bench" below and [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
@@ -436,20 +436,34 @@ rather than failing oddly:
 | | Updates? |
 |-|-|
 | Windows NSIS | Yes, signed or not |
-| macOS | **Only when signed** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build has no update path at all |
+| macOS | **Only when signed, and only from `/Applications`** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build (every install from before 2026-08-30, every local `dist:mac`) has no update path at all; decided at boot from `codesign`, so the menu says `Updates need a manual download` before the first check. Running from the mounted DMG or a translocated path is refused the same way. |
 | Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
 | Linux `.deb` | No, deliberately — it is your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
 | `npm start` | No — a dev build updates by `git pull` |
+
+On macOS the install itself happens *after* `quitAndInstall()`: that call is
+what first hands the zip to Squirrel.Mac, which then fetches, unpacks and
+verifies the bundle before it quits the app. The drain's tail waits on
+Squirrel's own progress events for that (ten minutes while it is demonstrably
+working, thirty seconds while it has said nothing) rather than the fixed ten
+seconds that used to exit over the top of it and relaunch the old build. An
+install that still fails is written down and reported on the next launch, with
+the log path.
+
+Logs: `~/Library/Logs/Calandria/main.log` on macOS,
+`~/.config/Calandria/logs/main.log` on Linux, `%APPDATA%\Calandria\logs\main.log`
+on Windows. Everything the shell prints goes there too, including the updater's
+own debug trace.
 
 `CALANDRIA_DESKTOP_AUTO_UPDATE=off` stops the shell contacting the feed at all.
 [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §6.6 has the reasoning, including
 why the `.deb` gate has to run *before* `require("electron-updater")`.
 
-`electron-updater` is this package's one **runtime** dependency. It is packed
-because it is in `dependencies`, not because `electron-builder.cjs`'s `files`
-names it — that list cannot carry `node_modules` — so moving it to
-`devDependencies` would ship a shell that throws the first time a packaged build
-checks for updates.
+`electron-updater` and `electron-log` are this package's two **runtime**
+dependencies. They are packed because they are in `dependencies`, not because
+`electron-builder.cjs`'s `files` names them — that list cannot carry
+`node_modules` — so moving either to `devDependencies` would ship a shell that
+throws on the require.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports

@@ -13,7 +13,10 @@
 "use strict";
 
 const { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, dialog, session } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
+const { execFile } = require("node:child_process");
+const log = require("electron-log/main");
 const { Supervisor, preferredPorts } = require("./supervisor");
 const {
   AppEvents,
@@ -27,14 +30,33 @@ const { confirmTrayResidency } = require("./tray-residency");
 const {
   CHECK_INTERVAL_MS,
   FIRST_CHECK_DELAY_MS,
-  INSTALL_FALLBACK_MS,
+  RELEASES_URL,
   classifyUpdaterError,
+  installFailureNotice,
+  installStageOf,
+  installStageTimeout,
+  macBundlePath,
   parseActiveTurns,
+  parseCodesign,
   quitAction,
   restartNotice,
   updateMenuItem,
   updaterDisposition,
 } = require("./updater");
+
+// Persistent logging, before anything else writes a line. Everything this file
+// says through `console.log` — and every sidecar line the Supervisor relays
+// through it — lands in electron-log's file as well as on stdout:
+// ~/Library/Logs/Calandria/main.log on macOS, ~/.config/Calandria/logs/main.log
+// on Linux, %APPDATA%\Calandria\logs\main.log on Windows (docs/DESKTOP_APP.md
+// §6.6). The file exists for the one story stdout cannot tell: an update that
+// fails on the way OUT of the process, after the drain, when the only observer
+// is the terminal nobody launched a packaged app from. The console transport is
+// pinned to the bare text so stdout stays byte-identical — desktop/e2e reads
+// `[shell] …` lines off it with `startsWith`.
+log.transports.console.format = "{text}";
+log.transports.file.maxSize = 5 * 1024 * 1024;
+Object.assign(console, log.functions);
 
 // Where the server payload lives — the thing supervisor.js runs `node server.js`
 // out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
@@ -107,6 +129,11 @@ let installOnQuit = false;
 // log line. Cleared by whichever updater event answers it.
 let manualCheck = false;
 let updateTimer = null;
+// The drain-tail watchdog (see finishQuit): one timer, re-armed per install
+// stage, so a stage that is legitimately slow does not get the clock a stage
+// that should be instant gets.
+let installWatchdog = null;
+let installStage = null;
 
 // One shell per machine. This mirrors, at the UI layer, the single-process rule
 // lib/db-lock.mjs enforces at the database layer: a second launch would spawn a
@@ -347,7 +374,12 @@ async function boot() {
     resourcesPath: app.isPackaged ? process.resourcesPath : null,
     onLog: (line) => {
       // Two consumers: the terminal a developer launched us from, and the
-      // loading screen (so a slow first boot shows progress instead of a spinner).
+      // loading screen's off-screen `#log`. The boot screen shows a spinner
+      // rather than these lines — a scrolling wall of sidecar output is not
+      // what someone waiting for the window wants to read — but they are still
+      // pushed across, because that element is the only place the supervisor's
+      // FIRST lines survive: Electron stdout capture starts after launch has
+      // resolved, so desktop/e2e reads them back off the page instead.
       console.log(line);
       // executeJavaScript rather than IPC: the boot screen is the only consumer
       // and adding a preload for it would mean shipping a bridge into every
@@ -398,7 +430,10 @@ async function boot() {
     // malformed feed config must not turn a working session into "Calandria
     // could not start" — an app that cannot check for updates still works.
     try {
-      startUpdater();
+      await startUpdater();
+      // An install that failed on the way out of the LAST session could not be
+      // shown then (see finishQuit); this is the first moment it can be.
+      await reportLastInstallFailure();
     } catch (err) {
       console.log(`[shell] auto-update unavailable: ${err?.message || err}`);
     }
@@ -750,7 +785,7 @@ function gotoTask(payload) {
  * for the mechanism.
  * ------------------------------------------------------------------------- */
 
-function startUpdater() {
+async function startUpdater() {
   updateDisposition = updaterDisposition({
     env: process.env,
     platform: process.platform,
@@ -758,18 +793,22 @@ function startUpdater() {
     // Set by the AppImage runtime to the path of the running image. The only
     // artifact on Linux that can replace itself in place.
     appImage: process.env.APPIMAGE || null,
+    mac: await macBundleFacts(),
   });
   // Paint the reason into both menus even when the answer is no — a greyed
   // "Updates come from your package manager" is information; a missing item
   // reads as an app that has no updates at all.
   refreshUpdateMenus();
   if (!updateDisposition.enabled) {
-    console.log(`[shell] auto-update off: ${updateDisposition.reason}`);
+    console.log(`[shell] auto-update off (${updateDisposition.code}): ${updateDisposition.reason}`);
     return;
   }
 
   updater = require("electron-updater").autoUpdater;
-  updater.logger = { info: logUpdate, warn: logUpdate, error: logUpdate, debug: () => {} };
+  // electron-log directly, debug level included: MacUpdater's account of its
+  // proxy server and the Squirrel handoff is at debug, and it is the account a
+  // failed install needs.
+  updater.logger = log.scope("updater");
   updater.autoDownload = true;
   // THE setting. electron-updater's default is true, which installs from an
   // `app.on("quit")` handler — and `quit` fires after our `before-quit` has
@@ -790,15 +829,28 @@ function startUpdater() {
     announceUpdate();
   });
   updater.on("error", (err) => {
+    // Past the drain this error is the install failing, and finishQuit() owns
+    // that: it records the failure for the next launch and exits. A menu
+    // refresh or a dialog here would be raised against a tray that is already
+    // destroyed and a window on its way out.
+    if (quitting) return;
     const { message, fatal } = classifyUpdaterError(err);
     console.log(`[shell] update check failed: ${message}`);
     setUpdateState({ phase: "error", error: message });
+    const wasManual = manualCheck;
     answerManualCheck("Could not check for updates", message);
     if (!fatal) return;
     // Squirrel.Mac cannot update an app whose signature it cannot read. That is
-    // a property of the build, not a transient, so stop asking.
+    // a property of the build, not a transient, so stop asking — and SAY so,
+    // once, even when nobody pressed anything: an automatic check that found
+    // this used to be a console.log line in a terminal no packaged app has.
     if (updateTimer) clearInterval(updateTimer);
     updateTimer = null;
+    if (!wasManual && Notification.isSupported()) {
+      const toast = new Notification({ title: "Calandria cannot update itself", body: message });
+      toast.on("click", () => void shell.openExternal(RELEASES_URL));
+      toast.show();
+    }
   });
 
   setTimeout(() => void checkForUpdates(false), FIRST_CHECK_DELAY_MS).unref();
@@ -806,14 +858,42 @@ function startUpdater() {
   updateTimer.unref();
 }
 
+/**
+ * What a packaged macOS build knows about itself before the first check: where
+ * the bundle is, and what `codesign` says about it. updater.js's
+ * `macDisposition()` turns that into the three "this install cannot update"
+ * answers that used to be discovered at install time, on the way out of the
+ * process, where nothing could show them.
+ *
+ * Best-effort by contract. `codesign` is in every macOS install, but a probe
+ * that fails (killed by the 5s timeout, missing, odd output) reports
+ * `signature: "unknown"`, which the policy leaves alone — a failed probe must
+ * not disable a working updater. Null off macOS and in development, where the
+ * policy has already answered.
+ */
+async function macBundleFacts() {
+  if (process.platform !== "darwin" || !app.isPackaged) return null;
+  const bundlePath = macBundlePath(process.execPath);
+  if (!bundlePath) return null;
+  const result = await new Promise((resolve) => {
+    execFile(
+      "/usr/bin/codesign",
+      ["-dv", "--verbose=4", bundlePath],
+      { timeout: 5000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }),
+    );
+  });
+  const verdict = parseCodesign(result);
+  console.log(
+    `[shell] bundle ${bundlePath}: signature ${verdict.signature}${verdict.authority ? ` (${verdict.authority})` : ""}`,
+  );
+  return { bundlePath, signature: verdict.signature };
+}
+
 // One shape, two menus: label and enabled come from updater.js so the tray and
 // the application menu can never disagree about what the update state is.
 function trayUpdateItem() {
   return updateMenuItem({ ...updateState, disposition: updateDisposition });
-}
-
-function logUpdate(message) {
-  if (message) console.log(`[updater] ${message}`);
 }
 
 function setUpdateState(patch) {
@@ -844,12 +924,19 @@ function refreshUpdateMenus() {
 async function checkForUpdates(manual) {
   if (!updater) {
     if (manual) {
-      await messageBox({
+      // A macOS install that cannot update itself is one that needs the user
+      // to go and get the release, so the dialog offers the trip. The other
+      // codes (off, dev build, package manager) have somewhere else to go.
+      const needsDownload = /^mac-/.test(updateDisposition?.code || "");
+      const { response } = await messageBox({
         type: "info",
-        message: "Automatic updates are off",
+        message: needsDownload ? "This install cannot update itself" : "Automatic updates are off",
         detail: updateDisposition?.reason || "This build does not update itself.",
-        buttons: ["OK"],
+        buttons: needsDownload ? ["Download latest release", "OK"] : ["OK"],
+        defaultId: 0,
+        cancelId: needsDownload ? 1 : 0,
       });
+      if (needsDownload && response === 0) void shell.openExternal(RELEASES_URL);
     }
     return;
   }
@@ -956,8 +1043,24 @@ async function activeTurnCount() {
  * `quitAndInstall` calls `app.quit()` itself, which re-enters `before-quit` —
  * harmless, because `quitting` is already true there and the handler returns
  * without preventing it. If the handoff does not take the process down, the
- * fallback does: a drained shell with no sidecars left is not something to
+ * watchdog does: a drained shell with no sidecars left is not something to
  * leave on screen.
+ *
+ * The watchdog is STAGED, and on macOS it has to be. With `autoInstallOnAppQuit`
+ * off, MacUpdater's `quitAndInstall()` is what first hands the zip to
+ * Squirrel.Mac — Squirrel then fetches it from electron-updater's local proxy,
+ * extracts the bundle, verifies its signature, stages it, and only THEN quits
+ * the app. That is tens of seconds to minutes, and the fixed 10s exit this
+ * used to arm cut it off every time: the app went down mid-install and came
+ * back unchanged. Squirrel reports its stages on Electron's native
+ * `autoUpdater` (MacUpdater drives it but does not re-emit), so that is what
+ * re-arms the clock here — long while Squirrel is demonstrably working, short
+ * once it has staged the bundle and short before it has said anything.
+ *
+ * Whatever goes wrong here goes wrong in the one place it cannot be shown: the
+ * tray is destroyed and the window is on its way out. So a failure is written
+ * down (`recordInstallFailure`) and the NEXT launch reports it, with the log
+ * file named, instead of relaunching unchanged as if nothing happened.
  */
 function finishQuit() {
   if (quitAction({ installRequested: installOnQuit, phase: updateState.phase }) !== "install") {
@@ -965,17 +1068,91 @@ function finishQuit() {
     return;
   }
   console.log(`[shell] drained; installing ${updateState.version || "update"}`);
-  setTimeout(() => {
-    console.log("[shell] installer did not take the app down; exiting");
-    app.exit(0);
-  }, INSTALL_FALLBACK_MS).unref();
+  armInstallWatchdog("handoff");
+  if (process.platform === "darwin") {
+    const native = require("electron").autoUpdater;
+    for (const event of ["checking-for-update", "update-available", "update-downloaded", "before-quit-for-update"]) {
+      native.on(event, () => {
+        const stage = installStageOf(event);
+        console.log(`[shell] squirrel: ${event}${stage ? ` → ${stage}` : ""}`);
+        if (stage) armInstallWatchdog(stage);
+      });
+    }
+    native.on("update-not-available", () => console.log("[shell] squirrel: update-not-available (nothing staged)"));
+    native.on("error", (err) => {
+      const { message } = classifyUpdaterError(err);
+      console.log(`[shell] install failed (${installStage}): ${message}`);
+      recordInstallFailure({ stage: "error", message });
+      app.exit(0);
+    });
+  }
   try {
     // isSilent false so a Windows user sees the installer they are agreeing to;
     // isForceRunAfter true so "restart and update" actually restarts.
     updater.quitAndInstall(false, true);
   } catch (err) {
-    console.log(`[shell] install failed: ${err?.message || err}`);
+    const { message } = classifyUpdaterError(err);
+    console.log(`[shell] install failed: ${message}`);
+    recordInstallFailure({ stage: "error", message });
     app.exit(0);
+  }
+}
+
+function armInstallWatchdog(stage) {
+  installStage = stage;
+  if (installWatchdog) clearTimeout(installWatchdog);
+  const ms = installStageTimeout(stage);
+  installWatchdog = setTimeout(() => {
+    console.log(`[shell] installer did not take the app down after ${Math.round(ms / 1000)}s (${stage}); exiting`);
+    recordInstallFailure({ stage, message: "" });
+    app.exit(0);
+  }, ms);
+  installWatchdog.unref();
+}
+
+// Where a failed install leaves its note for the next launch. userData rather
+// than the log: the log is for reading, this is a flag, consumed on sight.
+function installFailureFile() {
+  return path.join(app.getPath("userData"), "update-install-failed.json");
+}
+
+function recordInstallFailure({ stage, message }) {
+  try {
+    const record = { version: updateState.version, stage, message, at: new Date().toISOString() };
+    fs.writeFileSync(installFailureFile(), JSON.stringify(record));
+  } catch (err) {
+    console.log(`[shell] could not record the install failure: ${err?.message || err}`);
+  }
+}
+
+async function reportLastInstallFailure() {
+  const file = installFailureFile();
+  let record = null;
+  try {
+    record = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.unlinkSync(file);
+  } catch {
+    return;
+  }
+  const logPath = safeLogPath();
+  console.log(`[shell] the last update did not install (${record?.stage}): ${record?.message || "watchdog"}`);
+  const { message, detail } = installFailureNotice({ ...record, logPath });
+  const { response } = await messageBox({
+    type: "warning",
+    message,
+    detail,
+    buttons: ["Download latest release", "OK"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (response === 0) void shell.openExternal(RELEASES_URL);
+}
+
+function safeLogPath() {
+  try {
+    return log.transports.file.getFile().path;
+  } catch {
+    return "";
   }
 }
 

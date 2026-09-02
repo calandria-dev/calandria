@@ -63,12 +63,13 @@ vi.mock("@openai/codex-sdk", () => {
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createProject, createTask, getTask, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { createProject, createTask, getTask, getProject, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe, subscribeGlobal } from "@/lib/events";
 import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
+import { cloudOverrideEnv } from "@/lib/agentEnv";
 
 // Collect every event the runner publishes for a task until turn_end.
 function collectEvents(taskId: string): { events: TaskStreamEvent[]; done: Promise<void> } {
@@ -506,5 +507,90 @@ describe("codex driver contract through the runner", () => {
     expect(afterSecond.total_tokens - afterFirst.total_tokens).toBe(1_250);
     const secondUsage = second.events.find((e) => e.type === "usage") as { usage?: { input_tokens: number; cache_read_tokens: number; output_tokens: number } } | undefined;
     expect(secondUsage?.usage).toMatchObject({ input_tokens: 1_000, cache_read_tokens: 200, output_tokens: 50 });
+  });
+});
+
+// A turn against a provider override (lib/agentEnv.ts) is not the vendor's
+// spend, whatever the driver reports as cost — but "not vendor spend" is two
+// different facts and the ledger has to keep them apart. A LOCAL model server
+// bills nothing, so 0 is a measurement. A CUSTOM base URL may be OpenRouter or
+// a Bedrock proxy, so its price is UNKNOWN and the row is NULL, which every
+// total leaves out rather than folding in as a fake zero. Both are tagged with
+// the endpoint's host, both keep their tokens (an unpriced turn still filled a
+// context window), and the published usage event agrees with the row so the
+// live chip and Insights can't disagree.
+describe("provider override usage accounting", () => {
+  it("records a measured zero and tags the row with the endpoint for a local-model project", async () => {
+    const project = createProject({ name: "Local" });
+    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" }) });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([
+      { type: "session", sessionId: "local-1" },
+      { type: "usage", usage: { cost_usd: 0.5, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_creation_tokens: 40 } },
+      { type: "done", sessionId: "local-1" },
+    ]);
+    const { events, done } = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, total_tokens: 100, turns: 1 });
+    const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
+    expect(usageEv.usage.cost_usd).toBe(0);
+    expect(usageEv.usage.input_tokens).toBe(10);
+    const { getDb } = await import("@/lib/db");
+    const row = getDb().prepare("SELECT provider, cost_usd FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string; cost_usd: number | null };
+    // 0, not NULL: a model served off this machine really is free, and saying
+    // so is a claim we can stand behind.
+    expect(row).toEqual({ provider: "localhost:11434", cost_usd: 0 });
+    expect(getTaskUsage(task.id).unpriced_turns).toBe(0);
+  });
+
+  // The regression this whole distinction exists for: the "Custom base URL"
+  // preset pointed at a paid third party used to be billed at $0 alongside
+  // Ollama, so Insights, the running total and the live chip all under-reported
+  // real money with nothing on screen admitting the number was a placeholder.
+  it("records a custom endpoint's cost as unknown rather than zero", async () => {
+    const project = createProject({ name: "Custom" });
+    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api", ANTHROPIC_MODEL: "some/model" }) });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([
+      { type: "session", sessionId: "custom-1" },
+      { type: "usage", usage: { cost_usd: 0.5, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_creation_tokens: 40 } },
+      { type: "done", sessionId: "custom-1" },
+    ]);
+    const { events, done } = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    const { getDb } = await import("@/lib/db");
+    const row = getDb().prepare("SELECT provider, cost_usd FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string; cost_usd: number | null };
+    // NULL, not 0 and not the driver's 0.5: the driver priced a model id it was
+    // merely told, against a catalog this endpoint doesn't bill from.
+    expect(row).toEqual({ provider: "openrouter.ai", cost_usd: null });
+    // The total leaves it out and says how many turns it left out, so the
+    // dollar figure the UI renders is a floor it can mark rather than a lie.
+    const totals = getTaskUsage(task.id);
+    expect(totals).toMatchObject({ cost_usd: 0, total_tokens: 100, turns: 1, unpriced_turns: 1 });
+    // Tokens survive intact; the wire carries 0 (the client ADDS it to the
+    // running total) plus the flag that stops that 0 reading as "free".
+    const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
+    expect(usageEv.usage.cost_usd).toBe(0);
+    expect(usageEv.usage.input_tokens).toBe(10);
+    expect(usageEv.unpriced).toBe(true);
+  });
+
+  it("bills a task-level cloud override at the driver's figure inside a local project", async () => {
+    const project = createProject({ name: "Local-2" });
+    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434" }) });
+    const task = createTask({ project_id: project.id, title: "T", description: "", agent_env: cloudOverrideEnv() as Record<string, string> });
+    script([
+      { type: "session", sessionId: "cloud-1" },
+      { type: "usage", usage: { cost_usd: 0.25, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 } },
+      { type: "done", sessionId: "cloud-1" },
+    ]);
+    const { done } = collectEvents(task.id);
+    await startResumeTurn(getTask(task.id)!, getProject(project.id)!, "go");
+    await done;
+    expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0.25, turns: 1, unpriced_turns: 0 });
+    const { getDb } = await import("@/lib/db");
+    expect((getDb().prepare("SELECT provider FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string }).provider).toBe("");
   });
 });

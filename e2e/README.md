@@ -163,6 +163,14 @@ project, so they're independently runnable.
 - New UI flow → prefer role/title/placeholder selectors (the app has no
   `data-testid`s); scope title text to a container class when it renders in
   several places (list row, board card, session header).
+- A viewport change → wait for the app to have SEEN it before asserting on what
+  it did about it. matchMedia reports a crossing once per rendered frame, so on
+  a loaded runner two `setViewportSize` calls can land inside one, and to the
+  app the window never left the first width. `.body[data-shed]` is the
+  auto-collapse policy as the app currently holds it (`""`, `"proj task"`,
+  `"proj task rail"`); `03-views.spec.ts` shows the wait. The boot skeleton
+  draws a `.col-projects` too, so it is no proof boot has landed — gate on a
+  control that only the booted app renders (`19-mobile-project-pane.spec.ts`).
 - New agent-visible behavior → add a directive to the mock driver rather than
   special-casing a spec.
 - Changed `lib/` or `app/` code → re-run `npm run test:e2e` (not `:only`): the

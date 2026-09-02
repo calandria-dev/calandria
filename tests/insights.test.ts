@@ -7,14 +7,20 @@ import {
   createTask,
   deleteTask,
   getInsightsData,
+  getTaskUsage,
   recordTaskMerge,
   updateTask,
 } from "../lib/store";
 import { commitFile, makeRepoWithWorktree, tmpDir, writeFile } from "./helpers";
 import { addInternalUsage } from "../lib/internalUsage";
+import type { TurnUsage } from "../lib/types";
 
 const DAY = 24 * 60 * 60 * 1000;
-const usage = (over: Partial<Parameters<typeof addUsage>[0]["usage"]> = {}) => ({
+// Pinned to TurnUsage rather than derived from addUsage's param: the ledger
+// accepts a null cost (an unpriced endpoint — see LedgerUsage) and internal
+// usage does not, so deriving would make every one of these rows nullable for
+// no reason. Everything here is ordinary priced cloud spend.
+const usage = (over: Partial<TurnUsage> = {}): TurnUsage => ({
   cost_usd: 1.5, input_tokens: 100, output_tokens: 50, cache_read_tokens: 1000, cache_creation_tokens: 200,
   ...over,
 });
@@ -24,6 +30,48 @@ function makeProjectTask(agent = "claude") {
   const task = createTask({ project_id: project.id, title: "t", description: "", agent });
   return { project, task };
 }
+
+// The dashboard reads `cost` as the period's spend, so a bucket that quietly
+// omitted an unpriced turn would be the same under-report this feature exists
+// to end — just one layer further out. `unp` is what lets the KPI and the
+// leaderboards mark the figure as a floor.
+describe("unpriced turns in the insights aggregates", () => {
+  it("counts a null-cost turn without letting it touch the spend or the tokens", () => {
+    const { project } = makeProjectTask();
+    const tag = createTag({ project_id: project.id, name: "feature" });
+    const task = createTask({ project_id: project.id, title: "t", description: "", tag_ids: [tag.id] });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 2 }) });
+    addUsage({
+      project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
+      provider: "openrouter.ai",
+      // What lib/runner.ts writes for a custom base URL: tokens measured, price
+      // unknown. NOT 0 — that would assert the turn was free.
+      usage: { ...usage({ input_tokens: 7 }), cost_usd: null },
+    });
+
+    const data = getInsightsData(Date.now() - DAY);
+    const mine = data.usage.filter((r) => r.p === project.id);
+    expect(mine).toHaveLength(1);
+    // Two turns, one price. The dollar figure is the priced turn alone, and the
+    // tokens are both — an unpriced turn still filled a context window.
+    expect(mine[0].cost).toBe(2);
+    expect(mine[0].unp).toBe(1);
+    expect(mine[0].inp).toBe(107);
+
+    const mineTag = data.tagUsage.filter((r) => r.p === project.id && r.g === tag.id);
+    expect(mineTag).toHaveLength(1);
+    expect(mineTag[0]).toMatchObject({ cost: 2, unp: 1 });
+  });
+
+  it("reports no unpriced turns when every row carries a price, zero included", () => {
+    const { project, task } = makeProjectTask();
+    // A local model server's 0 is a MEASUREMENT and must not be confused for an
+    // unknown: it belongs in the total, and it isn't counted here.
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: "localhost:11434", usage: usage({ cost_usd: 0 }) });
+    const mine = getInsightsData(Date.now() - DAY).usage.filter((r) => r.p === project.id);
+    expect(mine[0]).toMatchObject({ cost: 0, unp: 0 });
+  });
+});
 
 describe("merge line stats", () => {
   it("mergeTask reports the additions/deletions the merge landed", async () => {
@@ -185,5 +233,15 @@ describe("getInsightsData", () => {
     expect(tagRows.find((r) => r.g === second.id)!.cost).toBeCloseTo(3);
     // So the tag cube's total (6) does NOT equal the task cube's total (3).
     expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(6);
+  });
+});
+// SUM() over zero rows is NULL, not 0, and `unpriced_turns` is typed a number.
+// A task nobody has run yet is the commonest row in the table.
+describe("usage totals with no rows at all", () => {
+  it("reports zeroes, not nulls, for a task that has never run", () => {
+    const { task } = makeProjectTask();
+    const totals = getTaskUsage(task.id);
+    expect(totals.unpriced_turns).toBe(0);
+    expect(totals).toMatchObject({ cost_usd: 0, turns: 0, unpriced_turns: 0 });
   });
 });
