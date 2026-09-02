@@ -147,6 +147,9 @@ async function catchUpBase(repoPath: string, baseBranch: string): Promise<{ adva
   const fetched = await fetchBase(repoPath, baseBranch, { force: true });
   if (!fetched.attempted) return { advanced: false };
   const status = await remoteBaseStatus(repoPath, baseBranch);
+  // No local ref to move. advanceBaseBranch would refuse this in the same words,
+  // but the all-zero status it used to come back as never let it be asked.
+  if (status.baseMissing) return { advanced: false, error: `base branch ${baseBranch} not found in this repository` };
   if (status.unknown) return { advanced: false, error: `could not compare ${baseBranch} with ${status.label}` };
   if (!status.canFastForward) return { advanced: false, ...(status.diverged ? { error: `${baseBranch} has diverged from ${status.label}` } : {}) };
   const moved = await advanceBaseBranch(repoPath, baseBranch, status.remoteTip);
@@ -159,13 +162,19 @@ async function catchUpBase(repoPath: string, baseBranch: string): Promise<{ adva
  */
 async function blockingWork(
   landing: Landing,
-  safety: { isDirty: boolean; ahead: number; reason?: string },
+  safety: { isDirty: boolean; ahead: number | null; reason?: string },
   repoPath: string,
   workBranch: string
 ): Promise<string | null> {
   if (safety.isDirty) return safety.reason ?? "uncommitted changes not saved to any branch";
   if (safety.ahead === 0) return null;
-  if (landing === "merge") return safety.reason ?? `${safety.ahead} commits not yet in the base branch`;
+  // A null count means the base branch has no ref here, so nothing was compared.
+  // A local merge is judged against exactly that branch, so unknowable must
+  // block it. A PR landing never trusted the count anyway (a squash leaves every
+  // landed branch permanently ahead) and still has unpushedCommits below — a
+  // question about the REMOTE, which a missing local base doesn't touch.
+  if (landing === "merge")
+    return safety.reason ?? (safety.ahead === null ? "the base branch could not be compared" : `${safety.ahead} commits not yet in the base branch`);
 
   const unpushed = await unpushedCommits(repoPath, workBranch);
   if (unpushed === null) return null; // nothing to compare — GitHub's verdict stands

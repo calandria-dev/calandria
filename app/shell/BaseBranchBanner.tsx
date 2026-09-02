@@ -81,6 +81,11 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   if (st.fetchError && !st.fetchedAt)
     return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t reach {label}. {base} may be out of date.</div>;
 
+  // No local ref for it at all — a standing misconfiguration, and the case that
+  // used to render nothing because every count came back zero.
+  if (st.baseMissing)
+    return <div className="bb-banner warn">{Icon.cloudOff()} {base} has no branch in this checkout, so it can&apos;t be compared with {label}.</div>;
+
   if (st.unknown)
     return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t compare {base} with {label}. This looks like a shallow clone.</div>;
 

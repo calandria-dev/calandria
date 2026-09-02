@@ -440,6 +440,10 @@ export interface RemoteBaseStatus {
   canFastForward: boolean; // behind, not ahead, and knowable → a one-click catch-up
   localTip: string;
   remoteTip: string;
+  // The base branch has no LOCAL ref here, so the counts above are zeros meaning
+  // "couldn't compare" rather than "in sync". Set only in that case; absent
+  // otherwise (the shape SyncStatus.baseMissing uses).
+  baseMissing?: boolean;
 }
 
 const noRemoteStatus = (label = ""): RemoteBaseStatus => ({
@@ -465,7 +469,14 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
     git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}`]).catch(() => ""),
     git(repoPath, ["rev-parse", "--verify", `${up.trackingRef}^{commit}`]).catch(() => ""),
   ]);
-  if (!localTip || !remoteTip) return { ...base, localTip, remoteTip, tracked: !!remoteTip };
+  // No local ref is its own answer, not an all-zero "in sync". Both callers of
+  // advanceBaseBranch short-circuited on those zeros — "up to date" from the
+  // banner's fast-forward, "nothing to catch up to" from reclaim — so
+  // advanceBaseBranchLocked's own `base branch <name> not found` refusal was
+  // unreachable and a project pointed at a branch it has no ref for reported
+  // itself permanently in sync with its remote.
+  if (!localTip || !remoteTip)
+    return { ...base, localTip, remoteTip, tracked: !!remoteTip, ...(localTip ? {} : { baseMissing: true }) };
 
   if (localTip === remoteTip) return { ...base, tracked: true, localTip, remoteTip };
 
@@ -1138,8 +1149,16 @@ export async function worktreeDiskUsage(wtPath: string): Promise<number> {
 export interface PruneSafety {
   safe: boolean; // removing the worktree would lose no work
   isDirty: boolean; // uncommitted changes present (discarded by `remove --force`)
-  ahead: number; // commits on the work branch not yet in the base branch
+  // Commits on the work branch not yet in the base branch, or NULL when the
+  // comparison couldn't be made because the base branch has no ref here. Null is
+  // not zero: this number authorises deleting a checkout, so an unknowable count
+  // has to read as "assume there IS work", the way commitsSinceCut's null does.
+  ahead: number | null;
   reason?: string; // why it's unsafe — surfaced to the user
+  // The base branch has no ref in this repository, so `ahead` is null. Set only
+  // in that case; absent otherwise, so nothing has to test it to read an
+  // ordinary verdict (the same shape SyncStatus.baseMissing uses).
+  baseMissing?: boolean;
 }
 
 /**
@@ -1176,22 +1195,40 @@ export async function worktreePruneSafety(input: {
   // Commits on the work branch that the base branch hasn't yet absorbed. Compared
   // against the base BRANCH (not the recorded base_sha) so it reflects git reality
   // regardless of merged_at bookkeeping.
-  let ahead = 0;
-  if (workBranch && (await branchExists(repoPath, workBranch)) && (await branchExists(repoPath, baseBranch))) {
-    ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${baseBranch}..${workBranch}`]).catch(() => "0"), 10) || 0;
+  //
+  // The two missing-ref cases are NOT the same answer. A missing WORK branch
+  // really is zero — the branch that would carry those commits doesn't exist, so
+  // there is nothing left to orphan. A missing BASE branch makes the count
+  // unknowable, and it used to come back as that same zero, which every caller
+  // reads as "no unlanded work, safe to prune" while it authorises deleting the
+  // checkout. Say "couldn't compare" instead and let it refuse.
+  let ahead: number | null = 0;
+  let baseMissing = false;
+  if (workBranch && (await branchExists(repoPath, workBranch))) {
+    if (await branchExists(repoPath, baseBranch)) {
+      ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${baseBranch}..${workBranch}`]).catch(() => "0"), 10) || 0;
+    } else {
+      ahead = null;
+      baseMissing = true;
+    }
   }
 
   const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
+  const base = baseBranch || "the base branch";
+  const unlanded =
+    ahead === null
+      ? `${base} not found in this repository, so unlanded commits can't be ruled out`
+      : ahead > 0
+        ? `${commits(ahead)} not yet in ${base}`
+        : "";
   const reason =
-    isDirty && ahead > 0
-      ? `uncommitted changes + ${commits(ahead)} not yet in ${baseBranch || "the base branch"}`
+    isDirty && unlanded
+      ? `uncommitted changes + ${unlanded}`
       : isDirty
         ? "uncommitted changes not saved to any branch"
-        : ahead > 0
-          ? `${commits(ahead)} not yet in ${baseBranch || "the base branch"}`
-          : undefined;
+        : unlanded || undefined;
 
-  return { safe: !isDirty && ahead === 0, isDirty, ahead, reason };
+  return { safe: !isDirty && ahead === 0, isDirty, ahead, reason, ...(baseMissing ? { baseMissing: true } : {}) };
 }
 
 /**

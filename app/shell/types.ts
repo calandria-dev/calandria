@@ -235,7 +235,7 @@ export interface BulkMoveResult {
   kept: { task_id: string; depends_on_id: string }[];
   /** One per worktree torn down to let a started task move — the part of the
    *  account nobody can get back, so the report names it. */
-  discarded: { id: string; branch: string; dirty: boolean; ahead: number }[];
+  discarded: { id: string; branch: string; dirty: boolean; ahead: number | null }[];
   /** Moved rows that left a tag behind, because the rest of its members stayed. */
   untagged: { id: string; tag_id: string; tag_name: string }[];
   /** Tags that came along whole — `renamed_from` when the destination had that name. */
@@ -249,7 +249,7 @@ export interface DiscardPreview {
   has_worktree: boolean;
   safe: boolean;
   dirty: boolean;
-  ahead: number;
+  ahead: number | null; // null = the base branch has no ref, so nothing was compared
   reason: string | null;
   branch: string;
 }
@@ -281,6 +281,7 @@ export interface BaseBranchResp {
   ahead?: number;
   diverged?: boolean;
   unknown?: boolean; // ancestry couldn't be established (shallow clone)
+  baseMissing?: boolean; // no local ref for the base branch — the counts mean "couldn't compare"
   canFastForward?: boolean;
   remoteTip?: string;
   fetchedAt?: number;
