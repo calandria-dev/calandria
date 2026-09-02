@@ -1,0 +1,14 @@
+{
+  "type": "required_status_checks",
+  "parameters": {
+    "strict_required_status_checks_policy": false,
+    "do_not_enforce_on_create": true,
+    "required_status_checks": [
+      { "context": "Changed paths" },
+      { "context": "Audit (npm)" },
+      { "context": "Types (tsc)" },
+      { "context": "Unit (vitest)" },
+      { "context": "Windows (types + unit)" }
+    ]
+  }
+}

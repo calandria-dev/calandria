@@ -28,8 +28,12 @@ export interface WorktreeDiscard {
   branch: string;
   /** Uncommitted edits were present and are now gone. */
   dirty: boolean;
-  /** Commits on the work branch the base branch never absorbed, now orphaned. */
-  ahead: number;
+  /**
+   * Commits on the work branch the base branch never absorbed, now orphaned, or
+   * null when the base branch had no ref to compare against — an unknown number
+   * of them, which is why the discard needed the stronger acknowledgement.
+   */
+  ahead: number | null;
 }
 
 export interface TaskMoveOutcome extends TaskMoveBatch {
@@ -232,7 +236,8 @@ export interface DiscardPreview {
   /** Removing it would lose nothing — a merged, clean worktree. */
   safe: boolean;
   dirty: boolean;
-  ahead: number;
+  /** Unlanded commits, or null when the base branch has no ref to compare against. */
+  ahead: number | null;
   /** What makes it unsafe, in the user's words. Null when it's safe. */
   reason: string | null;
   /** The branch that would be deleted with it. */

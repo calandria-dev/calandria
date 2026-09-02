@@ -19,6 +19,7 @@ import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { recordBaseCut } from "@/lib/baseDrift";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
@@ -37,6 +38,7 @@ import {
 import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { sendTurnInput } from "@/lib/turnInput";
+import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage } from "@/lib/types";
@@ -296,7 +298,8 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // ever reaching this function, so this branch is its safety net, not its
     // primary path.)
     if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
-      const wt = await ensureWorktree(project.repo_path, id, resolveBaseBranch(task, project));
+      const requestedBase = resolveBaseBranch(task, project);
+      const wt = await ensureWorktree(project.repo_path, id, requestedBase);
       if (wt) {
         task.worktree_path = wt.path;
         task.work_branch = wt.branch;
@@ -310,6 +313,17 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
         updateTask(id, {
           worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
           ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+        });
+        // Record what the cut actually got, for the opening turn's context to state:
+        // a base branch behind the project default, or one that no longer exists,
+        // is otherwise invisible to the session until its PR reads as a revert
+        // (lib/baseDrift.ts).
+        await recordBaseCut({
+          taskId: id,
+          repoPath: project.repo_path,
+          requestedBase,
+          cutBase: wt.baseBranch,
+          projectDefault: project.branch,
         });
       }
     }
@@ -793,6 +807,17 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
         }
+      } else if (ev.type === "ask_dismissed") {
+        // The driver gave up waiting on this question (Stop, disconnect). Same
+        // shape as ask_answered, minus the pretence that an answer arrived.
+        const t = toolMsgs[ev.id];
+        if (t?.data.ask && !t.data.ask.answers && !t.data.ask.dismissed) {
+          t.data.ask = { ...t.data.ask, dismissed: ev.dismissal };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          openAsks.delete(ev.id);
+          if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        }
       } else if (ev.type === "permission") {
         // A tool call parked on the user's approval (the canUseTool gate under
         // acceptEdits / plan). Same deal as an ask: persist the
@@ -874,7 +899,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         updateTask(id, { background_pending: 1, background_note: ev.note });
         publish(id, ev);
         // The composer told the user a follow-up parked mid-turn would be
-        // "sent when this turn ends" — and the model's turn HAS ended: a
+        // "sent at turn end" — and the model's turn HAS ended: a
         // linger is the session holding its input open for work nobody is
         // waiting on. So hand the oldest parked message to it now rather than
         // leaving it until the linger closes, which by default has no deadline
@@ -1010,20 +1035,30 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // the pending queue, and turn_end — settling any of them here would clobber
     // a live turn's state (running flipped off, its queued follow-ups eaten).
     const superseded = hasTurn(id) && !ownsTurn(id, abortController);
-    // Any permission card still open never got a decision — the turn died
-    // (Stop, a crash, a driver error) with the gate parked. Settle it here or
-    // it renders as answerable forever, and answering it would resolve nothing.
+    // Any card still open never got a decision — the turn died (Stop, a crash,
+    // a driver error) with the user parked on it. Settle it here or it renders as
+    // answerable forever, and answering it would resolve nothing. Both kinds
+    // ride openAsks and both need the backstop: an unanswered QUESTION is the
+    // same lie as an undecided permission card, so `ask` gets a dismissal
+    // marker rather than being left blank — never a fabricated answer.
     // Best-effort: this is the finally, and the task row may already be gone.
     for (const openId of openAsks) {
       const t = toolMsgs[openId];
-      if (!t?.data.permission || t.data.permission.outcome) continue;
-      const outcome = { decision: "deny" as const, auto: true, reason: "interrupted" as const, note: DENIED_INTERRUPTED };
-      t.data.permission = { request: t.data.permission.request, outcome };
+      if (!t) continue;
       try {
-        updateMessage(t.dbId, JSON.stringify(t.data));
-        publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
+        if (t.data.permission && !t.data.permission.outcome) {
+          const outcome = { decision: "deny" as const, auto: true, reason: "interrupted" as const, note: DENIED_INTERRUPTED };
+          t.data.permission = { request: t.data.permission.request, outcome };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
+        } else if (t.data.ask && !t.data.ask.answers && !t.data.ask.dismissed) {
+          const dismissal = { reason: "interrupted" as const, note: ASK_INTERRUPTED_NOTE };
+          t.data.ask = { ...t.data.ask, dismissed: dismissal };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { type: "ask_dismissed", id: openId, dismissal, msgId: t.dbId, generation: gen });
+        }
       } catch (err) {
-        log.error("could not settle open permission card", { task: id, err });
+        log.error("could not settle open card", { task: id, err });
       }
     }
     // A Stop isn't a failure (Claude swallows the abort), so it reports as a

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
+import { POST as projectBaseBranchRoute } from "../app/api/projects/[id]/base-branch/route";
+import { createProject } from "../lib/store";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
 import { onPosix } from "./platform";
 
@@ -127,6 +129,76 @@ describe("remoteBaseStatus", () => {
 
   it("says there is no remote for a purely local repo", async () => {
     expect(await remoteBaseStatus(await makeRepo(), "main")).toMatchObject({ hasRemote: false, behind: 0 });
+  });
+
+  // A branch the repo has only ever seen on the remote returned every count at
+  // its default, which reads as "in sync" — forever, since nothing about it can
+  // change. Say "couldn't compare" instead, the way SyncStatus.baseMissing does.
+  it("flags a base branch with no local ref instead of an all-zero 'in sync'", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "pr-workflow");
+    await commitFile(colleague, "pr-workflow.txt", "on the tag branch\n", "pr-workflow: first");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin");
+    await expect(git(repo, "rev-parse", "--verify", "refs/heads/pr-workflow")).rejects.toThrow();
+
+    const st = await remoteBaseStatus(repo, "pr-workflow");
+
+    expect(st).toMatchObject({ hasRemote: true, tracked: true, baseMissing: true, localTip: "" });
+    expect(st.remoteTip).toBeTruthy();
+    expect(st.canFastForward).toBe(false);
+  });
+
+  it("leaves baseMissing absent for an ordinary comparison", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushFromColleague(colleague, "a.txt", "one\n");
+    await fetchBase(repo, "main");
+
+    expect((await remoteBaseStatus(repo, "main")).baseMissing).toBeUndefined();
+  });
+});
+
+// The banner's one-click catch-up. advanceBaseBranchLocked has always refused a
+// base branch it can't resolve, but the all-zero status a missing local ref
+// produced answered "up to date" before the refusal could run, so a project
+// pointed at a remote-only branch reported itself in sync with its remote and
+// the button did nothing, forever.
+describe("POST /api/projects/[id]/base-branch — fast-forward", () => {
+  const ff = (id: string) =>
+    projectBaseBranchRoute(
+      new Request("http://localhost/api/projects/x/base-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "fast-forward" }),
+      }),
+      { params: Promise.resolve({ id }) }
+    );
+
+  it("refuses, naming the branch, when it has no local ref", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "pr-workflow");
+    await commitFile(colleague, "pr-workflow.txt", "on the tag branch\n", "pr-workflow: first");
+    await git(colleague, "push", "origin", "pr-workflow");
+    const project = createProject({ name: `ff-missing-${uid()}`, repo_path: repo, branch: "pr-workflow" });
+
+    const res = await ff(project.id);
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("pr-workflow");
+    expect(body.upToDate).toBeUndefined();
+  });
+
+  it("still fast-forwards an ordinary behind base branch", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    const remoteSha = await pushFromColleague(colleague, "remote.txt", "landed on origin\n");
+    const project = createProject({ name: `ff-ok-${uid()}`, repo_path: repo, branch: "main" });
+
+    const body = await (await ff(project.id)).json();
+
+    expect(body.ok).toBe(true);
+    expect(await git(repo, "rev-parse", "main")).toBe(remoteSha);
   });
 });
 

@@ -429,8 +429,11 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the
   scheduler; it reaches the runner, so it is not pinned.
 - `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job, polled via GET rather
-  than held open. `lib/recap.ts` — the staleness and activity sweep. Both are project-scoped
-  one-shots that run on the utility agent via `lib/agents/oneshots.ts`.
+  than held open. `lib/tagRefresh.ts` — the same shape for a tag ("Refresh tag"), except that it
+  APPLIES its outcome instead of drafting one: task edits go through `lib/agentTools.ts` and land
+  as revertable "Changed by agent" rows, and only work with nothing in it may be retired.
+  `lib/recap.ts` — the staleness and activity sweep. All three are project-scoped one-shots that
+  run on the utility agent via `lib/agents/oneshots.ts`.
 - `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15),
   riding `lib/scheduler.ts`'s ticker on its own much longer clock, because this process owns the
   database and a second daemon would need a second lock. `prunableTaskIds()` is the whole policy,
@@ -465,8 +468,9 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
   (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
   (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
-  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
-  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one went
+  with the merge: `mergeTaskPr` passes `--delete-branch`; a github.com merge instead needs the
+  repo's `delete_branch_on_merge`, off by default), mark the task done. `maybeAutoReclaim()` is the
   silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
   call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
   unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ

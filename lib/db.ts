@@ -396,6 +396,7 @@ export function init(db: Database.Database) {
       send_context    INTEGER NOT NULL DEFAULT 1,
       priority        TEXT NOT NULL DEFAULT 'med',
       catch_up_ms     INTEGER NOT NULL DEFAULT -1, -- -1 = use the instance default
+      once_date       TEXT NOT NULL DEFAULT '',    -- 'YYYY-MM-DD' = fire once then spend; '' = weekly
       next_fire_at    INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
@@ -480,6 +481,14 @@ export function init(db: Database.Database) {
       position       INTEGER NOT NULL DEFAULT 0, -- chip order; created_at order for now
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL,
+      -- "Refresh tag with AI" job state (lib/tagRefresh.ts), on the row for the
+      -- same reason projects.refresh_* is: the job outlives the click, so the
+      -- bar has to survive lighting another chip, a reload, or a restart.
+      refresh_status     TEXT NOT NULL DEFAULT 'idle',
+      refresh_stage      TEXT NOT NULL DEFAULT '',
+      refresh_summary    TEXT NOT NULL DEFAULT '',
+      refresh_error      TEXT NOT NULL DEFAULT '',
+      refresh_started_at INTEGER NOT NULL DEFAULT 0,
       UNIQUE(project_id, name)
     );
 
@@ -659,13 +668,38 @@ function recoverFromCrash(db: Database.Database) {
     // Drop any queued follow-ups: the turns they were lined up behind died with
     // the previous process, so there's nothing left to dequeue them.
     db.prepare("DELETE FROM pending_messages").run();
-    // Settle any tool-permission card still open. The turn parked on it died with
-    // the previous process and the pending-ask registry it was waiting on is
-    // in-memory, so the card can never be answered — left alone it would render
-    // as live buttons that resolve nothing. Same reasoning as the running reset
-    // above. (json_valid guards the handful of tool rows that predate JSON
-    // content; json_extract would raise on those.)
-    db.prepare(
+    settleOpenCards(db);
+
+    reapInFlightScheduleRuns(db);
+  })();
+}
+
+/**
+ * Settle every interactive card the previous process left parked on the user.
+ *
+ * A permission card with no `outcome` and a question card with neither
+ * `answers` nor `dismissed` are the same fact: the turn that opened them died
+ * with that process, and the registry it would have been answered through
+ * (lib/asks.ts) lives in memory, so no answer can ever reach them. Left alone
+ * they render live buttons — indistinguishable from a card somebody is actually
+ * waiting on — and pressing one resolves nothing: POST /answer returns
+ * `resolved: false` and the pick lands as an ordinary message into a fresh
+ * turn, which is not what the card offered.
+ *
+ * The question card is marked DISMISSED rather than given answers, because a
+ * transcript must never claim the user said something they did not. That is the
+ * same distinction `PermissionOutcome.auto` draws on the other card.
+ *
+ * (`json_valid` guards the handful of tool rows that predate JSON content;
+ * `json_extract` would raise on those. The `dismissed IS NULL` clause is also
+ * what backfills rows written before that field existed, on first boot.)
+ *
+ * Exported so tests can drive it directly; recoverFromCrash above is the only
+ * production caller.
+ */
+export function settleOpenCards(db: Database.Database): { permissions: number; asks: number } {
+  const permissions = db
+    .prepare(
       `UPDATE messages
           SET content = json_set(content, '$.permission.outcome',
                 json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
@@ -674,10 +708,22 @@ function recoverFromCrash(db: Database.Database) {
           AND json_valid(content)
           AND json_extract(content, '$.permission.request.id') IS NOT NULL
           AND json_extract(content, '$.permission.outcome') IS NULL`
-    ).run();
-
-    reapInFlightScheduleRuns(db);
-  })();
+    )
+    .run().changes;
+  const asks = db
+    .prepare(
+      `UPDATE messages
+          SET content = json_set(content, '$.ask.dismissed',
+                json('{"reason":"restarted","note":"Not answered \u2014 the app restarted before an answer arrived."}'))
+        WHERE role = 'tool'
+          AND content LIKE '%"ask"%'
+          AND json_valid(content)
+          AND json_extract(content, '$.ask.id') IS NOT NULL
+          AND json_extract(content, '$.ask.answers') IS NULL
+          AND json_extract(content, '$.ask.dismissed') IS NULL`
+    )
+    .run().changes;
+  return { permissions, asks };
 }
 
 /**
@@ -996,6 +1042,10 @@ export function migrate(db: Database.Database) {
   if (!schedCols.includes("runbook_id")) {
     db.exec("ALTER TABLE schedules ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
   }
+  // One-time schedules (lib/schedule/time.ts). '' on every pre-existing row is
+  // exactly right: they are all weekly, and '' is already what the recurring
+  // path means by "no date pinned".
+  if (!schedCols.includes("once_date")) db.exec("ALTER TABLE schedules ADD COLUMN once_date TEXT NOT NULL DEFAULT ''");
   // A tag's DEFAULT base branch: where a whole plan's tasks are cut from, set
   // once instead of N times (phase 2 of the per-task base branch design). Same
   // '' = inherit convention as tasks.base_branch, so every existing row keeps
@@ -1005,6 +1055,16 @@ export function migrate(db: Database.Database) {
   // sets it, in task_tags.position order — see lib/baseBranch.ts.
   const tagCols = (db.prepare("PRAGMA table_info(tags)").all() as { name: string }[]).map((c) => c.name);
   if (!tagCols.includes("base_branch")) db.exec("ALTER TABLE tags ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''");
+  // "Refresh tag with AI" job state. Defaults spell "no job has ever run here",
+  // which is what every existing row means, so an upgrade shows an idle button
+  // rather than a stuck bar.
+  if (!tagCols.includes("refresh_status")) {
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_status TEXT NOT NULL DEFAULT 'idle'");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_stage TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_summary TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_error TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_started_at INTEGER NOT NULL DEFAULT 0");
+  }
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

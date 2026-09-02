@@ -110,10 +110,32 @@ on:
     branches: [main]
     paths-ignore:
       - website/**
+  # EVERY base, not just main. A stacked tag tree's PRs target an integration
+  # branch (`pr-workflow`, `core-fixes`, …), and `branches: [main]` meant none
+  # of them ran a single job here: the only check such a PR got was "PR title
+  # (Conventional Commits)", which fires because pr-title.yml has no branch
+  # filter. Six PRs in a row (#123-#128) went green on one 4-second check, and
+  # #62 had to be covered by dispatching this workflow by hand. The whole tag's
+  # worth of work then arrived untested on the one PR that finally targeted
+  # main, where a red suite is expensive to bisect across several squashed
+  # commits. An enumerated list (`[main, pr-workflow, …]`) was rejected: it
+  # needs editing every time a stacked branch appears, which is exactly the
+  # failure mode that produced this.
+  #
+  # `push` deliberately stays main-only, so a task branch's own pushes don't
+  # double-run alongside its PR. Cost is bounded by the paths-ignore filter
+  # above, the concurrency group below, and the fact that the four slow jobs
+  # (e2e, desktop and the Windows pair) stay label-gated on any pull_request
+  # whatever its base.
   pull_request:
-    branches: [main]
-    paths-ignore:
-      - website/**
+    branches: ["**"]
+    # No `paths-ignore` here, unlike `push` above. A required status check that
+    # never reports blocks a PR forever — "Expected — waiting for status" — and
+    # a workflow-level path filter produces exactly that, so requiring these
+    # jobs in a ruleset and filtering the workflow out are incompatible. The
+    # website-only saving is preserved one level down instead: the `changes`
+    # job below decides, and every job gates on it. A SKIPPED required check
+    # satisfies the gate where a missing one hangs it.
     # `labeled` is here so adding the `e2e` label to an open PR actually starts
     # an e2e run instead of waiting for the next push. The cost is that any
     # label change re-runs `unit`; the concurrency group below cancels the
@@ -162,6 +184,10 @@ on:
 # from its own tag. Keying on the event makes the collision unrepresentable
 # whatever a closed PR's ref resolves to, rather than resting on it resolving
 # to something distinct.
+#
+# `github.ref` is the PR's own `refs/pull/N/merge`, never its base, so widening
+# the trigger to every base branch keeps one group per PR: a tag tree's six open
+# PRs don't cancel each other, and each still cancels its own superseded run.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -187,11 +213,88 @@ permissions:
 # awaiting a merge can start reporting `skipped`. A closed PR is awaiting
 # nothing, which is what makes skipping it safe.
 jobs:
+  # Replaces the `pull_request` path filter deleted above. Same policy —
+  # website/** is the Astro site, its own package.json and lockfile, no import
+  # into the app, so a copy edit should not buy a Windows lane and a production
+  # build — but expressed as a job every other job depends on, so the check
+  # names always EXIST and report `skipped` rather than never appearing.
+  #
+  # Matches `paths-ignore` semantics deliberately: app == false only when EVERY
+  # changed file is under website/. A mixed PR runs everything, because a change
+  # that touches app code and the site is an app change.
+  #
+  # Non-PR events (push, schedule, workflow_dispatch, and the workflow_call from
+  # publish-image.yml on a tag or the nightly) have no PR file list to read and
+  # nothing to save, so they short-circuit to true.
+  #
+  # "Changed paths" MUST ITSELF BE A REQUIRED CHECK in any ruleset that requires
+  # the four below. A `needs:` whose dependency FAILS reports its dependents as
+  # `skipped`, and a skipped required check satisfies the gate — so a red job
+  # here would wave through a PR that ran nothing, which is the failure this
+  # whole file is being changed to stop. Requiring it too makes that
+  # unrepresentable: the gate cannot be satisfied unless this job went green.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    # NO `permissions:` block, and the file list comes from git rather than the
+    # pulls API for exactly that reason. This job is reached through
+    # workflow_call from publish-image.yml, and a CALLED workflow may not
+    # request a scope above its caller's ceiling — GitHub rejects the whole run
+    # with `startup_failure` before a single job starts. Asking for
+    # `pull-requests: read` here did precisely that, and `startup_failure` does
+    # not appear in `gh pr checks`, so the PR still read CLEAN: the same shape
+    # as the bug this file is being changed to fix. `git diff` needs only the
+    # top-level `contents: read`, which every caller already has.
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          # Full history: the diff is against the base SHA, which a shallow
+          # clone of the merge ref does not necessarily contain.
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ] || [ -z "${BASE:-}" ]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "not a pull request ($EVENT) — running everything"
+            exit 0
+          fi
+          # A cost optimisation must never be the thing that reddens CI, so a
+          # diff that cannot be computed falls through to the empty case below
+          # rather than letting `set -e` kill the step.
+          # Three dots, not two: compare against the MERGE BASE. A two-dot diff
+          # also reports whatever landed on the base branch since this PR was
+          # cut, so one unrelated app commit on main would make a website-only
+          # PR look like an app change and the saving would never apply.
+          files=$(git diff --name-only "$BASE...$HEAD_SHA" 2>/dev/null || echo "")
+          if [ -z "$files" ]; then
+            echo "::warning::could not read the changed-file list — running everything"
+          fi
+          # Empty means we could not tell what changed. Fail OPEN — running the
+          # suite unnecessarily costs minutes, skipping it wrongly ships a
+          # regression, and under a required-checks ruleset a wrong `false`
+          # would mark the gate satisfied without having tested anything.
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qv '^website/'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "app code changed — running everything"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "website/ only — skipping the app jobs"
+          fi
+
   audit:
     # Keep this name. security-scan.yml runs the identical command weekly and
     # used to answer to "Audit (npm)" as well; it is now "Audit (npm, weekly)"
     # precisely so this one can be named unambiguously as a required check.
     name: Audit (npm)
+    needs: changes
     # Two independent exclusions, both of which have to hold.
     #
     # The `schedule` trigger above exists for `macos-desktop` alone. Without
@@ -205,9 +308,9 @@ jobs:
     # `labeled` trigger fires for a merged PR too, and release-please labels
     # the release PR right after it merges.
     if: >-
-      ${{ github.event_name != 'schedule'
+      ${{ needs.changes.outputs.app == 'true' && (github.event_name != 'schedule'
           && (github.event_name != 'pull_request'
-              || github.event.pull_request.state == 'open') }}
+              || github.event.pull_request.state == 'open')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -228,11 +331,12 @@ jobs:
 
   typecheck:
     name: Types (tsc)
+    needs: changes
     # Neither the weekly macOS schedule nor a closed PR — see `audit`.
     if: >-
-      ${{ github.event_name != 'schedule'
+      ${{ needs.changes.outputs.app == 'true' && (github.event_name != 'schedule'
           && (github.event_name != 'pull_request'
-              || github.event.pull_request.state == 'open') }}
+              || github.event.pull_request.state == 'open')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -273,11 +377,12 @@ jobs:
 
   unit:
     name: Unit (vitest)
+    needs: changes
     # Neither the weekly macOS schedule nor a closed PR — see `audit`.
     if: >-
-      ${{ github.event_name != 'schedule'
+      ${{ needs.changes.outputs.app == 'true' && (github.event_name != 'schedule'
           && (github.event_name != 'pull_request'
-              || github.event.pull_request.state == 'open') }}
+              || github.event.pull_request.state == 'open')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -301,12 +406,13 @@ jobs:
 
   windows:
     name: Windows (types + unit)
+    needs: changes
     # Neither the weekly macOS schedule nor a closed PR — see `audit`. Doubly so
     # for the schedule half: this runner bills at 2x.
     if: >-
-      ${{ github.event_name != 'schedule'
+      ${{ needs.changes.outputs.app == 'true' && (github.event_name != 'schedule'
           && (github.event_name != 'pull_request'
-              || github.event.pull_request.state == 'open') }}
+              || github.event.pull_request.state == 'open')) }}
     runs-on: windows-latest
     # Generous next to `unit`'s 15: process spawning is far more expensive on
     # Windows and this suite shells out to git thousands of times.
@@ -416,19 +522,20 @@ jobs:
 
   e2e:
     name: End-to-end (Playwright)
+    needs: changes
     # inputs is null on push/pull_request, so the `!= 'off'` branch is the
     # default path there; only an explicit 'off' from a caller suppresses it.
     # The closed-PR clause is the one the other four jobs carry; a merged PR
     # would not normally hold the `e2e` label, but this is the pair of jobs
     # whose waste is measured in half-hours, so it does not rely on that.
     if: >-
-      ${{ (github.event_name != 'pull_request'
+      ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
           && (inputs.e2e == 'on'
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
-                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
+                      || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -471,18 +578,19 @@ jobs:
 
   desktop:
     name: Desktop shell (Electron)
+    needs: changes
     # Byte-for-byte the same expression as `e2e` above, on purpose — see the
     # comment on `windows-e2e` below for why. This job keeps step with both:
     # the desktop shell serves the same build `e2e` exercises in a browser, so
     # there is no reason for its schedule to answer a different question.
     if: >-
-      ${{ (github.event_name != 'pull_request'
+      ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
           && (inputs.e2e == 'on'
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
-                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
+                      || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: ubuntu-24.04
     # 45, not `e2e`'s 30: this job runs the window suite TWICE — once against
     # the dev shell, once against the packaged artifact — and pays for
@@ -603,19 +711,20 @@ jobs:
 
   windows-e2e:
     name: End-to-end (Playwright, Windows)
+    needs: changes
     # Byte-for-byte the same expression as `e2e` above, on purpose. A third
     # schedule (main-only, or always-on) would mean the `e2e` label no longer
     # answers "run the slow suites on this PR", and a Windows-specific
     # regression would surface on a different push than the Linux one it shares
     # a cause with. Keep the two in lockstep when either changes.
     if: >-
-      ${{ (github.event_name != 'pull_request'
+      ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
           && (inputs.e2e == 'on'
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
-                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
+                      || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: windows-latest
     # Twice `e2e`'s 30. Same suite, but every process spawn, file write and
     # module load costs more here, and it pays for a production build on top.
@@ -667,16 +776,17 @@ jobs:
 
   windows-desktop:
     name: Desktop shell (Electron, Windows)
+    needs: changes
     # The same expression again — see `windows-e2e` below for why all four slow
     # lanes share one gate rather than each having a schedule of its own.
     if: >-
-      ${{ (github.event_name != 'pull_request'
+      ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
           && (inputs.e2e == 'on'
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
-                      || contains(github.event.pull_request.labels.*.name, 'e2e')))) }}
+                      || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     #
     # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).
     # docs/DESKTOP_E2E.md §4 left that open; this lane closes it, and the
@@ -1032,6 +1142,7 @@ jobs:
 
   macos-desktop:
     name: Desktop shell (Electron, macOS)
+    needs: changes
     # NOT the shared `e2e` expression the other three slow lanes use, and that
     # is the one deliberate asymmetry in this file. Those three are gated to
     # keep CI fast; this one is also gated to keep it CHEAP — a macOS runner
@@ -1047,11 +1158,11 @@ jobs:
     # The closed-PR clause is the other three lanes'; on the priciest runner in
     # the file it matters most, since a merged PR is awaiting nothing.
     if: >-
-      ${{ (github.event_name != 'pull_request'
+      ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
           && (github.event_name == 'schedule'
               || github.event_name == 'workflow_dispatch'
-              || contains(github.event.pull_request.labels.*.name, 'macos')) }}
+              || contains(github.event.pull_request.labels.*.name, 'macos'))) }}
     runs-on: macos-latest
     # Above the Ubuntu desktop lane's 45 and the Windows one's 60. Ubuntu's two
     # passes (dev shell, then the packaged artifact) plus one extra GUI launch,

@@ -43,20 +43,24 @@ published prices and carries a `~`.
 
 ## Plan usage meter
 
-On a Claude Pro/Max subscription login, the titlebar shows a compact meter with the current
-session (5-hour) and week (7-day) plan utilization, plus the time left before the session
-window resets. Running many parallel sessions burns a plan faster than one terminal, so
-check the remaining headroom before dispatching more work. Click it for the full breakdown:
-every window Anthropic reports (including per-model weeks), reset times, and data freshness.
-The pill tints amber at 80% and red at 95% or when a limit is reached.
+On a Claude Pro/Max or ChatGPT subscription login, the titlebar shows a compact meter with
+the current session (5-hour) and week (7-day) plan utilization, plus the time left before the
+session window resets. Running many parallel sessions burns a plan faster than one terminal,
+so check the remaining headroom before dispatching more work. Click it for the full
+breakdown: every window the provider reports (for Claude, including per-model weeks), reset
+times, and data freshness. The pill tints amber at 80% and red at 95% or when a limit is
+reached. Connect both agents and you get a pill each, labelled with the agent it meters.
 
-Two data sources feed it. Percentages come from the same usage endpoint the Claude CLI's own
-`/usage` panel reads, fetched conservatively: only while a tab is open, at most once per five
-minutes (`CALANDRIA_PLAN_USAGE_MIN_FETCH_MS`), backing off when Anthropic rate-limits it.
-Between fetches it uses the cache plus the rate-limit telemetry every turn already carries,
-so an approaching or reached limit shows up immediately instead of on the next poll. Set
-`CALANDRIA_PLAN_USAGE=off` to hide the meter and stop the app from calling the usage
-endpoint. The meter doesn't render for API-key auth, since there's no plan to meter.
+Percentages are read conservatively in both cases: only while a tab is open, at most once per
+five minutes (`CALANDRIA_PLAN_USAGE_MIN_FETCH_MS`), backing off on failure and serving the
+cache in between. For Claude that read is the same usage endpoint the CLI's own `/usage`
+panel uses, and it is topped up for free by the rate-limit telemetry every turn already
+carries, so an approaching or reached limit shows up immediately instead of on the next poll.
+Codex has no such telemetry — its turn stream reports token counts and nothing about limits —
+so its figures come only from `codex app-server`'s account rate-limit view and are at most one
+fetch interval old. Set `CALANDRIA_PLAN_USAGE=off` to hide the meter and stop the app from
+asking either provider. The meter doesn't render for API-key auth, since there's no plan to
+meter.
 
 ## Calandria overhead
 

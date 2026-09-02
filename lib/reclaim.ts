@@ -17,8 +17,10 @@
 //   1. fast-forward the LOCAL base branch from origin, so the repo the user
 //      works in actually contains what just landed;
 //   2. remove the worktree;
-//   3. delete the LOCAL branch — the remote one is GitHub's job, via the
-//      repository's delete_branch_on_merge;
+//   3. delete the LOCAL branch — the remote one is deleted by whatever landed
+//      the PR: mergeTaskPr passes `--delete-branch`, and a PR merged outside
+//      Calandria instead depends on the repository's delete_branch_on_merge,
+//      which GitHub leaves off by default;
 //   4. mark the task done.
 //
 // Both landings run through here, not two implementations of it. `merged_at`
@@ -42,9 +44,11 @@
 //     permanently ahead of its base and gating on that would refuse every
 //     reclaim this feature exists to perform. What replaces it is
 //     unpushedCommits(): commits the remote never received were not in the
-//     thing GitHub merged, whichever strategy it used. When the upstream ref is
-//     gone (delete_branch_on_merge, then a pruning fetch) there is nothing left
-//     to compare and GitHub's own "merged" verdict stands.
+//     thing GitHub merged, whichever strategy it used. It asks the REMOTE
+//     whether the branch is still there rather than trusting the local mirror,
+//     which deleting the remote branch leaves behind untouched, and it discounts
+//     what a base-branch Sync dragged across; when the remote branch is gone
+//     there is nothing left to compare and GitHub's "merged" verdict stands.
 //
 // UPDATED_AT. The worktree columns are cleared through clearTaskWorktreePath()
 // rather than updateTask(), which stamps `updated_at` — the board's sort key
@@ -147,6 +151,9 @@ async function catchUpBase(repoPath: string, baseBranch: string): Promise<{ adva
   const fetched = await fetchBase(repoPath, baseBranch, { force: true });
   if (!fetched.attempted) return { advanced: false };
   const status = await remoteBaseStatus(repoPath, baseBranch);
+  // No local ref to move. advanceBaseBranch would refuse this in the same words,
+  // but the all-zero status it used to come back as never let it be asked.
+  if (status.baseMissing) return { advanced: false, error: `base branch ${baseBranch} not found in this repository` };
   if (status.unknown) return { advanced: false, error: `could not compare ${baseBranch} with ${status.label}` };
   if (!status.canFastForward) return { advanced: false, ...(status.diverged ? { error: `${baseBranch} has diverged from ${status.label}` } : {}) };
   const moved = await advanceBaseBranch(repoPath, baseBranch, status.remoteTip);
@@ -159,15 +166,22 @@ async function catchUpBase(repoPath: string, baseBranch: string): Promise<{ adva
  */
 async function blockingWork(
   landing: Landing,
-  safety: { isDirty: boolean; ahead: number; reason?: string },
+  safety: { isDirty: boolean; ahead: number | null; reason?: string },
   repoPath: string,
-  workBranch: string
+  workBranch: string,
+  baseBranch: string
 ): Promise<string | null> {
   if (safety.isDirty) return safety.reason ?? "uncommitted changes not saved to any branch";
   if (safety.ahead === 0) return null;
-  if (landing === "merge") return safety.reason ?? `${safety.ahead} commits not yet in the base branch`;
+  // A null count means the base branch has no ref here, so nothing was compared.
+  // A local merge is judged against exactly that branch, so unknowable must
+  // block it. A PR landing never trusted the count anyway (a squash leaves every
+  // landed branch permanently ahead) and still has unpushedCommits below — a
+  // question about the REMOTE, which a missing local base doesn't touch.
+  if (landing === "merge")
+    return safety.reason ?? (safety.ahead === null ? "the base branch could not be compared" : `${safety.ahead} commits not yet in the base branch`);
 
-  const unpushed = await unpushedCommits(repoPath, workBranch);
+  const unpushed = await unpushedCommits(repoPath, workBranch, baseBranch);
   if (unpushed === null) return null; // nothing to compare — GitHub's verdict stands
   if (unpushed === 0) return null;
   return `${unpushed} commit${unpushed === 1 ? "" : "s"} never pushed, so the merged pull request did not include ${unpushed === 1 ? "it" : "them"}`;
@@ -198,7 +212,7 @@ export async function reclaimPreview(taskId: string): Promise<ReclaimPreview | n
     workBranch: task.work_branch,
     baseBranch,
   });
-  const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch);
+  const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
   return {
     ...empty,
     bytes: task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0,
@@ -261,14 +275,17 @@ export async function reclaimTask(
           workBranch: task.work_branch,
           baseBranch,
         });
-        const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch);
+        const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
         if (blocking && !opts.discardUnsafe)
           return { ok: false, unsafe: true, landing, reason: `${UNSAFE_DISCARD_REASON}: ${blocking}` };
 
         const bytes = task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0;
         // keepBranch is deliberately NOT set: the branch is the task's diff only
         // while the diff is not in the base branch yet, and by definition it now
-        // is. The remote branch is GitHub's to delete (delete_branch_on_merge).
+        // is. The REMOTE branch is not this function's to delete — the merge
+        // that landed the work already took it (mergeTaskPr's --delete-branch,
+        // or delete_branch_on_merge), and a reclaim must not make a network
+        // write from inside the repo lock.
         await removeWorktree(project.repo_path, task.worktree_path, task.work_branch, { keepBranch: false });
         // removeWorktree never throws, so a surviving directory is only visible
         // by looking. Leave the column pointing at it: worktree paths are keyed

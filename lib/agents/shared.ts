@@ -8,6 +8,7 @@ import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from 
 import { listSummaries } from "../store";
 import { tagContextBlock } from "../tagContext";
 import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
+import { takeBaseCutNote } from "../baseDrift";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 
@@ -73,6 +74,15 @@ export function buildProjectContext(project: Project, task: Task): string {
       `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
+  // What the cut ACTUALLY got, when that differs from what the line above
+  // promises: a base branch that has fallen behind the project default, or one
+  // that no longer exists at all. Recorded at worktree-cut time by
+  // lib/baseDrift.ts and consumed here, so it reaches the session that is about
+  // to be damaged by the drift rather than only the user's tag chip. Empty on
+  // every ordinary task, and immediately after the line it qualifies, because on
+  // its own "Base branch: core-fixes" reads as reassurance.
+  const cutNote = takeBaseCutNote(task.id);
+  if (cutNote) lines.push(`\n${cutNote}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
 
@@ -554,4 +564,123 @@ export function resultText(content: unknown): string {
     return content.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : typeof b === "string" ? b : "")).join("");
   }
   return content == null ? "" : JSON.stringify(content);
+}
+
+// ---------- the "Refresh tag" plan (lib/tagRefresh.ts) ----------
+//
+// Prompt AND parser live here rather than in each driver, unlike the older
+// one-shots whose prose is duplicated per driver. Those return free text, where
+// drift is a style difference; this one returns a machine-read contract that
+// the SERVER applies to real rows. Two copies of the schema would eventually
+// disagree about a field name, and the symptom would be a Codex instance whose
+// refresh silently changes nothing.
+
+/** Delimiters the plan JSON is wrapped in, so interim narration can be dropped. */
+export const TAG_PLAN_OPEN = "<<<TAG_PLAN>>>";
+export const TAG_PLAN_CLOSE = "<<<END_TAG_PLAN>>>";
+
+/** One member the refresh wants to change. `retire` and the text fields are exclusive. */
+export interface TagPlanTask {
+  id: string;
+  title?: string;
+  description?: string;
+  /** Retract this task: it is already done elsewhere, or a sibling superseded it. */
+  retire?: boolean;
+  /** Why — required for a retirement, and shown to the user on the struck-through card. */
+  reason?: string;
+}
+
+export interface TagPlan {
+  /** The rewritten tag description, or "" to leave the saved one alone. */
+  description: string;
+  tasks: TagPlanTask[];
+}
+
+/**
+ * What the utility agent is asked to do when the user presses "Refresh tag".
+ *
+ * The instruction that matters most is the LAST one: say nothing about a task
+ * that is still accurate. A model asked to review seven briefs will, unprompted,
+ * return seven improved briefs — and the user gets seven "Changed by agent"
+ * chips for a plan that hadn't actually gone stale, which teaches them to stop
+ * pressing the button. Silence is the expected output of a healthy tag.
+ */
+export function buildTagRefreshPrompt(project: Project, digest: string): string {
+  return (
+    `A "tag" in this app is a named plan: a set of tasks in the project "${project.name}" that belong to one ` +
+    `feature, migration or refactor, plus a description of what the plan IS. The plan was written at some point ` +
+    `in the past. The code has moved since. Your job is to check the plan against the code as it stands NOW and ` +
+    `report only what has actually gone stale.\n\n` +
+    `Explore the repository in your working directory using the read-only tools available to you — read the files ` +
+    `each task talks about, grep for the symbols and routes it names, check whether the thing it proposes already ` +
+    `exists, and look at recent history. Judge every task on evidence you found in the code, never on how the ` +
+    `brief reads.\n\n` +
+    `For each task, decide which ONE of these applies:\n` +
+    `  (a) Still accurate — the work described is still needed and still described correctly. Say NOTHING about it.\n` +
+    `  (b) Stale wording — the work is still needed, but the brief points at files, symbols or an approach that no ` +
+    `longer exist. Return a corrected "title" and/or "description".\n` +
+    `  (c) Overtaken — the work is already done in the code, or another task in this plan has made it unnecessary. ` +
+    `Return "retire": true with a "reason" naming the evidence (the file, function or task that settles it).\n\n` +
+    `Be conservative about (c). "Retire" retracts a task the user planned; propose it only when you have READ the ` +
+    `code that makes it redundant, not because the title sounds similar to something you saw. If you are unsure, ` +
+    `treat it as (a) and mention the doubt in the tag description instead.\n\n` +
+    `Then write the tag's description: a short paragraph (2-5 sentences, plain prose, no heading, no bullet list) ` +
+    `saying what this plan is for and where it currently stands. It is shown under the tag and given to every ` +
+    `session that carries it, so it must be accurate about the present. Return "" to keep the saved one unchanged.\n\n` +
+    `Output a single JSON object wrapped between a line containing ${TAG_PLAN_OPEN} and a line containing ` +
+    `${TAG_PLAN_CLOSE}, with this exact shape:\n` +
+    `{"description": "...", "tasks": [{"id": "<the task's id, copied exactly>", "title": "...", ` +
+    `"description": "...", "retire": false, "reason": "..."}]}\n` +
+    `Omit "title"/"description" on a task you aren't rewording. Use the ids exactly as given below — a task you ` +
+    `invent an id for is dropped. An empty "tasks" array is a perfectly good answer and means the plan is fresh. ` +
+    `Any thinking-out-loud goes BEFORE the opening marker.\n\n` +
+    `=== THE PLAN ===\n${digest}`
+  );
+}
+
+/**
+ * Pull the plan out of a one-shot's raw text. Every failure mode degrades to an
+ * empty plan rather than throwing: the job's job is to change what it can
+ * justify, and a model that emitted prose instead of JSON has justified nothing.
+ * The caller reports "nothing needed changing", which is honest — we did look.
+ */
+export function parseTagPlan(raw: string): TagPlan {
+  const empty: TagPlan = { description: "", tasks: [] };
+  const open = raw.indexOf(TAG_PLAN_OPEN);
+  const close = raw.lastIndexOf(TAG_PLAN_CLOSE);
+  let body = open !== -1 && close > open ? raw.slice(open + TAG_PLAN_OPEN.length, close) : raw;
+  body = body.trim().replace(/^```(?:json)?\n([\s\S]*)\n```$/, "$1").trim();
+  // Without markers the text may be narration with an object buried in it.
+  if (!body.startsWith("{")) {
+    const first = body.indexOf("{");
+    const last = body.lastIndexOf("}");
+    if (first === -1 || last <= first) return empty;
+    body = body.slice(first, last + 1);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return empty;
+  }
+  if (!parsed || typeof parsed !== "object") return empty;
+  const obj = parsed as { description?: unknown; tasks?: unknown };
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const tasks: TagPlanTask[] = Array.isArray(obj.tasks)
+    ? obj.tasks.flatMap((t) => {
+        if (!t || typeof t !== "object") return [];
+        const e = t as Record<string, unknown>;
+        const id = str(e.id);
+        if (!id) return [];
+        const entry: TagPlanTask = { id };
+        // "" is not a proposed rewrite, it's a field the model left blank —
+        // applying it would blank a real brief.
+        if (str(e.title)) entry.title = str(e.title);
+        if (str(e.description)) entry.description = str(e.description);
+        if (e.retire === true) entry.retire = true;
+        if (str(e.reason)) entry.reason = str(e.reason);
+        return [entry];
+      })
+    : [];
+  return { description: str(obj.description), tasks };
 }
