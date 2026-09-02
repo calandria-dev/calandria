@@ -68,6 +68,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const patch = await req.json();
+  // A branch key that's present but blank is refused with a message rather
+  // than silently kept (which is what updateProject does for it) — the
+  // Settings form should hear why nothing changed instead of nothing at all.
+  if (typeof patch.branch === "string" && !patch.branch.trim())
+    return NextResponse.json({ error: "branch is required" }, { status: 400 });
   const project = updateProject(id, patch);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json(project);

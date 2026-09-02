@@ -86,13 +86,31 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // "base branch <name> not found". There is no action to offer here (the fix is
   // to point the task or project at a branch that exists), so this says the one
   // thing worth saying and stops.
-  if (st.baseMissing)
+  if (st.baseMissing) {
+    // An unset base_branch resolves to "" rather than a name that's missing —
+    // a different problem (a project whose branch field was left/cleared
+    // blank) with a different fix (Settings, not a push or a spelling
+    // correction), so it gets its own sentence instead of naming a blank.
+    const unset = !st.baseBranch;
     return (
-      <div className="sync-banner conflict" data-sync-state="base-missing" title={`Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`}>
-        <span className="sync-msg">{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</span>
+      <div
+        className="sync-banner conflict"
+        data-sync-state="base-missing"
+        title={
+          unset
+            ? "This project has no base branch set, so nothing here can be compared, synced or merged. Set one in Settings → Project."
+            : `Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`
+        }
+      >
+        <span className="sync-msg">
+          {unset
+            ? "This project has no base branch set — set one in Settings → Project"
+            : <>{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</>}
+        </span>
         <span className="sync-spacer" />
       </div>
     );
+  }
 
   const conflicts = st.conflicts?.length ?? 0;
   const paused = !!st.mergeInProgress;

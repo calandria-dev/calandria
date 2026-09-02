@@ -1199,7 +1199,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1271,7 +1271,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </div>
         </div>
         <div className="field" style={{ flex: "0 0 170px", marginBottom: 0 }}>
-          <div className="lab">{Icon.git()} Branch</div>
+          <div className="lab">{Icon.git()} Branch <span className="opt">(required to run tasks)</span></div>
           <input type="text" className="ctx-mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
         </div>
       </div>
