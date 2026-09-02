@@ -634,4 +634,38 @@ describe("merging into a non-default base branch", () => {
     expect(await git(repo, "rev-parse", "main")).toBe(mainTip);
     expect(fs.existsSync(path.join(repo, "a.txt"))).toBe(false);
   });
+
+  // The object-level fast path advances the base with a bare `update-ref`, which
+  // has no idea a checkout is standing on it. A LINKED worktree on the base is
+  // the case `mergeTask`'s target !== current check doesn't cover: without the
+  // holder check the merge "succeeded" and left that worktree reporting the
+  // whole merge as uncommitted local changes.
+  it("refuses rather than moving a base branch a linked worktree has checked out", async () => {
+    const repo = await makeRepo();
+    await git(repo, "branch", "feature/x");
+    const featureTip = await git(repo, "rev-parse", "feature/x");
+    // The user's own worktree, sitting on the base branch.
+    const held = path.join(path.dirname(repo), `held-${uid()}`);
+    await git(repo, "worktree", "add", held, "feature/x");
+
+    const wt = await ensureWorktree(repo, uid(), "feature/x");
+    if (!wt) throw new Error("ensureWorktree returned null");
+    await commitFile(wt.path, "feature.txt", "feature\n", "task work");
+
+    const res = await mergeTask({
+      repoPath: repo, worktreePath: wt.path, workBranch: wt.branch,
+      baseBranch: "feature/x", message: "land on feature/x",
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.targetBranch).toBe("feature/x");
+    // The refusal names the worktree standing on the branch, so the user knows
+    // which checkout to let go of.
+    expect(res.error).toContain("feature/x");
+    expect(res.error).toContain(held);
+    // The branch did not move, and the held worktree sees nothing out of place.
+    expect(await git(repo, "rev-parse", "feature/x")).toBe(featureTip);
+    expect(await git(held, "rev-parse", "HEAD")).toBe(featureTip);
+    expect(await git(held, "status", "--porcelain")).toBe("");
+  });
 });

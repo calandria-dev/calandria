@@ -1698,6 +1698,16 @@ async function mergeViaTree(input: {
 }): Promise<MergeResult | null> {
   const { repoPath, target, workBranch, message, committed, mergedSha } = input;
 
+  // Moving a ref out from under a checkout is exactly what the worktree path
+  // can't do and this one can. `update-ref` below would advance `target` while
+  // some worktree's index and files still describe the old tip, and `git status`
+  // there would report the whole merge as phantom local changes. The caller
+  // guarantees the MAIN checkout isn't on `target`, but a linked worktree
+  // legitimately can be — anyone who works in worktrees themselves. Bail to the
+  // slow path, where `worktree add` gets git's own refusal (naming the holder)
+  // instead of a silently corrupted checkout.
+  if (await worktreeForBranch(repoPath, target)) return null;
+
   let tree: string;
   try {
     tree = (await git(repoPath, ["merge-tree", "--write-tree", target, workBranch])).split("\n")[0].trim();
