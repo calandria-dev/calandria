@@ -17,8 +17,10 @@
 //   1. fast-forward the LOCAL base branch from origin, so the repo the user
 //      works in actually contains what just landed;
 //   2. remove the worktree;
-//   3. delete the LOCAL branch — the remote one is GitHub's job, via the
-//      repository's delete_branch_on_merge;
+//   3. delete the LOCAL branch — the remote one is deleted by whatever landed
+//      the PR: mergeTaskPr passes `--delete-branch`, and a PR merged outside
+//      Calandria instead depends on the repository's delete_branch_on_merge,
+//      which GitHub leaves off by default;
 //   4. mark the task done.
 //
 // Both landings run through here, not two implementations of it. `merged_at`
@@ -44,7 +46,7 @@
 //     unpushedCommits(): commits the remote never received were not in the
 //     thing GitHub merged, whichever strategy it used. It asks the REMOTE
 //     whether the branch is still there rather than trusting the local mirror,
-//     which delete_branch_on_merge leaves behind untouched, and it discounts
+//     which deleting the remote branch leaves behind untouched, and it discounts
 //     what a base-branch Sync dragged across; when the remote branch is gone
 //     there is nothing left to compare and GitHub's "merged" verdict stands.
 //
@@ -280,7 +282,10 @@ export async function reclaimTask(
         const bytes = task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0;
         // keepBranch is deliberately NOT set: the branch is the task's diff only
         // while the diff is not in the base branch yet, and by definition it now
-        // is. The remote branch is GitHub's to delete (delete_branch_on_merge).
+        // is. The REMOTE branch is not this function's to delete — the merge
+        // that landed the work already took it (mergeTaskPr's --delete-branch,
+        // or delete_branch_on_merge), and a reclaim must not make a network
+        // write from inside the repo lock.
         await removeWorktree(project.repo_path, task.worktree_path, task.work_branch, { keepBranch: false });
         // removeWorktree never throws, so a surviving directory is only visible
         // by looking. Leave the column pointing at it: worktree paths are keyed

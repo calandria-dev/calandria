@@ -111,8 +111,10 @@ refresh that records the merge and leaves the worktree to the reclaim path.
 A merged PR is a definitive signal that a task's checkout is disposable, so the session header
 grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
 or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
-base branch from origin, remove the worktree, delete the **local** branch (the remote one is
-GitHub's job, via the repository's `delete_branch_on_merge`) and mark the task done.
+base branch from origin, remove the worktree, delete the **local** branch (the remote one went
+with the merge: landing the PR from Calandria passes `--delete-branch`, while a PR merged on
+github.com instead needs the repository's `delete_branch_on_merge`, which is off by default)
+and mark the task done.
 
 Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
 server do it by itself. It is off by default and per project, because an unattended reclaim

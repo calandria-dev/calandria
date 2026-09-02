@@ -1244,7 +1244,9 @@ export async function worktreePruneSafety(input: {
  * merge strategy did to the rest. See lib/reclaim.ts, the only caller.
  *
  * `null` is deliberately distinct from 0. The upstream is routinely gone by the
- * time this runs — GitHub's delete_branch_on_merge removes the remote branch —
+ * time this runs — the merge that landed the PR removes the remote branch
+ * (mergeTaskPr passes `--delete-branch`; a PR merged on github.com instead
+ * needs the repository's delete_branch_on_merge, which is off by default) —
  * and "there is no longer anything to compare" must not read as "nothing is
  * unpushed" to a caller that would treat 0 as permission.
  *
@@ -1253,7 +1255,7 @@ export async function worktreePruneSafety(input: {
  * `git diff`:
  *
  * LOCAL MIRRORS OF A DELETED BRANCH DON'T VANISH. `fetchBase` never prunes, so
- * after delete_branch_on_merge the remote branch is gone while
+ * once that merge deletes the remote branch it is gone while
  * `refs/remotes/origin/<branch>` still sits at the pre-merge tip, and a
  * rev-parse of it happily succeeds. The ref existing locally is therefore no
  * evidence the remote has anything, and the REMOTE is asked directly
