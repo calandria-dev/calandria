@@ -436,20 +436,34 @@ rather than failing oddly:
 | | Updates? |
 |-|-|
 | Windows NSIS | Yes, signed or not |
-| macOS | **Only when signed** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build has no update path at all |
+| macOS | **Only when signed, and only from `/Applications`** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build (every install from before 2026-08-30, every local `dist:mac`) has no update path at all; decided at boot from `codesign`, so the menu says `Updates need a manual download` before the first check. Running from the mounted DMG or a translocated path is refused the same way. |
 | Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
 | Linux `.deb` | No, deliberately — it is your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
 | `npm start` | No — a dev build updates by `git pull` |
+
+On macOS the install itself happens *after* `quitAndInstall()`: that call is
+what first hands the zip to Squirrel.Mac, which then fetches, unpacks and
+verifies the bundle before it quits the app. The drain's tail waits on
+Squirrel's own progress events for that (ten minutes while it is demonstrably
+working, thirty seconds while it has said nothing) rather than the fixed ten
+seconds that used to exit over the top of it and relaunch the old build. An
+install that still fails is written down and reported on the next launch, with
+the log path.
+
+Logs: `~/Library/Logs/Calandria/main.log` on macOS,
+`~/.config/Calandria/logs/main.log` on Linux, `%APPDATA%\Calandria\logs\main.log`
+on Windows. Everything the shell prints goes there too, including the updater's
+own debug trace.
 
 `CALANDRIA_DESKTOP_AUTO_UPDATE=off` stops the shell contacting the feed at all.
 [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §6.6 has the reasoning, including
 why the `.deb` gate has to run *before* `require("electron-updater")`.
 
-`electron-updater` is this package's one **runtime** dependency. It is packed
-because it is in `dependencies`, not because `electron-builder.cjs`'s `files`
-names it — that list cannot carry `node_modules` — so moving it to
-`devDependencies` would ship a shell that throws the first time a packaged build
-checks for updates.
+`electron-updater` and `electron-log` are this package's two **runtime**
+dependencies. They are packed because they are in `dependencies`, not because
+`electron-builder.cjs`'s `files` names them — that list cannot carry
+`node_modules` — so moving either to `devDependencies` would ship a shell that
+throws on the require.
 
 Electron and `electron-builder` are `devDependencies`, so if your shell exports
 `NODE_ENV=production` (a Calandria task session does) `npm install` reports
