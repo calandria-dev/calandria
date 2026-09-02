@@ -1,3 +1,4 @@
+import { serializeAgentEnv } from "./agentEnv";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -286,11 +287,15 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ? WHERE id = ?`
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
+      // agent_env is normalized, not trusted, for the same reason: the allowlist
+      // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
+      // whatever a PATCH body (object or JSON text) carried.
+      serializeAgentEnv(n.agent_env), id);
   return getProject(id);
 }
 
@@ -644,6 +649,13 @@ export function createTask(input: {
   runbook_id?: string | null;
   /** The tags it carries at birth (validated against the project by the caller). */
   tag_ids?: string[];
+  /**
+   * A provider override laid over the project's (lib/agentEnv.ts), settable at
+   * creation because `suggest_task` is the path a frontier-model session uses
+   * to delegate work to a local model, and the task's first turn may be an
+   * auto-start with no PATCH in between. Object or JSON text; normalized here.
+   */
+  agent_env?: string | Record<string, string> | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -663,13 +675,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, agent_env, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
       agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      position, now, now
+      serializeAgentEnv(input.agent_env), position, now, now
     );
   // Tags are a second write because they are a second table. setTaskTags does
   // the project check for us, so a caller that got the tags wrong fails here
@@ -1060,9 +1072,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env), n.updated_at, id);
   return getTask(id);
 }
 
@@ -1879,17 +1891,21 @@ export function addUsage(input: {
   task_id: string;
   generation: number;
   agent?: string;
+  /** The endpoint host the turn ran against, "" (default) for the agent's own
+   *  cloud — `AgentProvider.host` from lib/agentEnv.ts. The runner zeroes
+   *  cost_usd for any non-empty value before calling this. */
+  provider?: string;
   usage: TurnUsage;
 }): void {
   const u = input.usage;
   getDb()
     .prepare(
       `INSERT INTO task_usage
-         (id, project_id, task_id, generation, agent, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, subagent_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, project_id, task_id, generation, agent, provider, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, subagent_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude",
+      nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude", input.provider || "",
       u.cost_usd, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens,
       // NULL, not 0, for a driver that doesn't report it — see TurnUsage.
       u.subagent_tokens ?? null,

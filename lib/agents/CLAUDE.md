@@ -162,6 +162,14 @@ Enterprise-managed approval requirements can disallow the driver's `approval_pol
 which the exec transport can't survive. The driver spots the CLI's downgrade warning and
 self-heals to `on-request`, recording the `codex_approval_downgraded` setting.
 
+A provider override (`lib/agentEnv.ts`, docs/AGENTS.md "Local models") reaches Codex as
+config, not env: `codex/provider.ts` maps the merged turn env's `OPENAI_BASE_URL` onto a
+`model_providers.calandria-local` entry on the Responses wire API and selects it with
+`model_provider`, because the CLI reads its provider from config.toml and under a ChatGPT
+login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the task's pick and
+the Settings default in the model fallback. Claude Code needs no mapping: the same override
+IS its environment.
+
 ## Agent MCP inheritance is asymmetric
 
 A **Claude** task session is meant to feel like the user's own `claude` terminal.

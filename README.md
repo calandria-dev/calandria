@@ -219,6 +219,19 @@ login; API keys stay optional.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
+### Local models
+
+Either agent can run against a local model server. Set a project's **Model
+provider** to *Local model*, point it at Ollama (`http://localhost:11434`) or
+LM Studio (`http://localhost:1234`), name a model, and every task in that
+project runs there: Claude Code through `ANTHROPIC_BASE_URL`, Codex through a
+provider entry Calandria adds for the turn. Those turns are recorded at zero
+cost. A cloud session can also delegate a single task to the local model with
+`suggest_task`'s `provider: "local"`. Set `CALANDRIA_LOCAL_MODEL_BASE_URL` once
+for a Docker instance.
+
+[Recipes and the allowlist](docs/AGENTS.md#local-models)
+
 ### Preparing a project for parallel tasks
 
 Every task is its own git worktree, so it starts from a checkout holding

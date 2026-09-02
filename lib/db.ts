@@ -764,6 +764,11 @@ export function migrate(db: Database.Database) {
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");
+  // Provider override for the project's turns (lib/agentEnv.ts): JSON over an
+  // allowlist of the env keys the two CLIs read to pick an endpoint and model,
+  // so a project can run against Ollama / LM Studio without a new driver.
+  // '' = no override, the agent's own cloud login — every pre-existing project.
+  add("agent_env", "TEXT NOT NULL DEFAULT ''");
   add("deprecated", "INTEGER NOT NULL DEFAULT 0");
   add("seeded", "INTEGER NOT NULL DEFAULT 0");
   // Per-project managed-services config + the project's deterministic port.
@@ -840,6 +845,10 @@ export function migrate(db: Database.Database) {
   // Per-task run controls (added after model selection): thinking preset + permission mode.
   if (!taskCols.includes("reasoning")) db.exec("ALTER TABLE tasks ADD COLUMN reasoning TEXT");
   if (!taskCols.includes("permission_mode")) db.exec("ALTER TABLE tasks ADD COLUMN permission_mode TEXT");
+  // Per-task provider override, laid over the project's (lib/agentEnv.ts). This
+  // is how a frontier-model session delegates a task to a local model, or a
+  // task in a local-model project is sent back to the cloud. '' = inherit.
+  if (!taskCols.includes("agent_env")) db.exec("ALTER TABLE tasks ADD COLUMN agent_env TEXT NOT NULL DEFAULT ''");
   // Agent-driver seam: which driver runs this task's sessions. Every pre-seam
   // task ran Claude, so the column default backfills existing rows correctly.
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
@@ -1040,6 +1049,14 @@ export function migrate(db: Database.Database) {
   // historical fan-out spent nothing rather than admitting it wasn't recorded.
   if (!usageCols.includes("subagent_tokens")) {
     db.exec("ALTER TABLE task_usage ADD COLUMN subagent_tokens INTEGER");
+  }
+  // Which endpoint the turn ran against: '' for the agent's own cloud (every
+  // row before this shipped, and every row since with no override), else the
+  // override's host[:port] ("localhost:11434"). A turn against an override is
+  // stored with cost_usd = 0 — it isn't Anthropic or OpenAI spend, whatever the
+  // driver's per-token estimate said — and this column is what says so.
+  if (!usageCols.includes("provider")) {
+    db.exec("ALTER TABLE task_usage ADD COLUMN provider TEXT NOT NULL DEFAULT ''");
   }
 
   // The agent thread's last reported CUMULATIVE token counters, as JSON. Only
