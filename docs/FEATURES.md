@@ -554,21 +554,33 @@ Two things an agent cannot do:
 
 ## Scheduled tasks
 
-A schedule is a saved prompt plus a recurring day and time, owned by the project it lives in.
-Find it on the project landing pane, under **Schedules**; click the project's name at the top
-of the task list to get there from anywhere. A schedule fires with no browser tab open: it's
-driven by a ticker in the server process, not a timer in your browser.
+A schedule is a saved prompt plus a day and time, owned by the project it lives in. Find it
+on the project landing pane, under **Schedules**; click the project's name at the top of the
+task list to get there from anywhere. A schedule fires with no browser tab open: it's driven
+by a ticker in the server process, not a timer in your browser.
+
+Every schedule has **Edit**, **Pause**, **Run now** and **Delete**. Deleting is a hard delete
+with no undo, like everything else here, but it only removes the *schedule*: the tasks it
+already minted are kept, so deleting tomorrow's job never deletes last week's work.
 
 Each firing mints a fresh task with its own transcript, worktree, and turn, rather than
 reusing one across occurrences, so every run is reviewable like a task you started by hand
 and a bad run doesn't contaminate the next one's context.
 
+**Weekly or once.** The default is recurring: pick the days of the week it runs. Switch
+**Repeats** to **Once** and you pick a single date instead — "there's a release going out
+overnight, check on it at 04:00" — and the schedule fires exactly one time. Afterwards it
+doesn't vanish: it stays on the card reading **Ran — one-time**, disabled, with its run
+history intact, because the outcome of a 04:00 job is the thing you came to read at 09:00.
+Delete it when you're done with it, or edit it to a later date to arm it again. A date that
+has already passed is refused on the spot rather than saved as a job that can never fire.
+
 **Timezone** is picked explicitly (defaulting to your browser's) rather than inferred from
 the server, since the server may run in a different zone than the person who set up the
 schedule (a container on UTC, a user on Pacific). The time is wall-clock, so "08:30" keeps
 meaning 08:30 across a Daylight Saving transition. The editor previews the next three
-occurrences as you set the days, time, and timezone, so you can catch a mistake on the form
-instead of the following Monday.
+occurrences (or the single one, for a one-off) as you set the days, time, and timezone, so
+you can catch a mistake on the form instead of the following Monday.
 
 **Catching up**: if the app was asleep or down when a firing was due, the next tick runs the
 most recent missed slot once, marked `catch_up` (useful for a morning run discovered at noon,

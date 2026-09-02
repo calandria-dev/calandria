@@ -396,6 +396,7 @@ export function init(db: Database.Database) {
       send_context    INTEGER NOT NULL DEFAULT 1,
       priority        TEXT NOT NULL DEFAULT 'med',
       catch_up_ms     INTEGER NOT NULL DEFAULT -1, -- -1 = use the instance default
+      once_date       TEXT NOT NULL DEFAULT '',    -- 'YYYY-MM-DD' = fire once then spend; '' = weekly
       next_fire_at    INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
@@ -996,6 +997,10 @@ export function migrate(db: Database.Database) {
   if (!schedCols.includes("runbook_id")) {
     db.exec("ALTER TABLE schedules ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
   }
+  // One-time schedules (lib/schedule/time.ts). '' on every pre-existing row is
+  // exactly right: they are all weekly, and '' is already what the recurring
+  // path means by "no date pinned".
+  if (!schedCols.includes("once_date")) db.exec("ALTER TABLE schedules ADD COLUMN once_date TEXT NOT NULL DEFAULT ''");
   // A tag's DEFAULT base branch: where a whole plan's tasks are cut from, set
   // once instead of N times (phase 2 of the per-task base branch design). Same
   // '' = inherit convention as tasks.base_branch, so every existing row keeps

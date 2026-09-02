@@ -803,6 +803,13 @@ export interface Schedule {
   send_context: number;
   priority: Priority;
   catch_up_ms: number;  // -1 = inherit the instance default
+  /**
+   * 'YYYY-MM-DD' for a ONE-TIME schedule, '' for the ordinary weekly one.
+   * When set, `days_mask` is ignored and the schedule fires exactly once, then
+   * spends itself (enabled = 0, next_fire_at = 0) rather than being deleted —
+   * the run ledger is the whole point of a "check on it at 04:00" job.
+   */
+  once_date: string;
   next_fire_at: number; // cached from lib/schedule/time.ts
   /**
    * The runbook this schedule fires, if any. When set, fireSchedule() reads the
