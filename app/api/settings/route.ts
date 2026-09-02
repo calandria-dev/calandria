@@ -17,10 +17,16 @@ export const dynamic = "force-dynamic";
 // (recaps, context drafts — see lib/agents/oneshots.ts), default "claude".
 // `background_jobs` defaults to "on" and gates unattended agent turns;
 // `recap_mode` defaults to "automatic" (also accepts "on_open" and "off").
+// `job_model_light:<agent>` / `job_model_heavy:<agent>` pick the model for the
+// internal one-shots, split by how hard the job is (light = the text-only
+// handoff notes and recaps, heavy = the repo-exploring context draft — see
+// lib/agents/oneshots.ts). Agent-scoped and unvalidated for `default_model`'s
+// reasons; unset means "inherit the driver's own default", the behavior these
+// jobs had before the setting existed.
 // The notify_* keys and their master switch (`notifications`) gate
 // lib/notifications — server-side rather than in the browser because the
 // webhook channel planned next must obey the same policy. All default on.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+)$/;
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());

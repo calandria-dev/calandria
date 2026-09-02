@@ -23,7 +23,7 @@ import type {
   PermissionOutcome,
   PermissionRequest,
 } from "../../types";
-import type { AgentDriver, OneShotResult, TurnHooks } from "../types";
+import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
@@ -1355,7 +1355,12 @@ async function* runTurn(
  * Summarize a transcript into a concise handoff note for the /clear flow.
  * One-shot, genuinely no tools — just text in, summary out (see TEXT_ONE_SHOT).
  */
-async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+// The tier setting the caller resolved, in the shape query() wants. Omitted when
+// unset, so a one-shot keeps inheriting Claude Code's own configured default —
+// the behavior every one-shot had before the setting existed.
+const oneShotModel = (opts?: OneShotOptions) => (opts?.model ? { model: opts.model } : {});
+
+async function summarizeTranscript(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Summarize the following Claude Code session into a concise handoff note for a fresh session ` +
@@ -1365,6 +1370,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
     options: {
       cwd: project.repo_path || process.cwd(),
       ...TEXT_ONE_SHOT,
+      ...oneShotModel(opts),
     },
   });
 
@@ -1413,7 +1419,7 @@ const DRAFT_SETTING_SOURCES: SettingSource[] = ["user", "project"];
  * context and recent git activity. Returns markdown the user reviews before
  * saving — we deliberately don't persist here.
  */
-async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+async function draftProjectContext(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `You are refreshing the saved "project context" for the project "${project.name}". ` +
@@ -1441,6 +1447,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
     options: {
       cwd: project.repo_path || process.cwd(),
       ...ONE_SHOT_BASE,
+      ...oneShotModel(opts),
       settingSources: DRAFT_SETTING_SOURCES,
       tools: DRAFT_TOOLS,
       maxTurns: 40,
@@ -1473,7 +1480,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
  * statuses, recent commits). Describes what happened only — deliberately no
  * next-step suggestions.
  */
-async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+async function summarizeProjectRecap(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns ` +
@@ -1484,6 +1491,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
     options: {
       cwd: project.repo_path || process.cwd(),
       ...TEXT_ONE_SHOT,
+      ...oneShotModel(opts),
     },
   });
 

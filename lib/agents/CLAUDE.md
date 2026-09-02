@@ -209,6 +209,36 @@ produce a paragraph of prose, whose git half already arrives in `digest`. All th
 the user's own `~/.claude/projects` with unresumable recap turns.
 `tests/claudeSettingSources.test.ts` pins both policies.
 
+## Which model a one-shot runs
+
+Nothing used to say. Both drivers passed no model at all, so a handoff note ran on whatever the
+user's `~/.claude/settings.json` or `~/.codex/config.toml` happened to name — invisible from
+Calandria, and on a machine pinned to an expensive alias it was the expensive one summarizing
+four bullets. Codex was worse than invisible: `oneShot()` resolved `resolveCodexModel(null)` for
+its *reporting* state, so the pricing estimate claimed the CLI default while the thread actually
+ran whatever `config.toml` said.
+
+`oneShotModel()` in `lib/agents/oneshots.ts` is now the one resolver, and the settings are
+**agent-scoped** for `default_model`'s reason — a model id names one provider's catalog. Unset
+stays the default and still means "pass nothing, inherit the driver's own", so an instance that
+never opens Settings behaves exactly as before.
+
+Two tiers, not one knob per job, because the jobs really do split and the drivers already
+encode the split: the LIGHT ones (`summarizeTranscript`, `summarizeProjectRecap`) are text in →
+text out with `tools: []` and `maxTurns: 1` / `ONESHOT_MAX_ITEMS_TEXT`, while the HEAVY one
+(`draftProjectContext`) reads an unfamiliar codebase over `maxTurns: 40` /
+`ONESHOT_MAX_ITEMS_EXPLORE` to write a document prepended to every later session in the project.
+A per-job knob would be four settings almost everyone sets to two values.
+
+The lookup keys off the **resolved** driver, not the requested one. A Codex task whose `/clear`
+note falls back to Claude (the utility backstop above) reads `job_model_light:claude`, because
+handing Claude a `gpt-*` id would be a model the catalog can't run. That case is
+`tests/oneshotModel.test.ts`.
+
+`OneShotOptions` is trailing-optional on all three helper signatures, so a driver that ignores it
+still satisfies `AgentDriver` — the same tolerance the interface already extends to a driver that
+implements none of them.
+
 ## Slash-command discovery
 
 The composer's `/` menu is discovered, not hardcoded. It used to be a one-element array holding

@@ -40,6 +40,29 @@ names one provider's catalog and `opus` is not a value Codex can run. Switching 
 unstarted task's agent drops its model back to Inherit rather than carrying over an id the
 new driver would silently ignore.
 
+### Models for Calandria's own jobs
+
+The jobs Calandria runs for you — described under background jobs below — have their own two
+pickers, beside the default model and scoped to the same agent: **Quick internal jobs** and
+**Repo-reading internal jobs**.
+
+They are split that way because the work is. The quick tier is the `/clear` handoff note and
+the project recap: one turn, no tools, text in and text out, which is what a small fast model
+is for. The heavy tier is the "Refresh with AI" context draft, which explores an unfamiliar
+repository read-only before writing a document that is then prepended to every new session in
+that project, so accuracy is worth paying for. Two tiers rather than a knob per job, since a
+knob per job is four settings almost everyone would set to two values.
+
+Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
+run on whatever `~/.claude/settings.json` or `~/.codex/config.toml` names, exactly as they did
+before the pickers existed.
+
+Each tier is read off the agent that actually runs the job, which is not always the one you
+were looking at. A `/clear` note follows its own task's agent so the cost lands on that login;
+recaps and context drafts follow the utility agent. When a driver doesn't implement a job and
+falls back, the fallback agent's setting is the one used — a model id belongs to one provider's
+catalog, and `opus` is not something Codex can run.
+
 ## Authentication and billing
 
 The recommended path is the subscription login offered by the first-run wizard or
@@ -136,7 +159,8 @@ tools it can never call. They still read `~/.claude/settings.json`, because that
 where a Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they
 authenticate the same way your ordinary turns do. The context draft additionally loads the
 repository's `CLAUDE.md`, since describing the repo is its job, and can read, search, and
-list files, but not run commands or write anything.
+list files, but not run commands or write anything. Which model each of them runs on is the
+two-tier setting described under "Choosing a model" above.
 
 ## OpenAI Codex
 

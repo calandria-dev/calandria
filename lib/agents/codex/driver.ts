@@ -21,7 +21,7 @@
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, OneShotResult } from "../types";
+import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
@@ -266,7 +266,13 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // degrades to empty text (callers add their own "(no … produced)" fallback) so
 // a failed helper turn never rejects into the recap/refresh jobs — mirrors the
 // Claude driver. Usage received before an error or max-items abort is retained.
-async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
+async function oneShot(
+  project: Project,
+  prompt: string,
+  maxItems: number,
+  opts?: OneShotOptions,
+  mode: SandboxMode = "read-only",
+): Promise<OneShotResult> {
   // Same MCP policy as a turn, and it bites harder here: a one-shot mounts no
   // Calandria bridge at all, so every inherited server is a subprocess
   // spawned purely to offer a recap or summary run tools it could never call.
@@ -275,10 +281,15 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
     codexPathOverride: CODEX_CLI_PATH || undefined,
     ...(Object.keys(inherited).length ? { config: { mcp_servers: inherited } } : {}),
   });
+  // Same shape as a turn's (see runTurn): OMIT the override when nothing was
+  // chosen, so the user's own ~/.codex/config.toml default still wins, but
+  // resolve the reported model to the CLI default either way for pricing.
+  const chosen = opts?.model || null;
   const thread = codex.startThread({
     workingDirectory: project.repo_path || process.cwd(),
     skipGitRepoCheck: true,
     sandboxMode: mode,
+    ...(chosen ? { model: chosen } : {}),
     ...approvalOverride(),
     networkAccessEnabled: false,
   });
@@ -287,7 +298,7 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   // The last agent_message wins — the same semantics as the SDK's finalResponse.
   let finalResponse = "";
   let usage: TurnUsage | undefined;
-  const state = newState(resolveCodexModel(null));
+  const state = newState(resolveCodexModel(chosen));
   try {
     const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
     for await (const ev of events) {
@@ -310,13 +321,14 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   return { text: finalResponse.trim(), usage };
 }
 
-async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+async function summarizeTranscript(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `Summarize the following Codex session into a concise handoff note for a fresh session continuing the ` +
       `same task. Cover: what was done, the current state of the code, decisions made, and what remains. Be ` +
       `specific about files and follow-ups. Output only the note.\n\n=== TRANSCRIPT ===\n${transcript}`,
-    ONESHOT_MAX_ITEMS_TEXT
+    ONESHOT_MAX_ITEMS_TEXT,
+    opts
   );
   return { text: result.text || "(no summary produced)", usage: result.usage };
 }
@@ -324,7 +336,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
 const CTX_OPEN = "<<<CONTEXT>>>";
 const CTX_CLOSE = "<<<END_CONTEXT>>>";
 
-async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+async function draftProjectContext(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `You are refreshing the saved "project context" for the project "${project.name}". This context is prepended ` +
@@ -340,7 +352,8 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `~200–500 words. Wrap ONLY the final document between a line containing ${CTX_OPEN} and a line containing ` +
       `${CTX_CLOSE}.\n\n=== EXISTING SAVED CONTEXT (may be stale) ===\n${project.context || "(none)"}\n\n` +
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
-    ONESHOT_MAX_ITEMS_EXPLORE
+    ONESHOT_MAX_ITEMS_EXPLORE,
+    opts
   );
   const open = result.text.indexOf(CTX_OPEN);
   const close = result.text.lastIndexOf(CTX_CLOSE);
@@ -349,14 +362,15 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
   return { text: doc || "(no context produced)", usage: result.usage };
 }
 
-async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+async function summarizeProjectRecap(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns after ` +
       `time away. Output ONLY 2–4 terse markdown bullet points ("- " each), one line each, ideally under ~12 words. ` +
       `Be concrete about features, files, and tasks. No headings, no intro/outro, no next steps — recap only what has ` +
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
-    ONESHOT_MAX_ITEMS_TEXT
+    ONESHOT_MAX_ITEMS_TEXT,
+    opts
   );
   return { text: result.text || "(no recap produced)", usage: result.usage };
 }
