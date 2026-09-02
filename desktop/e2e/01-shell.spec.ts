@@ -16,6 +16,7 @@
 import { statSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { isDesktopShell } from "@/app/shell/useNotifications";
+import { isBootHandoffUrl } from "./bootUrl";
 import { attachShellLog, launchDuplicate, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
@@ -37,7 +38,17 @@ test.afterAll(async () => {
 test("the boot screen streams supervisor logs, then hands off to the app", async () => {
   // The window is created on loading.html and only swaps once /api/version
   // answers, so these three facts together ARE the handoff.
-  expect(shell.firstUrl).toMatch(/loading\.html$|^about:blank$/);
+  //
+  // EITHER SIDE of the swap passes (issue #75). Requiring the boot screen here
+  // made the assertion a race the shell could lose by being fast: on macOS the
+  // swap sometimes lands before the fixture's first non-empty read, and this
+  // failed for the app having come up promptly — reddening packaging and the
+  // two steps after it. `isBootHandoffUrl` says what is actually claimed, and
+  // `tests/bootUrl.test.ts` pins it on every lane rather than only this one.
+  expect(
+    isBootHandoffUrl(shell.firstUrl, shell.origin),
+    `the window's first URL was neither the boot screen nor the app: ${JSON.stringify(shell.firstUrl)}`
+  ).toBe(true);
   // The supervisor really did narrate its start...
   expect(shell.log.join("\n")).toMatch(/\[shell] ready on http:\/\/127\.0\.0\.1:\d+/);
   // ...and those lines reached the boot screen, which is a SEPARATE claim and

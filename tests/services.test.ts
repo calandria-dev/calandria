@@ -30,6 +30,7 @@ import { resolveFeatures } from "../lib/features";
 // Liveness the same way the supervisor asks it: a process-group probe on POSIX,
 // `tasklist` on win32, where a negative pid means nothing (lib/processTree.ts).
 import { treeAlive } from "../lib/processTree";
+import { waitForTree } from "./waitForTree";
 
 const APP_HOST = "ishan.calandria.example.com";
 
@@ -205,7 +206,18 @@ describe("service registry persistence", () => {
     wipeRegistry();
     await restoreServices();
 
-    expect(treeAlive(oldPid)).toBe(false); // old orphan is gone
+    // Polled rather than sampled once (issue #99). `restoreServices()` awaits
+    // its own work, but on win32 the kill it issued is `taskkill /T /F`, which
+    // returns once the request is made and not once the tree is gone — so a
+    // single probe here was asserting on the instant the OS happened to finish,
+    // and intermittently lost that race on the Windows unit lane. The claim is
+    // unchanged: the orphan IS reaped, and a tree that never dies still fails
+    // below.
+    const orphanAlive = await waitForTree(
+      () => treeAlive(oldPid),
+      (alive) => !alive
+    );
+    expect(orphanAlive).toBe(false); // old orphan is gone
     const restored = listServices(project).find((s) => s.name === "dev");
     expect(restored!.status).toBe("running");
     expect(restored!.pid).not.toBe(oldPid);
