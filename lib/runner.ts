@@ -874,7 +874,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         updateTask(id, { background_pending: 1, background_note: ev.note });
         publish(id, ev);
         // The composer told the user a follow-up parked mid-turn would be
-        // "sent when this turn ends" — and the model's turn HAS ended: a
+        // "sent at turn end" — and the model's turn HAS ended: a
         // linger is the session holding its input open for work nobody is
         // waiting on. So hand the oldest parked message to it now rather than
         // leaving it until the linger closes, which by default has no deadline
