@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../icons";
-import { jsend } from "./api";
+import { jget, jsend } from "./api";
 import { isAwaiting, isWithdrawn } from "./format";
 import { StatusDot } from "./shared";
 import { TAG_COLORS, type TagRow, type TaskRow } from "./types";
@@ -147,6 +147,113 @@ export function baseConsequence(args: {
   return lines;
 }
 
+/** What `GET /api/tags/[id]/sync` answers with — `lib/git.ts`'s BranchDrift, plus
+ *  the two shapes that need no git at all. */
+export interface TagDriftInfo {
+  inherited?: boolean; // the tag has no base of its own
+  sameAsProject?: boolean; // its base IS the project default
+  projectBranch?: string;
+  branch?: string;
+  against?: string;
+  exists?: boolean;
+  againstExists?: boolean;
+  behind?: number;
+  ahead?: number;
+  diverged?: boolean;
+  unknown?: boolean;
+}
+
+/**
+ * The one line a drift reading is worth, and whether Sync is on offer — split
+ * out from the component because it is the whole judgement and the rest is
+ * plumbing.
+ *
+ * `null` means say nothing: a tag that follows the project default, or names it
+ * explicitly, has no second branch to fall behind. "Up to date" IS said, though,
+ * because the absence of a warning is not the same as having been told, and this
+ * band is where someone comes to check.
+ *
+ * Being ahead is not reported. An integration branch is ahead of main by
+ * definition — that's what it's for — and counting it beside the number that
+ * matters would bury it.
+ */
+export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" | "bad"; syncable: boolean } | null {
+  if (d.inherited || d.sameAsProject) return null;
+  const branch = d.branch || "this tag's base branch";
+  const against = d.against || d.projectBranch || "the project default";
+  if (d.exists === false)
+    return { text: `${branch} no longer exists here — new tasks are cut from HEAD instead`, tone: "bad", syncable: false };
+  if (d.againstExists === false) return { text: `${against} doesn't exist here`, tone: "bad", syncable: false };
+  if (d.unknown) return { text: `can't compare with ${against}`, tone: "warn", syncable: false };
+  const behind = d.behind ?? 0;
+  if (behind === 0) return { text: `up to date with ${against}`, tone: "ok", syncable: false };
+  return { text: `${behind} behind ${against}`, tone: "warn", syncable: true };
+}
+
+/**
+ * Drift of the tag's base branch from the project default, and the Sync that
+ * closes it. Sits above the strip's two modes so the editor — where the base
+ * branch is typed — shows it as well as the read view where the badge is.
+ *
+ * Fetched per tag on open rather than served with the tag list: see the route.
+ * The saved `tag.base_branch` is the key, so typing in the editor doesn't refetch
+ * on every keystroke, and saving a new branch does.
+ */
+function TagDriftRow({ tag }: { tag: TagRow }) {
+  const [drift, setDrift] = useState<TagDriftInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!tag.base_branch) return setDrift(null);
+    try {
+      setDrift(await jget<TagDriftInfo>(`/api/tags/${tag.id}/sync`));
+    } catch {
+      setDrift(null); // a drift reading nobody can take is not worth an error band
+    }
+  }, [tag.id, tag.base_branch]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const sync = async () => {
+    setBusy(true);
+    setErr(null);
+    setNote(null);
+    try {
+      const r = await jsend<{ behind?: number }>(`/api/tags/${tag.id}/sync`, "POST");
+      setNote(`Merged ${r.behind ?? 0} commit(s) in.`);
+    } catch (e) {
+      // Every refusal — a dirty worktree holding the branch, a conflict, a
+      // missing ref — arrives as the route's 409 and `jsend` unwraps its
+      // `error` verbatim, which is the whole point of phrasing them for a
+      // reader in lib/git.ts.
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
+
+  const line = drift && driftLine(drift);
+  if (!line) return null;
+  return (
+    <div className={`gs-drift ${line.tone}`}>
+      <span className="gs-drift-msg mono">{line.text}</span>
+      {line.syncable && (
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void sync()}
+          title={`Merge ${drift?.against ?? "the project default"} into ${drift?.branch ?? "this branch"}, so tasks tagged this stop being cut stale`}>
+          {busy ? "Syncing…" : "Sync"}
+        </button>
+      )}
+      {note && <span className="gs-drift-note">{note}</span>}
+      {err && <span className="gs-drift-err">{err}</span>}
+    </div>
+  );
+}
+
 export function TagStrip({ tag, members, allTags, projectBranch, originTask, onSelectTask, onDeleted }: {
   tag: TagRow;
   /** Every task carrying the tag, in tray order — the strip sorts them itself. */
@@ -221,6 +328,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
 
   return (
     <div className="gstrip" style={tagTint(tag.color)}>
+      <TagDriftRow tag={tag} />
       {editing ? (
         <div className="gs-edit">
           <input className="gs-name-in" value={name} aria-label="Tag name" autoFocus
