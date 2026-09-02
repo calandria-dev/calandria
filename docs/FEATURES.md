@@ -9,9 +9,9 @@ contains the longer feature inventory kept out of the project README.
 
 ## Parallel work without collisions
 
-Each task runs in its own git worktree and branch, with an independent Claude Code or Codex
-session. Projects and tasks share one workspace, so you can run many sessions without mixing
-their files, terminals, or transcripts.
+Each task runs in its own git worktree and branch, with an independent Claude Code, Codex or
+Antigravity session. Projects and tasks share one workspace, so you can run many sessions
+without mixing their files, terminals, or transcripts.
 
 The cross-project **Needs you** signal identifies sessions waiting for input. Turns run on
 the server and their events are persisted, so reloading the page or sleeping your laptop
@@ -801,10 +801,11 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
-preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
-connected agent automatically, so a Claude-only or Codex-only installation works without
-special configuration, and they can be pinned to their own models — a small one for the
-short summarizing jobs, a stronger one for the draft that reads your repository.
+Claude Code, OpenAI Codex and Google's Antigravity are first-class agent drivers. Calandria
+detects expired connections, preserves queued follow-ups, and provides a reconnect action.
+Background jobs choose a connected agent automatically, so an installation with only one of
+the three connected works without special configuration, and each can be pinned to its own
+models — a small one for the short summarizing jobs, a stronger one for the draft that reads
+your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.

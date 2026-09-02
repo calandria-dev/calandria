@@ -2,7 +2,7 @@
 
 ![Calandria](docs/design/og.png)
 
-### Run Claude Code and Codex in parallel across every project, from any browser.
+### Run Claude Code, Codex and Antigravity in parallel across every project, from any browser.
 
 Calandria is a self-hosted web control room for your coding agents. Run it
 on your laptop or a server and use the same workspace from your computer,
@@ -221,9 +221,11 @@ already queued. The transcript records that it was sent.
 
 ## Supported agents
 
-Calandria supports **Claude Code** and **OpenAI Codex** end to end. Choose an
-agent per task, or connect only the one you use. Both work with subscription
-login; API keys stay optional.
+Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity**
+(the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
+one you use. All three work with subscription login; API keys stay optional —
+except in a container, where Antigravity needs one, since its CLI stores its
+token in the OS keyring.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 

@@ -111,6 +111,22 @@ export const CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH || claudeDefaultPath(
 export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
 
 /**
+ * Path to the Antigravity CLI (`agy`), the binary behind the Gemini driver.
+ * Empty = resolve bare `agy` on PATH (the Docker image installs it globally
+ * next to `claude` and `codex`). Set this to pin a specific binary when PATH is
+ * trimmed or a different install should be used.
+ */
+export const AGY_CLI_PATH = process.env.AGY_CLI_PATH || "";
+
+/**
+ * Where the Gemini driver keeps each task's private HOME. `agy` reads MCP
+ * servers from exactly one user-global file, so a per-task HOME is the only way
+ * parallel tasks get their own bridge entry — see lib/agents/gemini/home.ts for
+ * the experiments that ruled out every in-repo alternative.
+ */
+export const GEMINI_HOMES_DIR = readEnv("CALANDRIA_GEMINI_HOMES_DIR") || path.join(dbLocation.dir, "gemini-homes");
+
+/**
  * Path to the GitHub CLI (`gh`) used for repo listing/cloning, the guided
  * device-flow login, and opening PRs. Empty = auto-resolve: bare `gh` if the
  * server's PATH can see it, else a best-effort probe of the usual install dirs

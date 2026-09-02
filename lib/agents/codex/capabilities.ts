@@ -128,4 +128,6 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   supportsResume: true,
   apiKeyHint: codexApiKey.hint,
   loginStyle: "device_code",
+  loginCompletesOutOfBand: false,
+  connectHint: null,
 };

@@ -182,6 +182,103 @@ is the honest option.
 - **Slash-command discovery**: `-p "/help"` answers in print mode without spending quota,
   so `listCommands` is feasible; format to confirm.
 
+## Settled by the driver, 2026-09-02
+
+The driver (`lib/agents/gemini/`) was built against a signed-in `agy` 1.1.22 and a recorded
+`stream-json` capture, now committed as `tests/fixtures/gemini/*.jsonl`. Several claims above
+came from the vendor's documentation and the binary's embedded prose, and the CLI does not
+behave the way either describes. **Where this section disagrees with the tables above, this
+section is what was measured.**
+
+### The event mapping above is wrong in four places
+
+- **`step_type` is lowercase snake_case**: `user_input`, `agent_response`, `tool`,
+  `system_message`. The uppercase `CORTEX_STEP_TYPE_*` names in the binary are an internal
+  enum that never reaches the wire. There is no `PLANNER_RESPONSE` step and no `MCP_TOOL` step.
+- **An MCP call is an ordinary `tool` step** whose `tool_name` is the CLI's own dispatcher,
+  `call_mcp_tool`. The server and tool the model actually asked for are in
+  `tool_info.parameters.ServerName` / `.ToolName`. Reading `tool_info.name` would label every
+  Calandria call "call_mcp_tool", and `lib/suggestionCard.ts` would never match a `suggest_task`.
+- **`result.usage` is cumulative over the whole conversation**, not per turn. A two-turn
+  conversation reported 61357 input tokens, exactly the sum of its four steps
+  (14765 + 15287 + 15494 + 15811). The driver keeps a persisted baseline and subtracts it,
+  the same machinery Codex needs.
+- **The conversation id rides `init`**, at the top level of the envelope rather than inside it.
+  Each line is `{"event":"<name>", "<name>":{…}}` — tag and payload key both.
+
+Also: assistant prose arrives as `text_delta` on `agent_response` steps, but most such steps
+carry no text at all (they are the model's tool-planning turns), and a reply the CLI never
+streamed still appears in `result.response`.
+
+### `CANCELED` does not mean the user stopped it
+
+The table above says to swallow `CANCELED`/`INTERRUPTED` when our own abort fired. That is
+necessary but not sufficient: `CANCELED` is *also* what a turn reports when the CLI auto-denies
+a tool it has nobody to prompt about. Swallowing it unconditionally renders a turn that did
+nothing as a silent success. Worse, the status is not even consistent — the same class of
+denial was observed ending a run both `CANCELED` and `SUCCESS`, in both cases with exit code 0
+and the only honest signal on stderr (`no output produced — a tool required the "command"
+permission that headless mode cannot prompt for, so it was auto-denied`). The driver reads
+stderr for it.
+
+This is why the capability descriptor offers no "default"/ask permission mode. In the CLI's own
+default mode (`request-review`) a headless turn cannot run a single tool, so offering it would
+be offering a mode that is guaranteed to do nothing.
+
+### Question 1 (per-task MCP): solved by a per-task `HOME`, not by a workspace root
+
+The CLI's embedded documentation describes workspace "customization roots" (`.agents/`,
+`.agent/`, `_agents/`, `_agent/`) that may carry `mcp_config.json`. **That is not true of MCP
+servers.** With the config placed in all four of those, plus `.gemini/`, `.gemini/config/`,
+`.antigravity/` and the repository root simultaneously, the model still answered "NO MCP". Only
+the global `~/.gemini/config/mcp_config.json` is read. (The roots are real for skills, rules and
+hooks; MCP is the exception.)
+
+What works is pointing `HOME` at a per-task directory, so the CLI reads *our* copy of that one
+global file. Two things the spike did not anticipate:
+
+- **A bare per-task `HOME` loses the login.** The CLI re-prompts for OAuth, so the token is not
+  purely in the D-Bus keyring as concluded above — something under `~/.gemini/antigravity-cli`
+  gates it. Symlinking that one directory back to the real home restores authentication while
+  keeping `config/` private.
+- **`HOME` is inherited by every shell command the agent runs**, so a naive override takes away
+  `~/.gitconfig` and `~/.ssh` — an agent that cannot set a committer identity or reach a remote.
+  `lib/agents/gemini/home.ts` symlinks every entry of the real home across and substitutes only
+  `.gemini`.
+
+Verified end to end: a turn under a per-task home called `get_task` through the bridge and got
+back that task's own `CALANDRIA_TASK_ID`. `scripts/calandria-mcp.mjs` is unchanged.
+
+### Question 2 (keyring in the container): documented, not solved
+
+The container path is `GEMINI_API_KEY`, as `.env.example` now states. No D-Bus is added to the
+image. A container user therefore bills Google's API rather than drawing on a subscription;
+a desktop install with a running keyring gets the subscription login.
+
+### Corrections to the login flow
+
+`agy models` takes **no** `--output-format` flag — passing one is a usage error — and it exits
+**0 whether or not you are signed in**, so `authStatus` parses its TSV output rather than a
+status code.
+
+The print-mode login (`agy -p` with stdin open) is unusable for the connect card: it dies after
+exactly 61 seconds with "authentication timed out", the window is not configurable, and because
+the code is bound to that child's PKCE verifier, respawning to get a fresh window invalidates
+whatever code the user is holding. The **interactive** CLI has no such timeout — measured alive
+and accepting a pasted code many minutes later — so `lib/agents/gemini/auth.ts` drives the real
+CLI under a pty, answers its one menu prompt, and writes the code when the user submits it.
+
+### The model catalog
+
+`agy models` on a signed-in host returns reasoning effort **baked into the slug**
+(`gemini-3.8-flash-high` / `-medium` / `-low`; `gemini-3.1-pro` has only `-high` and `-low`),
+so the driver offers no separate reasoning picker — choosing the model is choosing the effort.
+The default is `gemini-3.8-flash-high`. The catalog is also **not Gemini-only**: it serves
+`claude-sonnet-4-6`, `claude-opus-4-6-thinking` and `gpt-oss-120b-medium`. Note that
+`gemini-3.1-pro` (the bare slug this document guessed at) does not exist in Google's public API
+catalog either — there it is `gemini-3.1-pro-preview`, still Preview — and Google has published
+no prices for the 3.8 line, so those turns are estimated at the 3.5 Flash rate.
+
 ## Open questions the driver task must settle first
 
 1. **Per-task MCP configuration.** `agy mcp add` writes one user-global

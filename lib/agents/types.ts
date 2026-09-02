@@ -119,6 +119,27 @@ export interface AgentCapabilities {
    * enters in the browser, then polls until it lands (Codex).
    */
   loginStyle: "paste_code" | "device_code";
+  /**
+   * TRUE when the login can finish WITHOUT the user pasting anything back —
+   * Antigravity's OAuth redirect lands on Google's own callback page, which
+   * completes the sign-in for the waiting CLI, so a user who never copies the
+   * code is nonetheless signed in. The connect card therefore polls the
+   * driver's authStatus() alongside its login poll while the code box is
+   * showing, instead of waiting for a paste that will never come.
+   *
+   * False for Claude (the code IS the exchange) and for Codex, whose device
+   * flow already lands on its own and is polled through the login session.
+   * Costs a real CLI probe per poll, so it stays opt-in per driver.
+   */
+  loginCompletesOutOfBand: boolean;
+  /**
+   * One extra sentence the connect card shows under its sign-in CTA — the
+   * per-agent caveat that the generic prose can't carry. Antigravity's is the
+   * container one: `agy` keeps its OAuth token in the D-Bus Secret Service,
+   * which the published image has no daemon for, so a containerized instance
+   * connects with `GEMINI_API_KEY` instead. null = nothing to add.
+   */
+  connectHint: string | null;
 }
 
 // ---------- auth surface (shape after lib/claude-auth.ts) ----------

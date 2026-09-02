@@ -237,6 +237,20 @@ runaway helper turn is cut off instead of looping unbounded. The binary path com
 `CODEX_CLI_PATH`, or the SDK auto-resolves its bundled
 binary or PATH.
 
+### The Antigravity driver (`lib/agents/gemini/driver.ts`)
+
+Google's `agy` CLI has no SDK, so this driver owns the process itself: `spawn`, NDJSON off
+stdout, `gemini/events.ts` to normalize. It runs on the user's Google login and needs no API
+key outside a container (where it needs one, since the CLI's token lives in the OS keyring —
+see [AGENTS.md](AGENTS.md#antigravity-gemini)). Two structural differences from the other two
+drivers: **each task runs under its own `HOME`** (`gemini/home.ts`), because the CLI reads MCP
+servers from exactly one user-global file and a shared one would let whichever task wrote last
+own every other task's tool identity; and **usage is cumulative per conversation**, so a turn's
+spend is a delta against the `sessions.usage_cum` baseline, the same shape Codex needs. Cost is
+estimated from Google's published prices (`gemini/pricing.ts`) — the CLI reports no dollar
+figure — while plan quota is read from the CLI's own `/usage` command, which spends none
+(`gemini/planUsage.ts`).
+
 ### Internal one-shots (`lib/agents/oneshots.ts`)
 
 `lib/agents/oneshots.ts` routes the internal jobs that run a turn outside the main chat:
@@ -486,16 +500,25 @@ Cancelling a task can now start work, matching what "Start when unblocked" promi
 `tests/autoStart.test.ts` and `tests/withdrawSuggestion.test.ts` pin both directions so this
 can't regress.
 
-### Adding a third agent (e.g. Gemini, Cursor)
+### Adding another agent
 
 Implement the `AgentDriver` interface in `lib/agents/<id>/driver.ts`. `runTurn()` is the
 only required method; the one-shot helpers are optional and fall back to the utility agent.
-Register the driver in `lib/agents/registry.ts` and ship its CLI in the `Dockerfile`,
-installed on `PATH` next to `claude` and `codex`. Nothing else needs to change: the
-capability descriptor drives the pickers, the `/api/agents/[id]/*` routes are generic, and
+Register the driver in `lib/agents/registry.ts` **and** `lib/agents/capabilities.ts` (the
+second is what `listAgentIds()` reads, so a driver registered only in the first is connectable
+but invisible to every id-level lookup), and ship its CLI in the `Dockerfile`, installed on
+`PATH` next to `claude`, `codex` and `agy`. Nothing else needs to change: the capability
+descriptor drives the pickers, the `/api/agents/[id]/*` routes are generic, and
 `getDriver(task.agent)` resolves the new driver everywhere it's used. `tests/agentDriver.test.ts`
 (the driver contract test) and `tests/codexEvents.test.ts` (the event-mapping test) are
 templates for pinning a new driver to the same `StreamEvent` contract.
+
+The Antigravity driver is the worked example for a CLI with **no SDK** — spawn the binary,
+parse its stream, mock `node:child_process` in the tests — and for the two places a genuinely
+new agent shape reached past the driver seam rather than being absorbed by it: the connect
+card grew `loginCompletesOutOfBand` and `connectHint` on the capability descriptor, because
+that login can finish without the code box and cannot finish at all in a container. Both are
+data the card renders, not branches on an agent id, which is the rule to hold to.
 
 ## Everything else, by module
 
