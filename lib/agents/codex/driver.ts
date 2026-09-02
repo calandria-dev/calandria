@@ -26,7 +26,7 @@ import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
-import { buildProjectContext } from "../shared";
+import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
@@ -407,6 +407,15 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
   return { text: doc || "(no context produced)", usage: result.usage };
 }
 
+/**
+ * "Refresh tag" — the same read-only explore budget as the context draft, since
+ * it is the same kind of run: read enough of the repo to judge a plan. Returns
+ * the raw text for parseTagPlan(); the server, not this run, applies anything.
+ */
+async function planTagRefresh(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
+  return oneShot(project, buildTagRefreshPrompt(project, digest), ONESHOT_MAX_ITEMS_EXPLORE, opts);
+}
+
 async function summarizeProjectRecap(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
@@ -432,6 +441,7 @@ export const codexDriver: AgentDriver = {
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,
+  planTagRefresh,
   // Auth delegates to lib/agents/codex/auth.ts (the headless `codex login
   // --device-auth` flow + `codex login status` / a one-shot verify turn).
   authStatus: codexStatus,

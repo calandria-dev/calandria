@@ -924,8 +924,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The <strong>Refresh with AI</strong> project-context draft, which explores the repository read-only before it
-                      writes. It reads an unfamiliar codebase and is prepended to every new session in the project, so accuracy pays here.
+                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check, which
+                      both explore the repository read-only before deciding something durable — context prepended to every new session,
+                      or which of a tag&apos;s tasks have gone stale. Both read an unfamiliar codebase, so accuracy pays here.
                     </div>
                   }
                 />

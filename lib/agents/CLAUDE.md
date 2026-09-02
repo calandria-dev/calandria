@@ -302,7 +302,7 @@ never call (measured on one machine: 10 servers, 146 tools, ~8s added to a ~5s j
 do the work, none of which was set before:
 
 - **`tools`** is the real restriction. `allowedTools` is not: it only pre-approves, and
-  `bypassPermissions` pre-approves everything anyway. All three helpers used to pass
+  `bypassPermissions` pre-approves everything anyway. Every helper used to pass
   `allowedTools` and get the full toolset (verified on CLI 2.1.228: `allowedTools: []` ran Read,
   and the "read-only" draft agent ran Write). `skills: []` backs it up against the discovery pass.
 - **`strictMcpConfig: true`** drops MCP from settings, `.mcp.json` and plugins. `tools` alone
@@ -328,7 +328,11 @@ transform can only be skewed by it. `draftProjectContext` keeps `project` (descr
 is its whole job, and that's what loads CLAUDE.md) but not `local` (gitignored personal overrides
 in a document written for everyone), runs with `maxTurns: 40`, and trades Bash for
 `tools: ["Read", "Grep", "Glob"]`: unreviewed arbitrary execution in the user's checkout to
-produce a paragraph of prose, whose git half already arrives in `digest`. All three set
+produce a paragraph of prose, whose git half already arrives in `digest`. `planTagRefresh`
+("Refresh tag", lib/tagRefresh.ts) reuses that exact configuration — same tools, same
+`settingSources`, same `maxTurns` — because it is the same kind of run, reading a repo to judge
+a plan; the difference is only that its output is a JSON plan the server applies rather than
+prose. All four set
 `persistSession: false`, since nothing records a one-shot's session id and they were only filling
 the user's own `~/.claude/projects` with unresumable recap turns.
 `tests/claudeSettingSources.test.ts` pins both policies.
@@ -349,17 +353,18 @@ never opens Settings behaves exactly as before.
 
 Two tiers, not one knob per job, because the jobs really do split and the drivers already
 encode the split: the LIGHT ones (`summarizeTranscript`, `summarizeProjectRecap`) are text in →
-text out with `tools: []` and `maxTurns: 1` / `ONESHOT_MAX_ITEMS_TEXT`, while the HEAVY one
-(`draftProjectContext`) reads an unfamiliar codebase over `maxTurns: 40` /
-`ONESHOT_MAX_ITEMS_EXPLORE` to write a document prepended to every later session in the project.
-A per-job knob would be four settings almost everyone sets to two values.
+text out with `tools: []` and `maxTurns: 1` / `ONESHOT_MAX_ITEMS_TEXT`, while the HEAVY ones
+(`draftProjectContext`, `planTagRefresh`) read an unfamiliar codebase over `maxTurns: 40` /
+`ONESHOT_MAX_ITEMS_EXPLORE` — one to write a document prepended to every later session in the
+project, the other to judge whether a tag's tasks still describe work the code needs.
+A per-job knob would be a setting per job almost everyone sets to two values.
 
 The lookup keys off the **resolved** driver, not the requested one. A Codex task whose `/clear`
 note falls back to Claude (the utility backstop above) reads `job_model_light:claude`, because
 handing Claude a `gpt-*` id would be a model the catalog can't run. That case is
 `tests/oneshotModel.test.ts`.
 
-`OneShotOptions` is trailing-optional on all three helper signatures, so a driver that ignores it
+`OneShotOptions` is trailing-optional on every helper signature, so a driver that ignores it
 still satisfies `AgentDriver` — the same tolerance the interface already extends to a driver that
 implements none of them.
 

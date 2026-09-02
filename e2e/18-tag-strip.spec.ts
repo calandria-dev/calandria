@@ -136,6 +136,44 @@ test("the strip expands one lit chip into the tag's detail, and stays shut for t
   await expect(page.locator(".sess-head")).toContainText(memberTitle);
 });
 
+test("Refresh tag runs a detached job whose report outlives leaving the tag", async ({ page, request }) => {
+  await openProject(page);
+  await chip(page).click();
+  const strip = page.locator(".gstrip");
+
+  await strip.getByRole("button", { name: "Refresh tag" }).click();
+  // The mock driver returns a plan that rewrites the description and rewords
+  // the first member, so both halves of "apply" are on screen.
+  await expect(strip.locator(".gs-job-sum")).toContainText("description rewritten", { timeout: 30000 });
+  await expect(strip.locator(".gs-job-sum")).toContainText("1 task reworded");
+  await expect(strip.locator(".gs-desc").first()).toHaveText(`Mock tag refresh for ${PROJECT}.`);
+
+  // The job's state lives on the tag ROW, not in the component: shutting the
+  // strip (a second lit chip) and reopening it must not lose the report. This
+  // is the same mechanism that lets the run survive a reload or a project
+  // switch while it is still going.
+  await chip(page, OTHER).click();
+  await expect(strip).toHaveCount(0);
+  await chip(page, OTHER).click();
+  await expect(strip.locator(".gs-job-sum")).toContainText("description rewritten");
+
+  // The reword is a revertable agent edit, which is why the job is allowed to
+  // apply rather than propose.
+  const member = (await tasksOf(request)).find((t) => t.title === memberTitle)!;
+  const edits = await (await request.get(`/api/tasks/${member.id}/agent-edits`)).json();
+  expect(edits.edits).toHaveLength(1);
+  expect(edits.edits[0].changes[0]).toMatchObject({ field: "description", after: "Mock refreshed brief." });
+
+  // Dismiss clears the report for good — and never the edits it reported on.
+  await strip.getByRole("button", { name: "Dismiss" }).click();
+  await expect(strip.locator(".gs-job-sum")).toHaveCount(0);
+  await chip(page, OTHER).click();
+  await chip(page, OTHER).click();
+  await expect(strip.locator(".gs-job-sum")).toHaveCount(0);
+  const stillEdited = await (await request.get(`/api/tasks/${member.id}`)).json();
+  expect(stillEdited.description).toBe("Mock refreshed brief.");
+});
+
 test("the strip renames the tag and deletes it without touching its tasks", async ({ page, request }) => {
   await openProject(page);
   await chip(page).click();

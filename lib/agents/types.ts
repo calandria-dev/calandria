@@ -335,10 +335,10 @@ export interface AgentDriver {
 
   // ---------- one-shot helpers (no session, text in → text out) ----------
   //
-  // All three are OPTIONAL: a driver can ship runTurn() alone and the app
+  // All four are OPTIONAL: a driver can ship runTurn() alone and the app
   // backstops the missing helper with the configured utility agent (see
   // lib/agents/oneshots.ts). summarizeTranscript is task-scoped (runs on the
-  // task's own agent so the work bills the right login); draft/recap are
+  // task's own agent so the work bills the right login); the rest are
   // project-scoped and run on the utility agent.
 
   //
@@ -352,6 +352,15 @@ export interface AgentDriver {
   draftProjectContext?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
   /** Short "where you left off" recap from a recent-activity digest. */
   summarizeProjectRecap?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
+  /**
+   * Check a tag's plan against the code and say what's gone stale — the
+   * "Refresh tag" button (lib/tagRefresh.ts). `digest` carries the tag, its
+   * saved description and every member's brief; the driver explores the repo
+   * READ-ONLY and returns a JSON plan (parsed by parseTagPlan()) rather than
+   * writing anything. The server applies it, so the edits land as revertable
+   * agent edits instead of unattended writes nobody can see.
+   */
+  planTagRefresh?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
 
   // ---------- auth (the setup wizard's connect / verify flow) ----------
 
