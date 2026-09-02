@@ -25,11 +25,16 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
   // One agent: show what the provider actually said, so "expired session" isn't
   // confused with "revoked key" or a network blip. Several: keep it to the names.
   const detail = broken.length === 1 ? broken[0].authBroken?.reason : null;
+  // Flagged while still connected on record means the login died in flight.
+  // Flagged with NO record means the record was dropped on purpose — the CLI's
+  // provider changed under a verified login (lib/agents/connections.ts) — and
+  // "expired" would send the user chasing the wrong fix.
+  const expired = broken.every((a) => a.authenticated);
   return (
     <div className="auth-banner" role="alert">
       <span className="ab-ic">{Icon.bolt()}</span>
       <span className="ab-msg">
-        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working. The sign-in expired.</b> {AUTH_BANNER_HINT}
+        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working. {expired ? "The sign-in expired." : "The connection no longer applies."}</b> {AUTH_BANNER_HINT}
         {detail && <span className="ab-why" title={detail}>{detail}</span>}
       </span>
       <span className="ab-spacer" />
@@ -149,6 +154,18 @@ export function AgentConnect({
 
   return (
     <div>
+      {/* No record, but flagged: the record was dropped because the CLI's
+          provider changed under it (lib/agents/connections.ts). Lead with
+          why, so the fresh sign-in below reads as the fix and not a regression. */}
+      {!agent.connected && agent.authBroken && (
+        <div className="wiz-connected broken" style={{ marginBottom: 14 }}>
+          <span className="wiz-warn">{Icon.bolt()}</span>
+          <div>
+            <div className="wiz-ok-t">{agent.label} needs to be connected again</div>
+            <div className="hlp" style={{ margin: "3px 0 0" }}>{agent.authBroken.reason}</div>
+          </div>
+        </div>
+      )}
       {canApiKey && (
         <div className="seg" style={{ maxWidth: 460, marginBottom: 16 }}>
           <button className={mode === "subscription" ? "on" : ""} onClick={() => setMode("subscription")}>
