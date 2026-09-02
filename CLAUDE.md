@@ -288,7 +288,8 @@ id, including ones the user accepted or started. The only refusal is `running=1`
 agent" chip with per-edit Revert and a Keep-changes ack (`GET`/`POST /api/tasks/[id]/agent-edits`).
 Visibility and undo replaced the narrower gate. It covers title, description, priority and status
 minus `cancelled`: on the own row that would `abortTurn()` the very turn calling it, and on
-anyone else's it needs a stated reason, which is `withdraw_suggestion` below.
+anyone else's it needs a stated reason, which is `withdraw_suggestion` below. It does NOT carry
+the project — re-parenting is `move_task`, below.
 
 It also covers **`blocked_by`, the only way an agent can order a plan at all.** `suggest_task`
 takes blockers in the call that INVENTS the task, before any of them has an id, so a planning turn
@@ -319,6 +320,19 @@ carry, and returns an `autoStartDependents` flag instead of calling `maybeAutoSt
 itself, because `lib/autoStart.ts` reaches the runner while `lib/agentTools.ts` is pinned SDK-free.
 `tests/codexUpdateTaskPolicy.test.ts` runs the real stdio bridge against the real endpoint and
 asserts on the DB, because Codex is the path where the MODEL names the target.
+
+**`move_task(tasks, project)`** re-parents tasks (issue #24), running `lib/taskMove.ts` — the
+board's own operation — so a move keeps the row rather than retyping it into a new one. A separate
+verb for `set_base_branch`'s reason and one more: it's async and locking, and it's a SET operation,
+since a `blocked_by` edge survives iff BOTH ends move in the same call. Chains go whole; every
+dropped edge is named, because a task that looks ready and isn't is the issue's one stated failure
+mode. **It takes no discard acknowledgement**: the bulk route asks for those as lists of ids so one
+switch can't answer for eleven checkouts, and an agent verb must not be the shortcut past that —
+started tasks (and anything mid-turn, including the caller) are refused per task while the rest
+still move, and the internal endpoint ignores a flag sent anyway. A move off a row the user had
+accepted is recorded like an `update_task` edit under a new `project` field, and its Revert re-runs
+the move backwards rather than writing `project_id`, which would strand the task's sessions and
+spend.
 
 **`withdraw_suggestion(task, reason)`** is the retraction verb, on the SAME `isInertSuggestion()`
 screen (shared, so the two policies can't drift): an agent reaching for `status: "done"` to mean

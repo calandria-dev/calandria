@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProject, getTask, getTaskDeps, getTag, getTaskTagIds, setTaskTags, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
 import { setTaskBaseBranch } from "@/lib/baseBranch";
+import { moveTasksToProject } from "@/lib/taskMove";
 import { publishGlobal } from "@/lib/events";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import type { AgentEditChange, Priority, Status, Task } from "@/lib/types";
@@ -22,11 +23,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 /**
  * Fold one AgentEditChange's `before_value` into the patch that restores it —
- * every field except `blocked_by`, `tags` and `base_branch`, which POST handles
- * separately (the first two live in their own tables; the third has to go back
- * through the same git reconciliation that set it, since a raw column write
- * would leave `base_sha` describing a branch the task is no longer on). A
- * failure in any of the three has to become a 409 with the row untouched.
+ * every field except `blocked_by`, `tags`, `base_branch` and `project`, which
+ * POST handles separately (the first two live in their own tables; the other
+ * two have to go back through the same operation that set them, since a raw
+ * column write would leave `base_sha` describing a branch the task is no longer
+ * on, and would strand a moved task's sessions, usage and merges in the project
+ * it left). A failure in any of the four has to become a 409 with the row
+ * untouched.
  * Accumulated into ONE patch rather than written per field: a revert of a
  * four-field edit is one user action and should be one row write, so a
  * listener refetching on task_edited can never catch it half-applied.
@@ -48,6 +51,7 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
     case "tags":
     case "blocked_by":
     case "base_branch":
+    case "project":
       break;
   }
 }
@@ -82,6 +86,12 @@ function staleFields(task: Task, changes: AgentEditChange[]): string[] {
         // would call an untouched task stale the moment its pin was cleared.
         if (typeof c.after_value === "string" && task.base_branch !== c.after_value)
           out.push(`the base branch is now "${task.base_branch || "inherited"}"`);
+        break;
+      case "project":
+        // Ids, not the readable names, for base_branch's reason: two projects
+        // may share a name, and the name is only what the panel prints.
+        if (typeof c.after_value === "string" && task.project_id !== c.after_value)
+          out.push(`the task has been moved to another project since`);
         break;
     }
   }
@@ -123,6 +133,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         { error: `${stale.join("; ")}: changed since this edit, so reverting it would overwrite a later change. Revert newer edits first, or edit the task directly.` },
         { status: 409 }
       );
+    }
+
+    // The move goes FIRST, ahead of even the base branch: it re-parents the row
+    // and every project-keyed child of it (sessions, usage, merges), so a
+    // refusal here has to leave the whole edit un-reverted rather than land the
+    // other fields on a task sitting in the wrong project. Routed through the
+    // same operation that made the move, never a `project_id` write, and with
+    // no discard acknowledgement — a task started since the move can't be moved
+    // back without destroying its checkout, and that is still the user's answer
+    // to give, from the board's Move dialog rather than from an undo button.
+    const projectChange = edit.changes.find((c) => c.field === "project");
+    if (projectChange) {
+      const back = typeof projectChange.before_value === "string" ? projectChange.before_value : "";
+      const out = await moveTasksToProject([id], back);
+      if (!out)
+        return NextResponse.json(
+          { error: "the project this task was moved out of no longer exists, so it can't be moved back. Nothing was reverted." },
+          { status: 409 }
+        );
+      if (out.moved.length === 0) {
+        const why = out.skipped[0]?.reason ?? "it could not be moved back";
+        return NextResponse.json({ error: `could not move the task back: ${why}. Nothing was reverted.` }, { status: 409 });
+      }
     }
 
     // The base branch goes FIRST, before anything is written: putting it back

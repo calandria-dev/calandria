@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
  * future one) Calandria's task tools (suggest_task / list_tasks /
- * get_task / update_task / withdraw_suggestion / set_base_branch / update_tag /
- * create_pr),
+ * get_task / update_task / move_task / withdraw_suggestion / set_base_branch /
+ * update_tag / create_pr),
  * its runbook tools
  * (create_runbook / list_runbooks / update_runbook), list_projects,
  * expose_service and ask_user.
@@ -29,7 +29,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -254,6 +254,25 @@ server.registerTool(
     // policy here either. The endpoint decides whether that target is an inert
     // tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("withdraw-suggestion", { task, reason });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  MOVE_TASK.name,
+  {
+    description: MOVE_TASK.description,
+    inputSchema: {
+      tasks: z.array(z.string()).describe(MOVE_TASK.params.tasks),
+      project: z.string().describe(MOVE_TASK.params.project),
+    },
+  },
+  async ({ tasks, project }) => {
+    // `tasks` and `project` are the MODEL's and are forwarded unvalidated — the
+    // bridge holds no policy. The endpoint decides which rows may move, against
+    // CALANDRIA_TASK_ID as the trusted caller identity, and refuses a started
+    // task rather than offering the discard acknowledgement that is the user's.
+    const data = await callInternal("move-task", { tasks, project });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

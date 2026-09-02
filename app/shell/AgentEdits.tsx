@@ -22,6 +22,7 @@ const FIELD_LABEL: Record<AgentEditField, string> = {
   tags: "Tags",
   blocked_by: "Blocked by",
   base_branch: "Base branch",
+  project: "Project",
 };
 
 // The chip itself is a leaf: it owns whether its own modal is open rather than
