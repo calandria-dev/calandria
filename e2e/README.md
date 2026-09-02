@@ -124,6 +124,7 @@ can be removed to reclaim disk.
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into another project (id or name), through the real strict resolver; an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | `e2e:blocked=<command>` | that Bash call rejected by the CLI itself: an already-decided card with no buttons, nothing parked on the user |
+  | `e2e:ask=[<header>\|]<question>\|<a>,<b>[\|multi]` | park the turn on an AskUserQuestion card, through the real `startAskUser` + `takeAskOutcome` pair the stdio bridge's `ask_user` tool uses. The header is optional and `multi` makes it multi-select; repeat the directive to put several questions on one card |
   | *(none)* | append the prompt to `AGENT_NOTES.md` (so every turn has a diff) |
 
 ## Specs
@@ -153,6 +154,7 @@ can be removed to reclaim disk.
 | `19-mobile-project-pane.spec.ts` | the phone's project pane: Runbooks reachable and dispatch opens the task, Back walks project → task list → projects, a refresh lands back on the pane |
 | `20-agent-edits.spec.ts` | "Changed by agent": the chip appears live, the panel shows the diff, Revert restores the original, Keep changes clears the chip, a task with a live turn refuses the write |
 | `21-base-branch.spec.ts` | per-task base branches: retarget a started task from the edit dialog, merge into that branch, the user's checkout stays on `main` |
+| `26-ask-user.spec.ts` | the other half of `lib/asks.ts`: a turn parks on an AskUserQuestion card, it docks below the transcript while the answer is owed and settles back inline once given, and multi-select, "Other" and a two-question card all reach the model. Runs the `startAskUser` / `takeAskOutcome` pair the stdio bridge's `ask_user` uses, so it is the only browser coverage of the non-Claude ask path |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named
