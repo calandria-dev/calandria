@@ -92,13 +92,32 @@ decision at turn time; the rest are literal ids handed to `--model`. That split 
 version can need a pinned row even when its family alias already exists: `fable` resolves through
 the CLI's own catalog, so an instance whose CLI predates the version — likely wherever
 `DISABLE_AUTOUPDATER` is set — never reaches it. Measured on 2.1.252, `--model fable` billed
-`claude-fable-5` after 5.1 shipped, which is what `claude-fable-5-1` is pinned for.
+`claude-fable-5` after 5.1 shipped, which is what `claude-fable-5-1` is pinned for; measured
+again on 2.1.257, the same alias resolves `claude-fable-5-1`. Both are correct for their CLI,
+which is the point: the alias is a moving target and only the pin is a promise.
 
 Pinning an id the installed CLI doesn't know is safe, and the failure mode is legible: the CLI
 logs `[claude-code:unrecognized_model]` and passes the string through unchanged, so the turn runs
 and bills as the id asked for. It is a pass-through and not a silent fallback — probing a bogus
 `claude-fable-6` alongside it errored out rather than quietly running something else, which is the
 control that makes the `claude-fable-5-1` result mean anything.
+
+**No alias label names a version, on either catalog.** A pin may, because it pins one; an alias
+is resolved by the installed CLI (or by `ANTHROPIC_DEFAULT_*_MODEL` under Vertex) at turn time,
+so a version in the label is a guess about what that resolver will pick — the very thing the
+pinned row above exists because you can't rely on. Measured wrong: on 2.1.257 `--model fable`
+runs `claude-fable-5-1` while the row read "Fable 5". Default-catalog aliases therefore read
+"(latest)" and Vertex's read "(provider default)" — each naming its resolver — and the version is
+stated only where it's known, by `modelLabel()` parsing the id a turn actually billed. Picker
+says "Fable (latest)", badge says "Fable 5.1"; that split is what `tests/modelLabel.test.ts` and
+`tests/claudeVertexModels.test.ts` pin from both ends.
+
+The resolution IS readable without an API call — `claude --model <alias> --output-format
+stream-json` prints it on the `init` line, which still appears with `ANTHROPIC_BASE_URL` pointed
+at a dead port — but it costs a ~4s CLI spawn per value, and this descriptor is read
+synchronously per request (`modelContextWindow()` runs inside `getTaskContext()`). Putting the
+resolved id in an alias's subtitle the way Vertex does wants a cached, CLI-version-keyed
+background probe, which is not built.
 
 The Vertex list is a set of measured corrections, not a second catalog. Every entry the catalog
 held at the time was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran;
@@ -114,8 +133,7 @@ measured 403, rather than credited with a result of its own. What the probe foun
   `ANTHROPIC_DEFAULT_*_MODEL`, so a mapping carrying `[1m]` makes plain `opus` a 1M session that
   the catalog called 200k, a fifth of the real window on the context gauge. Aliases now take
   their window and subtitle from the id they resolve to and drop the version claim from their
-  label (`f82f66d`'s relabel, applied only under Vertex; a pinned row still names its version,
-  correctly).
+  label (`f82f66d`'s relabel; a pinned row still names its version, correctly).
 - `settings.json`'s `env` block beats the process env. Measured, not assumed: exporting a
   different `ANTHROPIC_DEFAULT_OPUS_MODEL` while settings.json said otherwise still ran
   settings.json's choice.
