@@ -256,9 +256,21 @@ test.describe("auto-collapse on a narrow window", () => {
     await expect(listRow(page, NARROW_TASK)).toBeVisible();
 
     // Leave the breakpoint and come back: both are tucked away again.
+    //
+    // The leaving has to be SEEN. Both columns are open at 1024 (reopened) and
+    // at 1440 (nothing shed), so the DOM is identical at the two widths and a
+    // `.col-projects` check passes before the browser has so much as evaluated
+    // the new width. matchMedia reports a crossing per rendered frame, and a
+    // loaded runner can take the second resize before the first has had one —
+    // to the app the window then never left 1024, and nothing, in the app or
+    // out of it, could tell it otherwise (#104). `data-shed` is the policy as
+    // the app currently sees it; waiting for it is waiting for the app to have
+    // observed the width, which is the precondition the return leg asserts on.
     await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator("[data-shed]")).toHaveAttribute("data-shed", "");
     await expect(page.locator(".col-projects")).toBeVisible();
     await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.locator("[data-shed]")).toHaveAttribute("data-shed", "proj task");
     await expect(page.getByTitle("Show projects panel")).toBeVisible();
     await expect(page.getByTitle("Show tasks panel")).toBeVisible();
   });

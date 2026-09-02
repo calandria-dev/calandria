@@ -35,6 +35,7 @@ export interface HistoryLike {
   readonly state: unknown;
   pushState(state: unknown, unused: string, url: string): void;
   replaceState(state: unknown, unused: string, url: string): void;
+  back(): unknown;
 }
 
 export function selectionUrl(sel: NavSel, pathname: string): string {
@@ -51,8 +52,25 @@ export function selectionUrl(sel: NavSel, pathname: string): string {
 // open task, or settings) is showing and Back should close it rather than leave.
 export const isDeep = (sel: NavSel): boolean => !!sel.proj || sel.view === "settings" || sel.view === "insights";
 
-const trapArmed = (h: HistoryLike): boolean =>
+export const trapArmed = (h: HistoryLike): boolean =>
   !!(h.state && (h.state as { trap?: unknown }).trap);
+
+// The app's own Back affordances ("Back to projects", "Back to tasks"). Whether
+// a press must go through the browser is a fact about the history RIGHT NOW,
+// not about whether the effect that arms the trap has had its turn yet: the
+// trap is pushed by a passive effect, one paint after the pane it guards is on
+// screen and tappable, and pressing Back inside that gap used to call
+// history.back() against a history with no trap on it — a no-op on a fresh tab,
+// or leaving the app on one with a page behind it, in both cases without
+// closing the pane (issue #104, the phone leg). So: armed, pop it, and the
+// popstate handler closes the level as it does for the device button; not
+// armed, close the level directly, and the effect then reconciles the URL to
+// the shallower selection with nothing to arm.
+export function backOneLevel(h: HistoryLike, sel: NavSel, apply: (next: NavSel) => void): "history" | "state" {
+  if (trapArmed(h)) { h.back(); return "history"; }
+  apply(closeOneLevel(sel));
+  return "state";
+}
 
 // Keep the URL mirrored to the current selection (so a refresh lands back where
 // you were) and, when `armTrap`, ensure exactly one trap entry sits on top while
