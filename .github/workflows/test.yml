@@ -110,8 +110,25 @@ on:
     branches: [main]
     paths-ignore:
       - website/**
+  # EVERY base, not just main. A stacked tag tree's PRs target an integration
+  # branch (`pr-workflow`, `core-fixes`, …), and `branches: [main]` meant none
+  # of them ran a single job here: the only check such a PR got was "PR title
+  # (Conventional Commits)", which fires because pr-title.yml has no branch
+  # filter. Six PRs in a row (#123-#128) went green on one 4-second check, and
+  # #62 had to be covered by dispatching this workflow by hand. The whole tag's
+  # worth of work then arrived untested on the one PR that finally targeted
+  # main, where a red suite is expensive to bisect across several squashed
+  # commits. An enumerated list (`[main, pr-workflow, …]`) was rejected: it
+  # needs editing every time a stacked branch appears, which is exactly the
+  # failure mode that produced this.
+  #
+  # `push` deliberately stays main-only, so a task branch's own pushes don't
+  # double-run alongside its PR. Cost is bounded by the paths-ignore filter
+  # above, the concurrency group below, and the fact that the four slow jobs
+  # (e2e, desktop and the Windows pair) stay label-gated on any pull_request
+  # whatever its base.
   pull_request:
-    branches: [main]
+    branches: ["**"]
     paths-ignore:
       - website/**
     # `labeled` is here so adding the `e2e` label to an open PR actually starts
@@ -162,6 +179,10 @@ on:
 # from its own tag. Keying on the event makes the collision unrepresentable
 # whatever a closed PR's ref resolves to, rather than resting on it resolving
 # to something distinct.
+#
+# `github.ref` is the PR's own `refs/pull/N/merge`, never its base, so widening
+# the trigger to every base branch keeps one group per PR: a tag tree's six open
+# PRs don't cancel each other, and each still cancels its own superseded run.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

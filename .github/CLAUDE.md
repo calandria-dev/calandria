@@ -22,6 +22,17 @@ because every agent verified locally and nobody watched Actions.
   six jobs were queued the whole time. Confirm with `gh run list --branch <branch>` (or
   `gh pr view --json statusCheckRollup`) that checks EXIST before believing an empty watch, and
   re-watch if they do. An empty result is never terminal state.
+- **A PR into a non-main base used to conclude without having run anything.** `test.yml` filtered
+  `pull_request` on `branches: [main]`, so a PR into a tag tree's integration branch
+  (`pr-workflow`, `core-fixes`, …) started no audit, typecheck, unit or Windows job at all. It
+  still went green, on the one check that survives: "PR title (Conventional Commits)", which fires
+  because `pr-title.yml` carries no branch filter. Six such PRs (#123-#128) each concluded on a
+  single 4-second check, and #62 was covered only by dispatching `test.yml` by hand. Watching to
+  terminal state cannot catch this — there was a conclusion, and it was green. The filter is now
+  `branches: ["**"]`, so this is history rather than a thing to check for; what it leaves behind is
+  the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
+  fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
+  among them find out why before merging.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
