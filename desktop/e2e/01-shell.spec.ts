@@ -17,7 +17,7 @@ import { statSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { isDesktopShell } from "@/app/shell/useNotifications";
 import { isBootHandoffUrl } from "./bootUrl";
-import { attachShellLog, launchDuplicate, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
+import { attachShellLog, ensureOnboarded, launchDuplicate, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 
@@ -59,6 +59,14 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   expect(shell.bootScreenLog, "the boot screen never received a supervisor log line").toMatch(
     /\[shell] node: /
   );
+  // Received, not displayed. What someone waiting for the window sees is a
+  // spinner; the lines go into a pane clipped out of the layout, which is the
+  // only reason the assertion above (and 06-packaged's) can read them at all.
+  expect(shell.bootScreen.spinner, "the boot screen showed no spinner").toBe(true);
+  expect(
+    shell.bootScreen.logWidth,
+    "the log pane is back on screen — the boot screen is meant to be a spinner"
+  ).toBeLessThanOrEqual(2);
   expect(shell.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(shell.win.url().startsWith(shell.origin)).toBe(true);
 
@@ -210,6 +218,39 @@ test("the user agent tells the page it is inside the shell", async () => {
   expect(isDesktopShell(ua)).toBe(true);
   // Appended, not replacing: the app may reasonably branch on Chrome's version.
   expect(ua).toContain("Chrome/");
+});
+
+test("Settings → Notifications says the shell owns push instead of offering a subscribe button", async () => {
+  // What the two denials above look like from the panel. The Web Push field
+  // used to read only the capability checks (secure context, service worker,
+  // PushManager), never the user agent, so in here it offered "Enable push on
+  // this device" and then failed the click against the denied permission with
+  // "unblock them in the browser's site settings" — a page the shell has no
+  // way to open. The panel now stands down off the same token the field above
+  // it uses (app/shell/usePush.ts, `desktop_shell`), and nothing in this window
+  // may call Notification.requestPermission() for push.
+  await ensureOnboarded(shell.origin);
+  await shell.win.addInitScript(() => {
+    localStorage.setItem("calandria_agent_nudge_dismissed", "1");
+    localStorage.setItem("calandria:welcomeCoach:dismissed", "1");
+  });
+  // Opened through the URL (`?view=settings`, app/shell/persist.ts) rather than
+  // the projects column's gear, for the reason 02-smoke.spec.ts navigates by
+  // URL: the hosted runners clamp the window under AUTO_COLLAPSE_BELOW and the
+  // column that holds that button is a 30px spine there.
+  await shell.win.goto(`${shell.origin}/?view=settings`);
+  await shell.win.locator(".settings-nav .nav-item", { hasText: "Notifications" }).click();
+  await expect(shell.win.getByText("Push notifications", { exact: true })).toBeVisible();
+  // The one sentence the whole fix exists to show: native is already on.
+  await expect(shell.win.getByText(/Native notifications are already on/)).toBeVisible();
+  // And nothing to click: no subscribe button, and none of the copy the
+  // browser-only verdicts would have produced in its place.
+  await expect(shell.win.getByRole("button", { name: /push on this device/ })).toHaveCount(0);
+  await expect(shell.win.getByText(/This browser can't receive push notifications/)).toHaveCount(0);
+  await expect(shell.win.getByText(/blocked for this site/)).toHaveCount(0);
+  // The browser-notifications field beside it stood down the same way already;
+  // the two must agree, or the panel contradicts itself two fields apart.
+  await expect(shell.win.getByText("Desktop notifications", { exact: true })).toBeVisible();
 });
 
 test("copy and paste reach the system clipboard", async () => {

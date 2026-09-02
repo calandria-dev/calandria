@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Priority, Status } from "@/lib/types";
+import type { AgentProvider } from "@/lib/agentEnv";
 import { Icon, AgentMark } from "../icons";
 import { SCLS, SLABEL, AWAIT_LABEL } from "./types";
 
@@ -89,6 +90,30 @@ export function AgentBadge({ agent, label, multi }: { agent?: string | null; lab
   return (
     <span className={`agent-badge${mark ? ` ${agent}` : ""}`} role="img" aria-label={`Runs on ${label}`} title={`Runs on ${label}`}>
       {mark ? mark() : Icon.bolt()}
+    </span>
+  );
+}
+
+// Which ENDPOINT a task's turns run against, when it isn't the agent's own
+// cloud (lib/agentEnv.ts): a local model server or a custom base URL, set on
+// the project or overridden on the task. Sits beside the agent mark and says
+// the one thing the mark can't — that this Claude Code session is talking to
+// Ollama, and isn't billed as Anthropic spend. Same fixed, non-shrinking
+// discipline as AgentBadge: the title beside it is `flex:1;min-width:0`.
+// Renders nothing for the cloud, so single-endpoint instances never see it.
+export function ProviderBadge({ provider }: { provider: AgentProvider }) {
+  if (provider.kind === "cloud") return null;
+  const what = provider.kind === "local" ? "local model server" : "custom endpoint";
+  // The two non-cloud kinds are billed differently and the badge has to say so:
+  // a local server really is free, while a custom base URL may be a paid third
+  // party we have no prices for. See ProviderPricing in lib/agentEnv.ts.
+  const billing = provider.pricing === "free"
+    ? "Not cloud spend: turns against it cost nothing."
+    : "Not cloud spend, and not free either — its prices are unknown, so turns against it are recorded unpriced and left out of cost totals.";
+  const title = `Runs against ${provider.host} (${what}${provider.model ? `, ${provider.model}` : ""}). ${billing}`;
+  return (
+    <span className={`provider-badge ${provider.kind}`} role="img" aria-label={title} title={title}>
+      {provider.kind}
     </span>
   );
 }

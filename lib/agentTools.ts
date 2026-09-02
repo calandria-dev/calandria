@@ -53,6 +53,8 @@ import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATT
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
+import { cloudOverrideEnv, describeProvider, providerPresetEnv, taskProvider, type AgentEnv } from "./agentEnv";
+import { LOCAL_MODEL_BASE_URL } from "./config";
 
 /** What `list_projects` hands the agent: enough to name a target, nothing more. */
 export interface AgentProjectInfo {
@@ -287,6 +289,15 @@ export interface SuggestTaskInput {
   tags?: string[];
   /** The CALLING session's task, recorded as a new tag's origin. Never the model's word for it. */
   origin_task_id?: string | null;
+  /**
+   * Where the new task's turns run (lib/agentEnv.ts). "local" pins it to the
+   * local model server — the delegation case, a frontier-model session handing
+   * routine work to a model that costs no quota; "cloud" pins it to the agent's
+   * own login inside a project whose default is local. Omitted = inherit.
+   */
+  provider?: "local" | "cloud";
+  /** The model to run on: an Ollama tag for local, a catalog id for cloud. */
+  model?: string;
 }
 
 /**
@@ -322,7 +333,34 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     tags = hit.tags;
     createdTags = hit.created;
   }
+  // The provider override, resolved BEFORE the insert so a task is never
+  // created pointing at nothing. "local" reuses the target project's own
+  // endpoint when it already has one (a project on a LAN box must not be
+  // redirected to the instance default) and falls back to the instance knob;
+  // the model is the caller's, else the project's, and with neither the call
+  // is refused — a local task with no model asks Ollama for a Claude id.
+  const model = input.model?.trim() || null;
+  let agentEnv: AgentEnv | undefined;
+  if (input.provider === "local") {
+    const current = taskProvider(project);
+    const localModel = model ?? current.model;
+    if (!localModel) {
+      return {
+        task: null,
+        text: `Could not add "${input.title}": provider "local" needs a model — pass one (an Ollama tag such as qwen3-coder), or set a local model on ${project.name} in its settings. Nothing was created.`,
+      };
+    }
+    agentEnv = providerPresetEnv({
+      baseUrl: current.kind === "cloud" ? LOCAL_MODEL_BASE_URL : (current.anthropic_base_url ?? current.openai_base_url ?? LOCAL_MODEL_BASE_URL),
+      model: localModel,
+      token: current.auth_token ?? undefined,
+    });
+  } else if (input.provider === "cloud") {
+    agentEnv = cloudOverrideEnv();
+  }
   const task = createTask({
+    model,
+    agent_env: agentEnv,
     project_id: project.id,
     title: input.title,
     description: input.description,
@@ -347,9 +385,12 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const tagNote =
     (reused.length ? ` Tagged ${reused.map((t) => `"${t.name}"`).join(", ")}.` : "") +
     (createdTags.length ? ` Created tag${createdTags.length === 1 ? "" : "s"} ${createdTags.map((t) => `"${t.name}"`).join(", ")} in ${project.name}.` : "");
+  const providerNote = agentEnv
+    ? ` Runs against ${input.provider === "cloud" ? "the agent's own cloud login" : `the local model server (${describeProvider(agentEnv).host}, model ${describeProvider(agentEnv).model})`}.`
+    : "";
   return {
     task,
-    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}`,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}`,
   };
 }
 

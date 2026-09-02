@@ -322,6 +322,19 @@ export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
 );
 
 /**
+ * The endpoint the "Local model" preset in a project's settings points at, and
+ * what `suggest_task`'s `provider: "local"` uses — an Ollama or LM Studio
+ * server, or anything that speaks both the Anthropic Messages and the OpenAI
+ * Responses API (lib/agentEnv.ts, docs/AGENTS.md "Local models"). One knob so
+ * a Docker instance can say `http://host.docker.internal:11434` once instead
+ * of in every project. Only the DEFAULT is instance-wide: the preset writes
+ * the resolved URL into the project's override, where it can be edited per
+ * project. A trailing `/v1` is tolerated and stripped.
+ */
+export const LOCAL_MODEL_BASE_URL =
+  String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+
+/**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
  * ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY). Off by default: both entrypoints
  * strip those vars at boot (lib/env-keys.mjs — server.js and pty-server.js read

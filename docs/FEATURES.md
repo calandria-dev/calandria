@@ -715,7 +715,9 @@ A service worker (`public/sw.js`) handles Web Push, so a phone with no tab open 
 subscribes. It has no fetch handler and no offline mode, since everything on screen is live
 server state (SSE event streams, the terminal's WebSocket) with nothing useful to serve from
 a cache. Chrome no longer requires a service worker for install, so install works whether or
-not you ever subscribe.
+not you ever subscribe. The desktop app never subscribes itself: it raises the same
+notifications natively, so its Settings say so and withhold the button, while still listing
+(and removing) the phones subscribed elsewhere.
 
 ## Workspace tools
 

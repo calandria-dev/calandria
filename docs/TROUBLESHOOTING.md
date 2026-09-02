@@ -367,6 +367,12 @@ agent fails the same way; the first one to run just reveals it first. Once detec
   (`lib/agents/connections.ts`) until a successful turn or a fresh login clears it, so the
   banner survives a restart. Grep logs for `agent_auth_broken` or the provider phrases above to
   confirm.
+- The same banner, worded *"The connection no longer applies"*, means the Claude connection was
+  verified against one backend and Claude Code is now configured for another (Anthropic, Vertex
+  AI or Amazon Bedrock, by `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_BEDROCK` in
+  `~/.claude/settings.json` or the env). The record is dropped rather than kept as a "connected"
+  that every turn would disprove, and the reason names both backends. Recovery is the same:
+  reconnect, which verifies against the backend the CLI now uses.
 
 **Recovery.** No shell access to the container is needed:
 

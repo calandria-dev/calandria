@@ -126,8 +126,17 @@ export type Shell = {
   dbDir: string;
   /** The URL the window was showing when it first appeared (the boot screen). */
   firstUrl: string;
-  /** What the boot screen's `<pre id="log">` had streamed into it before the swap. */
+  /**
+   * What the boot screen's `<pre id="log">` had streamed into it before the
+   * swap. The pane is off screen — the boot screen shows a spinner — but it is
+   * still written, and is the only place the supervisor's first lines survive.
+   */
   bootScreenLog: string;
+  /**
+   * What the boot screen actually SHOWED while it was up: the spinner, and how
+   * wide the log pane rendered (`-1` if it was gone by the time we looked).
+   */
+  bootScreen: { spinner: boolean; logWidth: number };
   /**
    * Everything the Electron main process wrote to stdout/stderr from the moment
    * `electron.launch()` resolved. The supervisor's very first lines are already
@@ -319,6 +328,7 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   // timeout waiting for an element that is never coming back. Short per-read
   // timeouts, and the last non-empty read wins.
   let bootScreenLog = "";
+  let bootScreen: Shell["bootScreen"] = { spinner: false, logWidth: -1 };
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline && !win.url().startsWith("http://")) {
     bootScreenLog =
@@ -326,6 +336,19 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
         .locator("#log")
         .innerText({ timeout: 500 })
         .catch(() => "")) || bootScreenLog;
+    // Same window of opportunity, so read it here rather than in a second loop.
+    // A rect, not `isVisible()`: the log pane is clipped to 1×1 rather than
+    // `display: none` (it has to stay rendered for `innerText` above), and
+    // Playwright calls a 1×1 element visible.
+    bootScreen = await win
+      .evaluate(() => {
+        const log = document.getElementById("log");
+        return {
+          spinner: !!document.querySelector(".spinner"),
+          logWidth: log ? log.getBoundingClientRect().width : -1,
+        };
+      })
+      .catch(() => bootScreen);
     if (bootScreenLog.trim()) break;
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -337,7 +360,18 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
     await win.waitForLoadState("domcontentloaded");
   }
 
-  return { app, win, origin, root, dbDir: path.join(root, "db"), firstUrl, bootScreenLog, log, proc };
+  return {
+    app,
+    win,
+    origin,
+    root,
+    dbDir: path.join(root, "db"),
+    firstUrl,
+    bootScreenLog,
+    bootScreen,
+    log,
+    proc,
+  };
 }
 
 /**

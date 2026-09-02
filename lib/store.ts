@@ -1,3 +1,4 @@
+import { serializeAgentEnv } from "./agentEnv";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -6,7 +7,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
@@ -56,13 +57,14 @@ const AWAITING_ARM = "(t.status = 'in_progress' AND t.awaiting_input = 1)";
 const PR_RED_ARM = "(t.pr_state = 'open' AND t.pr_checks = 'failing' AND t.status IN ('in_progress', 'done'))";
 const NEEDS_YOU = `t.suggested = 0 AND (${AWAITING_ARM} OR ${PR_RED_ARM}) AND ${NOT_SNOOZED}`;
 
-export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[] {
+export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number; unpriced_turns: number })[] {
   return getDb()
     .prepare(
       `SELECT p.*,
          (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.suggested = 0) AS task_count,
          (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND ${NEEDS_YOU}) AS awaiting_count,
          COALESCE((SELECT SUM(u.cost_usd) FROM task_usage u WHERE u.project_id = p.id), 0) AS cost_usd,
+         COALESCE((SELECT SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) FROM task_usage u WHERE u.project_id = p.id), 0) AS unpriced_turns,
          (SELECT MAX(ts) FROM (
             SELECT MAX(updated_at) AS ts FROM tasks WHERE project_id = p.id
             UNION ALL SELECT MAX(started_at) FROM sessions WHERE project_id = p.id
@@ -72,7 +74,7 @@ export function listProjects(): (Project & { task_count: number; last_activity: 
           )) AS last_activity
        FROM projects p ORDER BY p.position ASC, p.created_at ASC`
     )
-    .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[];
+    .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number; unpriced_turns: number })[];
 }
 
 // Every project row in sidebar order, WITHOUT listProjects' per-project
@@ -286,11 +288,15 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ? WHERE id = ?`
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ? WHERE id = ?`
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, id);
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
+      // agent_env is normalized, not trusted, for the same reason: the allowlist
+      // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
+      // whatever a PATCH body (object or JSON text) carried.
+      serializeAgentEnv(n.agent_env), id);
   return getProject(id);
 }
 
@@ -328,6 +334,9 @@ export function setProjectRefresh(
 // `tag_ids` the tags it carries, in tag order (see task_tags).
 export type TaskWithUsage = Task & {
   cost_usd: number;
+  /** Turns whose endpoint had no price to record, so `cost_usd` is the sum over
+   *  the others — a floor, not the whole figure. See LedgerUsage. */
+  unpriced_turns: number;
   total_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
@@ -374,6 +383,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     .prepare(
       `SELECT t.*,
          COALESCE((SELECT SUM(u.cost_usd) FROM task_usage u WHERE u.task_id = t.id), 0) AS cost_usd,
+         COALESCE((SELECT SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) FROM task_usage u WHERE u.task_id = t.id), 0) AS unpriced_turns,
          COALESCE((SELECT SUM(u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_creation_tokens)
                    FROM task_usage u WHERE u.task_id = t.id), 0) AS total_tokens,
          COALESCE((SELECT SUM(u.cache_read_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_read_tokens,
@@ -386,6 +396,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     )
     .all(projectId) as (Task & {
     cost_usd: number;
+    unpriced_turns: number;
     total_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
@@ -644,6 +655,13 @@ export function createTask(input: {
   runbook_id?: string | null;
   /** The tags it carries at birth (validated against the project by the caller). */
   tag_ids?: string[];
+  /**
+   * A provider override laid over the project's (lib/agentEnv.ts), settable at
+   * creation because `suggest_task` is the path a frontier-model session uses
+   * to delegate work to a local model, and the task's first turn may be an
+   * auto-start with no PATCH in between. Object or JSON text; normalized here.
+   */
+  agent_env?: string | Record<string, string> | null;
 }): Task {
   const now = Date.now();
   const id = nanoid();
@@ -663,13 +681,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, agent_env, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
       agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      position, now, now
+      serializeAgentEnv(input.agent_env), position, now, now
     );
   // Tags are a second write because they are a second table. setTaskTags does
   // the project check for us, so a caller that got the tags wrong fails here
@@ -1060,9 +1078,9 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env), n.updated_at, id);
   return getTask(id);
 }
 
@@ -1879,17 +1897,23 @@ export function addUsage(input: {
   task_id: string;
   generation: number;
   agent?: string;
-  usage: TurnUsage;
+  /** The endpoint host the turn ran against, "" (default) for the agent's own
+   *  cloud — `AgentProvider.host` from lib/agentEnv.ts. The runner decides what
+   *  the turn is worth from that provider's `pricing` before calling this: the
+   *  driver's figure for cloud, 0 for a local model server, null for a custom
+   *  base URL nobody has priced. */
+  provider?: string;
+  usage: LedgerUsage;
 }): void {
   const u = input.usage;
   getDb()
     .prepare(
       `INSERT INTO task_usage
-         (id, project_id, task_id, generation, agent, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, subagent_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, project_id, task_id, generation, agent, provider, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, subagent_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude",
+      nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude", input.provider || "",
       u.cost_usd, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens,
       // NULL, not 0, for a driver that doesn't report it — see TurnUsage.
       u.subagent_tokens ?? null,
@@ -1914,7 +1938,7 @@ export function recordTaskMerge(input: {
 }
 
 const ZERO_USAGE: UsageTotals = {
-  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0,
+  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0, unpriced_turns: 0,
 };
 
 // Sum a usage query into cumulative totals (NULLs → 0 when no rows exist yet).
@@ -1928,6 +1952,7 @@ function sumUsage(where: string, param: string): UsageTotals {
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
          COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
+         COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced_turns,
          COUNT(*) AS turns
        FROM task_usage WHERE ${where}`
     )
@@ -2032,6 +2057,7 @@ export function getInstanceUsage(): InstanceUsage {
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
          COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
+         COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced_turns,
          COUNT(*) AS turns
        FROM task_usage`
     )
@@ -2082,8 +2108,12 @@ export function getInstanceUsage(): InstanceUsage {
  */
 export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
-  /** Per-day token/cost usage, one row per (day, project, agent). */
-  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** Per-day token/cost usage, one row per (day, project, agent). `unp` counts
+   *  the turns in the bucket that had no price to record — a custom base URL,
+   *  whose cost nobody has stated (see LedgerUsage). `cost` sums the OTHERS, so
+   *  a bucket with `unp > 0` is showing a floor, and the dashboard has to say
+   *  so rather than present it as the period's spend. */
+  usage: { d: string; p: string; a: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /**
    * The same spend attributed to TAGS — `g` is the tag id, "" for usage by a
    * task carrying none (or by a task since deleted). A task with three tags
@@ -2092,7 +2122,7 @@ export interface InsightsData {
    * that is part of two features really did cost both of them its time. The
    * leaderboard says so rather than dividing spend it has no basis to divide.
    */
-  tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  tagUsage: { d: string; p: string; a: string; g: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /** The tags those `g` keys name, for the leaderboard's labels. */
   tags: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
@@ -2114,7 +2144,9 @@ export function getInsightsData(sinceMs: number): InsightsData {
     .prepare(
       `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
               CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
-              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cost_usd) AS cost,
+              SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) AS unp,
+              SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
               SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
        FROM task_usage u
        WHERE u.created_at >= ? GROUP BY d, p, a`
@@ -2133,7 +2165,9 @@ export function getInsightsData(sinceMs: number): InsightsData {
       `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
               CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
               COALESCE(tt.tag_id, '') AS g,
-              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cost_usd) AS cost,
+              SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) AS unp,
+              SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
               SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
        FROM task_usage u
          LEFT JOIN tasks t ON t.id = u.task_id
