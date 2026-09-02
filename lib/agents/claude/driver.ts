@@ -35,6 +35,7 @@ import {
   listTagsForAgent,
   listProjectsForAgent,
   listTasksForAgent,
+  moveTasksForAgent,
   registerExposedService,
   rememberSuggestedTitle,
   resolveTagRefs,
@@ -45,7 +46,7 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
@@ -446,6 +447,23 @@ function calandriaServer(
           // lib/autoStart.ts and this file must not reach it (TurnHooks).
           if (autoStartDependents && updated) hooks?.onTaskCleared(updated.id);
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        MOVE_TASK.name,
+        MOVE_TASK.description,
+        {
+          tasks: z.array(z.string()).describe(MOVE_TASK.params.tasks),
+          project: z.string().describe(MOVE_TASK.params.project),
+        },
+        async (args: { tasks: string[]; project: string }) => {
+          // Same trust split as update_task: the closed-over `task` is the
+          // caller (the server's word), `args.tasks` the targets (the model's).
+          // No discard acknowledgement is accepted here on purpose — a started
+          // task's checkout can only be destroyed with the user's per-task
+          // answer, which they give from the board.
+          const { ok, text } = await moveTasksForAgent(task, args.tasks, args.project);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
         }
       ),
       tool(

@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
+import type { Status, Priority, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown } from "../Markdown";
 import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
@@ -572,12 +573,20 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const usage = usageSplit(task);
   const cost = costDisplay(findAgent(agents, task.agent), provider);
   const multiAgent = agents.agents.length > 1;
-  // True while a question card is still unanswered — hides the "thinking" dots,
-  // since Claude is parked on the user, not working.
-  const awaitingAnswer = useMemo(() => messages.some((m) => {
-    if (m.role !== "tool") return false;
-    try { const d = JSON.parse(m.content) as ToolData; return !!d.ask && !d.ask.answers; } catch { return false; }
-  }), [messages]);
+  // The question(s) the turn is parked on, lifted out of the transcript flow and
+  // docked below it. A card left inline is at the mercy of whatever streams in
+  // after it — one subagent returning a screenful scrolls it away, and nothing
+  // then says an answer is owed. ./pendingPrompt.ts owns which rows qualify.
+  const pendingIds = useMemo(
+    () => pendingPromptIds(messages, promptsAreLive(task, running)),
+    [messages, task.status, task.awaiting_input, running],
+  );
+  const pendingSet = useMemo(() => new Set(pendingIds), [pendingIds]);
+  const pendingMsgs = useMemo(() => messages.filter((m) => pendingSet.has(m.id)), [messages, pendingSet]);
+  // A docked card is the same fact as "not typing": the model is parked on the
+  // user, not working, so the thinking dots would be promising output that
+  // cannot arrive until the card is answered.
+  const awaitingAnswer = pendingIds.length > 0;
 
   // Auto-scroll only while the user is parked at the bottom. If they scroll up to
   // read earlier output, we leave their position alone even as new messages stream
@@ -626,7 +635,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 
   useEffect(() => {
     if (pinned.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, running]);
+  }, [messages.length, running, pendingIds.length]);
 
   // Switching tasks (or in/out of chat view) always jumps to the latest.
   useEffect(() => {
@@ -669,6 +678,10 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // Only the newest message may offer to resume at the reset —
                 // an older usage-limit notice describes a limit that has healed.
                 const last = si === sessions.length - 1 && mi === s.messages.length - 1;
+                // Docked below the transcript instead (pendingMsgs). `prev` above
+                // still sees it, so the assistant run's header stays collapsed
+                // exactly as it would have with the card in place.
+                if (pendingSet.has(m.id)) return null;
                 return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
@@ -710,6 +723,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
       </div>
       </div>
+      {pendingMsgs.length > 0 && (
+        // Outside .transcript-wrap on purpose: the wrap's bottom edge is what
+        // .msg-nav anchors to, so a dock inside it would sit under the jump
+        // buttons. Here the nav stays on the transcript and the dock owns the
+        // strip above the composer.
+        <div className="prompt-dock" role="group" aria-label="Waiting for your answer">
+          <div className="prompt-dock-in">
+            {pendingMsgs.map((m) => (
+              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+            ))}
+          </div>
+        </div>
+      )}
       <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} />
     </>
   );

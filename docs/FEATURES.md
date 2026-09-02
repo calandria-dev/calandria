@@ -465,6 +465,17 @@ holds: clean and merged, or the uncommitted edits and unmerged commits it would 
 red. Leaving all of them unticked is a plain move. Three worktrees with unsaved work in a
 selection of eleven don't block the other eight; those three are reported and left in place.
 
+Agents can move tasks between projects too, with `move_task(tasks, project)`. It runs the
+same operation the board does, so a moved task keeps its id, brief, transcript, cost history
+and comments rather than being retyped into a new one, and a blocked-by link survives when
+both of its ends are in the same call — pass a whole chain together. What an agent is *not*
+given is the discard confirmation. A task you have already started can only move by having
+its worktree destroyed, and that answer is yours to give per checkout from the board, so the
+tool refuses those (and anything mid-turn) and names them instead. Every edge it had to drop
+is reported back, since a task that looks ready and isn't is worse than a refusal. Moving a
+task you had already accepted shows on the board as an agent change with a one-click revert,
+which moves it back the same way rather than rewriting a column.
+
 Agents can suggest follow-up tasks into their own project or any other one. When a session
 spots work that belongs to a different repo, it looks up the project and files the suggestion
 into that project's tray with that project's default agent and settings. It has to name the

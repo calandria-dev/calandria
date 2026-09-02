@@ -141,13 +141,15 @@ export interface Task {
 /**
  * A field an agent tool can rewrite on a task the user already accepted.
  *
- * `base_branch` is the one that isn't `update_task`'s — it belongs to
- * `set_base_branch`, which moves a real worktree — but it lands in the same
- * audit trail so the "Changed by agent" chip covers a retarget too. Its Revert
- * goes back through `retargetTaskBase`, never a raw column write (see
- * app/api/tasks/[id]/agent-edits/route.ts).
+ * Two of them aren't `update_task`'s, and both belong to tools that move
+ * something real rather than writing a column: `base_branch` to
+ * `set_base_branch`, which retargets a worktree, and `project` to `move_task`,
+ * which re-parents the row and everything keyed to it. They land in the same
+ * audit trail so the "Changed by agent" chip covers those too, and their Revert
+ * re-runs the operation — `retargetTaskBase` and `moveTasksToProject` — never a
+ * raw column write (see app/api/tasks/[id]/agent-edits/route.ts).
  */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
 
 /** One field's before/after inside a recorded agent edit. */
 export interface AgentEditChange {

@@ -127,6 +127,7 @@ describe("calandria-mcp stdio bridge", () => {
         "list_runbooks",
         "list_tags",
         "list_tasks",
+        "move_task",
         "set_base_branch",
         "suggest_task",
         "update_runbook",
