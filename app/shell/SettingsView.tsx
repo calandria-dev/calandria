@@ -351,7 +351,16 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       setPushErr(e instanceof Error ? e.message : String(e));
     }
   }
-  const pushHelp = push === "insecure"
+  // `desktop_shell` mirrors the Browser/Desktop notifications block above: the
+  // shell denies the page's notification permission on purpose and raises
+  // native toasts itself, so the subscribe button is withheld rather than left
+  // to fail with a "browser site settings" hint the shell has no page for. The
+  // shell exposes no bridge (no preload, by design), so there is nothing to
+  // open the OS notification pane with — the copy names it instead. The device
+  // list below still shows, and still removes, the phones subscribed elsewhere.
+  const pushHelp = push === "desktop_shell"
+    ? "Native notifications are already on: the desktop app raises them itself through your OS, so this window doesn't subscribe to push — that would deliver every event twice. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
+    : push === "insecure"
     ? "Push needs a secure origin, like every notification does. Reach the instance over https or as localhost."
     : push === "needs_install"
       ? "On iPhone and iPad, push only works for an app on the Home Screen: Share → Add to Home Screen, open Calandria from there, and enable it here."
