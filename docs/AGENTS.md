@@ -198,6 +198,23 @@ carries a `local` chip beside the agent mark.
 - **LM Studio**: start the local server, load a model, then base URL `http://localhost:1234`
   and the model's identifier as LM Studio shows it.
 
+**Picking a model.** Once a project is on an endpoint, the model field stops being
+the driver's catalog and becomes a text box: the vendor's line-up is not what that
+machine has, and only the machine knows. Its suggestions are what the server itself
+reports — Calandria asks Ollama's `GET /api/tags` first (its names are the ids the
+Anthropic endpoint wants, tag included), then `GET /v1/models` for LM Studio and
+anything else OpenAI-compatible. Anything can still be typed, so a model pulled a
+minute ago works before any probe has seen it. The probe is always server-side
+(`GET /api/projects/[id]/models`): the endpoint is loopback on the machine
+Calandria runs on, which the browser usually can't reach at all.
+
+Settings → Agents reports the instance's default endpoint the same way — *Ollama at
+localhost:11434: reachable, 4 models* — separately from the agents above it, because
+an agent's *connected* is its CLI login and says nothing about a local server. A
+project on Ollama runs through a Claude login it never uses, and fails with a
+perfectly good one when Ollama is down. `CALANDRIA_MODEL_PROBE_MS` (2500ms) bounds
+how long the probe waits.
+
 **What the override can and can't carry.** The stored form is `projects.agent_env`, a JSON
 object over a fixed allowlist: the two base URLs, the Anthropic auth token, the model
 variables Claude Code's `opus`/`sonnet`/`haiku` aliases resolve through, and the model Codex
@@ -211,11 +228,17 @@ you typed for it. The reverse holds too. A project-level `ANTHROPIC_AUTH_TOKEN` 
 only when the same override points the base URL somewhere other than Anthropic, so the
 field is not a way around `CALANDRIA_ALLOW_API_KEY_ENV`.
 
-**Billing.** A turn against an override is recorded with a cost of zero and tagged with the
-endpoint's host in `task_usage.provider`. Token counts are still recorded, since the local
-model still filled a context window, and the context gauge still works. Project-scoped
-one-shots (recaps, *Refresh with AI*) run on the utility agent's own login, not the
-project's endpoint.
+**Billing, and what the gauges can still tell you.** A turn against an override is
+recorded with a cost of zero and tagged with the endpoint's host in
+`task_usage.provider`, and the session header shows no dollar figure at all rather
+than `$0.00` — there is no price, and the API-price equivalent would be the list
+price of a model that didn't run. Token counts *are* recorded, since the local model
+still filled a context window. The window itself is reported as **unknown**: the
+override rewrites `ANTHROPIC_MODEL` and the `opus`/`sonnet`/`haiku` aliases, so a
+task whose picker still reads *Sonnet* is not running Sonnet, and sizing it from the
+catalog would draw a 4% gauge on a 32K window about to overflow. The rail shows the
+token count without a percentage. Project-scoped one-shots (recaps, *Refresh with
+AI*) run on the utility agent's own login, not the project's endpoint.
 
 **Delegating from a cloud session.** A task can override its project on its own row, which is
 what lets a frontier model hand routine work to a local one. `suggest_task` takes

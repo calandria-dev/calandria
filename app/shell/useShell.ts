@@ -174,8 +174,6 @@ export function useShell() {
 
   // Latest agents bundle for the live stream handler (context-window sizing),
   // read without re-subscribing the EventSource.
-  const agentsRef = useRef(agents);
-  useEffect(() => { agentsRef.current = agents; }, [agents]);
 
   const loadTasks = useCallback(async (projectId: string, selectFirst = true) => {
     const data = await jget<{ tasks: TaskRow[]; tags?: TagRow[] }>(`/api/projects/${projectId}`);
@@ -233,7 +231,7 @@ export function useShell() {
 
   // ---------- live task event stream + transcript state ----------
   const { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg } = useTaskStream({
-    selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks,
+    selTask, selProjRef, setTaskRunning, setTasks, setProjects, loadTasks,
   });
   // A client-side notifier used to live here, firing its own wording straight
   // off liveAwaiting. That's retired: the server now composes the message (see

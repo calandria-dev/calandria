@@ -4,16 +4,14 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { TaskStreamEvent, ToolData, AskAnswers, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
 import { contextPct } from "./format";
-import { capsFor } from "./agents";
-import type { AgentsBundle, Msg, ProjectRow, TaskRow } from "./types";
+import type { Msg, ProjectRow, TaskRow } from "./types";
 
 // Owns the per-task transcript state (msgsByTask) plus the live SSE consumption:
 // the snapshot-then-tail EventSource and the message mutators that apply each
 // server event. The turn itself runs server-side, detached from any connection.
-export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
+export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
   selTask: string | null;
   selProjRef: MutableRefObject<string | null>;
-  agentsRef: MutableRefObject<AgentsBundle>;
   setTaskRunning: (id: string, on: boolean) => void;
   setTasks: React.Dispatch<React.SetStateAction<TaskRow[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectRow[]>>;
@@ -199,7 +197,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       // task has one of these it is MEASURED, and the usage-derived estimate
       // below stops touching the gauge.
       setTasks((prev) => prev.map((x) => (x.id === taskId
-        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: false }
+        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.context_window), context_estimated: false }
         : x)));
     } else if (ev.type === "usage") {
       // Live cumulative spend: add this turn's totals to the task's figure.
@@ -218,7 +216,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             // over-reads on tool-heavy turns and is labelled an estimate.
             // Mirrors the COALESCE in lib/store.ts.
             ...(x.context_estimated || !(x.context_tokens > 0)
-              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: true }
+              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.context_window), context_estimated: true }
               : {}) }
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });

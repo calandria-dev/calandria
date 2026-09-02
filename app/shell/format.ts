@@ -1,6 +1,7 @@
 // Pure formatting + derivation helpers shared across the shell modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import { contextWindowFor } from "@/lib/contextWindow";
+import type { AgentProvider } from "@/lib/agentEnv";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";
 
@@ -91,7 +92,16 @@ export interface CostDisplay {
   approx: boolean; // prefix it with ~
   note: string;    // tooltip clause explaining what the figure means ("" = a plain billed charge)
 }
-export function costDisplay(agent: AgentInfo | undefined): CostDisplay {
+export function costDisplay(agent: AgentInfo | undefined, provider?: AgentProvider): CostDisplay {
+  // A turn against a provider override (a local model server, or any other
+  // endpoint — lib/agentEnv.ts) has no price. The runner records cost_usd as 0
+  // for exactly that reason, and "$0.00" on screen reads as a measured price
+  // rather than an inapplicable one. The API-price equivalent the catalog would
+  // quote is worse still: it is the list price of a model that didn't run. So
+  // there is no figure, and the tooltip says why.
+  if (provider && provider.kind !== "cloud") {
+    return { show: false, approx: false, note: `ran on ${provider.host}, not the vendor's API — no cost to report` };
+  }
   const caps = agent?.capabilities;
   const estimated = caps?.costIsEstimated === true;
   const show = caps?.reportsCostUsd !== false || estimated;
@@ -133,6 +143,10 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
   }
   if (cost.show && costUsd > 0) {
     lines.push(`${cost.approx ? "~" : ""}${fmtCost(costUsd)}${cost.note ? ` ${cost.note}` : " billed"}`);
+  } else if (!cost.show && cost.note) {
+    // No figure to caveat, so the caveat IS the line — otherwise a task on a
+    // local endpoint shows tokens with no explanation of the missing price.
+    lines.push(cost.note);
   }
   return lines.join("\n");
 }
@@ -147,8 +161,13 @@ export { DEFAULT_CONTEXT_WINDOW } from "@/lib/contextWindow";
 export function contextWindowOf(model: string | null | undefined, caps?: AgentCapabilities): number {
   return contextWindowFor(caps?.models ?? [], model);
 }
-export function contextPct(tokens: number, model: string | null | undefined, caps?: AgentCapabilities): number {
-  return Math.round((tokens / contextWindowOf(model, caps)) * 1000) / 10;
+// Percent of a KNOWN window. The window is passed in rather than looked up
+// because the server already resolved it onto the row (TaskRow.context_window),
+// and it is the only one that can: a local-model override makes the catalog
+// inapplicable, which the catalog itself has no way to notice. 0 = unknown,
+// and an unknown window has no percentage — see lib/store.ts taskContextWindow.
+export function contextPct(tokens: number, window: number): number {
+  return window > 0 ? Math.round((tokens / window) * 1000) / 10 : 0;
 }
 
 // Friendly name for a resolved model id — the badge that answers "which model

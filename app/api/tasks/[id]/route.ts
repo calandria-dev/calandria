@@ -31,6 +31,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // fan-out read as this session's own work.
     subagent_tokens: usage.subagent_tokens,
     context_tokens: ctx.context_tokens,
+    // 0 = no window we can name, which is what a provider override always
+    // means (lib/store.ts taskContextWindow). The rail reads this to show the
+    // token count without a percentage rather than a made-up one.
+    context_window: ctx.context_window,
     context_pct: ctx.context_pct,
     context_estimated: ctx.context_estimated,
     depends_on: getTaskDeps(id),

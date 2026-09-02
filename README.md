@@ -225,8 +225,11 @@ Either agent can run against a local model server. Set a project's **Model
 provider** to *Local model*, point it at Ollama (`http://localhost:11434`) or
 LM Studio (`http://localhost:1234`), name a model, and every task in that
 project runs there: Claude Code through `ANTHROPIC_BASE_URL`, Codex through a
-provider entry Calandria adds for the turn. Those turns are recorded at zero
-cost. A cloud session can also delegate a single task to the local model with
+provider entry Calandria adds for the turn. The model picker becomes a text box
+that suggests whatever the server reports it has, Settings → Agents says whether
+that server is answering, and those turns carry no cost figure and no context
+percentage — neither is knowable for a model the catalog has never seen. A cloud
+session can also delegate a single task to the local model with
 `suggest_task`'s `provider: "local"`. Set `CALANDRIA_LOCAL_MODEL_BASE_URL` once
 for a Docker instance.
 

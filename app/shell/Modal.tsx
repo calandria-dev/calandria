@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
@@ -122,21 +122,35 @@ export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick:
 }
 
 /**
- * The Model field, shared by both task dialogs and Settings → Run defaults.
- * The list is the driver's own catalog (modelOptions over the capability
- * descriptor — the same one the session rail's picker reads), so a Vertex
- * instance's corrected windows and a new driver's models arrive here with no
- * edit. A <select> rather than the `seg wrap` its neighbours use because Claude
- * Code offers a dozen-plus entries across three groups; consecutive options
- * sharing a `group` render under one <optgroup>, matching the rail's headers.
+ * The one model input, in both of its shapes.
  *
- * Renders nothing when the agent contributes no models — that's the
- * capabilities bundle not having loaded, and the synthetic "Inherit" head alone
- * is not a choice.
+ * A cloud project gets a <select> over the driver's own catalog (modelOptions
+ * over the capability descriptor — the same one the session rail's picker
+ * reads), so a Vertex instance's corrected windows and a new driver's models
+ * arrive here with no edit. A <select> rather than the `seg wrap` its
+ * neighbours use because Claude Code offers a dozen-plus entries across three
+ * groups; consecutive options sharing a `group` render under one <optgroup>,
+ * matching the rail's headers. It renders nothing when the agent contributes no
+ * models — that's the capabilities bundle not having loaded, and the synthetic
+ * "Inherit" head alone is not a choice.
+ *
+ * `freeForm` is the local-model case (lib/agentEnv.ts): the catalog is the
+ * VENDOR's line-up while the ids on the machine are whatever was pulled, so a
+ * closed list can only be wrong. The field becomes a text box whose
+ * `suggestions` are what the endpoint itself reports — a datalist, not a
+ * select, because a model pulled a second ago must be typeable before any probe
+ * has seen it. Deliberately the same component: the two shapes share the label,
+ * the inherit semantics of `null` and the help line, and a second component
+ * would drift from this one the first time either changed.
  */
-export function ModelField({ options, value, onChange, help, label = "Model", note }: {
+export function ModelField({ options, value, onChange, help, label = "Model", note, freeForm, suggestions, status }: {
   options: PickerOption[]; value: string | null; onChange: (v: string | null) => void;
   help?: string; label?: string; note?: React.ReactNode;
+  /** Accept any id and offer `suggestions` instead of restricting to `options`. */
+  freeForm?: boolean;
+  suggestions?: string[];
+  /** Replaces the catalog's subtitle in free-form mode — what the endpoint said. */
+  status?: React.ReactNode;
 }) {
   // Consecutive same-group runs, in catalog order. Built before the early
   // return would skip it, so the hook order is stable across a bundle arriving.
@@ -149,6 +163,17 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
     }
     return out;
   }, [options]);
+  if (freeForm) {
+    return (
+      <div className="field model-field">
+        <div className="lab">{Icon.spark()} {label}</div>
+        {note}
+        <FreeFormModel value={value ?? ""} onChange={(v) => onChange(v.trim() || null)} suggestions={suggestions ?? []}
+          label={label} placeholder="model id, e.g. qwen3-coder" />
+        <div className="hlp">{status}{help}</div>
+      </div>
+    );
+  }
   if (options.length <= 1) return null;
   // A model the catalog no longer lists — an id pinned before the instance was
   // pointed at Vertex, or carried in from another agent. Kept as an entry of its
@@ -169,6 +194,34 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
       </select>
       <div className="hlp">{known ? sel?.sub : "This id isn’t one this agent offers. It may not run."}{help}</div>
     </div>
+  );
+}
+
+/**
+ * The free-form model input itself: a text box with a <datalist> of whatever
+ * the endpoint reports.
+ *
+ * Its own component because the project settings dialog needs the input WITHOUT
+ * ModelField's label-and-help chrome (it sits inline beside the base URL), and
+ * two hand-rolled inputs would be two behaviours. A datalist rather than a
+ * combobox because the browser's own is exactly right here: suggestions filter
+ * as you type and anything typed is still accepted — which is the requirement,
+ * since a model pulled a second ago won't be in a list probed before it.
+ */
+export function FreeFormModel({ value, onChange, suggestions, placeholder, label = "Model", className = "ctx-mono", style, title }: {
+  value: string; onChange: (v: string) => void; suggestions: string[];
+  placeholder?: string; label?: string; className?: string; style?: React.CSSProperties; title?: string;
+}) {
+  const listId = useId();
+  return (
+    <>
+      <input type="text" className={className} style={style} value={value} placeholder={placeholder} title={title}
+        aria-label={label} autoComplete="off" spellCheck={false}
+        list={suggestions.length ? listId : undefined} onChange={(e) => onChange(e.target.value)} />
+      {suggestions.length > 0 && (
+        <datalist id={listId}>{suggestions.map((m) => <option key={m} value={m} />)}</datalist>
+      )}
+    </>
   );
 }
 

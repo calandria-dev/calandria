@@ -89,7 +89,8 @@ export interface TaskRow {
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding) — see AgentEdits.tsx
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
-  context_pct: number; // context_tokens as a percent (0–100) of the model's window
+  context_window: number; // the window those tokens sit in; 0 = unknown, which a local-model override always is (see lib/store.ts taskContextWindow)
+  context_pct: number; // context_tokens as a percent (0–100) of the model's window; 0 when the window is unknown
   context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
   snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
   unread_run_at: number; // an unattended run finished cleanly and nobody has acknowledged it (ms epoch; 0 = nothing outstanding) — see isUnreadRun in ./format.ts
@@ -332,7 +333,7 @@ export type AgentInfoT = {
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
 // `id: null` = nothing connected; `fallback` = the configured agent isn't
@@ -388,7 +389,20 @@ export interface AgentInfo { id: string; label: string; capabilities: AgentCapab
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default — the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer rather than a guess.
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string }
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT }
+
+// ---------- local model endpoints ----------
+
+// Mirrors lib/modelEndpoint.ts. An agent's `authenticated` above is its CLI
+// LOGIN and says nothing about a local server: a project on Ollama runs on a
+// login it never uses, and fails with a perfectly good one when Ollama is down.
+// So reachability is its own fact, reported separately.
+export type EndpointApiT = "ollama" | "openai";
+/** The instance-wide default endpoint on GET /api/agents — a count, since
+ *  nothing there needs the ids. */
+export interface EndpointStatusT { base_url: string; reachable: boolean; api: EndpointApiT | null; model_count: number; error: string | null }
+/** One project's endpoint, with the ids — GET /api/projects/[id]/models. */
+export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; error: string | null }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

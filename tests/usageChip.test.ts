@@ -115,6 +115,23 @@ describe("costDisplay", () => {
   it("still shows a cost when the bundle hasn't loaded — but claims nothing about a plan", () => {
     expect(costDisplay(undefined)).toEqual({ show: true, approx: false, note: "" });
   });
+
+  // A turn against a provider override cost nothing to run and is recorded that
+  // way. "$0.00" reads as a measured price rather than an inapplicable one, and
+  // the API-price equivalent would be the list price of a model that didn't run.
+  it("shows no figure at all for a task on a local or custom endpoint", () => {
+    const cloudAgent = agent({ account: { email: "a@b.c", plan: "Max", method: "subscription" } });
+    const provider = { kind: "local" as const, host: "localhost:11434", anthropic_base_url: "http://localhost:11434", openai_base_url: null, model: "qwen3-coder", auth_token: "ollama" };
+    const c = costDisplay(cloudAgent, provider);
+    expect(c.show).toBe(false);
+    expect(c.approx).toBe(false);
+    expect(c.note).toContain("localhost:11434");
+    // …and the tooltip says so where the dollar line used to be.
+    expect(usageTooltip(usageSplit(real), 0, c)).toContain("no cost to report");
+    // An explicit cloud provider changes nothing.
+    expect(costDisplay(cloudAgent, { ...provider, kind: "cloud", host: "", anthropic_base_url: null, model: null, auth_token: null }))
+      .toEqual(costDisplay(cloudAgent));
+  });
 });
 
 describe("usageTooltip", () => {
