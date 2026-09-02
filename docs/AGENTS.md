@@ -48,9 +48,10 @@ pickers, beside the default model and scoped to the same agent: **Quick internal
 
 They are split that way because the work is. The quick tier is the `/clear` handoff note and
 the project recap: one turn, no tools, text in and text out, which is what a small fast model
-is for. The heavy tier is the "Refresh with AI" context draft, which explores an unfamiliar
-repository read-only before writing a document that is then prepended to every new session in
-that project, so accuracy is worth paying for. Two tiers rather than a knob per job, since a
+is for. The heavy tier is the "Refresh with AI" context draft and the "Refresh tag" plan check,
+which both explore an unfamiliar repository read-only before deciding something durable — a
+document prepended to every new session in that project, or which of a tag's tasks have gone
+stale — so accuracy is worth paying for. Two tiers rather than a knob per job, since a
 knob per job is four settings almost everyone would set to two values.
 
 Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
@@ -152,13 +153,14 @@ the other. Calandria ships a skill for preparing a repo to be worked on in many 
 at once; `skills/README.md` covers installing it for both agents.
 
 Calandria's own background jobs don't inherit any of this. A `/clear` handoff note, a
-project recap, and a "Refresh with AI" context draft are internal transformations, not
+project recap, a "Refresh with AI" context draft and a "Refresh tag" plan check are internal
+transformations, not
 sessions you're sitting in, so they run with your MCP servers, plugins, skills, and hooks
 switched off. Otherwise every four-bullet recap would start your entire MCP fleet to offer
 tools it can never call. They still read `~/.claude/settings.json`, because that's also
 where a Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they
-authenticate the same way your ordinary turns do. The context draft additionally loads the
-repository's `CLAUDE.md`, since describing the repo is its job, and can read, search, and
+authenticate the same way your ordinary turns do. The two repo-reading jobs additionally load
+the repository's `CLAUDE.md`, since judging the repo is their job, and can read, search, and
 list files, but not run commands or write anything. Which model each of them runs on is the
 two-tier setting described under "Choosing a model" above.
 
@@ -299,7 +301,7 @@ override rewrites `ANTHROPIC_MODEL` and the `opus`/`sonnet`/`haiku` aliases, so 
 task whose picker still reads *Sonnet* is not running Sonnet, and sizing it from the
 catalog would draw a 4% gauge on a 32K window about to overflow. The rail shows the
 token count without a percentage. Project-scoped one-shots (recaps, *Refresh with
-AI*) run on the utility agent's own login, not the project's endpoint.
+AI*, *Refresh tag*) run on the utility agent's own login, not the project's endpoint.
 
 **Delegating from a cloud session.** A task can override its project on its own row, which is
 what lets a frontier model hand routine work to a local one. `suggest_task` takes

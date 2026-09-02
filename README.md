@@ -169,8 +169,12 @@ already queued. The transcript records that it was sent.
   (union by default, intersection behind an any/all toggle). Each task shows
   a tinted badge per tag, progress comes from the tasks, and finished tags
   fold away. One lit chip expands into a strip with the tag's brief and its
-  steps in dependency order; ⌘K, the project page, and the Insights
-  leaderboard all reach it by name. A tag can also set the git **base
+  steps in dependency order, plus **Refresh tag** — an agent reads the whole
+  plan against the code, rewords briefs that point at things that no longer
+  exist, retires work the repo shows is already done, and rewrites the
+  description; every task change arrives as a revertable "Changed by agent"
+  edit, and the job keeps running if you navigate away. ⌘K, the project page,
+  and the Insights leaderboard all reach a tag by name. A tag can also set the git **base
   branch** its tasks are cut from, merged into, and synced against, so a
   five-task feature is pointed at `feature/auth` once. Each session is told
   which plan it belongs to and which step it is.

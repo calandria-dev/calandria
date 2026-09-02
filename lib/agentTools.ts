@@ -696,8 +696,22 @@ export function isInertSuggestion(t: Task): boolean {
  * own row or to a suggestion nobody has looked at yet was always allowed and
  * isn't a surprise to anyone.
  */
+/**
+ * Who is making the write, for the refusals and the audit row. Structural
+ * rather than a whole `Task` because not every caller IS a task: the tag
+ * refresh job (lib/tagRefresh.ts) is a background job the user pressed a
+ * button to start, and it has no session of its own to name. It passes a
+ * synthetic actor whose `id` matches no row, which is exactly right —
+ * `task_agent_edits.actor_task_id` has no foreign key precisely so the actor
+ * can outlive (or never have been) a task, and the chip renders `actor_title`
+ * as prose rather than linking it. The three fields below are all any of this
+ * ever reads off the caller; widening the type is what keeps the job from
+ * having to fake the other thirty.
+ */
+export type AgentEditActor = Pick<Task, "id" | "title" | "agent">;
+
 export function updateTaskForAgent(
-  caller: Task,
+  caller: AgentEditActor,
   targetRef: string | undefined,
   input: UpdateTaskInput
 ): { task: Task | null; text: string; autoStartDependents: boolean } {
@@ -1019,7 +1033,7 @@ export function updateTaskForAgent(
  * auto_start dependent unblocked-but-never-launched.
  */
 export function withdrawSuggestionForAgent(
-  caller: Task,
+  caller: AgentEditActor,
   targetRef: string | undefined,
   reason: string
 ): { task: Task | null; text: string; autoStartDependents: boolean } {

@@ -24,7 +24,7 @@ import type { Project, Task } from "../types";
 import { backgroundJobsEnabled } from "../backgroundJobs";
 
 // The one-shot helper names on AgentDriver, all optional.
-type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap";
+type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "planTagRefresh";
 
 /**
  * Which model a one-shot runs on, in two tiers rather than one knob per job.
@@ -45,6 +45,7 @@ const JOB_TIER: Record<OneShotKey, OneShotTier> = {
   summarizeTranscript: "light",
   summarizeProjectRecap: "light",
   draftProjectContext: "heavy",
+  planTagRefresh: "heavy",
 };
 
 /**
@@ -182,6 +183,19 @@ export async function summarizeTranscript(task: Task, transcript: string, projec
 /** Project-context draft ("Refresh with AI") — PROJECT-scoped (utility agent). */
 export async function draftProjectContext(project: Project, digest: string): Promise<string> {
   return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
+    project_id: project.id,
+  });
+}
+
+/**
+ * Tag freshness check ("Refresh tag") — PROJECT-scoped (utility agent).
+ *
+ * Attended, so it is NOT gated on `background_jobs`: like the context draft
+ * above, the user pressed a button and is watching a bar. The gate governs work
+ * nobody asked for.
+ */
+export async function planTagRefresh(project: Project, digest: string): Promise<string> {
+  return run("planTagRefresh", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
     project_id: project.id,
   });
 }

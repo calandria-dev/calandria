@@ -481,6 +481,14 @@ export function init(db: Database.Database) {
       position       INTEGER NOT NULL DEFAULT 0, -- chip order; created_at order for now
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL,
+      -- "Refresh tag with AI" job state (lib/tagRefresh.ts), on the row for the
+      -- same reason projects.refresh_* is: the job outlives the click, so the
+      -- bar has to survive lighting another chip, a reload, or a restart.
+      refresh_status     TEXT NOT NULL DEFAULT 'idle',
+      refresh_stage      TEXT NOT NULL DEFAULT '',
+      refresh_summary    TEXT NOT NULL DEFAULT '',
+      refresh_error      TEXT NOT NULL DEFAULT '',
+      refresh_started_at INTEGER NOT NULL DEFAULT 0,
       UNIQUE(project_id, name)
     );
 
@@ -1010,6 +1018,16 @@ export function migrate(db: Database.Database) {
   // sets it, in task_tags.position order — see lib/baseBranch.ts.
   const tagCols = (db.prepare("PRAGMA table_info(tags)").all() as { name: string }[]).map((c) => c.name);
   if (!tagCols.includes("base_branch")) db.exec("ALTER TABLE tags ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''");
+  // "Refresh tag with AI" job state. Defaults spell "no job has ever run here",
+  // which is what every existing row means, so an upgrade shows an idle button
+  // rather than a stuck bar.
+  if (!tagCols.includes("refresh_status")) {
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_status TEXT NOT NULL DEFAULT 'idle'");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_stage TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_summary TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_error TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_started_at INTEGER NOT NULL DEFAULT 0");
+  }
   // Manual task ordering (list groups + board columns both render in position
   // order). Backfill matches the sort that was implicit before the column
   // existed — priority then created_at, per project — so an upgrade doesn't

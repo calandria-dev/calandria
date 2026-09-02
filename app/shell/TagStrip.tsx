@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
-import { jsend } from "./api";
+import { jget, jsend } from "./api";
 import { isAwaiting, isWithdrawn } from "./format";
 import { StatusDot } from "./shared";
 import { TAG_COLORS, type TagRow, type TaskRow } from "./types";
@@ -147,6 +147,24 @@ export function baseConsequence(args: {
   return lines;
 }
 
+/** Mirrors TagRefreshState in lib/tagRefresh.ts — what GET/POST/DELETE .../refresh return. */
+type JobState = {
+  status: TagRow["refresh_status"];
+  stage: string;
+  summary: string;
+  error: string;
+  started_at: number;
+};
+
+/** The job as the tag row last recorded it — the reconnect seed. */
+const jobOf = (t: TagRow): JobState => ({
+  status: t.refresh_status,
+  stage: t.refresh_stage,
+  summary: t.refresh_summary,
+  error: t.refresh_error,
+  started_at: t.refresh_started_at,
+});
+
 export function TagStrip({ tag, members, allTags, projectBranch, originTask, onSelectTask, onDeleted }: {
   tag: TagRow;
   /** Every task carrying the tag, in tray order — the strip sorts them itself. */
@@ -169,6 +187,46 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
   const [desc, setDesc] = useState(tag.description);
   const [color, setColor] = useState<string | null>(tag.color);
   const [base, setBase] = useState(tag.base_branch);
+  const [job, setJob] = useState<JobState>(() => jobOf(tag));
+
+  // The job outlives this component. Its state is on the tag ROW, which arrives
+  // with every tags_changed refetch (TagRow IS Tag), so a strip mounting fresh —
+  // after lighting another chip, switching project, or a reload — already knows
+  // a run is in flight and picks the bar back up without asking.
+  useEffect(() => {
+    setJob(jobOf(tag));
+  }, [tag.id, tag.refresh_status, tag.refresh_stage, tag.refresh_summary, tag.refresh_error, tag.refresh_started_at]);
+
+  // The row only moves on tags_changed, which the job publishes at its two ENDS.
+  // Polling is what makes the stage label advance in between, and what settles a
+  // run promptly rather than on the next global event.
+  useEffect(() => {
+    if (job.status !== "running") return;
+    let live = true;
+    const t = setInterval(() => {
+      void jget<JobState>(`/api/tags/${tag.id}/refresh`)
+        .then((s) => { if (live) setJob(s); })
+        .catch(() => {});
+    }, 2500);
+    return () => { live = false; clearInterval(t); };
+  }, [job.status, tag.id]);
+
+  const refresh = async () => {
+    setErr(null);
+    // Optimistic: the POST returns the running state, but the click should light
+    // the bar immediately rather than a request round-trip later.
+    setJob({ status: "running", stage: "Reading the plan", summary: "", error: "", started_at: Date.now() });
+    try {
+      setJob(await jsend<JobState>(`/api/tags/${tag.id}/refresh`, "POST"));
+    } catch (e) {
+      setJob({ status: "error", stage: "", summary: "", error: e instanceof Error ? e.message : String(e), started_at: 0 });
+    }
+  };
+
+  const dismissJob = async () => {
+    setJob({ status: "idle", stage: "", summary: "", error: "", started_at: 0 });
+    await jsend<JobState>(`/api/tags/${tag.id}/refresh`, "DELETE").catch(() => {});
+  };
 
   // Another tab (or the delete below) can change the tag under the form.
   // Re-seed the fields whenever the row we're editing actually changes.
@@ -268,6 +326,18 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
                 {tag.base_branch}
               </span>
             )}
+            {/* The plan's own maintenance verb. It reads the tasks against the
+                code and fixes what drifted — so it sits with Edit rather than
+                inside it: editing is what the user writes, this is what the
+                repo says. Disabled while running, because the job is keyed by
+                tag and a second click would only return the first one's state. */}
+            <button className="btn btn-ghost btn-sm" disabled={job.status === "running" || !ordered.length}
+              onClick={() => void refresh()}
+              title={ordered.length
+                ? "Read this plan's tasks against the code, reword what's gone stale and rewrite the description"
+                : "Nothing carries this tag yet"}>
+              {Icon.spark()} {job.status === "running" ? "Refreshing…" : "Refresh tag"}
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Rename, describe, recolor or re-base this tag">
               {Icon.edit()} Edit
             </button>
@@ -285,6 +355,31 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
             aria-label={`${tag.name} progress`}>
             <span style={{ width: `${p.pct}%` }} />
           </div>
+          {/* The job's own band, directly under the progress bar and above the
+              description it is about to rewrite. Indeterminate on purpose: the
+              long phase is an agent reading a repo, and a bar that claimed a
+              percentage would be inventing one. The stage says what it's doing
+              and the note says the part people actually worry about — that
+              navigating away doesn't cancel it. */}
+          {job.status === "running" && (
+            <div className="gs-job" role="status" aria-live="polite">
+              <div className="gs-job-bar" aria-hidden="true"><span /></div>
+              <div className="gs-job-stage">{job.stage || "Working"}… you can leave this tag — it keeps running.</div>
+            </div>
+          )}
+          {job.status === "done" && job.summary && (
+            <div className="gs-job">
+              <div className="gs-job-sum">{job.summary}</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => void dismissJob()}>Dismiss</button>
+            </div>
+          )}
+          {job.status === "error" && job.error && (
+            <div className="gs-job err">
+              <div className="gs-job-sum">Refresh failed: {job.error}</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => void refresh()}>Retry</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => void dismissJob()}>Dismiss</button>
+            </div>
+          )}
           {tag.description && <div className="gs-desc">{tag.description}</div>}
           {originTask && (
             <button className="gs-origin" onClick={() => onSelectTask(originTask.id)}

@@ -86,6 +86,7 @@ import {
   resultText,
   clip,
   clipKeepTail,
+  buildTagRefreshPrompt,
   type ResultKind,
 } from "../shared";
 import {
@@ -1511,6 +1512,41 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
 }
 
 /**
+ * Check a tag's plan against the code ("Refresh tag"). Same read-only shape as
+ * draftProjectContext — Read/Grep/Glob in the project's own checkout, no Bash —
+ * because this run's whole output is a JSON plan the SERVER applies. The agent
+ * deciding a task is stale and the app writing that decision down are kept
+ * apart on purpose: it is what makes every change land as a revertable agent
+ * edit instead of an unattended write.
+ *
+ * Returns the raw text; the caller parses it with parseTagPlan().
+ */
+async function planTagRefresh(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
+  const response = query({
+    prompt: buildTagRefreshPrompt(project, digest),
+    options: {
+      cwd: project.repo_path || process.cwd(),
+      ...ONE_SHOT_BASE,
+      ...oneShotModel(opts),
+      settingSources: DRAFT_SETTING_SOURCES,
+      tools: DRAFT_TOOLS,
+      maxTurns: 40,
+    },
+  });
+
+  let out = "";
+  let usage: TurnUsage | undefined;
+  for await (const message of response) {
+    if (message.type === "assistant") {
+      for (const block of message.message.content) {
+        if (block.type === "text") out += block.text;
+      }
+    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+  }
+  return { text: out, usage };
+}
+
+/**
  * Generate a short "where you left off" recap for a project, shown when the
  * user returns after time away. One-shot, genuinely no tools (see
  * TEXT_ONE_SHOT). `digest` is the assembled recent activity (task summaries,
@@ -1574,6 +1610,7 @@ export const claudeDriver: AgentDriver = {
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,
+  planTagRefresh,
   // Auth delegates to lib/claude-auth.ts (the headless `claude auth login`
   // flow); the interface shapes were modeled on it, so this is a direct map.
   authStatus: claudeStatus,
