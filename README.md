@@ -179,11 +179,12 @@ already queued. The transcript records that it was sent.
   in one click. Each run creates a fresh task, with a box for this-run-only
   instructions.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
-  own timezone, with nobody logged in. Each firing creates a fresh task you
-  review like any other, and a schedule can fire a runbook so one recipe
-  serves both the clock and the button. A run that finished cleanly lands in
-  **Ran clean**, its own group outside the "needs you" pill, with a Mark done
-  button.
+  own timezone, with nobody logged in — or **once**, on a date you pick, for
+  the "there's a release overnight, check on it at 04:00" job. Each firing
+  creates a fresh task you review like any other, and a schedule can fire a
+  runbook so one recipe serves both the clock and the button. A run that
+  finished cleanly lands in **Ran clean**, its own group outside the "needs
+  you" pill, with a Mark done button.
 
   ![Project page with a tag, two runbooks, and a weekday schedule](docs/images/project.png)
 

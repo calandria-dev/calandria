@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { nextFireAt } from "@/lib/schedule/time";
+import { nextFireAt, partsIn } from "@/lib/schedule/time";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { agentLabel, capsFor, defaultAgentFor } from "./agents";
@@ -35,6 +35,17 @@ function whenLabel(ms: number, timezone: string): string {
 function zoneSuffix(timezone: string): string {
   const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return timezone && timezone !== local ? ` (${timezone})` : "";
+}
+
+/** Today's date, as it reads on the wall clock in `timezone` — the default for a fresh one-time schedule. */
+function todayInZone(timezone: string): string {
+  try {
+    const p = partsIn(Date.now(), timezone);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
 }
 
 const OUTCOME: Record<ScheduleRunRow["status"], { label: string; tone: "muted" | "busy" | "ok" | "bad" | "warn" }> = {
@@ -152,6 +163,10 @@ function ScheduleForm({
   const [mask, setMask] = useState(initial?.days_mask ?? WEEKDAYS);
   const [time, setTime] = useState(initial?.time_of_day ?? "09:00");
   const [tz, setTz] = useState(initial?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // "Once" swaps the day checkboxes for a single date; `mask` is left untouched
+  // underneath so switching back to Weekly restores exactly what was there.
+  const [repeats, setRepeats] = useState<"weekly" | "once">(initial?.once_date ? "once" : "weekly");
+  const [onceDate, setOnceDate] = useState(initial?.once_date || todayInZone(tz));
   const [agent, setAgent] = useState(initial?.agent ?? defaultAgentFor(agents, project.default_agent));
   const [permissionMode, setPermissionMode] = useState(initial?.permission_mode ?? "bypassPermissions");
   const [saving, setSaving] = useState(false);
@@ -208,18 +223,22 @@ function ScheduleForm({
   // Monday.
   const preview = useMemo(() => {
     try {
-      const spec = { daysMask: mask, timeOfDay: time, timezone: tz };
+      const spec = { daysMask: mask, timeOfDay: time, timezone: tz, onceDate: repeats === "once" ? onceDate : "" };
       const out: number[] = [];
       let cursor = Date.now();
       for (let i = 0; i < 3; i++) {
-        cursor = nextFireAt(spec, cursor).ms;
+        // A one-time spec has exactly one slot and returns null once it's spent —
+        // an in-progress edit to a past date hits this on the very first pass.
+        const next = nextFireAt(spec, cursor);
+        if (!next) break;
+        cursor = next.ms;
         out.push(cursor);
       }
       return out;
     } catch {
       return [];
     }
-  }, [mask, time, tz]);
+  }, [mask, time, tz, repeats, onceDate]);
 
   const toggleDay = (i: number) => setMask((m) => (m & (1 << i) ? m & ~(1 << i) : m | (1 << i)));
 
@@ -227,7 +246,9 @@ function ScheduleForm({
   // The `prompt` column is still written, as the fallback deleteRunbook
   // refreshes, but it is no longer what the user is filling in.
   const hasPrompt = runbookId ? !!linked : prompt.trim().length > 0;
-  const canSave = name.trim().length > 0 && hasPrompt && mask > 0 && /^\d{2}:\d{2}$/.test(time) && tz.trim().length > 0 && !saving;
+  const canSave = name.trim().length > 0 && hasPrompt
+    && (repeats === "once" ? /^\d{4}-\d{2}-\d{2}$/.test(onceDate) : mask > 0)
+    && /^\d{2}:\d{2}$/.test(time) && tz.trim().length > 0 && !saving;
 
   const save = async () => {
     if (!canSave) return;
@@ -241,6 +262,9 @@ function ScheduleForm({
       : { prompt, agent, permission_mode: permissionMode };
     const body = {
       name: name.trim(), days_mask: mask, time_of_day: time, timezone: tz,
+      // days_mask is sent unchanged even in Once mode — the server ignores it,
+      // but leaving it intact is what keeps the row convertible back to weekly.
+      once_date: repeats === "once" ? onceDate : "",
       runbook_id: runbookId || null, ...recipe,
     };
     try {
@@ -326,16 +350,41 @@ function ScheduleForm({
       </div>
       )}
       <div className="field">
-        <label className="lab" id={`${uid}-days-lab`}>Days</label>
-        <div className="sched-days" role="group" aria-labelledby={`${uid}-days-lab`}>
-          {DAYS.map((d, i) => (
-            <label key={d} className="sched-day">
-              <input type="checkbox" checked={!!(mask & (1 << i))} onChange={() => toggleDay(i)} />
-              {d}
-            </label>
-          ))}
+        <label className="lab">Repeats</label>
+        <div className="seg">
+          <button className={repeats === "weekly" ? "on" : ""} onClick={() => setRepeats("weekly")}>Weekly</button>
+          <button
+            className={repeats === "once" ? "on" : ""}
+            onClick={() => { setRepeats("once"); if (!onceDate) setOnceDate(todayInZone(tz)); }}
+          >
+            Once
+          </button>
         </div>
       </div>
+      {repeats === "weekly" ? (
+        <div className="field">
+          <label className="lab" id={`${uid}-days-lab`}>Days</label>
+          <div className="sched-days" role="group" aria-labelledby={`${uid}-days-lab`}>
+            {DAYS.map((d, i) => (
+              <label key={d} className="sched-day">
+                <input type="checkbox" checked={!!(mask & (1 << i))} onChange={() => toggleDay(i)} />
+                {d}
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="field">
+          <label className="lab" htmlFor={`${uid}-once`}>Date</label>
+          {/* `min` is today in the SCHEDULE's zone, not the browser's: the server
+              resolves the date against `tz`, so a browser a day ahead would
+              otherwise grey out a date that is still perfectly valid there. */}
+          <input
+            id={`${uid}-once`} type="date" min={todayInZone(tz)}
+            value={onceDate} onChange={(e) => setOnceDate(e.target.value)}
+          />
+        </div>
+      )}
       <div style={{ display: "flex", gap: 14 }}>
         <div className="field" style={{ flex: "0 0 150px" }}>
           <label className="lab" htmlFor={`${uid}-time`}>Time</label>
@@ -352,7 +401,11 @@ function ScheduleForm({
         {preview.length === 0 ? (
           <div className="sched-note">Enter a valid time, day and timezone to preview upcoming runs.</div>
         ) : (
-          preview.map((ms, i) => <div key={i} className="sched-note">next {whenLabel(ms, tz)}{zoneSuffix(tz)}</div>)
+          preview.map((ms, i) => (
+            <div key={i} className="sched-note">
+              {repeats === "once" ? "fires" : "next"} {whenLabel(ms, tz)}{zoneSuffix(tz)}
+            </div>
+          ))
         )}
       </div>
       {/* Hidden while a runbook is linked: it owns the agent and the permission
@@ -503,13 +556,23 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
         // future occurrences can age out of it after enough skips pile up on
         // top. `active_run` is served explicitly by the API for exactly this.
         const blocking = s.last_run?.status === "skipped_overlap" ? s.active_run : null;
+        // A one-time schedule that already fired: the server left it disabled
+        // with next_fire_at cleared rather than deleting it, so Resume would be
+        // a dead end here — there's nothing left to resume.
+        const spent = !!s.once_date && !s.enabled && s.next_fire_at === 0;
         return (
           <div key={s.id} className={`sched-row${s.enabled ? "" : " sched-paused"}`}>
             <div className="sched-head">
               <strong>{s.name}</strong>
-              <span className="sched-spec">{maskLabel(s.days_mask)} at {s.time_of_day}</span>
+              <span className="sched-spec">
+                {/* Zone deliberately omitted, as it is for a weekly row: the
+                    next-fire line beside this one already carries zoneSuffix. */}
+                {s.once_date
+                  ? `Once on ${s.once_date} at ${s.time_of_day}`
+                  : `${maskLabel(s.days_mask)} at ${s.time_of_day}`}
+              </span>
               <span className="sched-next">
-                {s.enabled ? `next ${whenLabel(s.next_fire_at, s.timezone)}${zoneSuffix(s.timezone)}` : "paused"}
+                {spent ? "Ran — one-time" : s.enabled ? `next ${whenLabel(s.next_fire_at, s.timezone)}${zoneSuffix(s.timezone)}` : "paused"}
               </span>
               <button
                 className="btn btn-line btn-sm"
@@ -518,19 +581,32 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
               >
                 {Icon.edit()} Edit
               </button>
-              <button
-                className="btn btn-line btn-sm"
-                disabled={busy === s.id}
-                onClick={() => act(s.id, () => jsend(`/api/schedules/${s.id}`, "PATCH", { enabled: !s.enabled }))}
-              >
-                {s.enabled ? "Pause" : "Resume"}
-              </button>
+              {!spent && (
+                <button
+                  className="btn btn-line btn-sm"
+                  disabled={busy === s.id}
+                  onClick={() => act(s.id, () => jsend(`/api/schedules/${s.id}`, "PATCH", { enabled: !s.enabled }))}
+                >
+                  {s.enabled ? "Pause" : "Resume"}
+                </button>
+              )}
               <button
                 className="btn btn-line btn-sm"
                 disabled={busy === s.id}
                 onClick={() => act(s.id, () => jsend(`/api/schedules/${s.id}/run`, "POST"))}
               >
                 {Icon.play()} Run now
+              </button>
+              <button
+                className="btn btn-line btn-sm"
+                disabled={busy === s.id}
+                onClick={() => {
+                  if (window.confirm(`Delete "${s.name}"? This can't be undone. Tasks it already created are kept.`)) {
+                    void act(s.id, () => jsend(`/api/schedules/${s.id}`, "DELETE"));
+                  }
+                }}
+              >
+                {Icon.x()} Delete
               </button>
             </div>
             {s.last_run ? <RunLine run={s.last_run} timezone={s.timezone} /> : <div className="sched-run sched-note">no runs yet</div>}

@@ -606,6 +606,8 @@ export interface ScheduleRow {
   enabled: number;
   agent: string;
   permission_mode: string | null;
+  /** '' = weekly (days_mask + time_of_day); 'YYYY-MM-DD' = fires once then spends itself. */
+  once_date: string;
   next_fire_at: number;
   /** The runbook this schedule fires, if any — it supplies the prompt and config. */
   runbook_id: string | null;

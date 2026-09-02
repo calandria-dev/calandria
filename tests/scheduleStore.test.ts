@@ -4,6 +4,7 @@ import { createProject, createTask } from "@/lib/store";
 import {
   createSchedule, getSchedule, listSchedules, listEnabledSchedules, updateSchedule,
   deleteSchedule, claimRun, settleRun, startRun, activeRun, recordMissedRun, listRuns, lastRun, specOf,
+  spendSchedule,
 } from "@/lib/schedule/store";
 
 const at = (iso: string) => Date.parse(iso);
@@ -39,7 +40,72 @@ describe("schedule store", () => {
   it("computes next_fire_at at creation", () => {
     const s = schedule(pid);
     expect(s.next_fire_at).toBeGreaterThan(Date.now());
-    expect(specOf(s)).toEqual({ daysMask: 62, timeOfDay: "08:30", timezone: "America/Los_Angeles" });
+    expect(specOf(s)).toEqual({ daysMask: 62, timeOfDay: "08:30", timezone: "America/Los_Angeles", onceDate: "" });
+  });
+
+  // ---------- one-time schedules ----------
+
+  // A UTC date N days out. Combined with any wall time in any zone it is
+  // comfortably future/past, so these never go stale on a real clock.
+  const dayOffset = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+  it("creates a one-time schedule pinned to its date", () => {
+    const s = schedule(pid, { once_date: dayOffset(30) });
+    expect(s.once_date).toBe(dayOffset(30));
+    expect(s.enabled).toBe(1);
+    expect(s.next_fire_at).toBeGreaterThan(Date.now());
+  });
+
+  it("refuses a one-time date that has already passed", () => {
+    // The mistake this catches is "set it for 04:00" typed at 05:00. Silently
+    // accepting it would create a schedule that can never fire and says nothing.
+    expect(() => schedule(pid, { once_date: dayOffset(-1) })).toThrow(/already passed/);
+    expect(listSchedules(pid)).toHaveLength(0);
+  });
+
+  it("defaults a one-time's dead days_mask rather than throwing on it", () => {
+    // The mask is never read for a one-time, but the column is NOT NULL and the
+    // row has to stay convertible back to weekly.
+    const s = schedule(pid, { once_date: dayOffset(30), days_mask: 0 });
+    expect(s.days_mask).toBe(127);
+  });
+
+  it("refuses moving a one-time backwards in time", () => {
+    const s = schedule(pid, { once_date: dayOffset(30) });
+    expect(() => updateSchedule(s.id, { once_date: dayOffset(-1) })).toThrow(/already passed/);
+    // Refused whole: the spec guard runs before the UPDATE, so a rename riding
+    // along in the same call can't land under an error that says nothing changed.
+    expect(getSchedule(s.id)!.once_date).toBe(dayOffset(30));
+  });
+
+  it("re-arms a spent one-time when its date is moved forward", () => {
+    const s = schedule(pid, { once_date: dayOffset(30) });
+    spendSchedule(s.id);
+    expect(getSchedule(s.id)!.enabled).toBe(0);
+    const rearmed = updateSchedule(s.id, { once_date: dayOffset(60) })!;
+    // Without this the edit would report success, show the new time, and never
+    // run — spendSchedule left enabled at 0 and a date edit doesn't touch it.
+    expect(rearmed.enabled).toBe(1);
+    expect(rearmed.next_fire_at).toBeGreaterThan(Date.now());
+  });
+
+  it("leaves a merely PAUSED one-time paused when its date moves", () => {
+    const s = schedule(pid, { once_date: dayOffset(30) });
+    updateSchedule(s.id, { enabled: 0 });
+    const moved = updateSchedule(s.id, { once_date: dayOffset(60) })!;
+    expect(moved.enabled).toBe(0);
+    // An explicit enabled in the same call always wins over the re-arm too.
+    spendSchedule(s.id);
+    expect(updateSchedule(s.id, { once_date: dayOffset(90), enabled: 0 })!.enabled).toBe(0);
+  });
+
+  it("converts a one-time back to weekly", () => {
+    const s = schedule(pid, { once_date: dayOffset(30) });
+    const weekly = updateSchedule(s.id, { once_date: "" })!;
+    expect(weekly.once_date).toBe("");
+    expect(specOf(weekly).onceDate).toBe("");
+    // Back on the Mon–Fri 08:30 cadence, not stranded on the old date.
+    expect(weekly.next_fire_at).toBeLessThan(Date.now() + 8 * 86_400_000);
   });
 
   it("lists per project, and only enabled ones for the ticker", () => {
