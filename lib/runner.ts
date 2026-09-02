@@ -19,6 +19,7 @@ import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { recordBaseCut } from "@/lib/baseDrift";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
@@ -296,7 +297,8 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
     // ever reaching this function, so this branch is its safety net, not its
     // primary path.)
     if (project.repo_path.trim() && (!task.worktree_path || !fs.existsSync(task.worktree_path))) {
-      const wt = await ensureWorktree(project.repo_path, id, resolveBaseBranch(task, project));
+      const requestedBase = resolveBaseBranch(task, project);
+      const wt = await ensureWorktree(project.repo_path, id, requestedBase);
       if (wt) {
         task.worktree_path = wt.path;
         task.work_branch = wt.branch;
@@ -310,6 +312,17 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
         updateTask(id, {
           worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
           ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+        });
+        // Record what the cut actually got, for the opening turn's context to state:
+        // a base branch behind the project default, or one that no longer exists,
+        // is otherwise invisible to the session until its PR reads as a revert
+        // (lib/baseDrift.ts).
+        await recordBaseCut({
+          taskId: id,
+          repoPath: project.repo_path,
+          requestedBase,
+          cutBase: wt.baseBranch,
+          projectDefault: project.branch,
         });
       }
     }

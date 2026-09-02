@@ -10,6 +10,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { recordBaseCut } from "@/lib/baseDrift";
 import { MAX_MESSAGE_CHARS } from "@/lib/promptLimits";
 import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
@@ -167,7 +168,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // POST landing in this window queues instead of double-running.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
         try {
-          const wt = await ensureWorktree(proj.repo_path, fresh.id, resolveBaseBranch(fresh, proj));
+          const requestedBase = resolveBaseBranch(fresh, proj);
+          const wt = await ensureWorktree(proj.repo_path, fresh.id, requestedBase);
           if (wt) {
             fresh.worktree_path = wt.path;
             fresh.work_branch = wt.branch;
@@ -180,6 +182,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             updateTask(id, {
               worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
               ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+            });
+            await recordBaseCut({
+              taskId: id,
+              repoPath: proj.repo_path,
+              requestedBase,
+              cutBase: wt.baseBranch,
+              projectDefault: proj.branch,
             });
           }
         } catch (err) {

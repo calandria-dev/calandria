@@ -504,6 +504,59 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
   };
 }
 
+/** How one branch stands against another. `ahead`/`behind` are counted FROM
+ *  `branch`: behind = commits on `against` that `branch` hasn't got. */
+export interface BranchDrift {
+  exists: boolean; // `branch` resolves to a commit at all
+  ahead: number;
+  behind: number;
+  diverged: boolean;
+  unknown: boolean; // ancestry couldn't be established — NOT the same as zero
+}
+
+const noDrift = (o: Partial<BranchDrift> = {}): BranchDrift => ({
+  exists: false, ahead: 0, behind: 0, diverged: false, unknown: false, ...o,
+});
+
+/**
+ * Read-only comparison of two DIFFERENT branches — how far a long-lived
+ * integration branch has fallen behind the branch it forked from. This is not
+ * the question `remoteBaseStatus` answers: that one compares a branch to its
+ * own remote-tracking ref.
+ *
+ * Both arguments are commit-ish, so a caller may pass `main`, `origin/main` or
+ * a sha. Never touches the network: call `fetchBase` first if freshness matters,
+ * and note that a stale local `against` UNDERSTATES the drift, which is the
+ * direction to be wrong in — the callers treat "no answer" as "say nothing".
+ *
+ * The three not-a-number outcomes are kept apart because collapsing any of them
+ * into zero would report a stale branch as current. `exists: false` is the
+ * branch being gone (a tag still pinned to a branch someone deleted);
+ * `unknown` is a count that could not be taken, which a shallow clone really
+ * does produce; zeros with `exists` are the genuine "up to date".
+ */
+export async function branchDriftStatus(repoPath: string, branch: string, against: string): Promise<BranchDrift> {
+  if (!branch || !against) return noDrift({ unknown: true });
+  const [tip, againstTip] = await Promise.all([
+    git(repoPath, ["rev-parse", "--verify", `${branch}^{commit}`]).catch(() => ""),
+    git(repoPath, ["rev-parse", "--verify", `${against}^{commit}`]).catch(() => ""),
+  ]);
+  if (!tip) return noDrift(); // the branch itself is missing: absence, not drift
+  if (!againstTip) return noDrift({ exists: true, unknown: true });
+  if (tip === againstTip) return noDrift({ exists: true });
+
+  // `--left-right --count A...B` answers both directions in one subprocess:
+  // "<commits only on A>\t<commits only on B>".
+  try {
+    const [l, r] = (await git(repoPath, ["rev-list", "--left-right", "--count", `${tip}...${againstTip}`])).split(/\s+/);
+    const ahead = parseInt(l, 10) || 0;
+    const behind = parseInt(r, 10) || 0;
+    return { exists: true, ahead, behind, diverged: ahead > 0 && behind > 0, unknown: false };
+  } catch {
+    return noDrift({ exists: true, unknown: true });
+  }
+}
+
 // Which worktree, if any, has `branch` checked out. `git worktree list
 // --porcelain` prints one blank-line-separated block per worktree, the main one
 // first. Moving a branch that some worktree has checked out would leave that

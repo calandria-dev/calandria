@@ -8,6 +8,7 @@ import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from 
 import { listSummaries } from "../store";
 import { tagContextBlock } from "../tagContext";
 import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
+import { takeBaseCutNote } from "../baseDrift";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 
@@ -73,6 +74,15 @@ export function buildProjectContext(project: Project, task: Task): string {
       `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
+  // What the cut ACTUALLY got, when that differs from what the line above
+  // promises: a base branch that has fallen behind the project default, or one
+  // that no longer exists at all. Recorded at worktree-cut time by
+  // lib/baseDrift.ts and consumed here, so it reaches the session that is about
+  // to be damaged by the drift rather than only the user's tag chip. Empty on
+  // every ordinary task, and immediately after the line it qualifies, because on
+  // its own "Base branch: core-fixes" reads as reassurance.
+  const cutNote = takeBaseCutNote(task.id);
+  if (cutNote) lines.push(`\n${cutNote}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
 
