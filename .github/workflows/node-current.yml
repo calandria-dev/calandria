@@ -272,37 +272,63 @@ jobs:
           export PTY_EXPECT_DIR="$expect_dir"
           cat > pty-smoke.cjs <<'EOF'
           const pty = require("node-pty");
-          const isWin = process.platform === "win32";
-          const expected = process.env.PTY_EXPECT_DIR;
-          let utils = null;
-          try { utils = require("node-pty/lib/utils"); } catch { utils = null; }
-          if (!utils || typeof utils.loadNativeModule !== "function") {
-            console.log("note: node-pty/lib/utils.loadNativeModule is gone upstream; skipped the loaded-directory check");
-          } else {
-            const dir = utils.loadNativeModule("pty").dir.replace(/\\/g, "/");
-            if (!dir.includes(expected)) {
-              console.error("node-pty loaded pty.node from " + dir + ", but this platform's contract is " + expected + ". The loader prefers build/Release over prebuilds/, so a stray compiled binary shadows the bundled one.");
-              process.exit(1);
-            }
-            console.log("node-pty loaded pty.node from " + dir + " (expected " + expected + ")");
+
+          // EVERY exit here is explicit, including the successful one, because
+          // on Windows this script does not end on its own: once a pty has been
+          // opened the conpty agent keeps handles on the event loop, so the
+          // process sits there after onExit has fired and said everything went
+          // well. The watchdog below does not save it either — onExit clears the
+          // timer first. That cost run 33646504832 the Windows leg's whole
+          // 25-minute budget, printing both successes and then hanging; it had
+          // never surfaced because until this commit the step always failed
+          // before reaching the spawn on Windows.
+          //
+          // Write-then-exit rather than console.log followed by process.exit:
+          // stdout here is a pipe, writes to a pipe are asynchronous, and
+          // process.exit discards ones that have not flushed. The message IS the
+          // diagnosis on the failing paths, so it must not be the thing dropped.
+          function finish(code, msg) {
+            (code === 0 ? process.stdout : process.stderr).write(msg + "\n", () => process.exit(code));
           }
-          const file = isWin ? "cmd.exe" : "/bin/sh";
-          const args = isWin ? ["/c", "echo calandria-pty-ok"] : ["-c", "echo calandria-pty-ok"];
-          const term = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
-          let out = "";
-          term.onData((d) => { out += d; });
-          const timer = setTimeout(() => {
-            console.error("timed out waiting for pty output; got " + JSON.stringify(out));
-            process.exit(1);
-          }, 30000);
-          term.onExit(() => {
-            clearTimeout(timer);
-            if (!out.includes("calandria-pty-ok")) {
-              console.error("pty exited without producing the sentinel; got " + JSON.stringify(out));
-              process.exit(1);
+
+          // null means node-pty moved its internals and there is nothing to
+          // corroborate, which is reported and skipped rather than failed.
+          function loadedDir() {
+            let utils;
+            try { utils = require("node-pty/lib/utils"); } catch { return null; }
+            if (typeof utils.loadNativeModule !== "function") return null;
+            return utils.loadNativeModule("pty").dir.replace(/\\/g, "/");
+          }
+
+          function main() {
+            const expected = process.env.PTY_EXPECT_DIR;
+            const dir = loadedDir();
+            if (dir === null) {
+              console.log("note: node-pty/lib/utils.loadNativeModule is gone upstream; skipped the loaded-directory check");
+            } else if (!dir.includes(expected)) {
+              return finish(1, "node-pty loaded pty.node from " + dir + ", but this platform's contract is " + expected + ". The loader prefers build/Release over prebuilds/, so a stray compiled binary shadows the bundled one.");
+            } else {
+              console.log("node-pty loaded pty.node from " + dir + " (expected " + expected + ")");
             }
-            console.log("node-pty opened a real pty and read its output");
-          });
+
+            const isWin = process.platform === "win32";
+            const file = isWin ? "cmd.exe" : "/bin/sh";
+            const args = isWin ? ["/c", "echo calandria-pty-ok"] : ["-c", "echo calandria-pty-ok"];
+            const term = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
+            let out = "";
+            term.onData((d) => { out += d; });
+            const timer = setTimeout(() => finish(1, "timed out waiting for pty output; got " + JSON.stringify(out)), 30000);
+            term.onExit(() => {
+              clearTimeout(timer);
+              if (!out.includes("calandria-pty-ok")) {
+                finish(1, "pty exited without producing the sentinel; got " + JSON.stringify(out));
+              } else {
+                finish(0, "node-pty opened a real pty and read its output");
+              }
+            });
+          }
+
+          main();
           EOF
           node pty-smoke.cjs
           rm -f pty-smoke.cjs
