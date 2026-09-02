@@ -285,6 +285,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const cur = getProject(id);
   if (!cur) return undefined;
   const n = { ...cur, ...patch };
+  // branch is normalized like landing_mode below: a blank patch (missing base
+  // branch field, or one cleared to "" / whitespace in Settings) keeps the
+  // CURRENT branch rather than saving emptiness. An empty projects.branch
+  // makes resolveBaseBranch fall through to "", and every task then shows
+  // "isn't a branch in this repository" with a blank name.
+  const branch = n.branch.trim() || cur.branch;
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
@@ -292,7 +298,7 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
       // agent_env is normalized, not trusted, for the same reason: the allowlist
       // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
       // whatever a PATCH body (object or JSON text) carried.
