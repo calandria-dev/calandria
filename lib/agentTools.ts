@@ -48,7 +48,7 @@ import { refNameSafe } from "./git";
 import { withTaskLock } from "./taskLock";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
-import { waitForAnswer, settleAsk } from "./asks";
+import { waitForAnswer, settleAsk, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "./asks";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "./runContext";
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
@@ -1331,10 +1331,18 @@ export function startAskUser(task: Task, questions: AskQuestion[]): { askId: str
       settleAsk(task.id, askId, formatAnswers(questions, answers));
     })
     .catch(() => {
-      // Turn torn down (Stop) before an answer arrived. The card stays in the
-      // transcript unanswered — answering it later falls back to the /answer
-      // route's resolved:false path (a normal reply into a fresh turn).
-      settleAsk(task.id, askId, "The user dismissed the question without answering.");
+      // Turn torn down (Stop) before an answer arrived. Mark the card dismissed
+      // rather than leaving it blank: this is the bridge's OWN settle path (the
+      // runner's turn-end backstop never sees an out-of-band ask, since the row
+      // was written here and not through its event queue), so without it the
+      // card renders live option buttons that resolve nothing — /answer would
+      // return resolved:false and the pick would land as an ordinary message.
+      const dismissal = { reason: "interrupted" as const, note: ASK_INTERRUPTED_NOTE };
+      data.ask = { id: askId, questions, dismissed: dismissal };
+      updateMessage(m.id, JSON.stringify(data));
+      updateTask(task.id, { awaiting_input: 0 });
+      publish(task.id, { type: "ask_dismissed", id: askId, dismissal, msgId: m.id, generation: task.generation });
+      settleAsk(task.id, askId, ASK_DISMISSED_REPLY);
     });
 
   return { askId };

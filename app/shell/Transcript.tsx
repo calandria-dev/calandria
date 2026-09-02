@@ -129,6 +129,7 @@ function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (fi
 function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: string; onAnswer: (answers: AskAnswers) => void }) {
   const questions = data.ask?.questions ?? [];
   const existing = data.ask?.answers;
+  const dismissed = data.ask?.dismissed;
   const [state, setState] = useState(() => questions.map(() => ({ picked: [] as string[], other: "" })));
   const [submitted, setSubmitted] = useState(false);
 
@@ -142,6 +143,24 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
             <div className="ask-picked">{(existing[i] ?? []).join(", ") || "—"}</div>
           </div>
         ))}
+      </div>
+    );
+  }
+
+  // Never answered, and never will be: the turn was stopped or the app
+  // restarted with the question parked. Renders as a settled card — showing
+  // live options here would be indistinguishable from a question somebody is
+  // actually waiting on, and picking one would resolve nothing.
+  if (dismissed) {
+    return (
+      <div className="ask dismissed">
+        <div className="ask-head">{Icon.spark()} Not answered</div>
+        {questions.map((q, i) => (
+          <div className="ask-q" key={i}>
+            <div className="ask-qh"><span className="ask-chip">{q.header}</span>{q.question}</div>
+          </div>
+        ))}
+        <div className="ask-note">{dismissed.note}</div>
       </div>
     );
   }

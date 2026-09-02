@@ -1379,9 +1379,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* ---------------- AskUserQuestion card ---------------- */
 .ask{border:1px solid var(--accent-soft);border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
-.ask.answered{border-color:var(--line-2);opacity:.92;}
+.ask.answered,.ask.dismissed{border-color:var(--line-2);opacity:.92;}
 .ask-head{display:flex;align-items:center;gap:7px;padding:9px 13px;font-size:11px;font-weight:700;letter-spacing:.02em;color:var(--accent-ink);background:var(--accent-soft);border-bottom:1px solid var(--accent-soft);}
-.ask.answered .ask-head{color:var(--ink-3);background:var(--panel-2);}
+.ask.answered .ask-head,.ask.dismissed .ask-head{color:var(--ink-3);background:var(--panel-2);}
 .ask-head svg{width:14px;height:14px;}
 .ask-q{padding:12px 13px;border-top:1px solid var(--line-2);}
 .ask-q:first-of-type{border-top:none;}
@@ -1399,6 +1399,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ask-other:focus{outline:none;border-color:var(--accent);}
 .ask-foot{display:flex;justify-content:flex-end;padding:11px 13px;border-top:1px solid var(--line-2);}
 .ask-picked{font-size:12.5px;color:var(--ink-2);font-weight:500;}
+.ask-note{padding:11px 13px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-3);}
 
 /* ---------------- tool permission card (the canUseTool gate) ---------------- */
 .perm{border:1px solid var(--amber,var(--line-2));border-radius:var(--r);background:var(--surface-2);overflow:hidden;}

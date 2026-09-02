@@ -49,7 +49,7 @@ import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
-import { waitForAnswer } from "../../asks";
+import { waitForAnswer, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "../../asks";
 import {
   allowedByRules,
   blockedReason,
@@ -1111,7 +1111,12 @@ async function* runTurn(
                   reason = formatAnswers(questions, answers);
                 } catch {
                   // Turn torn down (Stop / disconnect) before an answer arrived.
-                  reason = "The user dismissed the question without answering.";
+                  // Settle the card here the way canUseTool's settle() does on
+                  // its abort path: an ask with neither answers nor a dismissal
+                  // renders live option buttons forever, indistinguishable from
+                  // a question somebody is actually waiting on.
+                  queue.push({ type: "ask_dismissed", id, dismissal: { reason: "interrupted", note: ASK_INTERRUPTED_NOTE } });
+                  reason = ASK_DISMISSED_REPLY;
                 }
                 return {
                   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
