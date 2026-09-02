@@ -208,7 +208,10 @@ endpoint, that `model_provider` really did resolve to `calandria-local` (`codex 
 about a second) and **refuses the turn** if it can't get that confirmation, naming the version it
 saw. The answer is remembered against the CLI version that gave it and re-earned whenever that
 version moves. Set `CALANDRIA_CODEX_PROVIDER_CHECK=off` to skip the check and accept the risk, or
-pin a known-good binary with `CODEX_CLI_PATH`. Claude Code needs none of this: it reads
+pin a known-good binary with `CODEX_CLI_PATH`. On Windows, if your `codex` is the npm `.cmd`
+shim the check stands down and says so in the log — the shim's command line can't carry the
+settings faithfully enough to check them; point `CODEX_CLI_PATH` at the real executable to get
+it back. Claude Code needs none of this: it reads
 `ANTHROPIC_BASE_URL` directly, and measured against a sink endpoint on 2.1.257 it sends every
 request there under a subscription login rather than falling back to Anthropic.
 

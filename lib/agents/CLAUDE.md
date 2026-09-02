@@ -195,6 +195,13 @@ Load-bearing details:
 - **The verdict is cached against the CLI version that earned it** (`codex_provider_ok:<baseUrl>`),
   since the binary is what moves. `codex --version` is ~30ms warm and guards the ~1.1s probe; the
   cloud path does neither, having no mapping to prove.
+- **One documented exception, and only one: a win32 batch shim.** Every override carries embedded
+  quotes (`model_provider="…"`), which `cmd.exe /d /s /c` can't be trusted to deliver intact —
+  unlike the fixed tokens `bin.ts` was written for. So a "wrong provider" answer there would
+  indict our own quoting rather than the mapping, and refusing on it would break every Windows
+  instance whose codex is an npm `.cmd` shim. That path degrades to the pre-check behaviour with a
+  warning; pointing `CODEX_CLI_PATH` at the real executable spawns it directly and restores the
+  check.
 - **Which binary gets probed.** With `CODEX_CLI_PATH` set, the probe and the SDK drive the same
   file. With it empty they resolve separately — the SDK to the binary vendored in
   `@openai/codex`, the probe to `codex` on PATH via `bin.ts` — which are the same install in

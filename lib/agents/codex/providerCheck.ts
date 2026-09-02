@@ -110,14 +110,20 @@ function toToml(value: CodexConfigValue): string {
 // TURN env (lib/agentEnv.ts), a plain Record without the NODE_ENV the augmented
 // type demands — the whole point being that the probe runs in the turn's
 // environment rather than the server's.
-export type CodexProbeOpts = { cwd?: string; env?: Record<string, string | undefined>; bin?: string };
+export type CodexProbeOpts = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  bin?: string;
+  /** Test seam for the win32 batch-shim path below; defaults to this host. */
+  platform?: NodeJS.Platform;
+};
 
-const spec = (args: string[], bin?: string) => spawnSpec(resolveCodexBin(bin), args);
+const spec = (args: string[], opts: CodexProbeOpts) => spawnSpec(resolveCodexBin(opts.bin), args, { platform: opts.platform });
 
 /** `codex-cli 0.146.0` → `0.146.0`. Null when the binary is missing or mute. */
 export async function codexCliVersion(opts: CodexProbeOpts = {}): Promise<string | null> {
   try {
-    const spec_ = spec(["--version"], opts.bin);
+    const spec_ = spec(["--version"], opts);
     const { stdout } = await run(spec_.command, spec_.args, {
       timeout: 10_000,
       env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
@@ -132,7 +138,9 @@ export async function codexCliVersion(opts: CodexProbeOpts = {}): Promise<string
 /** What `codex doctor --json` said the effective model provider is. */
 export type CodexDoctorReading =
   | { kind: "provider"; provider: string; cliVersion: string | null }
-  | { kind: "unreadable"; detail: string };
+  | { kind: "unreadable"; detail: string }
+  /** The probe can't compose faithful argv for this binary; see readCodexProvider. */
+  | { kind: "unquotable" };
 
 /**
  * Ask the CLI which provider it resolved, handing it the same `-c` overrides the
@@ -144,7 +152,15 @@ export type CodexDoctorReading =
 export async function readCodexProvider(overrides: string[], opts: CodexProbeOpts = {}): Promise<CodexDoctorReading> {
   const args = ["doctor", "--json"];
   for (const o of overrides) args.push("--config", o);
-  const spec_ = spec(args, opts.bin);
+  const spec_ = spec(args, opts);
+  // A win32 batch shim has to be run through `cmd.exe /d /s /c`, whose quoting
+  // rules are not the C-runtime ones every other caller here relies on — and
+  // every override we send carries embedded quotes (`model_provider="…"`),
+  // unlike the fixed tokens bin.ts was written for. So on that one path the argv
+  // the CLI receives may not be the argv we composed, and a "wrong provider"
+  // answer would be evidence about our quoting rather than about the mapping.
+  // Report it as its own thing instead of refusing on it.
+  if (spec_.windowsVerbatimArguments) return { kind: "unquotable" };
   let stdout = "";
   try {
     ({ stdout } = await run(spec_.command, spec_.args, {
@@ -195,6 +211,19 @@ export async function verifyCodexProvider(local: CodexProviderConfig, opts: Code
   if (version && getSetting(okKey(baseUrl)) === version) return { ok: true, cliVersion: version };
 
   const reading = await readCodexProvider(serializeCodexConfigOverrides(local.config), opts);
+  // The one case that passes WITHOUT proof, and the only one. Refusing here
+  // would break every Windows instance whose codex is an npm `.cmd` shim on a
+  // suspicion about our own quoting, so it degrades to the pre-check behaviour
+  // and says so out loud once per turn. Pinning CODEX_CLI_PATH at the real
+  // `codex.exe` spawns it directly and restores the check.
+  if (reading.kind === "unquotable") {
+    console.warn(
+      `[codex] running a local-endpoint turn UNVERIFIED: the resolved codex is a batch shim, whose command line ` +
+        `can't carry the provider overrides faithfully enough to check. Point CODEX_CLI_PATH at the codex ` +
+        `executable to re-enable the check.`
+    );
+    return { ok: true, cliVersion: version };
+  }
   if (reading.kind === "unreadable")
     return { ok: false, message: unverifiableMessage(reading.detail, version, baseUrl) };
   if (reading.provider !== CODEX_LOCAL_PROVIDER_ID)

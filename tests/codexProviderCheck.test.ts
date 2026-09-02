@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { onPosix } from "./platform";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +42,10 @@ const BASE_URL = "http://localhost:11434/v1";
 // FAKE_VERSION answers `--version`; FAKE_PROVIDER is what its doctor report
 // claims resolved; FAKE_MODE=garbage makes doctor emit something unparseable,
 // and FAKE_CALLS counts doctor invocations so the cache can be observed.
+// A shebang script, so every case driving it is POSIX-only (`onPosix`, per
+// tests/platform.ts): win32 can't exec one, and a `.cmd` rewrite would exercise
+// the cmd.exe quoting path the probe declines outright rather than the logic
+// these cases are about.
 const FAKE = `#!/usr/bin/env node
 const fs = require("fs");
 const argv = process.argv.slice(2);
@@ -99,7 +104,7 @@ describe("serializeCodexConfigOverrides", () => {
     expect(serializeCodexConfigOverrides({ t: { "a.b": "v" } })).toEqual([`t.a.b="v"`]);
   });
 
-  it("emits exactly the --config arguments the real SDK spawns codex with", async () => {
+  onPosix("emits exactly the --config arguments the real SDK spawns codex with", async () => {
     const { Codex } = await import("@openai/codex-sdk");
     const argvOut = path.join(dir, "argv.json");
     const { config } = codexProviderConfig(OVERRIDE);
@@ -131,7 +136,7 @@ describe("readCodexProvider against the real codex CLI", () => {
   // everything else in this file.
   const real = [path.join(process.cwd(), "node_modules", ".bin", "codex")].find((p) => fs.existsSync(p));
 
-  it("reports the mapped provider, and the default without it", async (ctx) => {
+  onPosix("reports the mapped provider, and the default without it", async (ctx) => {
     if (!real) return ctx.skip();
     const version = await codexCliVersion({ bin: real });
     expect(version, "a codex that can't say its version can't certify anything").toBeTruthy();
@@ -159,12 +164,12 @@ describe("verifyCodexProvider", () => {
     expect(await verifyCodexProvider(cloud, { bin: path.join(dir, "does-not-exist") })).toEqual({ ok: true, cliVersion: null });
   });
 
-  it("passes when the CLI confirms the mapping took", async () => {
+  onPosix("passes when the CLI confirms the mapping took", async () => {
     const local = codexProviderConfig(OVERRIDE);
     expect(await verifyCodexProvider(local, { bin: fakeBin, env: fakeEnv({}) })).toEqual({ ok: true, cliVersion: "9.9.9" });
   });
 
-  it("REFUSES rather than falling through to the paid login when the mapping didn't take", async () => {
+  onPosix("REFUSES rather than falling through to the paid login when the mapping didn't take", async () => {
     const local = codexProviderConfig(OVERRIDE);
     const verdict = await verifyCodexProvider(local, { bin: fakeBin, env: fakeEnv({ FAKE_PROVIDER: "openai" }) });
     expect(verdict.ok).toBe(false);
@@ -175,7 +180,7 @@ describe("verifyCodexProvider", () => {
     expect(msg).toContain("CODEX_CLI_PATH"); // how to pin a working one
   });
 
-  it("refuses when it cannot read an answer at all, naming the version floor", async () => {
+  onPosix("refuses when it cannot read an answer at all, naming the version floor", async () => {
     const local = codexProviderConfig(OVERRIDE);
     for (const mode of ["garbage", "silent"]) {
       const verdict = await verifyCodexProvider(local, { bin: fakeBin, env: fakeEnv({ FAKE_MODE: mode }) });
@@ -186,13 +191,24 @@ describe("verifyCodexProvider", () => {
     }
   });
 
+  it("runs a batch shim UNVERIFIED rather than refusing on our own cmd.exe quoting", async () => {
+    // Every override carries embedded quotes, which a `cmd.exe /d /s /c` line
+    // can't be trusted to deliver intact — so a "wrong provider" answer there
+    // would indict our quoting, not the mapping. The documented exception: it
+    // degrades to the pre-check behaviour instead of refusing every Windows
+    // instance whose codex is an npm `.cmd` shim.
+    expect(await readCodexProvider(["x=1"], { bin: "C:\\codex.cmd", platform: "win32" })).toEqual({ kind: "unquotable" });
+    const local = codexProviderConfig(OVERRIDE);
+    expect(await verifyCodexProvider(local, { bin: "C:\\codex.cmd", platform: "win32" })).toMatchObject({ ok: true });
+  });
+
   it("refuses when the binary isn't there", async () => {
     const local = codexProviderConfig(OVERRIDE);
     const verdict = await verifyCodexProvider(local, { bin: path.join(dir, "absent") });
     expect(verdict.ok).toBe(false);
   });
 
-  it("probes once per endpoint, then re-earns the verdict when the CLI version moves", async () => {
+  onPosix("probes once per endpoint, then re-earns the verdict when the CLI version moves", async () => {
     const local = codexProviderConfig(OVERRIDE);
     const calls = path.join(dir, "calls");
     const env = (over: Record<string, string> = {}) => fakeEnv({ FAKE_CALLS: calls, ...over });
