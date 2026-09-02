@@ -2520,6 +2520,14 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-base-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .gs-base-note{font-size:11.5px;color:var(--ink-3);display:flex;flex-direction:column;gap:2px;margin-top:-2px;}
 .gs-base-badge{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:1px 6px;border-radius:999px;}
+/* Drift of the tag's base branch from the project default, above both strip
+   modes. Warn is the ordinary state of a branch that has fallen behind, not an
+   error — the whole point is that it is surfaced early and fixed in one click. */
+.gs-drift{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);}
+.gs-drift.warn .gs-drift-msg{color:var(--amber);}
+.gs-drift.bad .gs-drift-msg{color:var(--red);}
+.gs-drift-note{color:var(--ink-3);}
+.gs-drift-err{color:var(--red);}
 .gs-colors{display:flex;align-items:center;gap:6px;}
 .gs-colors .spacer{flex:1;}
 .gs-sw{width:18px;height:18px;border-radius:50%;border:1px solid var(--line-strong);cursor:pointer;padding:0;}

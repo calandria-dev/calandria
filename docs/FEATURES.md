@@ -183,6 +183,27 @@ strip names it. Resolution order: the task's own base, then the first of its tag
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
 
+**And the strip says when that branch has fallen behind** — "3 behind main", with a **Sync**
+beside it. A long-lived integration branch drifts as work lands on the default, and every new
+task the tag cuts is then minted stale: the session builds on superseded commits and its pull
+request proposes reverting whatever landed in between. The reading is taken against the
+commit a new task would actually be cut from (the fetched remote tip when your local default
+is merely behind it), so a stale checkout of your own can't hide it.
+
+Sync **merges the default into the tag's branch**. It never resets it: proving a branch has
+been fully superseded is unreliable under squash merges — `git cherry` called 30 and 10
+commits "not upstream" on two branches `main` had in fact entirely absorbed — and a reset also
+force-moves a ref a live session may have checked out. A merge needs no such proof and can't
+drop a commit. If a worktree is holding the branch, the merge happens inside it so its files
+move too, and is refused outright when that worktree has uncommitted work, naming it. A
+conflict is reported and changes nothing. A tag pinned to a branch that has since been
+**deleted** says so here too, rather than silently cutting new tasks from whatever `HEAD` is.
+
+The strip is the half of this you can act on; the other half reaches the session. A task whose
+worktree was cut from a base branch already behind the default is told so in its opening
+context, before it writes a pull request — same measurement, said in the two places it
+matters.
+
 ### How work lands: merge or pull request
 
 A project also records **how** its work is meant to reach that branch, in the project
