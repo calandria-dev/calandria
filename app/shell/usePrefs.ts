@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { LS, loadPersist, selectionToPersist, type StoredSel } from "./persist";
-import { reconcileHistory, closeOneLevel, type NavSel } from "./navHistory";
+import { reconcileHistory, closeOneLevel, backOneLevel, type NavSel } from "./navHistory";
 import {
   DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH, MONO_FONTS, PROMPT_FONTS,
   type Appearance, type Settings, type Layout, type View, type TaskView,
@@ -135,20 +135,25 @@ export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSel
   // open (pushState fires no popstate, so no loop). Driving off the live
   // selection — not the popped URL — makes this immune to the task list churning
   // selTask, which would otherwise leave stale duplicate history entries.
+  const applySel = useCallback((next: NavSel) => {
+    setSelProj(next.proj);
+    setSelTask(next.task);
+    setProjectHome(next.home);
+    setView(next.view);
+  }, [setSelProj, setSelTask, setProjectHome]);
   useEffect(() => {
-    const onPop = () => {
-      const next = closeOneLevel(selRef.current);
-      setSelProj(next.proj);
-      setSelTask(next.task);
-      setProjectHome(next.home);
-      setView(next.view);
-    };
+    const onPop = () => applySel(closeOneLevel(selRef.current));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [setSelProj, setSelTask, setProjectHome]);
+  }, [applySel]);
+
+  // The in-app Back buttons. Through the browser when the trap is armed, so the
+  // device button and the on-screen one leave the same history behind; straight
+  // to the selection when it isn't (see backOneLevel).
+  const goBack = useCallback(() => { backOneLevel(window.history, selRef.current, applySel); }, [applySel]);
 
   const setAppearanceKey = (k: keyof Appearance, v: string) => setAppearance((a) => ({ ...a, [k]: v }));
   const setSetting = <K extends keyof Settings>(k: K, v: Settings[K]) => setSettings((s) => ({ ...s, [k]: v }));
 
-  return { view, setView, taskView, setTaskView, appearance, setAppearance: setAppearanceKey, settings, setSetting, setSettings, layout, setLayout, hydrated };
+  return { view, setView, taskView, setTaskView, appearance, setAppearance: setAppearanceKey, settings, setSetting, setSettings, layout, setLayout, hydrated, goBack };
 }

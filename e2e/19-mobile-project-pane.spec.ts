@@ -36,16 +36,23 @@ test.beforeAll(async ({ request }) => {
  * Cold load → this project's task list. Boot picks a project on its own
  * (active[0] — the seeded tutorial here), which on a phone lands straight on
  * THAT project's task list, so reaching the projects pane means pressing Back
- * first. The `.or()` is the boot gate: asking `isVisible()` while the skeleton
- * is still up answers "no" and silently skips the Back press.
+ * first.
+ *
+ * The gate is the Back button, nothing else. An earlier version accepted
+ * `.col-projects` as an alternative sign of boot — but the boot SKELETON draws
+ * a `.col-projects` of its own, so on a slow runner the gate opened on the
+ * skeleton, `isVisible()` on the not-yet-mounted Back button answered "no", the
+ * press was skipped, and the assertion below then met the task list boot had
+ * landed on in the meantime: `.col-projects` "element(s) not found" (#104). A
+ * fresh context has no remembered task, so boot always lands on a task list
+ * and the button is always coming.
  */
 async function openTaskList(page: Page): Promise<void> {
   await gotoApp(page);
   const back = page.getByRole("button", { name: "Back to projects" });
-  const projects = page.locator(".col-projects");
-  await expect(back.or(projects).first()).toBeVisible();
-  if (await back.isVisible()) await back.click();
-  await expect(projects).toBeVisible();
+  await expect(back).toBeVisible();
+  await back.click();
+  await expect(page.locator(".col-projects")).toBeVisible();
   await page.getByText(PROJECT).first().click();
   await expect(page.getByRole("button", { name: "Project home" })).toBeVisible();
 }
