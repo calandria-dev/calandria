@@ -465,8 +465,9 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
   (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
   (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
-  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
-  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one went
+  with the merge: `mergeTaskPr` passes `--delete-branch`; a github.com merge instead needs the
+  repo's `delete_branch_on_merge`, off by default), mark the task done. `maybeAutoReclaim()` is the
   silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
   call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
   unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ
