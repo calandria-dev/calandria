@@ -183,3 +183,9 @@ controls consume that contract.
 See [Architecture: the agent-driver seam](ARCHITECTURE.md#the-agent-driver-seam-libagents)
 for the implementation guide. Proposals for another agent are welcome in
 [GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/ideas).
+
+A Google driver is in progress. The spike that chose its backend, the Antigravity CLI
+(`agy`) rather than Gemini CLI, is recorded in
+[design/gemini-driver.md](design/gemini-driver.md): why (Gemini CLI stopped serving Google
+AI Pro, Ultra and free accounts on 2026-06-18), the measured headless surface of both CLIs,
+the event mapping, the login flow and the open questions the driver has to settle.
