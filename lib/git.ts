@@ -1189,13 +1189,36 @@ export async function worktreePruneSafety(input: {
  * opened and never pushed was not in the thing GitHub merged, whatever the
  * merge strategy did to the rest. See lib/reclaim.ts, the only caller.
  *
- * `null` is deliberately distinct from 0. The upstream ref is routinely gone by
- * the time this runs — GitHub's delete_branch_on_merge removes the remote
- * branch, and a later `git fetch --prune` takes the local mirror of it with
- * it — and "there is no longer anything to compare" must not read as "nothing
- * is unpushed" to a caller that would treat 0 as permission.
+ * `null` is deliberately distinct from 0. The upstream is routinely gone by the
+ * time this runs — GitHub's delete_branch_on_merge removes the remote branch —
+ * and "there is no longer anything to compare" must not read as "nothing is
+ * unpushed" to a caller that would treat 0 as permission.
+ *
+ * TWO THINGS THIS GETS WRONG IF WRITTEN THE OBVIOUS WAY, both observed on a
+ * real squash-merged PR that reported "4 commits never pushed" over an empty
+ * `git diff`:
+ *
+ * LOCAL MIRRORS OF A DELETED BRANCH DON'T VANISH. `fetchBase` never prunes, so
+ * after delete_branch_on_merge the remote branch is gone while
+ * `refs/remotes/origin/<branch>` still sits at the pre-merge tip, and a
+ * rev-parse of it happily succeeds. The ref existing locally is therefore no
+ * evidence the remote has anything, and the REMOTE is asked directly
+ * (`ls-remote`) under gitNet's best-effort contract. Not being able to ask is a
+ * third answer: it falls back to the local mirror rather than either declaring
+ * the branch gone or refusing, since with the count below fixed the mirror is a
+ * good enough answer for an offline repo.
+ *
+ * A SYNC'S COMMITS AREN'T THE TASK'S WORK. Once the PR has merged, catching the
+ * task branch up with its base (`merge --no-ff base`) puts the merge commit AND
+ * every base commit it pulled in — sibling PRs' squashes, and the task's own —
+ * beyond the upstream, none of it content the PR could have missed. So the
+ * count excludes what the base already has and the merges themselves. The
+ * caveat, for anyone tempted to reinstate them: a Sync that resolved conflicts
+ * really does carry content, but a Sync AFTER the PR merged is irrelevant to
+ * what the PR contained by definition, and one BEFORE it was either pushed
+ * (counted 0) or is a real unpushed commit that `--no-merges` still counts.
  */
-export async function unpushedCommits(repoPath: string, workBranch: string): Promise<number | null> {
+export async function unpushedCommits(repoPath: string, workBranch: string, baseBranch: string): Promise<number | null> {
   if (!workBranch || !refNameSafe(workBranch)) return null;
   const upstream = (
     await git(repoPath, ["rev-parse", "--symbolic-full-name", `${workBranch}@{upstream}`]).catch(() => "")
@@ -1204,11 +1227,35 @@ export async function unpushedCommits(repoPath: string, workBranch: string): Pro
   // The name resolving says only that the config exists; the ref itself may
   // have been pruned out from under it.
   if (!(await git(repoPath, ["rev-parse", "--verify", `${upstream}^{commit}`]).catch(() => ""))) return null;
-  const n = parseInt(
-    await git(repoPath, ["rev-list", "--count", `${upstream}..refs/heads/${workBranch}`]).catch(() => ""),
-    10
-  );
+  if ((await remoteBranchLives(repoPath, workBranch)) === false) return null;
+
+  const args = ["rev-list", "--count", `${upstream}..refs/heads/${workBranch}`, "--no-merges"];
+  if (baseBranch && refNameSafe(baseBranch) && (await branchExists(repoPath, baseBranch)))
+    args.push("--not", `refs/heads/${baseBranch}`);
+  const n = parseInt(await git(repoPath, args).catch(() => ""), 10);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Does the remote still publish this branch? `true` yes, `false` the remote
+ * answered and does not, `null` we couldn't ask — no remote, fetching turned
+ * off, or the network/credential failed.
+ *
+ * `null` and `false` are different answers to different questions, and the
+ * caller reads only `false` as "gone": a repo that can't reach its remote has
+ * learned nothing, and treating that as a deleted branch would wave every
+ * offline reclaim straight through the safety gate.
+ */
+async function remoteBranchLives(repoPath: string, workBranch: string): Promise<boolean | null> {
+  if (!GIT_FETCH_ENABLED) return null;
+  const up = await baseRemote(repoPath, workBranch).catch(() => null);
+  if (!up) return null;
+  try {
+    const out = await gitNet(repoPath, ["ls-remote", "--heads", up.remote, `refs/heads/${up.remoteBranch}`]);
+    return out.trim().length > 0;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- diff ----------
