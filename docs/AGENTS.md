@@ -205,6 +205,26 @@ should run. Nothing else gets through, so the field can't set `PATH` or `NODE_OP
 the spawned CLI. The model you name is written to every alias, so a task whose picker says
 `sonnet` still lands on the local model.
 
+**What a turn against an override costs.** Whatever the driver reports, it isn't measuring
+this endpoint: Claude Code prices the model id it was *told* and Codex prices an unknown id
+at the CLI-default family, both against a catalog the endpoint doesn't bill from. So the
+ledger decides, and it distinguishes the two presets rather than lumping them together:
+
+- **Local model** — an endpoint on this machine or your own network. Recorded at **$0**,
+  which is a measurement: nothing is being charged.
+- **Custom base URL** — free text, and just as likely to be OpenRouter, Together, Fireworks
+  or a Bedrock/Vertex proxy as anything free. Recorded as **unpriced** (`task_usage.cost_usd`
+  is NULL, distinct from a zero). Those turns are left out of every cost total, and each
+  place a total is shown marks it: the session header's usage chip prints `—` when a task has
+  nothing else to count and `$x.xx+` when it does, and Insights suffixes the Spend KPI and the
+  project, tag and provider tables with a `+` whose tooltip names the count. Tokens are kept
+  either way — an unpriced turn still filled a context window.
+
+The old behaviour billed every override at $0, so pointing the custom preset at a paid third
+party made that spend disappear from Insights with nothing on screen admitting the number was
+a placeholder. Rows written before this shipped keep their recorded 0; only turns from here
+on carry the distinction.
+
 **Credentials.** Redirecting the base URL drops the instance's own Anthropic and OpenAI keys
 from that turn's environment: a custom endpoint is a third party, and it gets only the token
 you typed for it. The reverse holds too. A project-level `ANTHROPIC_AUTH_TOKEN` is honoured

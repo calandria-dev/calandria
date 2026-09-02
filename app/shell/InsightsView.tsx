@@ -18,13 +18,20 @@ interface Payload {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   /** The tags `tagUsage`'s `g` keys name, for the leaderboard's labels. */
   tags: { id: string; name: string; color: string | null; project_id: string }[];
-  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /**
+   * `unp` counts turns in the (day, project, agent) bucket that ran against a
+   * custom base URL with no known price — genuinely unknown cost, not a
+   * measured $0 (that's a local Ollama/LM Studio turn). `cost` sums only the
+   * priced turns, so wherever `unp` is nonzero, `cost` is a floor.
+   */
+  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number; unp: number }[];
   /**
    * The same spend attributed to tags — `g` is the tag id, "" for usage by a
    * task carrying none. A multi-tagged task appears under EACH of its tags, so
    * this deliberately does not sum to `usage` — see the leaderboard below.
+   * `unp` has the same meaning as on `usage` above.
    */
-  tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number; unp: number }[];
   internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
@@ -36,9 +43,11 @@ interface DayRow {
   key: string;
   date: Date;
   spend: number; inp: number; out: number; cr: number; cw: number; tokens: number;
+  // Turns (not dollars) in this bucket that had no price — see `Payload.usage`.
+  unpriced: number;
   overheadSpend: number; overheadFresh: number; overheadTokens: number;
   tasks: number; add: number; del: number;
-  byAgent: Record<string, { spend: number; tokens: number; tasks: number }>;
+  byAgent: Record<string, { spend: number; tokens: number; unpriced: number; tasks: number }>;
 }
 
 // ---------- formatting ----------
@@ -50,6 +59,12 @@ const fmtCompact = (n: number) => {
   return String(n);
 };
 const fmtDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
+// "1 turn" / "4 turns" — the unpriced-turns disclosure below.
+const pluralTurns = (n: number) => `${n} turn${n === 1 ? "" : "s"}`;
+// Why a turn has no price: it ran against a custom base URL nobody has told
+// Calandria the cost of, so it's left OUT of a total rather than counted as
+// a measured $0 (which is what a local Ollama/LM Studio turn really is).
+const unprTitle = (n: number) => `${pluralTurns(n)} unpriced — ran against a custom endpoint with no price set, so left out of this total rather than counted as $0.`;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmtDateLong = (d: Date) => `${WEEKDAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
@@ -329,23 +344,23 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     const hues = agentHues(agentIds);
 
     // ---- per-day rows for the current range + totals for the previous one ----
-    const blank = (key: string, date: Date): DayRow => ({ key, date, spend: 0, inp: 0, out: 0, cr: 0, cw: 0, tokens: 0, overheadSpend: 0, overheadFresh: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0, byAgent: {} });
+    const blank = (key: string, date: Date): DayRow => ({ key, date, spend: 0, inp: 0, out: 0, cr: 0, cw: 0, tokens: 0, unpriced: 0, overheadSpend: 0, overheadFresh: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0, byAgent: {} });
     const rows = daysBack(N, 0).map(({ key, date }) => blank(key, date));
     const byKey = new Map(rows.map((r) => [r.key, r]));
     const prevKeys = new Set(daysBack(N, N).map((d) => d.key));
-    const prev = { spend: 0, tokens: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
-    const perAgent = (r: DayRow, a: string) => (r.byAgent[a] ??= { spend: 0, tokens: 0, tasks: 0 });
+    const prev = { spend: 0, tokens: 0, unpriced: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
+    const perAgent = (r: DayRow, a: string) => (r.byAgent[a] ??= { spend: 0, tokens: 0, unpriced: 0, tasks: 0 });
 
     for (const u of data.usage) {
       if (!matchP(u.p) || !matchA(u.a)) continue;
       const tokens = u.inp + u.out + u.cr + u.cw;
       const r = byKey.get(u.d);
       if (r) {
-        r.spend += u.cost; r.inp += u.inp; r.out += u.out; r.cr += u.cr; r.cw += u.cw; r.tokens += tokens;
+        r.spend += u.cost; r.inp += u.inp; r.out += u.out; r.cr += u.cr; r.cw += u.cw; r.tokens += tokens; r.unpriced += u.unp;
         const pa = perAgent(r, u.a);
-        pa.spend += u.cost; pa.tokens += tokens;
+        pa.spend += u.cost; pa.tokens += tokens; pa.unpriced += u.unp;
       } else if (prevKeys.has(u.d)) {
-        prev.spend += u.cost; prev.tokens += tokens;
+        prev.spend += u.cost; prev.tokens += tokens; prev.unpriced += u.unp;
       }
     }
     for (const u of data.internal) {
@@ -374,8 +389,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       else if (prevKeys.has(m.d)) { prev.add += m.add; prev.del += m.del; }
     }
 
-    const cur = { spend: 0, tokens: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
-    for (const r of rows) { cur.spend += r.spend; cur.tokens += r.tokens; cur.overheadSpend += r.overheadSpend; cur.overheadTokens += r.overheadTokens; cur.tasks += r.tasks; cur.add += r.add; cur.del += r.del; }
+    const cur = { spend: 0, tokens: 0, unpriced: 0, overheadSpend: 0, overheadTokens: 0, tasks: 0, add: 0, del: 0 };
+    for (const r of rows) { cur.spend += r.spend; cur.tokens += r.tokens; cur.unpriced += r.unpriced; cur.overheadSpend += r.overheadSpend; cur.overheadTokens += r.overheadTokens; cur.tasks += r.tasks; cur.add += r.add; cur.del += r.del; }
     const activeDays = rows.filter((r) => r.spend > 0 || r.tokens > 0 || r.overheadSpend > 0 || r.overheadTokens > 0 || r.tasks > 0 || r.add > 0 || r.del > 0).length;
 
     // Agents that actually have usage in the visible rows — drives the spend
@@ -390,25 +405,25 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
 
     // ---- provider panel ----
     const providers = chartAgents.map((a) => {
-      let spend = 0, tokens = 0, tasks = 0;
+      let spend = 0, tokens = 0, tasks = 0, unpriced = 0;
       for (const r of rows) {
         const pa = r.byAgent[a];
-        if (pa) { spend += pa.spend; tokens += pa.tokens; tasks += pa.tasks; }
+        if (pa) { spend += pa.spend; tokens += pa.tokens; tasks += pa.tasks; unpriced += pa.unpriced; }
       }
       const models = data.models
         .filter((m) => m.a === a)
         .map((m) => modelLabel(m.m, capsFor(agents, a)) || m.m);
-      return { id: a, spend, tokens, tasks, models: [...new Set(models)] };
+      return { id: a, spend, tokens, tasks, unpriced, models: [...new Set(models)] };
     });
     const provSpendSum = providers.reduce((s, p) => s + p.spend, 0);
 
     // ---- projects leaderboard (agent filter applies; project filter doesn't —
     // clicking a row IS the project filter) ----
     const dayIndex = new Map(rows.map((r, i) => [r.key, i]));
-    const perProject = new Map<string, { spend: number; tokens: number; tasks: number; add: number; del: number; lastKey: string; spark: number[] }>();
+    const perProject = new Map<string, { spend: number; tokens: number; unpriced: number; tasks: number; add: number; del: number; lastKey: string; spark: number[] }>();
     const proj = (p: string) => {
       let e = perProject.get(p);
-      if (!e) { e = { spend: 0, tokens: 0, tasks: 0, add: 0, del: 0, lastKey: "", spark: rows.map(() => 0) }; perProject.set(p, e); }
+      if (!e) { e = { spend: 0, tokens: 0, unpriced: 0, tasks: 0, add: 0, del: 0, lastKey: "", spark: rows.map(() => 0) }; perProject.set(p, e); }
       return e;
     };
     const touch = (e: { lastKey: string }, d: string) => { if (d > e.lastKey) e.lastKey = d; };
@@ -417,7 +432,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       const i = dayIndex.get(u.d);
       if (i === undefined) continue;
       const e = proj(u.p);
-      e.spend += u.cost; e.tokens += u.inp + u.out + u.cr + u.cw; e.spark[i] += u.cost; touch(e, u.d);
+      e.spend += u.cost; e.tokens += u.inp + u.out + u.cr + u.cw; e.unpriced += u.unp; e.spark[i] += u.cost; touch(e, u.d);
     }
     for (const s of data.shipped) {
       if (!matchA(s.a)) continue;
@@ -450,14 +465,14 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     // is the one table that deliberately answers a different, overlapping
     // question, so it gets its own attribution rather than a finer GROUP BY
     // on the series everything else shares.
-    const perTag = new Map<string, { spend: number; tokens: number; spark: number[] }>();
+    const perTag = new Map<string, { spend: number; tokens: number; unpriced: number; spark: number[] }>();
     for (const u of data.tagUsage) {
       if (!u.g || !matchP(u.p) || !matchA(u.a)) continue;
       const i = dayIndex.get(u.d);
       if (i === undefined) continue;
       let e = perTag.get(u.g);
-      if (!e) { e = { spend: 0, tokens: 0, spark: rows.map(() => 0) }; perTag.set(u.g, e); }
-      e.spend += u.cost; e.tokens += u.inp + u.out + u.cr + u.cw; e.spark[i] += u.cost;
+      if (!e) { e = { spend: 0, tokens: 0, unpriced: 0, spark: rows.map(() => 0) }; perTag.set(u.g, e); }
+      e.spend += u.cost; e.tokens += u.inp + u.out + u.cr + u.cw; e.unpriced += u.unp; e.spark[i] += u.cost;
     }
     const tagMeta = new Map(data.tags.map((t) => [t.id, t]));
     const tagRows = [...perTag.entries()]
@@ -523,7 +538,18 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const totalMark = overheadEstimated || estIds.size > 0 ? "~" : "";
 
   const kpis: { label: string; value: ReactNode; sub: string; spark: ReactNode; d: { text: string; arrow: string; color: string } }[] = [
-    { label: "Spend", value: <span className="kpi-big">{estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}</span>, sub: spendSub, spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--s5)" />, d: delta(cur.spend, prev.spend) },
+    {
+      label: "Spend",
+      value: (
+        <span className="kpi-big">
+          {estIds.size === chartAgents.length && estIds.size > 0 && "~"}{fmtMoney(cur.spend)}
+          {cur.unpriced > 0 && <span title={unprTitle(cur.unpriced)}>+</span>}
+        </span>
+      ),
+      // A floor, not a total, whenever unpriced turns landed in this bucket.
+      sub: cur.unpriced > 0 ? `${spendSub} · ${pluralTurns(cur.unpriced)} unpriced` : spendSub,
+      spark: <Sparkline vals={rows.map((r) => r.spend)} color="var(--s5)" />, d: delta(cur.spend, prev.spend),
+    },
     { label: "Calandria overhead", value: <span className="kpi-big">{overheadMark}{overheadPct.toFixed(overheadPct >= 10 ? 0 : 1)}%</span>, sub: `${overheadMark}${fmtMoney(cur.overheadSpend)} of ${totalMark}${fmtMoney(totalSpend)}`, spark: <Sparkline vals={rows.map((r) => r.overheadSpend)} color={CALANDRIA_HUE} />, d: delta(overheadPct, prevOverheadPct) },
     { label: "Tokens used", value: <span className="kpi-big">{fmtCompact(cur.tokens)}</span>, sub: "across all categories", spark: <Sparkline vals={rows.map((r) => r.tokens)} color="var(--run)" />, d: delta(cur.tokens, prev.tokens) },
     { label: "Tasks shipped", value: <span className="kpi-big">{String(Math.round(cur.tasks))}</span>, sub: "merged to base branch", spark: <Sparkline vals={rows.map((r) => r.tasks)} color="var(--s5)" />, d: delta(cur.tasks, prev.tasks) },
@@ -816,7 +842,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                         <span className="mono in-provmodels">{p.models.length ? p.models.join(" · ") : "—"}</span>
                       </span>
                     </span>
-                    <span className="mono" title={estIds.has(p.id) ? "Estimated from token counts × published API prices" : undefined}>{estIds.has(p.id) && "~"}{fmtMoney(p.spend)}</span>
+                    <span className="mono" title={estIds.has(p.id) ? "Estimated from token counts × published API prices" : undefined}>{estIds.has(p.id) && "~"}{fmtMoney(p.spend)}{p.unpriced > 0 && <span title={unprTitle(p.unpriced)}>+</span>}</span>
                     <span className="mono dim">{fmtCompact(p.tokens)}</span>
                     <span className="mono dim">{String(Math.round(p.tasks))}</span>
                   </div>
@@ -849,7 +875,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                       <span className="in-leg-dot" style={{ background: p.color, borderRadius: "50%" }} />
                       <span className="in-pname">{p.name}</span>
                     </span>
-                    <span className="mono">{fmtMoney(p.spend)}</span>
+                    <span className="mono">{fmtMoney(p.spend)}{p.unpriced > 0 && <span title={unprTitle(p.unpriced)}>+</span>}</span>
                     <span className="mono dim">{fmtCompact(p.tokens)}</span>
                     <span className="mono dim">{String(Math.round(p.tasks))}</span>
                     <span className="mono" style={{ fontSize: 12 }}>
@@ -899,7 +925,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                         <span className="in-pname">{t.name}</span>
                       </span>
                       <span className="dim" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{t.project}</span>
-                      <span className="mono">{fmtMoney(t.spend)}</span>
+                      <span className="mono">{fmtMoney(t.spend)}{t.unpriced > 0 && <span title={unprTitle(t.unpriced)}>+</span>}</span>
                       <span className="mono dim">{fmtCompact(t.tokens)}</span>
                       <span style={{ display: "flex", justifyContent: "flex-end" }}>
                         <span style={{ width: 120 }}><Sparkline vals={t.spark} color={t.color ?? "var(--s3)"} h={26} /></span>

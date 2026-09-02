@@ -212,6 +212,10 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             // fresh-vs-cached split stays right mid-turn, not just after a reload.
             cache_read_tokens: (x.cache_read_tokens ?? 0) + u.cache_read_tokens,
             cache_creation_tokens: (x.cache_creation_tokens ?? 0) + u.cache_creation_tokens,
+            // An unpriced turn adds 0 to the running total (that is what the
+            // wire carries) — this is what keeps the chip from reading that 0
+            // as "free" while the turn is still streaming.
+            unpriced_turns: (x.unpriced_turns ?? 0) + (ev.unpriced ? 1 : 0),
             // Only an UNMEASURED task (no `context` event this turn or before:
             // Codex, or a pre-measurement row — a measured figure is never 0)
             // derives its gauge from spend — the turn's input side, which

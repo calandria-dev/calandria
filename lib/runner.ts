@@ -39,7 +39,7 @@ import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContex
 import { sendTurnInput } from "@/lib/turnInput";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
-import type { Task, Project, PermissionOutcome, ToolData } from "@/lib/types";
+import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 
@@ -520,6 +520,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // (each SDK result message carries its own), hence a running sum rather than
   // a last-wins snapshot.
   const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // Of the usage reports folded into `spent`, how many carried no price at all
+  // (a custom base URL — see the usage branch below). `spent.cost_usd` is the
+  // sum over the others, so this is what stops the lifecycle line logging a
+  // confident "cost_usd: 0" for a turn that may well have cost real money.
+  let unpricedTurns = 0;
   // Start the idle clock (lib/turnActivity.ts) at the launch rather than at the
   // first event: a turn that hangs before the session ever opens is exactly the
   // kind of silence worth reporting, and with no baseline it would never be.
@@ -926,19 +931,39 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           publish(id, ev);
         }
       } else if (ev.type === "usage") {
-        // A turn against an overridden endpoint (a local model, a custom base
-        // URL — lib/agentEnv.ts) is not Anthropic or OpenAI spend, whatever the
-        // driver's own figure says: Claude Code prices whatever model id it was
-        // told, and the Codex estimate prices an unknown id at the CLI-default
-        // family. Zeroed HERE, once, before the ledger, the running total and
-        // the live chip all read it, and tagged with the endpoint so Insights
-        // can tell the row from real spend. Tokens are kept: a local turn still
-        // filled a context window.
+        // A turn against an overridden endpoint (lib/agentEnv.ts) is not
+        // Anthropic or OpenAI spend, whatever the driver's own figure says:
+        // Claude Code prices whatever model id it was TOLD, and the Codex
+        // estimate prices an unknown id at the CLI-default family. But "not
+        // vendor spend" splits in two, and folding the halves together is what
+        // this decides once, HERE, before the ledger, the running total and the
+        // live chip all read it:
+        //
+        //  - a LOCAL model server (Ollama, LM Studio, anything on this machine
+        //    or this network) genuinely bills nothing, so 0 is a measurement;
+        //  - a CUSTOM base URL is free text plus an optional token, as likely to
+        //    be OpenRouter, Together, Fireworks or a Bedrock proxy as anything
+        //    free. Writing 0 there under-reports a real bill and writing the
+        //    driver's figure over-reports a catalog that isn't the one being
+        //    charged. So it is recorded as UNKNOWN (null) and left out of every
+        //    total, rather than either lie.
+        //
+        // The kind comes from `taskProvider`, the same call the session header's
+        // provider badge renders from, so the ledger and the badge cannot
+        // disagree about which endpoint a turn ran against. Tokens are kept
+        // whichever way it lands: an unpriced turn still filled a context window.
         const provider = taskProvider(project, task);
-        const usage = provider.kind === "cloud" ? ev.usage : { ...ev.usage, cost_usd: 0 };
+        const cost = provider.pricing === "vendor" ? ev.usage.cost_usd : provider.pricing === "free" ? 0 : null;
+        const usage: LedgerUsage = { ...ev.usage, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
-        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] || 0;
-        publish(id, { ...ev, usage });
+        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
+        if (cost === null) unpricedTurns++;
+        // The wire event stays TurnUsage-shaped, and the client ADDS it to the
+        // task's running total, so an unpriced turn contributes 0 there for the
+        // same reason SUM() skips its NULL — with `unpriced` alongside so the
+        // client bumps the row's unpriced_turns and marks the total as a floor
+        // straight away, rather than showing a stalled figure until refetch.
+        publish(id, { ...ev, usage: { ...ev.usage, cost_usd: cost ?? 0 }, unpriced: cost === null });
       } else if (ev.type === "context") {
         // Measured occupancy, persisted as it arrives (not at turn end) so a
         // Stop or a crash mid-turn doesn't lose what the window actually
@@ -1063,7 +1088,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       cache_read: spent.cache_read_tokens,
       cache_write: spent.cache_creation_tokens,
       tokens_total: spent.input_tokens + spent.output_tokens + spent.cache_read_tokens + spent.cache_creation_tokens,
-      cost_usd: Math.round(spent.cost_usd * 10000) / 10000,
+      // Omitted entirely when every usage report this turn was unpriced: a
+      // logged 0 would be read as a measurement, and there isn't one.
+      cost_usd: unpricedTurns && !spent.cost_usd ? undefined : Math.round(spent.cost_usd * 10000) / 10000,
+      unpriced_turns: unpricedTurns || undefined,
       // Only when they say something: `superseded` means a Stop released this
       // turn's slot and a successor claimed it, so this line describes a turn
       // that settled nothing; `error` is the whole reason the line is at error

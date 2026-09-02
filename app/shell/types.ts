@@ -34,6 +34,10 @@ export interface ProjectRow {
   last_activity: number;
   awaiting_count: number; // in-progress tasks waiting on the user (across this project)
   cost_usd: number; // cumulative dollar spend across all this project's tasks
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor rather than the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
 }
 export interface TaskRow {
   id: string;
@@ -76,6 +80,10 @@ export interface TaskRow {
   position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the tag strip numbers its steps by it
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor rather than the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)

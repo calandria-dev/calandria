@@ -21,6 +21,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     ...task,
     cost_usd: usage.cost_usd,
+    // Turns whose endpoint had no price, making `cost_usd` a floor. Without it
+    // a page load would drop the marker the live stream had already put on the
+    // chip, and the total would silently go back to reading as complete.
+    unpriced_turns: usage.unpriced_turns,
     total_tokens: usage.total_tokens,
     // The cache buckets travel with the total so the usage chip can split
     // "fresh work" from re-read context instead of showing one inflated number.

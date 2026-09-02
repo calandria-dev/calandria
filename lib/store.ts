@@ -7,7 +7,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
@@ -57,13 +57,14 @@ const AWAITING_ARM = "(t.status = 'in_progress' AND t.awaiting_input = 1)";
 const PR_RED_ARM = "(t.pr_state = 'open' AND t.pr_checks = 'failing' AND t.status IN ('in_progress', 'done'))";
 const NEEDS_YOU = `t.suggested = 0 AND (${AWAITING_ARM} OR ${PR_RED_ARM}) AND ${NOT_SNOOZED}`;
 
-export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[] {
+export function listProjects(): (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number; unpriced_turns: number })[] {
   return getDb()
     .prepare(
       `SELECT p.*,
          (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.suggested = 0) AS task_count,
          (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND ${NEEDS_YOU}) AS awaiting_count,
          COALESCE((SELECT SUM(u.cost_usd) FROM task_usage u WHERE u.project_id = p.id), 0) AS cost_usd,
+         COALESCE((SELECT SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) FROM task_usage u WHERE u.project_id = p.id), 0) AS unpriced_turns,
          (SELECT MAX(ts) FROM (
             SELECT MAX(updated_at) AS ts FROM tasks WHERE project_id = p.id
             UNION ALL SELECT MAX(started_at) FROM sessions WHERE project_id = p.id
@@ -73,7 +74,7 @@ export function listProjects(): (Project & { task_count: number; last_activity: 
           )) AS last_activity
        FROM projects p ORDER BY p.position ASC, p.created_at ASC`
     )
-    .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number })[];
+    .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number; unpriced_turns: number })[];
 }
 
 // Every project row in sidebar order, WITHOUT listProjects' per-project
@@ -333,6 +334,9 @@ export function setProjectRefresh(
 // `tag_ids` the tags it carries, in tag order (see task_tags).
 export type TaskWithUsage = Task & {
   cost_usd: number;
+  /** Turns whose endpoint had no price to record, so `cost_usd` is the sum over
+   *  the others — a floor, not the whole figure. See LedgerUsage. */
+  unpriced_turns: number;
   total_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
@@ -379,6 +383,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     .prepare(
       `SELECT t.*,
          COALESCE((SELECT SUM(u.cost_usd) FROM task_usage u WHERE u.task_id = t.id), 0) AS cost_usd,
+         COALESCE((SELECT SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) FROM task_usage u WHERE u.task_id = t.id), 0) AS unpriced_turns,
          COALESCE((SELECT SUM(u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_creation_tokens)
                    FROM task_usage u WHERE u.task_id = t.id), 0) AS total_tokens,
          COALESCE((SELECT SUM(u.cache_read_tokens) FROM task_usage u WHERE u.task_id = t.id), 0) AS cache_read_tokens,
@@ -391,6 +396,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     )
     .all(projectId) as (Task & {
     cost_usd: number;
+    unpriced_turns: number;
     total_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
@@ -1892,10 +1898,12 @@ export function addUsage(input: {
   generation: number;
   agent?: string;
   /** The endpoint host the turn ran against, "" (default) for the agent's own
-   *  cloud — `AgentProvider.host` from lib/agentEnv.ts. The runner zeroes
-   *  cost_usd for any non-empty value before calling this. */
+   *  cloud — `AgentProvider.host` from lib/agentEnv.ts. The runner decides what
+   *  the turn is worth from that provider's `pricing` before calling this: the
+   *  driver's figure for cloud, 0 for a local model server, null for a custom
+   *  base URL nobody has priced. */
   provider?: string;
-  usage: TurnUsage;
+  usage: LedgerUsage;
 }): void {
   const u = input.usage;
   getDb()
@@ -1930,7 +1938,7 @@ export function recordTaskMerge(input: {
 }
 
 const ZERO_USAGE: UsageTotals = {
-  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0,
+  cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0, unpriced_turns: 0,
 };
 
 // Sum a usage query into cumulative totals (NULLs → 0 when no rows exist yet).
@@ -1944,6 +1952,7 @@ function sumUsage(where: string, param: string): UsageTotals {
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
          COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
+         COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced_turns,
          COUNT(*) AS turns
        FROM task_usage WHERE ${where}`
     )
@@ -2048,6 +2057,7 @@ export function getInstanceUsage(): InstanceUsage {
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
          COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
          COALESCE(SUM(subagent_tokens), 0) AS subagent_tokens,
+         COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced_turns,
          COUNT(*) AS turns
        FROM task_usage`
     )
@@ -2098,8 +2108,12 @@ export function getInstanceUsage(): InstanceUsage {
  */
 export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
-  /** Per-day token/cost usage, one row per (day, project, agent). */
-  usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /** Per-day token/cost usage, one row per (day, project, agent). `unp` counts
+   *  the turns in the bucket that had no price to record — a custom base URL,
+   *  whose cost nobody has stated (see LedgerUsage). `cost` sums the OTHERS, so
+   *  a bucket with `unp > 0` is showing a floor, and the dashboard has to say
+   *  so rather than present it as the period's spend. */
+  usage: { d: string; p: string; a: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /**
    * The same spend attributed to TAGS — `g` is the tag id, "" for usage by a
    * task carrying none (or by a task since deleted). A task with three tags
@@ -2108,7 +2122,7 @@ export interface InsightsData {
    * that is part of two features really did cost both of them its time. The
    * leaderboard says so rather than dividing spend it has no basis to divide.
    */
-  tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  tagUsage: { d: string; p: string; a: string; g: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /** The tags those `g` keys name, for the leaderboard's labels. */
   tags: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
@@ -2130,7 +2144,9 @@ export function getInsightsData(sinceMs: number): InsightsData {
     .prepare(
       `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
               CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
-              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cost_usd) AS cost,
+              SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) AS unp,
+              SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
               SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
        FROM task_usage u
        WHERE u.created_at >= ? GROUP BY d, p, a`
@@ -2149,7 +2165,9 @@ export function getInsightsData(sinceMs: number): InsightsData {
       `SELECT date(u.created_at/1000, 'unixepoch', 'localtime') AS d, u.project_id AS p,
               CASE WHEN u.agent = '' THEN 'claude' ELSE u.agent END AS a,
               COALESCE(tt.tag_id, '') AS g,
-              SUM(u.cost_usd) AS cost, SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
+              SUM(u.cost_usd) AS cost,
+              SUM(CASE WHEN u.cost_usd IS NULL THEN 1 ELSE 0 END) AS unp,
+              SUM(u.input_tokens) AS inp, SUM(u.output_tokens) AS out,
               SUM(u.cache_read_tokens) AS cr, SUM(u.cache_creation_tokens) AS cw
        FROM task_usage u
          LEFT JOIN tasks t ON t.id = u.task_id

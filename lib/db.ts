@@ -253,7 +253,12 @@ export function init(db: Database.Database) {
       project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       task_id               TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       generation            INTEGER NOT NULL,
-      cost_usd              REAL NOT NULL DEFAULT 0,
+      -- NULLable, and the NULL is load-bearing: it means "this endpoint's price
+      -- is unknown", which is a different fact from a measured zero. See the
+      -- provider column below and ProviderPricing in lib/agentEnv.ts. Every
+      -- aggregate sums this column, so an unpriced turn contributes nothing to
+      -- a total instead of dragging it down with an invented $0.00.
+      cost_usd              REAL,
       input_tokens          INTEGER NOT NULL DEFAULT 0,
       output_tokens         INTEGER NOT NULL DEFAULT 0,
       cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
@@ -1052,11 +1057,74 @@ export function migrate(db: Database.Database) {
   }
   // Which endpoint the turn ran against: '' for the agent's own cloud (every
   // row before this shipped, and every row since with no override), else the
-  // override's host[:port] ("localhost:11434"). A turn against an override is
-  // stored with cost_usd = 0 — it isn't Anthropic or OpenAI spend, whatever the
-  // driver's per-token estimate said — and this column is what says so.
+  // override's host[:port] ("localhost:11434"). What the row is WORTH follows
+  // from that host — a local model server bills nothing (cost_usd = 0, a
+  // measurement), a custom base URL bills something nobody has told us
+  // (cost_usd IS NULL) — and this column is what lets Insights tell all three
+  // apart. See ProviderPricing in lib/agentEnv.ts.
   if (!usageCols.includes("provider")) {
     db.exec("ALTER TABLE task_usage ADD COLUMN provider TEXT NOT NULL DEFAULT ''");
+  }
+
+  // cost_usd shipped NOT NULL DEFAULT 0, which left no way to say "unknown".
+  // Every turn against ANY provider override was written 0, so an instance
+  // pointing the custom-base-URL preset at a PAID third party (OpenRouter,
+  // Together, a Bedrock or Vertex proxy, a hosted vLLM) had every one of those
+  // turns silently billed at nothing. Widening the column to NULLable is the
+  // whole fix at this layer: SUM() skips NULLs, so an unpriced turn stops
+  // contributing a fake zero to a total the moment the runner writes one.
+  //
+  // SQLite cannot drop NOT NULL in place, so this is the documented 12-step
+  // table rebuild, narrowed to what applies: foreign keys OFF (they cannot be
+  // toggled inside a transaction, and the rename would otherwise be seen by the
+  // enforcement machinery mid-flight), rebuild in one transaction, keys back
+  // ON. Existing rows keep their recorded 0 rather than being reinterpreted as
+  // unknown: we know what those turns were written as, we do not know what they
+  // would have cost, and rewriting history from a schema migration would be a
+  // guess dressed as a correction. Only turns from here on carry the new fact.
+  const costCol = (db.prepare("PRAGMA table_info(task_usage)").all() as { name: string; notnull: number }[])
+    .find((c) => c.name === "cost_usd");
+  if (costCol && costCol.notnull) {
+    db.pragma("foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        db.exec("ALTER TABLE task_usage RENAME TO task_usage_old");
+        db.exec(`
+          CREATE TABLE task_usage (
+            id                    TEXT PRIMARY KEY,
+            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            task_id               TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            generation            INTEGER NOT NULL,
+            cost_usd              REAL,
+            input_tokens          INTEGER NOT NULL DEFAULT 0,
+            output_tokens         INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at            INTEGER NOT NULL,
+            agent                 TEXT NOT NULL DEFAULT '',
+            subagent_tokens       INTEGER,
+            provider              TEXT NOT NULL DEFAULT ''
+          );
+        `);
+        // Column-named on both sides: the old table's column ORDER depends on
+        // which of the three ALTERs above a given database has already run.
+        db.exec(`
+          INSERT INTO task_usage
+            (id, project_id, task_id, generation, cost_usd, input_tokens, output_tokens,
+             cache_read_tokens, cache_creation_tokens, created_at, agent, subagent_tokens, provider)
+          SELECT id, project_id, task_id, generation, cost_usd, input_tokens, output_tokens,
+                 cache_read_tokens, cache_creation_tokens, created_at, agent, subagent_tokens, provider
+            FROM task_usage_old ORDER BY rowid;
+        `);
+        db.exec("DROP TABLE task_usage_old");
+        // The rename took the indexes with it; the CREATE INDEX IF NOT EXISTS
+        // pass above already ran this boot, so recreate them here.
+        db.exec("CREATE INDEX IF NOT EXISTS idx_task_usage_task ON task_usage(task_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id)");
+      })();
+    } finally {
+      db.pragma("foreign_keys = ON");
+    }
   }
 
   // The agent thread's last reported CUMULATIVE token counters, as JSON. Only

@@ -226,7 +226,10 @@ provider** to *Local model*, point it at Ollama (`http://localhost:11434`) or
 LM Studio (`http://localhost:1234`), name a model, and every task in that
 project runs there: Claude Code through `ANTHROPIC_BASE_URL`, Codex through a
 provider entry Calandria adds for the turn. Those turns are recorded at zero
-cost. A cloud session can also delegate a single task to the local model with
+cost, because a model served off your own machine really is free. A **Custom
+base URL** may not be, so its turns are recorded as *unpriced* rather than as
+$0 — they are left out of every total, and the figures that omit them say so.
+A cloud session can also delegate a single task to the local model with
 `suggest_task`'s `provider: "local"`. Set `CALANDRIA_LOCAL_MODEL_BASE_URL` once
 for a Docker instance.
 
