@@ -278,7 +278,7 @@ describe("runner: a message sent into a lingering turn", () => {
 
   it("drains a follow-up parked mid-thought as soon as the turn starts lingering", async () => {
     // The other half of the order rule: a message queued while the model was
-    // thinking was promised "sent when this turn ends", and a linger IS the end
+    // thinking was promised "sent at turn end", and a linger IS the end
     // of the model's turn. Left parked it would wait out an unbounded linger
     // for no reason — and a message sent mid-linger would then arrive first.
     const proj = createProject({ name: "Drain" });
