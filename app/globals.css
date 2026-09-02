@@ -2089,9 +2089,19 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .sh-tools.open{overflow-x:visible;justify-content:flex-start;}
   .app.mobile .status-ctl{height:36px;}
 
-  /* Composer: 16px text stops iOS from zooming on focus; pad out the bottom for
-     the home indicator. The keyboard hints are mouse-era noise on a phone. */
-  .app.mobile .composer{padding:10px 12px calc(12px + env(safe-area-inset-bottom));}
+  /* Composer. The home-indicator inset belongs to whatever is bottom-most, and
+     on a phone that is .mtabbar, which pads for it itself — so the composer must
+     not add it too. It used to, and on a phone with a home indicator that put
+     the inset in twice: ~46px of dead space between the box and the tab bar
+     (12px + 34px), the "too much padding below the text box" report. The
+     composer takes the inset only while the tab bar is hidden, on the SAME
+     focus selector that hides it (see .mtabbar below; keep the two in step):
+     with a hardware keyboard the field is focused, nothing covers the
+     indicator, and the box would otherwise sit on it. With the software
+     keyboard up iOS reports the inset as 0, so that case costs nothing.
+     The keyboard hints are mouse-era noise on a phone. */
+  .app.mobile .composer{padding:10px 12px 12px;}
+  .app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + env(safe-area-inset-bottom));}
   /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
      line against the 40px send button (see .comp-area's comment). */
   .app.mobile .comp-area textarea{font-size:16px;padding:8px 0;}
@@ -2152,7 +2162,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    would otherwise ride on top of it — 100dvh shrinks to the visible viewport
    and the bottom-docked bar lands right above the keys, between them and the
    composer. Hide it for the duration; it returns on blur. Text-type inputs
-   only: focusing a checkbox raises no keyboard and must not blink the bar. */
+   only: focusing a checkbox raises no keyboard and must not blink the bar.
+   The composer's home-indicator rule (the phone block above) keys off this
+   same selector, since while the bar is gone the composer is bottom-most. */
 .app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
 .mtabbar-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:8px 0;background:none;border:0;color:var(--dim);font-size:10px;cursor:pointer;}
 .mtabbar-item svg{width:18px;height:18px;}
