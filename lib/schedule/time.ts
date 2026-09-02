@@ -13,6 +13,17 @@ export interface ScheduleSpec {
   timeOfDay: string;
   /** IANA zone name. Never an offset — offsets don't survive DST. */
   timezone: string;
+  /**
+   * 'YYYY-MM-DD' for a ONE-TIME schedule — "check in on the release at 04:00
+   * tomorrow" — or '' / undefined for the ordinary weekly one. When set,
+   * `daysMask` is ignored and there is exactly one occurrence, after which
+   * `nextFireAt` returns null forever.
+   *
+   * A calendar date rather than a stored instant, so the one-time job keeps the
+   * same wall-clock promise as every other: 02:30 on a spring-forward night
+   * lands where `resolveWall` puts it, not an hour out.
+   */
+  onceDate?: string;
 }
 
 /** Which DST oddity (if any) moved this firing off its nominal wall time. */
@@ -99,24 +110,55 @@ export function resolveWall(
   return { ms: valid[0], dstAdjusted: "" };
 }
 
+/** A one-time schedule's date, parsed and range-checked. Throws on anything else. */
+function parseOnceDate(onceDate: string): { year: number; month: number; day: number } {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(onceDate);
+  if (!m) throw new Error(`invalid once_date (want 'YYYY-MM-DD'): ${onceDate}`);
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Round-trip through UTC to reject 2026-02-30 and friends, which Date would
+  // otherwise silently roll forward into March.
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() + 1 !== month || probe.getUTCDate() !== day) {
+    throw new Error(`invalid once_date (no such calendar date): ${onceDate}`);
+  }
+  return { year, month, day };
+}
+
 /**
  * The next firing strictly after `afterMs`. Strictly, so re-adjudicating a slot
  * we just fired can never fire it again.
+ *
+ * Returns **null** when the spec has no further occurrence, which only a
+ * one-time schedule (`onceDate`) can ever be: its single slot is behind
+ * `afterMs`. A recurring spec always resolves or throws. Callers must land that
+ * null somewhere visible — `advanceNextFire` spends the schedule rather than
+ * leaving it enabled and pointed at nothing.
  */
-export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; dstAdjusted: DstAdjustment } {
-  const { daysMask, timeOfDay, timezone } = spec;
+export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; dstAdjusted: DstAdjustment } | null {
+  const { daysMask, timeOfDay, timezone, onceDate } = spec;
   const parsed = /^(\d{2}):(\d{2})$/.exec(timeOfDay);
   if (!parsed) throw new Error(`invalid time_of_day (want 'HH:MM'): ${timeOfDay}`);
   const hour = Number(parsed[1]);
   const minute = Number(parsed[2]);
   if (hour > 23 || minute > 59) throw new Error(`invalid time_of_day (out of range): ${timeOfDay}`);
-  if (!Number.isInteger(daysMask) || daysMask <= 0 || daysMask > 127) {
+  // The mask is dead weight on a one-time schedule, so it isn't validated there:
+  // the editor keeps whatever weekly selection was on screen when the user
+  // switched to Once, and a switch back must not have to survive a throw.
+  if (!onceDate && (!Number.isInteger(daysMask) || daysMask <= 0 || daysMask > 127)) {
     throw new Error(`invalid days_mask (want 1–127): ${daysMask}`);
   }
   try {
     formatter(timezone);
   } catch {
     throw new Error(`invalid timezone (want an IANA zone): ${timezone}`);
+  }
+
+  if (onceDate) {
+    const { year, month, day } = parseOnceDate(onceDate);
+    const resolved = resolveWall(year, month, day, hour, minute, timezone);
+    return resolved.ms > afterMs ? resolved : null;
   }
 
   // Walk local CALENDAR dates, never epoch + 24h — the latter is wrong on a DST
@@ -156,6 +198,7 @@ export function formatWallClock(ms: number, timezone: string): string {
 
 /** Human summary for the UI and run notes, e.g. "Mon–Fri at 08:30 (America/Los_Angeles)". */
 export function describeSpec(spec: ScheduleSpec): string {
+  if (spec.onceDate) return `Once on ${spec.onceDate} at ${spec.timeOfDay} (${spec.timezone})`;
   const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const days = names.filter((_, i) => spec.daysMask & (1 << i));
   let label: string;

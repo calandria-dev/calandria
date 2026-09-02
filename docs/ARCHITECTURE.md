@@ -141,15 +141,15 @@ the user's MCP servers, plugins, skills, and the repo's `CLAUDE.md` from every s
 
 The one-shot helpers isolate capability but still inherit config. Each sets `tools`
 explicitly, since that is the real restriction: `allowedTools` only pre-approves calls, and
-`bypassPermissions` pre-approves everything anyway, so all three helpers used to run with
+`bypassPermissions` pre-approves everything anyway, so every helper used to run with
 the full toolset regardless. Each also sets `strictMcpConfig: true` to drop the user's MCP
 fleet, `skills: []`, `settings: { disableAllHooks: true, autoMemoryEnabled: false }` to close
 surfaces the tool list doesn't cover, and `persistSession: false` since nothing records
 their session id. They keep `settingSources: ["user"]`, since `~/.claude/settings.json` also
 holds a Bedrock/Vertex/proxy user's `env` block and `apiKeyHelper`; full isolation there
 would fail the run with "Not logged in" while ordinary turns kept working. The two
-text-only helpers get `tools: []` and one turn. `draftProjectContext` adds `project` (to
-load `CLAUDE.md`) and gets `["Read", "Grep", "Glob"]` with no Bash, which under
+text-only helpers get `tools: []` and one turn. `draftProjectContext` and `planTagRefresh` add
+`project` (to load `CLAUDE.md`) and get `["Read", "Grep", "Glob"]` with no Bash, which under
 `bypassPermissions` would have meant unreviewed execution in the user's checkout to produce
 prose. `tests/claudeSettingSources.test.ts` pins both policies.
 
@@ -590,6 +590,15 @@ templates for pinning a new driver to the same `StreamEvent` contract.
   read-only, and persists the result for the client to poll via
   `GET /api/projects/[id]/refresh-context`. The draft is for the user to review; it is never
   auto-saved.
+- **`lib/tagRefresh.ts`** is the same shape for a whole TAG: "Refresh tag" reads every member
+  task's brief against the code and fixes what drifted. `startTagRefreshJob()` builds a digest of
+  the tag, its description and its members, runs `planTagRefresh()` read-only in the repo, and
+  applies the JSON plan it gets back — polled via `GET /api/tags/[id]/refresh`, state on the tags
+  row so the bar survives lighting another chip or a reload. Unlike the context draft there is
+  nothing to accept: task changes go through `lib/agentTools.ts` and land as revertable "Changed
+  by agent" edits, which is what lets the job apply rather than propose. Retiring is limited to
+  work that has none in it — an unreviewed suggestion is withdrawn, an accepted-but-never-started
+  task is cancelled revertably, and a STARTED task is only named in the report.
 - **`lib/recap.ts`** holds the "where you left off" staleness and activity logic, plus its
   background sweep.
 - **`app/Shell.tsx`** is the client UI: a projects rail, task list, and live session, with

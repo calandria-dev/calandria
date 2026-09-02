@@ -111,10 +111,13 @@ feat!: drop the control-plane interop routes
 Reverting needs the `revert:` type; GitHub's default `Revert "..."` title doesn't parse.
 If the check goes red, edit the title — it re-runs by itself, with no new push.
 
-**Write your commit subjects the same way.** The repository's squash setting is currently
-`COMMIT_OR_PR_TITLE`, which uses the PR title for a branch with several commits but the
-lone commit's own subject for a branch with one — and CI can only see the title. Keeping
-both conventional means it doesn't matter which one GitHub picks.
+**Write your commit subjects the same way.** The repository's `squash_merge_commit_title`
+is `PR_TITLE`, so the title the check just passed is the subject that lands, whether your
+branch has one commit or twenty. Conventional subjects on the branch are still worth
+writing: they are what the squash commit's body preserves, and they are the fallback if
+that setting ever drifts back to `COMMIT_OR_PR_TITLE`, which takes a single-commit
+branch's own subject instead — the way three fixes went missing from the 0.4.0 changelog
+with every check green.
 
 ## Before starting
 

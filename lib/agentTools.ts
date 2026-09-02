@@ -51,7 +51,7 @@ import { withTaskLock } from "./taskLock";
 import { moveTasksToProject } from "./taskMove";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
-import { waitForAnswer, settleAsk } from "./asks";
+import { waitForAnswer, settleAsk, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "./asks";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "./runContext";
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
@@ -709,8 +709,22 @@ export function isInertSuggestion(t: Task): boolean {
  * own row or to a suggestion nobody has looked at yet was always allowed and
  * isn't a surprise to anyone.
  */
+/**
+ * Who is making the write, for the refusals and the audit row. Structural
+ * rather than a whole `Task` because not every caller IS a task: the tag
+ * refresh job (lib/tagRefresh.ts) is a background job the user pressed a
+ * button to start, and it has no session of its own to name. It passes a
+ * synthetic actor whose `id` matches no row, which is exactly right —
+ * `task_agent_edits.actor_task_id` has no foreign key precisely so the actor
+ * can outlive (or never have been) a task, and the chip renders `actor_title`
+ * as prose rather than linking it. The three fields below are all any of this
+ * ever reads off the caller; widening the type is what keeps the job from
+ * having to fake the other thirty.
+ */
+export type AgentEditActor = Pick<Task, "id" | "title" | "agent">;
+
 export function updateTaskForAgent(
-  caller: Task,
+  caller: AgentEditActor,
   targetRef: string | undefined,
   input: UpdateTaskInput
 ): { task: Task | null; text: string; autoStartDependents: boolean } {
@@ -1032,7 +1046,7 @@ export function updateTaskForAgent(
  * auto_start dependent unblocked-but-never-launched.
  */
 export function withdrawSuggestionForAgent(
-  caller: Task,
+  caller: AgentEditActor,
   targetRef: string | undefined,
   reason: string
 ): { task: Task | null; text: string; autoStartDependents: boolean } {
@@ -1493,10 +1507,18 @@ export function startAskUser(task: Task, questions: AskQuestion[]): { askId: str
       settleAsk(task.id, askId, formatAnswers(questions, answers));
     })
     .catch(() => {
-      // Turn torn down (Stop) before an answer arrived. The card stays in the
-      // transcript unanswered — answering it later falls back to the /answer
-      // route's resolved:false path (a normal reply into a fresh turn).
-      settleAsk(task.id, askId, "The user dismissed the question without answering.");
+      // Turn torn down (Stop) before an answer arrived. Mark the card dismissed
+      // rather than leaving it blank: this is the bridge's OWN settle path (the
+      // runner's turn-end backstop never sees an out-of-band ask, since the row
+      // was written here and not through its event queue), so without it the
+      // card renders live option buttons that resolve nothing — /answer would
+      // return resolved:false and the pick would land as an ordinary message.
+      const dismissal = { reason: "interrupted" as const, note: ASK_INTERRUPTED_NOTE };
+      data.ask = { id: askId, questions, dismissed: dismissal };
+      updateMessage(m.id, JSON.stringify(data));
+      updateTask(task.id, { awaiting_input: 0 });
+      publish(task.id, { type: "ask_dismissed", id: askId, dismissal, msgId: m.id, generation: task.generation });
+      settleAsk(task.id, askId, ASK_DISMISSED_REPLY);
     });
 
   return { askId };

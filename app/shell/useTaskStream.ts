@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import type { TaskStreamEvent, ToolData, AskAnswers, PermissionOutcome } from "@/lib/types";
+import type { TaskStreamEvent, ToolData, AskAnswers, AskDismissal, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
 import { contextPct } from "./format";
 import type { Msg, ProjectRow, TaskRow } from "./types";
@@ -42,6 +42,30 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
             const d = JSON.parse(m.content) as ToolData;
             if (m.toolId !== askId && d.ask?.id !== askId) return m;
             d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], answers };
+            return { ...m, content: JSON.stringify(d) };
+          } catch {
+            return m;
+          }
+        }),
+      };
+    });
+
+  // Mark an AskUserQuestion message dismissed — the question was torn down
+  // before an answer arrived. Same matching as setAnswerOnMsg, and it writes
+  // `dismissed` rather than `answers` so the card reads "not answered" instead
+  // of attributing a choice to the user.
+  const setDismissedOnMsg = (taskId: string, askId: string, dismissal: AskDismissal) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      return {
+        ...prev,
+        [taskId]: arr.map((m) => {
+          if (m.role !== "tool") return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            if (m.toolId !== askId && d.ask?.id !== askId) return m;
+            if (d.ask?.answers) return m; // an answer already landed; it wins
+            d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], dismissed: dismissal };
             return { ...m, content: JSON.stringify(d) };
           } catch {
             return m;
@@ -146,6 +170,16 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
     } else if (ev.type === "ask_answered") {
       setAnswerOnMsg(taskId, ev.id, ev.answers);
       // Only drop the flag once every parked ask on this task is answered.
+      const open = openAsksRef.current[taskId];
+      open?.delete(ev.id);
+      if (!open || open.size === 0) {
+        setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
+      }
+    } else if (ev.type === "ask_dismissed") {
+      // The question died unanswered. Same un-parking as an answer — nobody is
+      // waiting on it any more — but the card must say so rather than keep
+      // offering options that resolve nothing.
+      setDismissedOnMsg(taskId, ev.id, ev.dismissal);
       const open = openAsksRef.current[taskId];
       open?.delete(ev.id);
       if (!open || open.size === 0) {
@@ -282,5 +316,5 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
     return () => es.close();
   }, [selTask]);
 
-  return { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg };
+  return { msgsByTask, appendMsg, setAnswerOnMsg, setDismissedOnMsg, setOutcomeOnMsg };
 }

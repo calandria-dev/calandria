@@ -2,6 +2,11 @@
 // actually run on? Family aliases move — "opus" resolved to claude-opus-4-8
 // before it resolved to claude-opus-5 — so a badge that reads just "Opus" is
 // worse than no badge. These pin the version (and the 1M variant) surviving.
+//
+// This is the OTHER half of the picker's alias labels reading "(latest)": the
+// picker can't know what an alias will resolve to, the badge is handed the id
+// it did resolve to. The badge is therefore the only place a version is named
+// on evidence, and it must keep naming one.
 import { describe, it, expect } from "vitest";
 import { modelLabel, contextWindowOf } from "@/app/shell/format";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
@@ -20,6 +25,15 @@ describe("modelLabel", () => {
     // reading, and must not drag the plain 5 id up to it either.
     expect(modelLabel("claude-fable-5-1", claude)).toBe("Fable 5.1");
     expect(modelLabel("claude-haiku-4-5", claude)).toBe("Haiku 4.5");
+  });
+
+  // The case that motivated de-versioning the picker: on CLI 2.1.257 `--model
+  // fable` resolves to claude-fable-5-1 (measured off the run's `init` line)
+  // while the catalog row read "Fable 5". The badge reads the real id, so the
+  // point release survives here even though the picker no longer guesses at it.
+  it("carries a point release the picker cannot predict", () => {
+    expect(modelLabel("claude-fable-5-1[1m]", claude)).toBe("Fable 5.1 (1M)");
+    expect(modelLabel("claude-haiku-4-5-20251001", claude)).toBe("Haiku 4.5");
   });
 
   it("marks the 1M-context variant as a distinct run mode", () => {

@@ -40,6 +40,30 @@ names one provider's catalog and `opus` is not a value Codex can run. Switching 
 unstarted task's agent drops its model back to Inherit rather than carrying over an id the
 new driver would silently ignore.
 
+### Models for Calandria's own jobs
+
+The jobs Calandria runs for you — described under background jobs below — have their own two
+pickers, beside the default model and scoped to the same agent: **Quick internal jobs** and
+**Repo-reading internal jobs**.
+
+They are split that way because the work is. The quick tier is the `/clear` handoff note and
+the project recap: one turn, no tools, text in and text out, which is what a small fast model
+is for. The heavy tier is the "Refresh with AI" context draft and the "Refresh tag" plan check,
+which both explore an unfamiliar repository read-only before deciding something durable — a
+document prepended to every new session in that project, or which of a tag's tasks have gone
+stale — so accuracy is worth paying for. Two tiers rather than a knob per job, since a
+knob per job is four settings almost everyone would set to two values.
+
+Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
+run on whatever `~/.claude/settings.json` or `~/.codex/config.toml` names, exactly as they did
+before the pickers existed.
+
+Each tier is read off the agent that actually runs the job, which is not always the one you
+were looking at. A `/clear` note follows its own task's agent so the cost lands on that login;
+recaps and context drafts follow the utility agent. When a driver doesn't implement a job and
+falls back, the fallback agent's setting is the one used — a model id belongs to one provider's
+catalog, and `opus` is not something Codex can run.
+
 ## Authentication and billing
 
 The recommended path is the subscription login offered by the first-run wizard or
@@ -129,14 +153,16 @@ the other. Calandria ships a skill for preparing a repo to be worked on in many 
 at once; `skills/README.md` covers installing it for both agents.
 
 Calandria's own background jobs don't inherit any of this. A `/clear` handoff note, a
-project recap, and a "Refresh with AI" context draft are internal transformations, not
+project recap, a "Refresh with AI" context draft and a "Refresh tag" plan check are internal
+transformations, not
 sessions you're sitting in, so they run with your MCP servers, plugins, skills, and hooks
 switched off. Otherwise every four-bullet recap would start your entire MCP fleet to offer
 tools it can never call. They still read `~/.claude/settings.json`, because that's also
 where a Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they
-authenticate the same way your ordinary turns do. The context draft additionally loads the
-repository's `CLAUDE.md`, since describing the repo is its job, and can read, search, and
-list files, but not run commands or write anything.
+authenticate the same way your ordinary turns do. The two repo-reading jobs additionally load
+the repository's `CLAUDE.md`, since judging the repo is their job, and can read, search, and
+list files, but not run commands or write anything. Which model each of them runs on is the
+two-tier setting described under "Choosing a model" above.
 
 ## OpenAI Codex
 
@@ -198,6 +224,23 @@ carries a `local` chip beside the agent mark.
 - **LM Studio**: start the local server, load a model, then base URL `http://localhost:1234`
   and the model's identifier as LM Studio shows it.
 
+**Which `codex` this works with: 0.146.0 or newer.** The Codex half of the override is the one
+piece here that reaches into another program's configuration schema, and the `codex` CLI
+autoupdates on your machine independently of Calandria. That would be a footnote if a broken
+mapping failed loudly, but it doesn't: an override the CLI no longer recognises is *inert*, so
+it would quietly fall back to the built-in `openai` provider and bill your ChatGPT login while
+the session header still showed the `local` chip. So Calandria asks the CLI to confirm, once per
+endpoint, that `model_provider` really did resolve to `calandria-local` (`codex doctor --json`,
+about a second) and **refuses the turn** if it can't get that confirmation, naming the version it
+saw. The answer is remembered against the CLI version that gave it and re-earned whenever that
+version moves. Set `CALANDRIA_CODEX_PROVIDER_CHECK=off` to skip the check and accept the risk, or
+pin a known-good binary with `CODEX_CLI_PATH`. On Windows, if your `codex` is the npm `.cmd`
+shim the check stands down and says so in the log — the shim's command line can't carry the
+settings faithfully enough to check them; point `CODEX_CLI_PATH` at the real executable to get
+it back. Claude Code needs none of this: it reads
+`ANTHROPIC_BASE_URL` directly, and measured against a sink endpoint on 2.1.257 it sends every
+request there under a subscription login rather than falling back to Anthropic.
+
 **Picking a model.** Once a project is on an endpoint, the model field stops being
 the driver's catalog and becomes a text box: the vendor's line-up is not what that
 machine has, and only the machine knows. Its suggestions are what the server itself
@@ -258,7 +301,7 @@ override rewrites `ANTHROPIC_MODEL` and the `opus`/`sonnet`/`haiku` aliases, so 
 task whose picker still reads *Sonnet* is not running Sonnet, and sizing it from the
 catalog would draw a 4% gauge on a 32K window about to overflow. The rail shows the
 token count without a percentage. Project-scoped one-shots (recaps, *Refresh with
-AI*) run on the utility agent's own login, not the project's endpoint.
+AI*, *Refresh tag*) run on the utility agent's own login, not the project's endpoint.
 
 **Delegating from a cloud session.** A task can override its project on its own row, which is
 what lets a frontier model hand routine work to a local one. `suggest_task` takes

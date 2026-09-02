@@ -65,6 +65,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { recordBaseCut } from "@/lib/baseDrift";
 import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import { DEPENDENCY_RUN_CONTEXT } from "@/lib/runContext";
 import type { TurnHooks } from "@/lib/agents/types";
@@ -202,7 +203,8 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
       // a visible transcript line via publishTurnError and unwinds the row to
       // retryable, the same path a broken runner import takes.
       if (!fresh.worktree_path || !fs.existsSync(fresh.worktree_path)) {
-        const wt = await ensureWorktree(project.repo_path, fresh.id, resolveBaseBranch(fresh, project));
+        const requestedBase = resolveBaseBranch(fresh, project);
+        const wt = await ensureWorktree(project.repo_path, fresh.id, requestedBase);
         if (wt) {
           fresh.worktree_path = wt.path;
           fresh.work_branch = wt.branch;
@@ -214,6 +216,13 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
           updateTask(taskId, {
             worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
             ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
+          });
+          await recordBaseCut({
+            taskId,
+            repoPath: project.repo_path,
+            requestedBase,
+            cutBase: wt.baseBranch,
+            projectDefault: project.branch,
           });
         }
       }

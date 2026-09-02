@@ -109,3 +109,24 @@ test("a fully typed command still sends as a message", async ({ page }) => {
   // reaches the agent — the CLI expands it on the far side.
   await expect(page.locator(".msg.user", { hasText: "/mock-status" })).toBeVisible({ timeout: 20_000 });
 });
+
+// Geometry, here because this file already has a repliable composer on screen.
+// The empty box used to be sized by autosize's scrollHeight measurement, which
+// in Chromium counts the PLACEHOLDER — so an empty composer stood three or four
+// placeholder lines tall and snapped to one on the first keystroke.
+test("the empty composer is one line tall and doesn't snap on the first keystroke", async ({ page }) => {
+  const box = await composer(page);
+  const height = async () => (await box.boundingBox())!.height;
+
+  const empty = await height();
+  await box.fill("h");
+  const typed = await height();
+  expect(empty).toBe(typed);
+
+  // Growth still works: a message long enough to wrap makes the box taller, and
+  // clearing it returns to the same one-line height.
+  await box.fill("wrap ".repeat(60));
+  expect(await height()).toBeGreaterThan(typed);
+  await box.fill("");
+  expect(await height()).toBe(empty);
+});

@@ -23,6 +23,66 @@ function pinNextFire(id: string, ms: number) {
   return getSchedule(id)!;
 }
 
+describe("adjudicate, one-time schedules", () => {
+  const dayOffset = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+  function makeOnce() {
+    const pid = createProject({ name: `once-${Math.random().toString(36).slice(2)}` }).id;
+    return createSchedule({
+      project_id: pid, name: "Check the overnight release", prompt: "How did the release go?",
+      days_mask: 62, time_of_day: "04:00", timezone: LA, once_date: dayOffset(1),
+    });
+  }
+
+  it("fires its one occurrence, then spends the schedule", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    const verdict = adjudicate(pinNextFire(s.id, slot), slot + 1_000, never);
+    expect(verdict.kind).toBe("fire");
+    // Spent, not deleted: enabled off and pointed at nothing, so the ticker
+    // never looks at it again while the run ledger and the row survive for the
+    // user to read at breakfast.
+    const after = getSchedule(s.id)!;
+    expect(after.enabled).toBe(0);
+    expect(after.next_fire_at).toBe(0);
+    expect(after.once_date).toBe(dayOffset(1));
+  });
+
+  it("never fires twice, even if the ticker comes round again", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    expect(adjudicate(pinNextFire(s.id, slot), slot + 1_000, never).kind).toBe("fire");
+    // Disabled now, so the second pass is a no-op rather than a duplicate claim.
+    expect(adjudicate(getSchedule(s.id)!, slot + 2_000, never).kind).toBe("none");
+    expect(listRuns(s.id)).toHaveLength(1);
+  });
+
+  it("records a one-time missed past its catch-up window, and still spends it", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    const pinned = pinNextFire(s.id, slot);
+    // A whole day late: the 04:00 check-in is worthless at 04:00 the next day.
+    const verdict = adjudicate(pinned, slot + 86_400_000, never);
+    expect(verdict.kind).toBe("missed");
+    expect(listRuns(s.id)[0].status).toBe("missed");
+    // Spent regardless — a one-time that was missed has still had its moment,
+    // and leaving it enabled would re-adjudicate the same dead slot forever.
+    expect(getSchedule(s.id)!.enabled).toBe(0);
+  });
+
+  it("walks no backlog — there is only ever the one slot", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    // Late but inside a generous window: fires as catch_up, and the missed-slot
+    // loop that a weekly schedule would run has nothing to consume.
+    updateSchedule(s.id, { catch_up_ms: 7 * 86_400_000 });
+    const verdict = adjudicate(pinNextFire(s.id, slot), slot + 2 * 3_600_000, never);
+    expect(verdict.kind).toBe("fire");
+    if (verdict.kind === "fire") expect(verdict.run.trigger).toBe("catch_up");
+    expect(listRuns(s.id)).toHaveLength(1);
+  });
+});
+
 describe("adjudicate", () => {
   let s: ReturnType<typeof makeSchedule>;
   beforeEach(() => { s = makeSchedule(); });
@@ -126,7 +186,7 @@ describe("adjudicate", () => {
       project_id: pid, name: "gap", prompt: "x",
       days_mask: 127, time_of_day: "02:30", timezone: LA,
     });
-    const slot = nextFireAt({ daysMask: 127, timeOfDay: "02:30", timezone: LA }, at("2026-03-08T00:00:00Z"));
+    const slot = nextFireAt({ daysMask: 127, timeOfDay: "02:30", timezone: LA }, at("2026-03-08T00:00:00Z"))!;
     const pinned = pinNextFire(gap.id, slot.ms);
     const verdict = adjudicate(pinned, slot.ms + 1_000, never);
     if (verdict.kind === "fire") expect(verdict.run.dst_adjusted).toBe("gap_forward");

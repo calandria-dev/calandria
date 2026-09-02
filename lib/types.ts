@@ -354,6 +354,16 @@ export interface AskQuestion {
 // free-text typed into "Other". One entry per question, in question order.
 export type AskAnswers = string[][];
 
+// Why a question card stopped being answerable without ever being answered:
+// the turn was stopped/errored ("interrupted") or the process died under it
+// ("restarted"). The counterpart of PermissionOutcome on the other interactive
+// card, and kept apart from AskAnswers on purpose — a dismissal is not a
+// choice, and the transcript must never read as though the user made one.
+export interface AskDismissal {
+  reason: "interrupted" | "restarted";
+  note: string;
+}
+
 // ---------- tool permission prompts (lib/permissions.ts) ----------
 
 // What the user picked on a permission card. "allow_always" additionally
@@ -585,6 +595,7 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
+  | { type: "ask_dismissed"; id: string; dismissal: AskDismissal }
   | { type: "permission"; request: PermissionRequest }
   | { type: "permission_decided"; id: string; outcome: PermissionOutcome }
   // A tool call the CLI refused BY ITSELF, without ever consulting canUseTool —
@@ -752,8 +763,12 @@ export interface ToolData {
   file?: string;
   // Present when this "tool" message is an AskUserQuestion prompt. `id` is the
   // tool_use id (stored here so it survives a reload — there's no DB column for
-  // it). `answers` is absent while awaiting the user, set once answered.
-  ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers };
+  // it). `answers` is absent while awaiting the user, set once answered;
+  // `dismissed` is set instead when the question died unanswered (Stop, driver
+  // error, restart), which is what keeps a dead card from rendering live
+  // buttons. Exactly the role `outcome` plays on `permission` below — the two
+  // cards park the user the same way and must un-park the same way.
+  ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers; dismissed?: AskDismissal };
   // Present when this "tool" message is a permission prompt (the canUseTool
   // gate under acceptEdits / plan). Same shape of deal as `ask`: the
   // request is persisted so a reload re-renders an answerable card, and
@@ -805,6 +820,13 @@ export interface Schedule {
   send_context: number;
   priority: Priority;
   catch_up_ms: number;  // -1 = inherit the instance default
+  /**
+   * 'YYYY-MM-DD' for a ONE-TIME schedule, '' for the ordinary weekly one.
+   * When set, `days_mask` is ignored and the schedule fires exactly once, then
+   * spends itself (enabled = 0, next_fire_at = 0) rather than being deleted —
+   * the run ledger is the whole point of a "check on it at 04:00" job.
+   */
+  once_date: string;
   next_fire_at: number; // cached from lib/schedule/time.ts
   /**
    * The runbook this schedule fires, if any. When set, fireSchedule() reads the
@@ -865,6 +887,26 @@ export interface Tag {
   position: number;
   created_at: number;
   updated_at: number;
+  /**
+   * "Refresh tag with AI" job state (lib/tagRefresh.ts). Persisted on the row
+   * rather than held in memory for the reason the project draft is: the job
+   * outlives the click. A user who fires it and then lights a different chip,
+   * switches project or reloads the tab must come back to the same bar, and a
+   * server that dies mid-run must leave something a later poll can unstick.
+   *
+   * Unlike the project context draft this one has NO draft field: the outcome
+   * is applied, not reviewed. The tag description is written directly and the
+   * task edits land in `task_agent_edits`, where the "Changed by agent" chip
+   * and its per-edit Revert are the review surface — a second, tag-shaped
+   * approval queue would be a different way to say the same thing.
+   */
+  refresh_status: "idle" | "running" | "done" | "error";
+  /** Which phase a running job is in, for the bar's label. "" when idle. */
+  refresh_stage: string;
+  /** What the last finished run actually changed, in the server's words, not the model's. */
+  refresh_summary: string;
+  refresh_error: string; // failure message (when status="error")
+  refresh_started_at: number; // when the current/last job started (ms epoch, 0 = never)
   /**
    * Derived per read, never stored. `done`/`cancelled` are terminal the way
    * lib/autoStart's blocks() counts them (a withdrawn suggestion is cancelled);

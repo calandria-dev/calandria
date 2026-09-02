@@ -45,10 +45,12 @@ export function adjudicate(schedule: Schedule, now: number, isBusy: (scheduleId:
   // the resolution that produced `slot` itself, then re-seeded each time `slot`
   // advances.
   let slot = fresh.next_fire_at;
-  let dstAdjusted = nextFireAt(specOf(fresh), slot - 1).dstAdjusted;
+  let dstAdjusted = nextFireAt(specOf(fresh), slot - 1)?.dstAdjusted ?? "";
   for (let guard = 0; guard < 1000; guard++) {
     const upcoming = nextFireAt(specOf(fresh), slot);
-    if (upcoming.ms > now) break;
+    // Null is a one-time schedule with nothing after this slot — there is no
+    // backlog to walk, and `slot` is already the occurrence to adjudicate.
+    if (!upcoming || upcoming.ms > now) break;
     recordMissedRun(fresh.id, slot, "the app was not running at this time");
     slot = upcoming.ms;
     dstAdjusted = upcoming.dstAdjusted;

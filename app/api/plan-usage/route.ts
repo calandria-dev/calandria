@@ -14,15 +14,22 @@ export const dynamic = "force-dynamic";
  * off, API-key auth), are simply absent from the map.
  */
 export async function GET() {
-  const agents: Record<string, PlanUsageSnapshot> = {};
-  for (const d of listDrivers()) {
-    if (!d.planUsage) continue;
-    try {
-      const snap = await d.planUsage();
-      if (snap) agents[d.id] = snap;
-    } catch {
-      // One driver's broken usage source must not blank the others' meters.
-    }
-  }
+  // Concurrently, not in sequence: the drivers' sources are unrelated, and they
+  // are not equally fast — Claude answers from a cached HTTP fetch while Codex
+  // spawns a short-lived `codex app-server`. Serially, one slow agent's whole
+  // timeout would be added to every other agent's meter on every poll.
+  const settled = await Promise.all(
+    listDrivers().map(async (d): Promise<[string, PlanUsageSnapshot] | null> => {
+      if (!d.planUsage) return null;
+      try {
+        const snap = await d.planUsage();
+        return snap ? [d.id, snap] : null;
+      } catch {
+        // One driver's broken usage source must not blank the others' meters.
+        return null;
+      }
+    }),
+  );
+  const agents = Object.fromEntries(settled.filter((e): e is [string, PlanUsageSnapshot] => e != null));
   return NextResponse.json({ now: Date.now(), agents });
 }

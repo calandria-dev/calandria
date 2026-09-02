@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/tasks/[id]/reclaim/route";
-import { ensureWorktree } from "../lib/git";
+import { ensureWorktree, unpushedCommits } from "../lib/git";
 import { getDb } from "../lib/db";
 import { landedVia, maybeAutoReclaim, reclaimPreview, reclaimTask } from "../lib/reclaim";
 import { createProject, createTask, getTask, updateProject, updateTask } from "../lib/store";
@@ -25,7 +25,7 @@ import { commitFile, git, makeRepo, makeRepoWithOrigin, pushFromColleague, write
  * permanently "ahead" of its base afterwards.
  */
 async function taskAwaitingItsPr(opts: { autoReclaim?: boolean } = {}) {
-  const { repo, colleague } = await makeRepoWithOrigin();
+  const { origin, repo, colleague } = await makeRepoWithOrigin();
   const project = createProject({ name: `reclaim-${Math.random()}`, repo_path: repo, branch: "main" });
   if (opts.autoReclaim) updateProject(project.id, { auto_reclaim: 1 });
   const task = createTask({ project_id: project.id, title: "a landed task" });
@@ -41,7 +41,35 @@ async function taskAwaitingItsPr(opts: { autoReclaim?: boolean } = {}) {
     base_sha: wt.baseSha,
   });
   const land = () => pushFromColleague(colleague, "feature.txt", "the work\n", "main");
-  return { repo, colleague, project, task, wt, land };
+  return { origin, repo, colleague, project, task, wt, land };
+}
+
+/** What the Sync button does: catch the local base up, then merge it in. */
+async function sync(repo: string, worktree: string) {
+  await git(repo, "fetch", "origin");
+  await git(repo, "merge", "--ff-only", "origin/main");
+  await git(worktree, "merge", "--no-ff", "-m", "sync: base into the task branch", "main");
+}
+
+/**
+ * The shape reported against PR #110: squash-merged with `--delete-branch`,
+ * then the base synced back into the task branch twice as sibling PRs landed on
+ * the same integration branch. `git diff <base>` is empty and nothing was ever
+ * withheld from the remote, yet the branch sits four commits beyond its
+ * upstream — which is what the preview turned into "4 commits never pushed".
+ */
+async function squashedThenSynced(opts: { deleteRemoteBranch?: boolean; autoReclaim?: boolean } = {}) {
+  const f = await taskAwaitingItsPr({ autoReclaim: opts.autoReclaim });
+  await f.land(); // this task's own PR squashes onto the base
+  if (opts.deleteRemoteBranch)
+    // GitHub's `--delete-branch`. Done inside the bare remote rather than with
+    // `git push origin --delete`, which would take the clone's mirror of the
+    // branch down with it — and that surviving stale mirror IS the defect.
+    await git(f.origin, "update-ref", "-d", `refs/heads/${f.wt.branch}`);
+  await sync(f.repo, f.wt.path);
+  await pushFromColleague(f.colleague, "sibling.txt", "a sibling PR\n", "main");
+  await sync(f.repo, f.wt.path);
+  return f;
 }
 
 /** Mark the PR merged the way lib/prState.ts's refresh does. */
@@ -178,6 +206,42 @@ describe("reclaiming a task merged locally", () => {
   });
 });
 
+describe("a squash-merged PR whose branch was deleted, then synced", () => {
+  it("doesn't count the commits a Sync brought in as work the PR missed", async () => {
+    const { repo, wt } = await squashedThenSynced();
+
+    // The premise, and why `ahead` can't be read literally here: four commits
+    // sit beyond the upstream — this task's squash, a sibling's, and the two
+    // Sync merges that pulled them in — over an empty diff against the base.
+    expect(parseInt(await git(repo, "rev-list", "--count", `origin/${wt.branch}..${wt.branch}`), 10)).toBe(4);
+    expect(await git(repo, "diff", "--name-only", "main", wt.branch)).toBe("");
+
+    expect(await unpushedCommits(repo, wt.branch, "main")).toBe(0);
+  });
+
+  it("has nothing to compare once the remote branch is gone", async () => {
+    const { repo, wt } = await squashedThenSynced({ deleteRemoteBranch: true });
+
+    // The local mirror of the deleted branch survives and still resolves —
+    // nothing in the app prunes — so only asking the remote finds out.
+    expect(await git(repo, "rev-parse", "--verify", `refs/remotes/origin/${wt.branch}^{commit}`)).toBeTruthy();
+    expect(await git(repo, "ls-remote", "--heads", "origin", `refs/heads/${wt.branch}`)).toBe("");
+
+    expect(await unpushedCommits(repo, wt.branch, "main")).toBeNull();
+  });
+
+  it("no longer stalls the silent auto-reclaim", async () => {
+    const { task, wt } = await squashedThenSynced({ deleteRemoteBranch: true, autoReclaim: true });
+    prMerged(task.id);
+
+    maybeAutoReclaim(task.id);
+    for (let i = 0; i < 100 && getTask(task.id)!.status !== "done"; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
+    expect(fs.existsSync(wt.path)).toBe(false);
+  });
+});
+
 describe("reclaim refusals that aren't about safety", () => {
   it("refuses a task that hasn't landed", async () => {
     const { task, wt } = await taskAwaitingItsPr();
@@ -307,5 +371,58 @@ describe("POST/GET /api/tasks/:id/reclaim", () => {
   it("404s an unknown task", async () => {
     expect((await POST(req("nope", {}), params("nope"))).status).toBe(404);
     expect((await GET(req("nope"), params("nope"))).status).toBe(404);
+  });
+});
+
+// A base branch that has no ref in this repository — a task pinned to a branch
+// since deleted locally, or a project pointed at one that only ever existed on
+// the remote. worktreePruneSafety used to answer that with `ahead: 0`, which
+// reads as "nothing unlanded, safe to prune" while it authorises deleting the
+// checkout AND its branch; catchUpBase saw the matching all-zero remote status
+// and reported nothing to do.
+describe("reclaiming against a base branch with no local ref", () => {
+  it("refuses a local-merge landing rather than reading the unknown count as zero", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `base-gone-${Math.random()}`, repo_path: repo, branch: "main" });
+    const task = createTask({ project_id: project.id, title: "based on a branch that's gone" });
+    const wt = await ensureWorktree(repo, task.id, "main");
+    if (!wt) throw new Error("worktree fixture failed");
+    await commitFile(wt.path, "landed.txt", "in main\n", "feat: landed");
+    await git(repo, "merge", "--no-ff", "-m", "merge the task", wt.branch);
+    updateTask(task.id, {
+      status: "in_progress", started: 1, worktree_path: wt.path, work_branch: wt.branch,
+      base_sha: wt.baseSha, merged_at: Date.now(), base_branch: "gone",
+    });
+
+    const res = await reclaimTask(task.id);
+
+    expect(res).toMatchObject({ ok: false, unsafe: true, landing: "merge" });
+    expect(res.reason).toContain("gone");
+    // Nothing was destroyed on the way to the refusal.
+    expect(fs.existsSync(wt.path)).toBe(true);
+    expect(await branchExists(repo, wt.branch)).toBe(true);
+
+    // And the acknowledgement still gets through, the way it does for any other
+    // unsafe reclaim.
+    expect(await reclaimTask(task.id, { discardUnsafe: true })).toMatchObject({ ok: true });
+    expect(fs.existsSync(wt.path)).toBe(false);
+  });
+
+  it("says why the base couldn't be caught up instead of silently advancing nothing", async () => {
+    const { repo, task, wt, land } = await taskAwaitingItsPr();
+    await land();
+    prMerged(task.id);
+    updateTask(task.id, { base_branch: "gone" });
+
+    const res = await reclaimTask(task.id);
+
+    // A PR landing never trusted the ahead count (a squash leaves every landed
+    // branch permanently ahead) and asks unpushedCommits instead — a question
+    // about the REMOTE, which the missing local base doesn't touch. So the
+    // reclaim still runs, and the base failure is reported rather than hidden.
+    expect(res).toMatchObject({ ok: true, landing: "pr", baseAdvanced: false, worktreeRemoved: true });
+    expect(res.baseError).toContain("gone");
+    expect(fs.existsSync(wt.path)).toBe(false);
+    expect(await branchExists(repo, wt.branch)).toBe(false);
   });
 });

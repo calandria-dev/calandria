@@ -1411,6 +1411,32 @@ export function updateTag(
 }
 
 /**
+ * Persist "Refresh tag with AI" job state in isolation — the tag analogue of
+ * setProjectRefresh, and separate from updateTag for the same reason: a
+ * background run and a concurrent rename must not clobber each other, and
+ * updateTag's fixed column list must never carry refresh_* state.
+ *
+ * It deliberately does NOT stamp `updated_at`. That column is the tag's own
+ * edit clock; a job ticking through three stages would otherwise report the
+ * tag as freshly edited three times for work the user didn't do.
+ */
+export function setTagRefresh(
+  id: string,
+  fields: Partial<Pick<Tag, "refresh_status" | "refresh_stage" | "refresh_summary" | "refresh_error" | "refresh_started_at">>,
+): Tag | undefined {
+  const cur = getTag(id);
+  if (!cur) return undefined;
+  const n = { ...cur, ...fields };
+  getDb()
+    .prepare(
+      `UPDATE tags SET refresh_status = ?, refresh_stage = ?, refresh_summary = ?, refresh_error = ?, refresh_started_at = ?
+       WHERE id = ?`
+    )
+    .run(n.refresh_status, n.refresh_stage, n.refresh_summary, n.refresh_error, n.refresh_started_at, id);
+  return getTag(id);
+}
+
+/**
  * Hard delete, like everything else. Members are UNTAGGED, never deleted —
  * task_tags is ON DELETE CASCADE from this side, and that is the whole policy:
  * a tag is a label over work, not the work. A member carrying other tags keeps

@@ -22,11 +22,48 @@ because every agent verified locally and nobody watched Actions.
   six jobs were queued the whole time. Confirm with `gh run list --branch <branch>` (or
   `gh pr view --json statusCheckRollup`) that checks EXIST before believing an empty watch, and
   re-watch if they do. An empty result is never terminal state.
+- **A PR into a non-main base used to conclude without having run anything.** `test.yml` filtered
+  `pull_request` on `branches: [main]`, so a PR into a tag tree's integration branch
+  (`pr-workflow`, `core-fixes`, …) started no audit, typecheck, unit or Windows job at all. It
+  still went green, on the one check that survives: "PR title (Conventional Commits)", which fires
+  because `pr-title.yml` carries no branch filter. Six such PRs (#123-#128) each concluded on a
+  single 4-second check, and #62 was covered only by dispatching `test.yml` by hand. Watching to
+  terminal state cannot catch this — there was a conclusion, and it was green. The filter is now
+  `branches: ["**"]`, so this is history rather than a thing to check for; what it leaves behind is
+  the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
+  fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
+  among them find out why before merging.
+- **`gh pr checks` cannot see a run that never started.** A workflow rejected at startup —
+  invalid YAML, or a called workflow requesting a permission scope above its caller's ceiling —
+  concludes `startup_failure`, contributes NO check runs, and is therefore absent from
+  `gh pr checks` and from `mergeStateStatus`. PR #142 read `CLEAN` with six passing checks while
+  `publish-image.yml` had been failing at startup for two commits. Same shape as the bullet above:
+  green because the thing that would have gone red never ran. `gh pr checks` answers "did the
+  checks that exist pass", which is not the question. **After changing anything under
+  `.github/workflows/`, list the RUNS:**
+  `gh run list --branch <branch> --json workflowName,headSha,status,conclusion`, and compare the
+  set of workflows against the commit before yours.
+- **Name a long-lived integration branch `integration/<something>`.** A tag tree's PRs target one,
+  and `integration/**` is what the `integration-require-checks` ruleset matches, so a branch named
+  outside the namespace is tested but still mergeable red. `.github/rulesets/README.md` has the
+  payloads, the five required contexts and the one ordering rule that matters: a required check
+  must ALREADY be produced by the base branch's `test.yml` before the rule goes on, or every PR
+  into that branch hangs on "Expected — waiting for status" with only an admin bypass to clear it.
+  Same incompatibility keeps `paths-ignore` off `test.yml`'s `pull_request` trigger.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
   the release notes. `.github/workflows/pr-title.yml` fails the PR instead; the fix is to retitle,
   which re-runs the check without a push. CONTRIBUTING.md has the type table.
+- **The title only reaches main because `squash_merge_commit_title` is `PR_TITLE`.** That repo
+  setting is the entire link between the check above and the commit release-please reads, and it
+  was `COMMIT_OR_PR_TITLE` until 0.4.1 — which uses the PR title for a multi-commit branch but the
+  lone COMMIT's subject for a single-commit one. A PR that `pr-title.yml` had just passed therefore
+  landed with its prefix stripped, release-please parsed it as non-conventional, and dropped it:
+  green run, nothing in the notes. That is how #56, #64 and #66 all vanished from the 0.4.0
+  changelog and had to be restored by hand on the release branch (`2f0338d`). Nothing in this repo
+  enforces the setting and changing it leaves no commit, so when entries go missing the first thing
+  to read is `gh api repos/calandria-dev/calandria -q .squash_merge_commit_title`.
 - **Red run: diagnose before rerunning.** Compare the failing step against the last green run on
   a sibling commit. If the failure is in an infra step your commit can't plausibly have caused
   (say the buildx floor-check dying with exit 255 before producing output, a known arm64/registry
@@ -51,6 +88,14 @@ because every agent verified locally and nobody watched Actions.
   `release-please.yml` opens and updates the release PR automatically off Conventional Commits.
   That is release automation rather than a release, so agents may write and fix it freely: bump the
   pinned action SHA, adjust `release-please-config.json`, repair the workflow when it breaks.
+- **Diff main's subjects against the changelog before proposing a release.**
+  `git log <last-tag>..origin/main --format='%s'` beside the entries the release PR adds to
+  `CHANGELOG.md`: every subject should appear except the types release-please legitimately hides
+  (`chore:`, `ci:`, `test:`, `style:`, `refactor:`). This survives the `PR_TITLE` fix rather than
+  being replaced by it, because the omission is silent BY CONSTRUCTION — release-please skips a
+  subject it cannot parse without logging anything — and `PR_TITLE` only closes the one cause we
+  found. A typo'd type, a `revert:` GitHub retitled, a commit that reached main some other way all
+  fail the same way and this is the only step that puts the two lists side by side.
 - **Merging a release PR takes a recorded user confirmation naming the version.** That merge cuts
   the tag and moves `latest`, so it carries the same human gate a manual `gh release create` used
   to — but the gate is the decision, not the click. An agent may perform the merge only after

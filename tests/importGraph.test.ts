@@ -36,12 +36,14 @@ const PINNED = [
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
+  "lib/agents/codex/providerCheck.ts", // proves that mapping took by asking the CLI; subprocess + store, no SDK
   "lib/modelEndpoint.ts", //     what models a local endpoint reports; fetch + agentEnv + config, and GET /api/agents probes it on every load
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/baseDrift.ts", //         the stale-base note a cut records for the opening turn; git + globalThis, no driving
   "lib/prMerge.ts", //          may this PR be squash-merged, and if not why not; pure types-only policy the client bundles alongside the route that enforces it
   "lib/prTools.ts", //          the commit/push/`gh pr create` both POST /api/tasks/[id]/pr and the create_pr tool run; store + git + github, no driving
   "lib/agentToolGuard.mjs", //  the loud-failure wrapper every agent tool answers through; zero imports, and scripts/calandria-mcp.mjs loads it in plain Node

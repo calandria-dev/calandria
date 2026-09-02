@@ -111,8 +111,10 @@ refresh that records the merge and leaves the worktree to the reclaim path.
 A merged PR is a definitive signal that a task's checkout is disposable, so the session header
 grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
 or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
-base branch from origin, remove the worktree, delete the **local** branch (the remote one is
-GitHub's job, via the repository's `delete_branch_on_merge`) and mark the task done.
+base branch from origin, remove the worktree, delete the **local** branch (the remote one went
+with the merge: landing the PR from Calandria passes `--delete-branch`, while a PR merged on
+github.com instead needs the repository's `delete_branch_on_merge`, which is off by default)
+and mark the task done.
 
 Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
 server do it by itself. It is off by default and per project, because an unattended reclaim
@@ -285,7 +287,10 @@ Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other task
 **Start when unblocked** launches an opted-in task as soon as its final blocker is marked
 done. Opt in from the edit dialog's dependency picker, or straight from the blocked task's
 own start screen: its "Blocked until …" notice carries a **Start when unblocked** button, and
-the queued notice it becomes carries **Cancel** to hand the start back to you.
+the queued notice it becomes carries **Cancel** to hand the start back to you. The block is
+enforced by the server on the start itself, not just by the disabled button, so a stale tab or
+a scripted call is refused too — and only for a task's first turn, since blockers order starts
+rather than conversations.
 
 A blocker doesn't have to be a task you accepted. An agent ordering a plan draws its edges
 while every step is still an unreviewed suggestion, so an accepted task can be waiting on
@@ -343,10 +348,24 @@ during a search.
 Lighting exactly one chip opens the **tag strip** beneath the bar: the description, a
 progress bar reading `3 done · 2 withdrawn`, a link back to the planning session
 (**Planned in …**, when an agent filed it), and its tasks in dependency order, each with a
-status dot and a step number. Its two actions are **Edit** (rename, describe, recolor from
-the badge palette) and **Delete tag**, which asks twice and names how many tasks stay;
-deleting a tag removes the label from its tasks without deleting them or touching their other
-tags. With two chips lit, the strip stays shut.
+status dot and a step number. Its three actions are **Refresh tag** (below), **Edit** (rename,
+describe, recolor from the badge palette) and **Delete tag**, which asks twice and names how
+many tasks stay; deleting a tag removes the label from its tasks without deleting them or
+touching their other tags. With two chips lit, the strip stays shut.
+
+**Refresh tag** checks the whole plan against the code. The utility agent explores the
+repository read-only, reads every member task's brief against what it finds, and reports what
+has drifted; the app applies the report. A brief pointing at files or an approach that no
+longer exists is reworded, the tag's description is rewritten to say where the plan actually
+stands, and a task the code shows is already handled is retired. Every task change lands as a
+**Changed by agent** edit with a per-field before/after and a one-click Revert, so the review
+happens after the write rather than in a second approval queue. Retiring is limited to work
+that has none in it: an unreviewed suggestion is withdrawn into the tray with the reason on
+it, a task accepted but never started is cancelled (revertably), and a task that has been
+started — it has a checkout and probably a diff — is only *named* in the report, never
+touched. The run is a detached background job: an inline bar under the progress bar says which
+phase it is in, and it keeps going if you light another chip, switch project or reload the
+tab. Spend shows up in **Insights** as *Tag refreshes*.
 
 Tags are reachable outside the task list too. The project landing page has a **Tags** card
 between the recap and Runbooks, showing active tags with their progress and what needs you (a
@@ -562,21 +581,33 @@ Two things an agent cannot do:
 
 ## Scheduled tasks
 
-A schedule is a saved prompt plus a recurring day and time, owned by the project it lives in.
-Find it on the project landing pane, under **Schedules**; click the project's name at the top
-of the task list to get there from anywhere. A schedule fires with no browser tab open: it's
-driven by a ticker in the server process, not a timer in your browser.
+A schedule is a saved prompt plus a day and time, owned by the project it lives in. Find it
+on the project landing pane, under **Schedules**; click the project's name at the top of the
+task list to get there from anywhere. A schedule fires with no browser tab open: it's driven
+by a ticker in the server process, not a timer in your browser.
+
+Every schedule has **Edit**, **Pause**, **Run now** and **Delete**. Deleting is a hard delete
+with no undo, like everything else here, but it only removes the *schedule*: the tasks it
+already minted are kept, so deleting tomorrow's job never deletes last week's work.
 
 Each firing mints a fresh task with its own transcript, worktree, and turn, rather than
 reusing one across occurrences, so every run is reviewable like a task you started by hand
 and a bad run doesn't contaminate the next one's context.
 
+**Weekly or once.** The default is recurring: pick the days of the week it runs. Switch
+**Repeats** to **Once** and you pick a single date instead — "there's a release going out
+overnight, check on it at 04:00" — and the schedule fires exactly one time. Afterwards it
+doesn't vanish: it stays on the card reading **Ran — one-time**, disabled, with its run
+history intact, because the outcome of a 04:00 job is the thing you came to read at 09:00.
+Delete it when you're done with it, or edit it to a later date to arm it again. A date that
+has already passed is refused on the spot rather than saved as a job that can never fire.
+
 **Timezone** is picked explicitly (defaulting to your browser's) rather than inferred from
 the server, since the server may run in a different zone than the person who set up the
 schedule (a container on UTC, a user on Pacific). The time is wall-clock, so "08:30" keeps
 meaning 08:30 across a Daylight Saving transition. The editor previews the next three
-occurrences as you set the days, time, and timezone, so you can catch a mistake on the form
-instead of the following Monday.
+occurrences (or the single one, for a one-off) as you set the days, time, and timezone, so
+you can catch a mistake on the form instead of the following Monday.
 
 **Catching up**: if the app was asleep or down when a firing was due, the next tick runs the
 most recent missed slot once, marked `catch_up` (useful for a morning run discovered at noon,
@@ -763,6 +794,7 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
 preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
 connected agent automatically, so a Claude-only or Codex-only installation works without
-special configuration.
+special configuration, and they can be pinned to their own models — a small one for the
+short summarizing jobs, a stronger one for the draft that reads your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.

@@ -62,6 +62,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       priority: body.priority,
       catch_up_ms: typeof body.catch_up_ms === "number" ? body.catch_up_ms : undefined,
       runbook_id: typeof body.runbook_id === "string" ? body.runbook_id : null,
+      // 'YYYY-MM-DD' makes this a one-time schedule. Shape and calendar
+      // validity are createSchedule's job (nextFireAt throws), so all that's
+      // needed here is to refuse a non-string before String() launders it.
+      once_date: typeof body.once_date === "string" ? body.once_date : "",
     });
     const { startScheduler } = await import("@/lib/scheduler");
     startScheduler();
