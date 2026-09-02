@@ -75,6 +75,35 @@ other tools…"), so that tail is cut. `decision_reason_type` is persisted raw a
 `Transcript.tsx`, because the CLI mints values the SDK's docs don't list (`subcommandResults`).
 Both real messages are captured verbatim in `tests/claudePermissionMode.test.ts`.
 
+### Tool results the CLI answers on its own behalf
+
+`lib/agentToolGuard.mjs` wraps every Calandria tool handler so a throw, an over-long call or a
+blank result comes back as a sentence naming the tool. One failure sits above that seam and the
+guard cannot reach it: the CLI answers the call itself and no handler runs.
+
+Measured 2026-09-02 (task `CrDHcuyuDt1PmLu0PDd1K`, Claude Code 2.1.257, server pid unchanged across
+the window). Five in-process `mcp__calandria__*` calls came back to the model as "The tool call was
+interrupted before a result was received." Each returned in the same second as the call, only
+Calandria tools were hit, and `Bash` calls in the same assistant turns were fine. The sentence is
+the CLI's own. `callMCPTool` returns it when the MCP client rejects with an `AbortError`, so the
+tool-call signal was already aborted when the request went out. Calandria never saw the call.
+`linkSignals` is not involved: only `canUseTool` uses it, and every turn gets a fresh controller
+from `claimTurn`/`handoffTurn`.
+
+Nothing landed in that session. `tasks.pr_url` stayed empty and no branch was pushed for three
+`create_pr` calls, and the task the model reported filing was created 23 seconds later by its own
+`POST /api/tasks` fallback, with `suggested=0`. The abort can still fire after the request is sent,
+so `toolInterruptedMessage()` says the call may or may not have taken effect rather than promising
+it did nothing.
+
+It does not reproduce from `resume` alone. Four spikes (fresh, two resumes, and a mid-turn
+injection, with and without the real `settingSources`) all returned their results. So the driver
+does the only thing available to it. The stream pump classifies the CLI's sentence for calls it
+recorded as Calandria's, replaces it with one that names the tool and says whose answer it is, and
+logs `agent tool call cut off before Calandria answered`. Without that line a turn whose Calandria
+calls all failed still logs `turn ok`, with nothing in the journal to find it by. The stdio bridge
+cannot do the same, being a separate process that never learns its answer was discarded.
+
 ### Model catalog and Vertex corrections
 
 The model half of the capability descriptor is computed per read rather than held constant,
