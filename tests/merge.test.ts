@@ -660,9 +660,11 @@ describe("merging into a non-default base branch", () => {
     expect(res.ok).toBe(false);
     expect(res.targetBranch).toBe("feature/x");
     // The refusal names the worktree standing on the branch, so the user knows
-    // which checkout to let go of.
+    // which checkout to let go of. Git prints that path with forward slashes on
+    // every platform while path.join gives backslashes on Windows, so match on
+    // the unique leaf name rather than the whole path.
     expect(res.error).toContain("feature/x");
-    expect(res.error).toContain(held);
+    expect(res.error).toContain(path.basename(held));
     // The branch did not move, and the held worktree sees nothing out of place.
     expect(await git(repo, "rev-parse", "feature/x")).toBe(featureTip);
     expect(await git(held, "rev-parse", "HEAD")).toBe(featureTip);
