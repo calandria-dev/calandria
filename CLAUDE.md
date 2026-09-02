@@ -265,6 +265,19 @@ is reached out of band with no tool_use id, so it patches the newest unclaimed `
 instead — which is why the runner re-reads that one field before writing a `tool_result` over the
 top.
 
+**Every tool answers through `lib/agentToolGuard.mjs`, and adding one must not opt out.** Twice
+(2026-08-24, 2026-08-30) a live turn's tool calls started coming back with no content and no error
+for 20-50 minutes before healing themselves, and the sessions reported a withdrawal, a runbook and
+a pull request that were never written — an empty result is indistinguishable from a quiet success,
+so the model cannot notice. The guard rewrites a throw, an over-long call and a blank result as a
+sentence naming the tool, and passes a healthy answer through untouched. It is applied to the whole
+tools ARRAY in the Claude driver and to `registerTool` itself in the bridge, so a tool added later
+cannot forget; both use the one `.mjs` copy, because a guard on one end only is one the other
+loses. The bound (`CALANDRIA_AGENT_TOOL_TIMEOUT_MS`, 10 min; 0 for `ask_user`, which waits on a
+human) exists because nothing below has a usable one — the CLI's per-call MCP timeout defaults to
+~27.7 hours and can't be set per in-process server. `create_pr` names its PR by number and URL for
+the same reason: it is the only way a session says in git that its work is finished.
+
 Reads range as widely as filing does: `list_tasks` takes the same optional `project` and flags the
 caller `current: true`, and `get_task` reads any id, defaulting to the session's own.
 
@@ -416,8 +429,11 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the
   scheduler; it reaches the runner, so it is not pinned.
 - `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job, polled via GET rather
-  than held open. `lib/recap.ts` — the staleness and activity sweep. Both are project-scoped
-  one-shots that run on the utility agent via `lib/agents/oneshots.ts`.
+  than held open. `lib/tagRefresh.ts` — the same shape for a tag ("Refresh tag"), except that it
+  APPLIES its outcome instead of drafting one: task edits go through `lib/agentTools.ts` and land
+  as revertable "Changed by agent" rows, and only work with nothing in it may be retired.
+  `lib/recap.ts` — the staleness and activity sweep. All three are project-scoped one-shots that
+  run on the utility agent via `lib/agents/oneshots.ts`.
 - `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15),
   riding `lib/scheduler.ts`'s ticker on its own much longer clock, because this process owns the
   database and a second daemon would need a second lock. `prunableTaskIds()` is the whole policy,
@@ -452,8 +468,9 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
   (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
   (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
-  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
-  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one went
+  with the merge: `mergeTaskPr` passes `--delete-branch`; a github.com merge instead needs the
+  repo's `delete_branch_on_merge`, off by default), mark the task done. `maybeAutoReclaim()` is the
   silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
   call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
   unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ

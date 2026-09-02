@@ -23,12 +23,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
   const fields: Record<string, unknown> = {};
-  for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms"]) {
+  // once_date rides the same copy loop: '' switches a schedule back to weekly,
+  // 'YYYY-MM-DD' makes it one-time, and updateSchedule validates the merged
+  // spec before anything is written.
+  for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms", "once_date"]) {
     if (body[k] !== undefined) fields[k] = body[k];
   }
   // Pause/resume. Resuming recomputes from NOW, so unpausing a schedule parked
   // for a month doesn't greet the user with a month of missed occurrences.
   if (body.enabled !== undefined) fields.enabled = body.enabled ? 1 : 0;
+  if (fields.once_date !== undefined && typeof fields.once_date !== "string") {
+    return NextResponse.json({ error: "once_date must be 'YYYY-MM-DD' or ''" }, { status: 400 });
+  }
   if (body.send_context !== undefined) fields.send_context = body.send_context ? 1 : 0;
   // Link or unlink the runbook this schedule fires. Compared against the
   // SCHEDULE's project, not a path id — see the POST route's note on why a

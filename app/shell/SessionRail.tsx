@@ -78,18 +78,29 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   // measure (a Claude task from before measurement existed heals on its next
   // turn; a Codex task never will).
   const estimated = task.context_estimated && task.context_tokens > 0;
-  const note = estimated
-    ? reportsContext
-      ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
-      : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
-    : "Tokens in the window as of the latest model request, as reported by the agent.";
+  // No window to be a percentage OF. That is what a provider override means
+  // (lib/store.ts taskContextWindow): the catalog sizes the vendor's models and
+  // this task is running someone else's, so the count is reported bare rather
+  // than as a fraction of a number we'd be inventing.
+  const unknownWindow = !(task.context_window > 0);
+  const note = unknownWindow
+    ? "This task runs on a model Calandria can't size — a local or custom endpoint names its own models and doesn't publish their context windows. The token count is real; the percentage would not be."
+    : estimated
+      ? reportsContext
+        ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
+        : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
+      : "Tokens in the window as of the latest model request, as reported by the agent.";
   return (
     <div className="rail-pad">
       <div className="ctxw-head">
         <span className="rail-eyebrow">CONTEXT WINDOW</span>
-        <span className="ctxw-pct" title={note}>{estimated ? "≈ " : ""}{pct}% used{task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}</span>
+        <span className="ctxw-pct" title={note}>
+          {unknownWindow
+            ? `window unknown${task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok used` : ""}`
+            : `${estimated ? "≈ " : ""}${pct}% used${task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}`}
+        </span>
       </div>
-      <div className="ctxw-meter"><div className="ctxw-fill" style={{ width: `${pct}%` }} /></div>
+      <div className="ctxw-meter"><div className="ctxw-fill" style={{ width: `${unknownWindow ? 0 : pct}%` }} /></div>
 
       <div className="ctxw-timeline">
         {sessions.map((s, i) => {

@@ -6,6 +6,7 @@ import type { Priority, Status } from "@/lib/types";
 import type { AgentProvider } from "@/lib/agentEnv";
 import { Icon, AgentMark } from "../icons";
 import { SCLS, SLABEL, AWAIT_LABEL } from "./types";
+import { endpointSummary, type EndpointModelsState } from "./modelEndpoint";
 
 // Touch-device detection, shared by every surface that must behave differently
 // under a finger (TaskBoard drops draggable=true, the Composer's return key
@@ -217,4 +218,18 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
       )}
     </>
   );
+}
+
+/**
+ * That sentence as the picker renders it: plain when the endpoint answered, and
+ * flagged when it didn't — an unreachable endpoint means every turn this
+ * project starts will fail, which is worth saying before the task is created
+ * rather than in the transcript afterwards.
+ */
+export function EndpointNote({ state }: { state: EndpointModelsState }) {
+  const text = endpointSummary(state.data, state.loading);
+  if (!text) return null;
+  const down = !!state.data && !state.data.reachable;
+  if (!down) return <>{text}</>;
+  return <span className="wiz-warn">{Icon.bolt()} {text}. Turns will fail until it answers.</span>;
 }

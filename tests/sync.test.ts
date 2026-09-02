@@ -134,13 +134,15 @@ describe("worktreeSyncStatus", () => {
     expect(await git(wt.path, "rev-parse", "HEAD")).toBe(wtTip);
   });
 
-  it("returns the inert status when the base branch was deleted", async () => {
+  // Inert, but no longer indistinguishable from "in sync": the zeros are all
+  // "couldn't compare", and `baseMissing` is what says so to the banner.
+  it("flags the base branch when it was deleted, instead of an all-zero in-sync", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await git(repo, "checkout", "-b", "scratch");
     await git(repo, "branch", "-D", "main");
 
     const s = await worktreeSyncStatus({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main" });
-    expect(s).toEqual({ behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] });
+    expect(s).toEqual({ behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [], baseMissing: true });
   });
 
   it("returns the inert status for missing worktree/branch inputs", async () => {
@@ -240,5 +242,19 @@ describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
     // paused merge is gone, so the banner has nothing left to ask about.
     const s = await worktreeSyncStatus(args);
     expect(s).toMatchObject({ behind: 0, mergeInProgress: false, conflicts: [] });
+  });
+});
+
+describe("worktreeSyncStatus — a missing work branch stays silent", () => {
+  it("stays silent for a missing WORK branch, which the next launch self-heals", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    const s = await worktreeSyncStatus({
+      repoPath: repo,
+      worktreePath: wt.path,
+      workBranch: "gone",
+      baseBranch: "main",
+    });
+    expect(s.baseMissing).toBeUndefined();
+    expect(s.behind).toBe(0);
   });
 });

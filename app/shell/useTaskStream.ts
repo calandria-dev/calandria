@@ -1,19 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import type { TaskStreamEvent, ToolData, AskAnswers, PermissionOutcome } from "@/lib/types";
+import type { TaskStreamEvent, ToolData, AskAnswers, AskDismissal, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
 import { contextPct } from "./format";
-import { capsFor } from "./agents";
-import type { AgentsBundle, Msg, ProjectRow, TaskRow } from "./types";
+import type { Msg, ProjectRow, TaskRow } from "./types";
 
 // Owns the per-task transcript state (msgsByTask) plus the live SSE consumption:
 // the snapshot-then-tail EventSource and the message mutators that apply each
 // server event. The turn itself runs server-side, detached from any connection.
-export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
+export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
   selTask: string | null;
   selProjRef: MutableRefObject<string | null>;
-  agentsRef: MutableRefObject<AgentsBundle>;
   setTaskRunning: (id: string, on: boolean) => void;
   setTasks: React.Dispatch<React.SetStateAction<TaskRow[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectRow[]>>;
@@ -44,6 +42,30 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             const d = JSON.parse(m.content) as ToolData;
             if (m.toolId !== askId && d.ask?.id !== askId) return m;
             d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], answers };
+            return { ...m, content: JSON.stringify(d) };
+          } catch {
+            return m;
+          }
+        }),
+      };
+    });
+
+  // Mark an AskUserQuestion message dismissed — the question was torn down
+  // before an answer arrived. Same matching as setAnswerOnMsg, and it writes
+  // `dismissed` rather than `answers` so the card reads "not answered" instead
+  // of attributing a choice to the user.
+  const setDismissedOnMsg = (taskId: string, askId: string, dismissal: AskDismissal) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      return {
+        ...prev,
+        [taskId]: arr.map((m) => {
+          if (m.role !== "tool") return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            if (m.toolId !== askId && d.ask?.id !== askId) return m;
+            if (d.ask?.answers) return m; // an answer already landed; it wins
+            d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], dismissed: dismissal };
             return { ...m, content: JSON.stringify(d) };
           } catch {
             return m;
@@ -153,6 +175,16 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       if (!open || open.size === 0) {
         setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
       }
+    } else if (ev.type === "ask_dismissed") {
+      // The question died unanswered. Same un-parking as an answer — nobody is
+      // waiting on it any more — but the card must say so rather than keep
+      // offering options that resolve nothing.
+      setDismissedOnMsg(taskId, ev.id, ev.dismissal);
+      const open = openAsksRef.current[taskId];
+      open?.delete(ev.id);
+      if (!open || open.size === 0) {
+        setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
+      }
     } else if (ev.type === "permission") {
       const data: ToolData = { title: "Permission needed", permission: { request: ev.request } };
       upsertMsg(taskId, { id: ev.msgId ?? `perm-${ev.request.id}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.request.id });
@@ -199,7 +231,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       // task has one of these it is MEASURED, and the usage-derived estimate
       // below stops touching the gauge.
       setTasks((prev) => prev.map((x) => (x.id === taskId
-        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: false }
+        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.context_window), context_estimated: false }
         : x)));
     } else if (ev.type === "usage") {
       // Live cumulative spend: add this turn's totals to the task's figure.
@@ -222,7 +254,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             // over-reads on tool-heavy turns and is labelled an estimate.
             // Mirrors the COALESCE in lib/store.ts.
             ...(x.context_estimated || !(x.context_tokens > 0)
-              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: true }
+              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.context_window), context_estimated: true }
               : {}) }
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
@@ -284,5 +316,5 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     return () => es.close();
   }, [selTask]);
 
-  return { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg };
+  return { msgsByTask, appendMsg, setAnswerOnMsg, setDismissedOnMsg, setOutcomeOnMsg };
 }

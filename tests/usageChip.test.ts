@@ -9,6 +9,7 @@ import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/shell/f
 import type { AgentInfo, TaskRow } from "@/app/shell/types";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
 import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { providerPricing } from "@/lib/agentEnv";
 import { addUsage, createProject, createTask, listTasks } from "@/lib/store";
 import { tmpDir } from "./helpers";
 
@@ -114,6 +115,30 @@ describe("costDisplay", () => {
 
   it("still shows a cost when the bundle hasn't loaded — but claims nothing about a plan", () => {
     expect(costDisplay(undefined)).toEqual({ show: true, approx: false, note: "" });
+  });
+
+  // A turn against a provider override carries no price the vendor charged, and
+  // the chip shows no figure for either non-cloud kind. What the LEDGER records
+  // does differ between them (0 for local, NULL for custom — see
+  // providerPricing), but neither reads honestly on screen: "$0.00" reads as a
+  // measured price rather than an inapplicable one, and the API-price
+  // equivalent would be the list price of a model that didn't run.
+  it("shows no figure at all for a task on a local or custom endpoint", () => {
+    const cloudAgent = agent({ account: { email: "a@b.c", plan: "Max", method: "subscription" } });
+    const provider = { kind: "local" as const, pricing: providerPricing("local"), host: "localhost:11434", anthropic_base_url: "http://localhost:11434", openai_base_url: null, model: "qwen3-coder", auth_token: "ollama" };
+    const c = costDisplay(cloudAgent, provider);
+    expect(c.show).toBe(false);
+    expect(c.approx).toBe(false);
+    expect(c.note).toContain("localhost:11434");
+    // …and the tooltip says so where the dollar line used to be.
+    expect(usageTooltip(usageSplit(real), 0, c)).toContain("no cost to report");
+    // A custom base URL is unpriced rather than free, and reads the same here.
+    const custom = { ...provider, kind: "custom" as const, pricing: providerPricing("custom"), host: "models.example.com" };
+    expect(costDisplay(cloudAgent, custom).show).toBe(false);
+    expect(costDisplay(cloudAgent, custom).note).toContain("models.example.com");
+    // An explicit cloud provider changes nothing.
+    expect(costDisplay(cloudAgent, { ...provider, kind: "cloud", pricing: providerPricing("cloud"), host: "", anthropic_base_url: null, model: null, auth_token: null }))
+      .toEqual(costDisplay(cloudAgent));
   });
 });
 

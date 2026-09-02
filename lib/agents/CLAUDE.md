@@ -92,13 +92,32 @@ decision at turn time; the rest are literal ids handed to `--model`. That split 
 version can need a pinned row even when its family alias already exists: `fable` resolves through
 the CLI's own catalog, so an instance whose CLI predates the version — likely wherever
 `DISABLE_AUTOUPDATER` is set — never reaches it. Measured on 2.1.252, `--model fable` billed
-`claude-fable-5` after 5.1 shipped, which is what `claude-fable-5-1` is pinned for.
+`claude-fable-5` after 5.1 shipped, which is what `claude-fable-5-1` is pinned for; measured
+again on 2.1.257, the same alias resolves `claude-fable-5-1`. Both are correct for their CLI,
+which is the point: the alias is a moving target and only the pin is a promise.
 
 Pinning an id the installed CLI doesn't know is safe, and the failure mode is legible: the CLI
 logs `[claude-code:unrecognized_model]` and passes the string through unchanged, so the turn runs
 and bills as the id asked for. It is a pass-through and not a silent fallback — probing a bogus
 `claude-fable-6` alongside it errored out rather than quietly running something else, which is the
 control that makes the `claude-fable-5-1` result mean anything.
+
+**No alias label names a version, on either catalog.** A pin may, because it pins one; an alias
+is resolved by the installed CLI (or by `ANTHROPIC_DEFAULT_*_MODEL` under Vertex) at turn time,
+so a version in the label is a guess about what that resolver will pick — the very thing the
+pinned row above exists because you can't rely on. Measured wrong: on 2.1.257 `--model fable`
+runs `claude-fable-5-1` while the row read "Fable 5". Default-catalog aliases therefore read
+"(latest)" and Vertex's read "(provider default)" — each naming its resolver — and the version is
+stated only where it's known, by `modelLabel()` parsing the id a turn actually billed. Picker
+says "Fable (latest)", badge says "Fable 5.1"; that split is what `tests/modelLabel.test.ts` and
+`tests/claudeVertexModels.test.ts` pin from both ends.
+
+The resolution IS readable without an API call — `claude --model <alias> --output-format
+stream-json` prints it on the `init` line, which still appears with `ANTHROPIC_BASE_URL` pointed
+at a dead port — but it costs a ~4s CLI spawn per value, and this descriptor is read
+synchronously per request (`modelContextWindow()` runs inside `getTaskContext()`). Putting the
+resolved id in an alias's subtitle the way Vertex does wants a cached, CLI-version-keyed
+background probe, which is not built.
 
 The Vertex list is a set of measured corrections, not a second catalog. Every entry the catalog
 held at the time was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran;
@@ -114,8 +133,7 @@ measured 403, rather than credited with a result of its own. What the probe foun
   `ANTHROPIC_DEFAULT_*_MODEL`, so a mapping carrying `[1m]` makes plain `opus` a 1M session that
   the catalog called 200k, a fifth of the real window on the context gauge. Aliases now take
   their window and subtitle from the id they resolve to and drop the version claim from their
-  label (`f82f66d`'s relabel, applied only under Vertex; a pinned row still names its version,
-  correctly).
+  label (`f82f66d`'s relabel; a pinned row still names its version, correctly).
 - `settings.json`'s `env` block beats the process env. Measured, not assumed: exporting a
   different `ANTHROPIC_DEFAULT_OPUS_MODEL` while settings.json said otherwise still ran
   settings.json's choice.
@@ -158,6 +176,21 @@ taken at face value rather than clamped to zero. The three token buckets are als
 the disjoint shape the contract expects: codex folds cache reads and cache writes into
 `input_tokens`, which would otherwise double-count them in the task total and the context gauge.
 
+**Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
+the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn
+stream carries no equivalent, and this was verified against the shipped CLI rather than
+assumed, because the failure mode is a meter that silently reports nothing: the SDK's
+`ThreadEvent` union is closed at eight members, `turn.completed.usage` is token counts only,
+and the exec JSONL serializer's own field table in the 0.146.0 binary lists no `token_count`
+and no `rate_limits` (older codex builds did emit one; the dotted exec protocol doesn't). Nor
+is it cached on disk — the rollout transcripts under `$CODEX_HOME/sessions` hold no
+rate-limit entry. So `codex/planUsage.ts` reads `account/rateLimits/read` from a throwaway
+`codex app-server` (`codex/appServer.ts`, where the verified JSON-RPC handshake is
+transcribed), behind the same `PLAN_USAGE_MIN_FETCH_MS` floor. Field names come from the
+CLI's own `codex app-server generate-json-schema` and are camelCase (`usedPercent`,
+`windowDurationMins`, `resetsAt` in seconds) with windows named by RANK — `primary` /
+`secondary`, not by duration — which is why `PlanUsagePill` matches two id vocabularies.
+
 Enterprise-managed approval requirements can disallow the driver's `approval_policy=never`,
 which the exec transport can't survive. The driver spots the CLI's downgrade warning and
 self-heals to `on-request`, recording the `codex_approval_downgraded` setting.
@@ -169,6 +202,54 @@ config, not env: `codex/provider.ts` maps the merged turn env's `OPENAI_BASE_URL
 login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the task's pick and
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
+
+### …and `codex/providerCheck.ts` proves the mapping took
+
+That mapping is three assumptions about another tool's config schema — `model_providers.<name>`,
+`model_provider`, `wire_api = "responses"` — none of them a public contract, against a CLI the
+SDK resolves off PATH and the user's package manager updates on its own schedule. What makes it
+worth a subprocess rather than a comment is the failure mode: an override codex no longer
+recognises is **inert, not an error**, so a renamed key silently reinstates the built-in `openai`
+provider — the user's paid ChatGPT login — while the header still shows the `local` chip and the
+ledger records the endpoint. Same silent-wrong-backend class as the connection/provider mismatch
+above, same answer: refuse.
+
+`codex doctor --json` accepts the same `-c` overrides the SDK passes and reports what it resolved
+under `checks["config.load"].details["model provider"]`. The driver asks before building the Codex
+client and yields an `error` instead of running when the answer isn't `calandria-local`.
+Load-bearing details:
+
+- **Only that one field is read.** `overallStatus` is `fail` whenever the local server happens to
+  be down, which says nothing about whether the mapping took; gating on it would refuse turns for
+  the wrong reason.
+- **Fail-closed.** A missing `doctor`, a non-JSON report or a report without that field all refuse.
+  "Can't prove it" is not "probably fine" when being wrong spends the user's money.
+  `CALANDRIA_CODEX_PROVIDER_CHECK=off` is the escape hatch, named in the error.
+- **The verdict is cached against the CLI version that earned it** (`codex_provider_ok:<baseUrl>`),
+  since the binary is what moves. `codex --version` is ~30ms warm and guards the ~1.1s probe; the
+  cloud path does neither, having no mapping to prove.
+- **One documented exception, and only one: a win32 batch shim.** Every override carries embedded
+  quotes (`model_provider="…"`), which `cmd.exe /d /s /c` can't be trusted to deliver intact —
+  unlike the fixed tokens `bin.ts` was written for. So a "wrong provider" answer there would
+  indict our own quoting rather than the mapping, and refusing on it would break every Windows
+  instance whose codex is an npm `.cmd` shim. That path degrades to the pre-check behaviour with a
+  warning; pointing `CODEX_CLI_PATH` at the real executable spawns it directly and restores the
+  check.
+- **Which binary gets probed.** With `CODEX_CLI_PATH` set, the probe and the SDK drive the same
+  file. With it empty they resolve separately — the SDK to the binary vendored in
+  `@openai/codex`, the probe to `codex` on PATH via `bin.ts` — which are the same install in
+  every shipped configuration and the same equivalence `auth.ts` and `mcp.ts` already lean on.
+  Pinning `CODEX_CLI_PATH` is what removes the "in every shipped configuration", which is one
+  more reason the refusal message recommends it.
+- **`serializeCodexConfigOverrides` restates the SDK's own `--config` flattener**, because the
+  probe has to send byte-identical arguments or it certifies a shape no turn uses. That's a
+  duplicate, so `tests/codexProviderCheck.test.ts` pins it against the argv the real SDK spawns a
+  fake binary with, and separately drives the real `codex` to show it still answers
+  `calandria-local` for the mapping and something else without it.
+
+The Claude side was checked rather than assumed: pointed at a sink on `ANTHROPIC_BASE_URL`,
+claude-cli 2.1.257 under a subscription login sent all six `/v1/messages` attempts to the sink and
+never fell back to `api.anthropic.com`. No mapping, no fallback, nothing to verify.
 
 ## Antigravity / Gemini driver (`gemini/`)
 
@@ -292,7 +373,7 @@ never call (measured on one machine: 10 servers, 146 tools, ~8s added to a ~5s j
 do the work, none of which was set before:
 
 - **`tools`** is the real restriction. `allowedTools` is not: it only pre-approves, and
-  `bypassPermissions` pre-approves everything anyway. All three helpers used to pass
+  `bypassPermissions` pre-approves everything anyway. Every helper used to pass
   `allowedTools` and get the full toolset (verified on CLI 2.1.228: `allowedTools: []` ran Read,
   and the "read-only" draft agent ran Write). `skills: []` backs it up against the discovery pass.
 - **`strictMcpConfig: true`** drops MCP from settings, `.mcp.json` and plugins. `tools` alone
@@ -318,10 +399,45 @@ transform can only be skewed by it. `draftProjectContext` keeps `project` (descr
 is its whole job, and that's what loads CLAUDE.md) but not `local` (gitignored personal overrides
 in a document written for everyone), runs with `maxTurns: 40`, and trades Bash for
 `tools: ["Read", "Grep", "Glob"]`: unreviewed arbitrary execution in the user's checkout to
-produce a paragraph of prose, whose git half already arrives in `digest`. All three set
+produce a paragraph of prose, whose git half already arrives in `digest`. `planTagRefresh`
+("Refresh tag", lib/tagRefresh.ts) reuses that exact configuration — same tools, same
+`settingSources`, same `maxTurns` — because it is the same kind of run, reading a repo to judge
+a plan; the difference is only that its output is a JSON plan the server applies rather than
+prose. All four set
 `persistSession: false`, since nothing records a one-shot's session id and they were only filling
 the user's own `~/.claude/projects` with unresumable recap turns.
 `tests/claudeSettingSources.test.ts` pins both policies.
+
+## Which model a one-shot runs
+
+Nothing used to say. Both drivers passed no model at all, so a handoff note ran on whatever the
+user's `~/.claude/settings.json` or `~/.codex/config.toml` happened to name — invisible from
+Calandria, and on a machine pinned to an expensive alias it was the expensive one summarizing
+four bullets. Codex was worse than invisible: `oneShot()` resolved `resolveCodexModel(null)` for
+its *reporting* state, so the pricing estimate claimed the CLI default while the thread actually
+ran whatever `config.toml` said.
+
+`oneShotModel()` in `lib/agents/oneshots.ts` is now the one resolver, and the settings are
+**agent-scoped** for `default_model`'s reason — a model id names one provider's catalog. Unset
+stays the default and still means "pass nothing, inherit the driver's own", so an instance that
+never opens Settings behaves exactly as before.
+
+Two tiers, not one knob per job, because the jobs really do split and the drivers already
+encode the split: the LIGHT ones (`summarizeTranscript`, `summarizeProjectRecap`) are text in →
+text out with `tools: []` and `maxTurns: 1` / `ONESHOT_MAX_ITEMS_TEXT`, while the HEAVY ones
+(`draftProjectContext`, `planTagRefresh`) read an unfamiliar codebase over `maxTurns: 40` /
+`ONESHOT_MAX_ITEMS_EXPLORE` — one to write a document prepended to every later session in the
+project, the other to judge whether a tag's tasks still describe work the code needs.
+A per-job knob would be a setting per job almost everyone sets to two values.
+
+The lookup keys off the **resolved** driver, not the requested one. A Codex task whose `/clear`
+note falls back to Claude (the utility backstop above) reads `job_model_light:claude`, because
+handing Claude a `gpt-*` id would be a model the catalog can't run. That case is
+`tests/oneshotModel.test.ts`.
+
+`OneShotOptions` is trailing-optional on every helper signature, so a driver that ignores it
+still satisfies `AgentDriver` — the same tolerance the interface already extends to a driver that
+implements none of them.
 
 ## Slash-command discovery
 

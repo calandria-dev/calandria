@@ -440,6 +440,10 @@ export interface RemoteBaseStatus {
   canFastForward: boolean; // behind, not ahead, and knowable → a one-click catch-up
   localTip: string;
   remoteTip: string;
+  // The base branch has no LOCAL ref here, so the counts above are zeros meaning
+  // "couldn't compare" rather than "in sync". Set only in that case; absent
+  // otherwise (the shape SyncStatus.baseMissing uses).
+  baseMissing?: boolean;
 }
 
 const noRemoteStatus = (label = ""): RemoteBaseStatus => ({
@@ -465,7 +469,14 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
     git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}`]).catch(() => ""),
     git(repoPath, ["rev-parse", "--verify", `${up.trackingRef}^{commit}`]).catch(() => ""),
   ]);
-  if (!localTip || !remoteTip) return { ...base, localTip, remoteTip, tracked: !!remoteTip };
+  // No local ref is its own answer, not an all-zero "in sync". Both callers of
+  // advanceBaseBranch short-circuited on those zeros — "up to date" from the
+  // banner's fast-forward, "nothing to catch up to" from reclaim — so
+  // advanceBaseBranchLocked's own `base branch <name> not found` refusal was
+  // unreachable and a project pointed at a branch it has no ref for reported
+  // itself permanently in sync with its remote.
+  if (!localTip || !remoteTip)
+    return { ...base, localTip, remoteTip, tracked: !!remoteTip, ...(localTip ? {} : { baseMissing: true }) };
 
   if (localTip === remoteTip) return { ...base, tracked: true, localTip, remoteTip };
 
@@ -491,6 +502,59 @@ export async function remoteBaseStatus(repoPath: string, baseBranch: string): Pr
     diverged: ahead > 0 && behind > 0,
     canFastForward: behind > 0 && ahead === 0,
   };
+}
+
+/** How one branch stands against another. `ahead`/`behind` are counted FROM
+ *  `branch`: behind = commits on `against` that `branch` hasn't got. */
+export interface BranchDrift {
+  exists: boolean; // `branch` resolves to a commit at all
+  ahead: number;
+  behind: number;
+  diverged: boolean;
+  unknown: boolean; // ancestry couldn't be established — NOT the same as zero
+}
+
+const noDrift = (o: Partial<BranchDrift> = {}): BranchDrift => ({
+  exists: false, ahead: 0, behind: 0, diverged: false, unknown: false, ...o,
+});
+
+/**
+ * Read-only comparison of two DIFFERENT branches — how far a long-lived
+ * integration branch has fallen behind the branch it forked from. This is not
+ * the question `remoteBaseStatus` answers: that one compares a branch to its
+ * own remote-tracking ref.
+ *
+ * Both arguments are commit-ish, so a caller may pass `main`, `origin/main` or
+ * a sha. Never touches the network: call `fetchBase` first if freshness matters,
+ * and note that a stale local `against` UNDERSTATES the drift, which is the
+ * direction to be wrong in — the callers treat "no answer" as "say nothing".
+ *
+ * The three not-a-number outcomes are kept apart because collapsing any of them
+ * into zero would report a stale branch as current. `exists: false` is the
+ * branch being gone (a tag still pinned to a branch someone deleted);
+ * `unknown` is a count that could not be taken, which a shallow clone really
+ * does produce; zeros with `exists` are the genuine "up to date".
+ */
+export async function branchDriftStatus(repoPath: string, branch: string, against: string): Promise<BranchDrift> {
+  if (!branch || !against) return noDrift({ unknown: true });
+  const [tip, againstTip] = await Promise.all([
+    git(repoPath, ["rev-parse", "--verify", `${branch}^{commit}`]).catch(() => ""),
+    git(repoPath, ["rev-parse", "--verify", `${against}^{commit}`]).catch(() => ""),
+  ]);
+  if (!tip) return noDrift(); // the branch itself is missing: absence, not drift
+  if (!againstTip) return noDrift({ exists: true, unknown: true });
+  if (tip === againstTip) return noDrift({ exists: true });
+
+  // `--left-right --count A...B` answers both directions in one subprocess:
+  // "<commits only on A>\t<commits only on B>".
+  try {
+    const [l, r] = (await git(repoPath, ["rev-list", "--left-right", "--count", `${tip}...${againstTip}`])).split(/\s+/);
+    const ahead = parseInt(l, 10) || 0;
+    const behind = parseInt(r, 10) || 0;
+    return { exists: true, ahead, behind, diverged: ahead > 0 && behind > 0, unknown: false };
+  } catch {
+    return noDrift({ exists: true, unknown: true });
+  }
 }
 
 // Which worktree, if any, has `branch` checked out. `git worktree list
@@ -799,7 +863,21 @@ export async function ensureWorktree(
   // refs/remotes/*, so it's safe alongside anything else in the repo, and holding
   // the per-repo lock across a network round trip would park every other task
   // launch behind one slow connection. Cannot throw; the guard is belt and braces.
-  if (baseBranch) await fetchBase(repoPath, baseBranch).catch(() => {});
+  if (baseBranch) {
+    await fetchBase(repoPath, baseBranch).catch(() => {});
+    // ...and materialise a base that exists ONLY as refs/remotes/<remote>/<branch>.
+    // Every base-branch check below and downstream goes through `branchExists`,
+    // which is local-only, so a branch a colleague pushed — or one a tag points a
+    // batch of tasks at — was invisible: the cut silently fell back to the main
+    // checkout's HEAD (not even the remote tip), the sync banner reported "in
+    // sync", and the first thing to say otherwise was Fix with AI refusing with
+    // "base branch <name> not found". The branch is real; only the local ref was
+    // missing, so make it, exactly as retargeting does (`--track`, so every later
+    // fetch, sync and PR resolves its upstream). Outside the lock because it can
+    // fetch, and best-effort because a genuinely absent branch is still allowed to
+    // fall back below.
+    await ensureLocalBaseBranch(repoPath, baseBranch).catch(() => {});
+  }
   // Serialize with merges and other worktree creations on the same repo: both
   // touch the shared worktree registry / read HEAD for the base sha, and a merge
   // racing this could hand back a base_sha read off a transient HEAD.
@@ -867,6 +945,9 @@ async function ensureWorktreeLocked(
   // The configured base branch if it exists, else current HEAD. The fallback
   // must stay — a freshly-initialized repo may have an unborn or differently-named
   // default branch, and a misconfigured project shouldn't block task isolation.
+  // It now fires only for a branch that is nowhere: `ensureWorktree` has already
+  // created a local ref for one that exists on the remote, so "no local ref" here
+  // means the branch really doesn't exist rather than merely hasn't been asked for.
   const localBase = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
 
   const reattaching = existing !== null;
@@ -1121,8 +1202,16 @@ export async function worktreeDiskUsage(wtPath: string): Promise<number> {
 export interface PruneSafety {
   safe: boolean; // removing the worktree would lose no work
   isDirty: boolean; // uncommitted changes present (discarded by `remove --force`)
-  ahead: number; // commits on the work branch not yet in the base branch
+  // Commits on the work branch not yet in the base branch, or NULL when the
+  // comparison couldn't be made because the base branch has no ref here. Null is
+  // not zero: this number authorises deleting a checkout, so an unknowable count
+  // has to read as "assume there IS work", the way commitsSinceCut's null does.
+  ahead: number | null;
   reason?: string; // why it's unsafe — surfaced to the user
+  // The base branch has no ref in this repository, so `ahead` is null. Set only
+  // in that case; absent otherwise, so nothing has to test it to read an
+  // ordinary verdict (the same shape SyncStatus.baseMissing uses).
+  baseMissing?: boolean;
 }
 
 /**
@@ -1159,22 +1248,40 @@ export async function worktreePruneSafety(input: {
   // Commits on the work branch that the base branch hasn't yet absorbed. Compared
   // against the base BRANCH (not the recorded base_sha) so it reflects git reality
   // regardless of merged_at bookkeeping.
-  let ahead = 0;
-  if (workBranch && (await branchExists(repoPath, workBranch)) && (await branchExists(repoPath, baseBranch))) {
-    ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${baseBranch}..${workBranch}`]).catch(() => "0"), 10) || 0;
+  //
+  // The two missing-ref cases are NOT the same answer. A missing WORK branch
+  // really is zero — the branch that would carry those commits doesn't exist, so
+  // there is nothing left to orphan. A missing BASE branch makes the count
+  // unknowable, and it used to come back as that same zero, which every caller
+  // reads as "no unlanded work, safe to prune" while it authorises deleting the
+  // checkout. Say "couldn't compare" instead and let it refuse.
+  let ahead: number | null = 0;
+  let baseMissing = false;
+  if (workBranch && (await branchExists(repoPath, workBranch))) {
+    if (await branchExists(repoPath, baseBranch)) {
+      ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${baseBranch}..${workBranch}`]).catch(() => "0"), 10) || 0;
+    } else {
+      ahead = null;
+      baseMissing = true;
+    }
   }
 
   const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
+  const base = baseBranch || "the base branch";
+  const unlanded =
+    ahead === null
+      ? `${base} not found in this repository, so unlanded commits can't be ruled out`
+      : ahead > 0
+        ? `${commits(ahead)} not yet in ${base}`
+        : "";
   const reason =
-    isDirty && ahead > 0
-      ? `uncommitted changes + ${commits(ahead)} not yet in ${baseBranch || "the base branch"}`
+    isDirty && unlanded
+      ? `uncommitted changes + ${unlanded}`
       : isDirty
         ? "uncommitted changes not saved to any branch"
-        : ahead > 0
-          ? `${commits(ahead)} not yet in ${baseBranch || "the base branch"}`
-          : undefined;
+        : unlanded || undefined;
 
-  return { safe: !isDirty && ahead === 0, isDirty, ahead, reason };
+  return { safe: !isDirty && ahead === 0, isDirty, ahead, reason, ...(baseMissing ? { baseMissing: true } : {}) };
 }
 
 /**
@@ -1189,13 +1296,38 @@ export async function worktreePruneSafety(input: {
  * opened and never pushed was not in the thing GitHub merged, whatever the
  * merge strategy did to the rest. See lib/reclaim.ts, the only caller.
  *
- * `null` is deliberately distinct from 0. The upstream ref is routinely gone by
- * the time this runs — GitHub's delete_branch_on_merge removes the remote
- * branch, and a later `git fetch --prune` takes the local mirror of it with
- * it — and "there is no longer anything to compare" must not read as "nothing
- * is unpushed" to a caller that would treat 0 as permission.
+ * `null` is deliberately distinct from 0. The upstream is routinely gone by the
+ * time this runs — the merge that landed the PR removes the remote branch
+ * (mergeTaskPr passes `--delete-branch`; a PR merged on github.com instead
+ * needs the repository's delete_branch_on_merge, which is off by default) —
+ * and "there is no longer anything to compare" must not read as "nothing is
+ * unpushed" to a caller that would treat 0 as permission.
+ *
+ * TWO THINGS THIS GETS WRONG IF WRITTEN THE OBVIOUS WAY, both observed on a
+ * real squash-merged PR that reported "4 commits never pushed" over an empty
+ * `git diff`:
+ *
+ * LOCAL MIRRORS OF A DELETED BRANCH DON'T VANISH. `fetchBase` never prunes, so
+ * once that merge deletes the remote branch it is gone while
+ * `refs/remotes/origin/<branch>` still sits at the pre-merge tip, and a
+ * rev-parse of it happily succeeds. The ref existing locally is therefore no
+ * evidence the remote has anything, and the REMOTE is asked directly
+ * (`ls-remote`) under gitNet's best-effort contract. Not being able to ask is a
+ * third answer: it falls back to the local mirror rather than either declaring
+ * the branch gone or refusing, since with the count below fixed the mirror is a
+ * good enough answer for an offline repo.
+ *
+ * A SYNC'S COMMITS AREN'T THE TASK'S WORK. Once the PR has merged, catching the
+ * task branch up with its base (`merge --no-ff base`) puts the merge commit AND
+ * every base commit it pulled in — sibling PRs' squashes, and the task's own —
+ * beyond the upstream, none of it content the PR could have missed. So the
+ * count excludes what the base already has and the merges themselves. The
+ * caveat, for anyone tempted to reinstate them: a Sync that resolved conflicts
+ * really does carry content, but a Sync AFTER the PR merged is irrelevant to
+ * what the PR contained by definition, and one BEFORE it was either pushed
+ * (counted 0) or is a real unpushed commit that `--no-merges` still counts.
  */
-export async function unpushedCommits(repoPath: string, workBranch: string): Promise<number | null> {
+export async function unpushedCommits(repoPath: string, workBranch: string, baseBranch: string): Promise<number | null> {
   if (!workBranch || !refNameSafe(workBranch)) return null;
   const upstream = (
     await git(repoPath, ["rev-parse", "--symbolic-full-name", `${workBranch}@{upstream}`]).catch(() => "")
@@ -1204,11 +1336,35 @@ export async function unpushedCommits(repoPath: string, workBranch: string): Pro
   // The name resolving says only that the config exists; the ref itself may
   // have been pruned out from under it.
   if (!(await git(repoPath, ["rev-parse", "--verify", `${upstream}^{commit}`]).catch(() => ""))) return null;
-  const n = parseInt(
-    await git(repoPath, ["rev-list", "--count", `${upstream}..refs/heads/${workBranch}`]).catch(() => ""),
-    10
-  );
+  if ((await remoteBranchLives(repoPath, workBranch)) === false) return null;
+
+  const args = ["rev-list", "--count", `${upstream}..refs/heads/${workBranch}`, "--no-merges"];
+  if (baseBranch && refNameSafe(baseBranch) && (await branchExists(repoPath, baseBranch)))
+    args.push("--not", `refs/heads/${baseBranch}`);
+  const n = parseInt(await git(repoPath, args).catch(() => ""), 10);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Does the remote still publish this branch? `true` yes, `false` the remote
+ * answered and does not, `null` we couldn't ask — no remote, fetching turned
+ * off, or the network/credential failed.
+ *
+ * `null` and `false` are different answers to different questions, and the
+ * caller reads only `false` as "gone": a repo that can't reach its remote has
+ * learned nothing, and treating that as a deleted branch would wave every
+ * offline reclaim straight through the safety gate.
+ */
+async function remoteBranchLives(repoPath: string, workBranch: string): Promise<boolean | null> {
+  if (!GIT_FETCH_ENABLED) return null;
+  const up = await baseRemote(repoPath, workBranch).catch(() => null);
+  if (!up) return null;
+  try {
+    const out = await gitNet(repoPath, ["ls-remote", "--heads", up.remote, `refs/heads/${up.remoteBranch}`]);
+    return out.trim().length > 0;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- diff ----------
@@ -1838,9 +1994,26 @@ export async function mergeTask(input: {
       await git(repoPath, ["merge", "--abort"]).catch(() => {});
     }
 
-    // Target: the configured base branch if it exists, else the repo's current branch.
+    // Target: the configured base branch, which has to exist. This used to fall
+    // back to whatever the main checkout had open — the quietest way a missing
+    // base went unremarked and by far the worst, since the task's work landed on
+    // an unrelated branch under a green "merged". The fallback can't be salvaged
+    // by asking whether the task forked from that branch either: a task whose
+    // base was missing was cut from HEAD, so it always did. A base that exists on
+    // the remote is now a local branch by cut time (`ensureLocalBaseBranch` in
+    // `ensureWorktree`), so reaching here means the branch is genuinely nowhere,
+    // and the honest answer is the same refusal `prepareWorktreeMerge` already
+    // gives — named alongside the branch we would otherwise have written to, so
+    // the user can see which one to fix.
     const current = await currentBranch(repoPath);
-    const target = (await branchExists(repoPath, baseBranch)) ? baseBranch : current || baseBranch;
+    if (!(await branchExists(repoPath, baseBranch)))
+      return {
+        ok: false,
+        targetBranch: baseBranch,
+        committed,
+        error: `base branch ${baseBranch} not found${current ? ` (this checkout is on ${current})` : ""}`,
+      };
+    const target = baseBranch;
 
     // Nothing to land? Answered before anything mutates — a re-click on an
     // already-merged task is "up to date" even when the checkout is dirty, and
@@ -2177,6 +2350,10 @@ export interface SyncStatus {
   baseTip: string; // the base branch tip — the new diff base after a successful sync
   mergeInProgress: boolean; // a base→work merge is paused in the worktree (MERGE_HEAD present), awaiting accept/discard
   unresolved: string[]; // while paused: files still carrying markers (or unstaged binaries) — `conflicts` mirrors this
+  // The base branch has no ref in this repository, so every number above is a
+  // zero meaning "couldn't compare" rather than "in sync". Set only in that case;
+  // absent otherwise, so nothing has to test it to read an ordinary status.
+  baseMissing?: boolean;
 }
 
 /**
@@ -2194,7 +2371,13 @@ export async function worktreeSyncStatus(input: {
   const none: SyncStatus = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
   if (!worktreePath || !workBranch) return none;
   const [baseOk, workOk] = await Promise.all([branchExists(repoPath, baseBranch), branchExists(repoPath, workBranch)]);
-  if (!baseOk || !workOk) return none;
+  // A missing WORK branch is transient — the checkout is being rebuilt, and the
+  // next launch self-heals it — so it stays silent. A missing BASE branch is a
+  // standing misconfiguration, and returning a bare `none` for it made the banner
+  // say "in sync" about a comparison that never happened, right up until merge and
+  // Fix with AI refused. Say which it is instead; the callers decide what to do.
+  if (!baseOk) return { ...none, baseMissing: true };
+  if (!workOk) return none;
 
   const countOf = async (range: string) => parseInt(await git(repoPath, ["rev-list", "--count", range]).catch(() => "0"), 10) || 0;
   const [baseTip, behind, ahead, isDirty] = await Promise.all([

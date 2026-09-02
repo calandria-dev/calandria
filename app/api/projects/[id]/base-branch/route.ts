@@ -57,6 +57,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await fetchBase(project.repo_path, project.branch);
       const status = await remoteBaseStatus(project.repo_path, project.branch);
       if (!status.remoteTip) return NextResponse.json({ ok: false, error: "no remote branch to catch up to" }, { status: 409 });
+      // Nothing local to move. advanceBaseBranch refuses this in the same words,
+      // but the all-zero status a missing ref used to produce made the check
+      // below answer "up to date" first, so that refusal was never reached and
+      // the project reported itself permanently in sync.
+      if (status.baseMissing)
+        return NextResponse.json({ ok: false, error: `base branch ${project.branch} not found in this repository` }, { status: 409 });
       if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true });
       const res = await advanceBaseBranch(project.repo_path, project.branch, status.remoteTip);
       return NextResponse.json({ ...res, behind: status.behind }, { status: res.ok ? 200 : 409 });

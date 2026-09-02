@@ -4,6 +4,7 @@ import { readEnv } from "./env.mjs";
 import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
+import { DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "./agentToolGuard.mjs";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
@@ -180,6 +181,19 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(readEnv("CALANDRIA_PERMISSION_PRO
 export const PERMISSION_UNATTENDED_MS = ms(readEnv("CALANDRIA_PERMISSION_UNATTENDED_MS"), 45_000);
 
 /**
+ * Bound on a single Calandria agent-tool call (suggest_task, create_pr, the rest
+ * of lib/agentToolGuard.mjs's charges), after which the model is told the call
+ * was abandoned instead of waiting on it. This is a backstop, not a tuning knob:
+ * nothing legitimate comes close, and the layer below has no usable deadline of
+ * its own — the CLI's per-call MCP timeout defaults to ~27.7 hours and cannot be
+ * set per in-process server, so without this a wedged tool call stalls the turn
+ * for the rest of the day. Read here for the Claude driver's in-process server
+ * and directly from the environment by scripts/calandria-mcp.mjs, which is plain
+ * Node and can't import this file; keep the name in sync. 0 disables the bound.
+ */
+export const AGENT_TOOL_TIMEOUT_MS = ms(readEnv("CALANDRIA_AGENT_TOOL_TIMEOUT_MS"), DEFAULT_AGENT_TOOL_TIMEOUT_MS);
+
+/**
  * Master switch for background linger. Each Claude turn is one SDK query
  * whose CLI process owns both the run_in_background children and the
  * in-memory task registry that promises "you'll be notified when it
@@ -349,6 +363,37 @@ export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
  */
 export const LOCAL_MODEL_BASE_URL =
   String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+
+/**
+ * How long Calandria will wait for a local model server to say which models it
+ * has (lib/modelEndpoint.ts) before calling it unreachable. Short on purpose:
+ * this probe runs inside GET /api/agents, which every tab loads, and the answer
+ * is a picker's suggestion list — a slow one must not hold up the app. A server
+ * on this machine answers in single-digit milliseconds; the budget only matters
+ * for a host that black-holes the connection instead of refusing it.
+ */
+export const MODEL_PROBE_MS = ms(readEnv("CALANDRIA_MODEL_PROBE_MS"), 2500);
+
+/**
+ * Whether a Codex turn against a local endpoint must PROVE the provider mapping
+ * took before it runs (lib/agents/codex/providerCheck.ts). On by default and
+ * fail-closed, because the failure it catches is silent: an unknown `-c`
+ * override is inert to the codex CLI, so a release that changes the config.toml
+ * schema drops the turn back onto the built-in `openai` provider and bills the
+ * user's ChatGPT login while the UI still says `local`. Turning this off trades
+ * ~1.1s on the first turn per endpoint (the verdict is cached against the CLI
+ * version that earned it) for exactly that risk.
+ */
+export const CODEX_PROVIDER_CHECK = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_CODEX_PROVIDER_CHECK") || "").toLowerCase(),
+);
+
+/**
+ * How long that check will wait for `codex doctor --json`. It runs at the head
+ * of a turn, so a wedged CLI must not hang the turn forever — a timeout is
+ * reported as "couldn't verify" and refuses, like any other unreadable answer.
+ */
+export const CODEX_PROVIDER_CHECK_MS = ms(readEnv("CALANDRIA_CODEX_PROVIDER_CHECK_MS"), 15_000);
 
 /**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
@@ -696,12 +741,16 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
 );
 
 /**
- * Floor between two fetches of a provider's plan-usage API. Anthropic
+ * Floor between two reads of a provider's plan usage, per agent. Anthropic
  * rate-limits its usage endpoint aggressively, so the app fetches at most this
  * often — and only while a browser is actually asking (the meter polls; no tab
  * open means no fetches at all). 300s matches the Claude CLI's own minimum
  * interval for the same endpoint. Between fetches the display coasts on the
  * cache plus the passive rate-limit telemetry that rides every turn for free.
+ *
+ * It floors the Codex side too, where the cost is different but no smaller: a
+ * throwaway `codex app-server` process per read, since that CLI's turn stream
+ * carries no rate-limit telemetry to coast on (lib/agents/codex/planUsage.ts).
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
 

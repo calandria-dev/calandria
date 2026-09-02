@@ -11,14 +11,16 @@
 # release whose notes never mention it, and there is no later point at which
 # anyone notices.
 #
-# The title is not always what gets used. The repository's
-# `squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`, which takes the PR title
-# for a multi-commit branch and the single commit's own subject for a
-# one-commit branch. This job can only see the title, so it enforces the half
-# it can reach; CONTRIBUTING.md asks for conventional commit subjects too,
-# which is what covers the other half. Setting the repository to `PR_TITLE`
-# makes the title authoritative in both cases and makes this job the whole
-# guarantee.
+# This job is the whole guarantee only because the repository's
+# `squash_merge_commit_title` is `PR_TITLE`, which makes the title the squash
+# subject whether the branch has one commit or twenty. It was
+# `COMMIT_OR_PR_TITLE` until 0.4.1, which took the lone commit's own subject on
+# a single-commit branch: a title this job had just passed was thrown away on
+# the way to main, release-please read the stripped subject as non-conventional,
+# and the change was dropped from the release notes with every check green.
+# #56, #64 and #66 all went missing from the 0.4.0 changelog that way. Nothing
+# here enforces the setting, so if entries start disappearing again, read it
+# first: `gh api repos/calandria-dev/calandria -q .squash_merge_commit_title`.
 #
 # Its own workflow rather than a job in test.yml, for two reasons:
 #

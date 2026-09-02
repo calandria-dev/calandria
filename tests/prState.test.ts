@@ -105,6 +105,55 @@ describe("rollupChecks", () => {
   it("refuses to call a verdict it doesn't recognize a pass", () => {
     expect(rollupChecks([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SOMETHING_NEW" }])).toBe("pending");
   });
+
+  it("reads the rerun, not the failure it replaced", () => {
+    // statusCheckRollup is every check run on the head commit, so a
+    // `gh run rerun --failed` leaves the dead FAILURE beside its green
+    // successor on a SHA that never changes. Without deduping, that PR is red
+    // forever and refreshing cannot help: there is nothing newer to read.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE", name: "e2e", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", workflowName: "test", startedAt: "2026-08-30T22:36:29Z" },
+      ])
+    ).toBe("passing");
+  });
+
+  it("drops the entries a concurrency-cancelled run left behind", () => {
+    // The other half of the same shape, and the one that made PR #84 red while
+    // `gh pr checks` called it green: a superseded run's jobs stay in the
+    // rollup as CANCELLED, which is a red verdict.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "CANCELLED", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:02Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+      ])
+    ).toBe("passing");
+  });
+
+  it("keeps a repeated name apart when a second workflow reports it", () => {
+    // A reusable workflow re-reports the caller's job names under its own name,
+    // so "Unit" under `test` and under `publish-image` are two real checks.
+    // Collapsing them would hide a genuine failure behind the other's pass.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE", name: "Unit", workflowName: "publish-image", startedAt: "2026-08-30T22:10:07Z" },
+      ])
+    ).toBe("failing");
+  });
+
+  it("never collapses entries that carry no name at all", () => {
+    // A nameless entry cannot be shown to duplicate anything, so it passes
+    // through — deduping it away would turn a red rollup green.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" },
+      ])
+    ).toBe("failing");
+  });
 });
 
 describe("refreshPrState", () => {

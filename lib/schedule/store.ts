@@ -15,7 +15,23 @@ export const specOf = (s: Schedule): ScheduleSpec => ({
   daysMask: s.days_mask,
   timeOfDay: s.time_of_day,
   timezone: s.timezone,
+  onceDate: s.once_date,
 });
+
+/**
+ * A one-time schedule that has already fired: disabled, pointed at nothing.
+ *
+ * It is NOT deleted. The run ledger hangs off the row (ON DELETE CASCADE), and
+ * a job you set for 04:00 is precisely the one whose outcome you read at 09:00,
+ * so the record has to survive the firing. Deleting it is the user's call, and
+ * now has a button.
+ */
+export function spendSchedule(id: string): void {
+  getDb().prepare("UPDATE schedules SET next_fire_at = 0, enabled = 0 WHERE id = ?").run(id);
+}
+
+/** What a caller is told when a one-time date is behind the clock. */
+const PAST_ONCE = "that one-time date and time has already passed";
 
 export function getSchedule(id: string): Schedule | null {
   return (getDb().prepare("SELECT * FROM schedules WHERE id = ?").get(id) as Schedule) ?? null;
@@ -47,35 +63,43 @@ export function createSchedule(input: {
   catch_up_ms?: number;
   /** Fire this runbook's recipe instead of `prompt` and the config above. */
   runbook_id?: string | null;
+  /** 'YYYY-MM-DD' for a one-time schedule; '' (the default) for a weekly one. */
+  once_date?: string;
 }): Schedule {
   const now = Date.now();
   const id = nanoid();
+  const onceDate = input.once_date ?? "";
+  // A one-time schedule's mask is never read, but the column is NOT NULL and
+  // the row must stay convertible back to weekly, so an absent one lands as
+  // "every day" rather than as a value nextFireAt would later throw on.
+  const daysMask = Number.isInteger(input.days_mask) && input.days_mask > 0 && input.days_mask <= 127
+    ? input.days_mask
+    : (onceDate ? 127 : input.days_mask);
   // Throws on an unusable spec — better a 400 at creation than a schedule that
-  // silently never fires.
-  const next = nextFireAt(
-    { daysMask: input.days_mask, timeOfDay: input.time_of_day, timezone: input.timezone },
-    now
-  ).ms;
+  // silently never fires. Null means a one-time date already behind us, which
+  // is the same kind of mistake and gets the same treatment.
+  const next = nextFireAt({ daysMask, timeOfDay: input.time_of_day, timezone: input.timezone, onceDate }, now);
+  if (!next) throw new Error(PAST_ONCE);
   getDb()
     .prepare(
       `INSERT INTO schedules (id, project_id, name, prompt, days_mask, time_of_day, timezone, enabled,
-                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, next_fire_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, once_date, next_fire_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      id, input.project_id, input.name, input.prompt, input.days_mask, input.time_of_day, input.timezone,
+      id, input.project_id, input.name, input.prompt, daysMask, input.time_of_day, input.timezone,
       input.agent || "claude", input.permission_mode ?? null, input.send_context === false ? 0 : 1,
-      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, next, now, now
+      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, onceDate, next.ms, now, now
     );
   return getSchedule(id)!;
 }
 
-const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone"] as const;
+const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone", "once_date"] as const;
 
 export function updateSchedule(
   id: string,
   fields: Partial<Pick<Schedule, "name" | "prompt" | "days_mask" | "time_of_day" | "timezone" | "enabled"
-    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id">>
+    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id" | "once_date">>
 ): Schedule | null {
   const before = getSchedule(id);
   if (!before) return null;
@@ -98,9 +122,25 @@ export function updateSchedule(
       daysMask: fields.days_mask ?? before.days_mask,
       timeOfDay: fields.time_of_day ?? before.time_of_day,
       timezone: fields.timezone ?? before.timezone,
+      onceDate: fields.once_date ?? before.once_date,
     };
     // Throws on an unusable spec — this must happen BEFORE the UPDATE below.
-    setEntries.push(["next_fire_at", nextFireAt(mergedSpec, Date.now()).ms]);
+    const next = nextFireAt(mergedSpec, Date.now());
+    // A one-time date in the past. Refused rather than written, because both
+    // ways of reaching here are a user asking for something impossible: moving
+    // a job to a moment that has been and gone, or un-pausing one that already
+    // fired. Silently spending it again would report success and do nothing.
+    if (!next) throw new Error(PAST_ONCE);
+    setEntries.push(["next_fire_at", next.ms]);
+    // Re-arm a SPENT one-time whose date has just been moved forward. Without
+    // this, "check on it at 04:00" that already fired could be edited to
+    // tomorrow, report success, show the new time — and never run, because
+    // spendSchedule had left enabled at 0 and nothing in an ordinary date edit
+    // puts it back. A paused-but-unfired one-time is a different row
+    // (next_fire_at > 0) and is deliberately left paused; and an explicit
+    // `enabled` in the same call always wins, since that one the user meant.
+    const spent = !!before.once_date && !before.enabled && before.next_fire_at === 0;
+    if (spent && !("enabled" in fields)) setEntries.push(["enabled", 1]);
   }
 
   getDb()
@@ -111,8 +151,12 @@ export function updateSchedule(
 
 /** Recompute and persist next_fire_at from the spec. Also the boot revalidation. */
 export function refreshNextFire(schedule: Schedule, afterMs = Date.now()): Schedule {
-  const next = nextFireAt(specOf(schedule), afterMs).ms;
-  getDb().prepare("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?").run(next, Date.now(), schedule.id);
+  const next = nextFireAt(specOf(schedule), afterMs);
+  if (!next) {
+    spendSchedule(schedule.id);
+    return getSchedule(schedule.id)!;
+  }
+  getDb().prepare("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?").run(next.ms, Date.now(), schedule.id);
   return getSchedule(schedule.id)!;
 }
 
@@ -120,8 +164,13 @@ export function refreshNextFire(schedule: Schedule, afterMs = Date.now()): Sched
 export function advanceNextFire(scheduleId: string, pastMs: number): void {
   const s = getSchedule(scheduleId);
   if (!s) return;
-  const next = nextFireAt(specOf(s), pastMs).ms;
-  getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(next, scheduleId);
+  const next = nextFireAt(specOf(s), pastMs);
+  // No next occurrence: a one-time schedule whose slot we just adjudicated.
+  // This is the ONLY place a one-time is spent on the happy path, and it runs
+  // where the recurring case advances — before the launch — so a crash between
+  // here and the turn can't leave it re-firing every tick forever.
+  if (!next) return spendSchedule(scheduleId);
+  getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(next.ms, scheduleId);
 }
 
 export function deleteSchedule(id: string): void {

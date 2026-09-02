@@ -15,11 +15,18 @@ import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
 // full per-window breakdown (all the windows the provider reports, including
 // per-model weeks) with reset times and data freshness.
 //
+// One pill per agent that reports usage, driven entirely by the keys in the
+// response — a driver that implements planUsage() appears here with no client
+// edit. Only the pill's two headline numbers need per-provider knowledge, and
+// that is the id lists below; everything else, labels included, comes from the
+// driver.
+//
 // Polls GET /api/plan-usage once a minute while the tab is visible. Cheap on
-// purpose: the server answers from an instance-wide cache and only touches the
-// (aggressively rate-limited) provider usage API when its own fetch floor
-// allows — see lib/agents/claude/planUsage.ts. Hidden entirely when no agent
-// reports plan usage (API-key auth, feature off, nothing fetched yet).
+// purpose: the server answers from an instance-wide cache and only reads a
+// provider's usage when its own fetch floor allows — see
+// lib/agents/claude/planUsage.ts and lib/agents/codex/planUsage.ts. Hidden
+// entirely when no agent reports plan usage (API-key auth, feature off,
+// nothing fetched yet).
 
 const POLL_MS = 60_000;
 
@@ -115,11 +122,25 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
   );
 }
 
-// One pill per agent that reports plan usage. Usually that is one (nobody runs
-// two metered subscriptions in the same instance by accident), but an
-// Antigravity + Claude workspace meters two independent quotas and hiding
-// either would misreport how much room the next batch of turns has. Each pill
-// wears its agent's brand mark once there is more than one to tell apart.
+// Which window is "the session" and which is "the week", across providers.
+// The popover renders every window the agent reports and takes its labels from
+// the driver, but the PILL has room for two numbers and has to know which two.
+// Claude and Antigravity tag every window with `kind` directly; Codex's
+// app-server names its windows by rank instead of duration (`primary` /
+// `secondary`, the ~5h and weekly limits) and reports no kind at all, so these
+// id lists are `AgentPlanPill`'s fallback. A provider whose keys match neither
+// still gets a pill — the single worst-window percentage below — rather than
+// being dropped.
+const SESSION_IDS = ["five_hour", "primary"];
+const WEEK_IDS = ["seven_day", "secondary"];
+
+// One pill per agent that reports plan usage, in the order GET /api/plan-usage
+// lists them (driver registration order). Usually that is one (nobody runs two
+// metered subscriptions in the same instance by accident), but an Antigravity
+// + Claude workspace — or a Claude + ChatGPT one — meters two independent
+// quotas, and hiding either would misreport how much room the next batch of
+// turns has. Each pill wears its agent's brand mark once there is more than
+// one to tell apart.
 export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
   const map = usePlanUsage();
   const metered = Object.entries(map).filter(([, s]) => s.available && s.windows.length > 0);
@@ -136,12 +157,12 @@ export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
 function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label: string; snap: PlanUsageSnapshot; multi: boolean }) {
   const [open, setOpen] = useState(false);
 
-  // By kind rather than by id: every metered plan has a session window and a
-  // week window, but each provider spells them its own way ("five_hour",
-  // "gemini-5h"). The ids stay as the fallback for a driver that declares no
-  // kind (and for a snapshot cached before they existed).
-  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => w.id === "five_hour");
-  const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => w.id === "seven_day");
+  // By kind where the driver says so: every metered plan has a session window
+  // and a week window, but each provider spells them its own way ("five_hour",
+  // "gemini-5h"), and Codex's app-server reports no kind at all. The id lists
+  // above are the fallback, covering both providers' spellings.
+  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => SESSION_IDS.includes(w.id));
+  const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => WEEK_IDS.includes(w.id));
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
   // so its time-to-reset earns pill space where the week's doesn't — the
@@ -162,6 +183,7 @@ function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label
         title={`${who} plan usage: click for the breakdown`}
       >
         {multi && mark && <span className="pp-mark" aria-hidden>{mark()}</span>}
+        {multi && <span className="pp-who">{label.split(" ")[0]}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%

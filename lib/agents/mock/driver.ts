@@ -311,6 +311,19 @@ export const mockDriver: AgentDriver = {
   async summarizeProjectRecap(project: Project) {
     return { text: `Mock recap for ${project.name}: everything is fine.` };
   },
+  // "Refresh tag" reads a JSON plan back, so the mock has to emit one — canned
+  // text would parse as an empty plan and the e2e would only ever see the
+  // nothing-changed path. It rewords the FIRST member (whose id it lifts out of
+  // the digest it was handed) so the apply half, and the "Changed by agent"
+  // chip that half exists to raise, are both exercisable.
+  async planTagRefresh(project: Project, digest: string) {
+    const first = /^id: (\S+)$/m.exec(digest)?.[1];
+    const plan = {
+      description: `Mock tag refresh for ${project.name}.`,
+      tasks: first ? [{ id: first, description: "Mock refreshed brief." }] : [],
+    };
+    return { text: `<<<TAG_PLAN>>>\n${JSON.stringify(plan)}\n<<<END_TAG_PLAN>>>` };
+  },
 
   async authStatus(): Promise<AgentAuthStatus> {
     return { authenticated: true, method: "mock", email: MOCK_EMAIL, plan: MOCK_PLAN, error: null };

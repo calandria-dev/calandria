@@ -299,9 +299,14 @@ describe("mergeTask", () => {
     expect(fs.existsSync(path.join(repo, "feature.txt"))).toBe(false);
   });
 
-  it("falls back to the current branch when the base branch is missing", async () => {
+  // This used to fall back to the repo's CURRENT branch, which is how a task's
+  // work could land on an unrelated branch under a green "merged". A base that
+  // exists on the remote is a local branch by cut time now, so a miss here means
+  // the branch is genuinely nowhere and there is no second-guessing to do.
+  it("refuses when the base branch is missing, rather than landing on the checked-out one", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+    const mainTip = await git(repo, "rev-parse", "main");
 
     const res = await mergeTask({
       repoPath: repo,
@@ -310,9 +315,12 @@ describe("mergeTask", () => {
       baseBranch: "develop", // does not exist
       message: "land feature",
     });
-    expect(res.ok).toBe(true);
-    expect(res.targetBranch).toBe("main");
-    expect(read(repo, "feature.txt")).toBe("feature\n");
+    expect(res.ok).toBe(false);
+    expect(res.targetBranch).toBe("develop");
+    expect(res.error).toContain("base branch develop not found");
+    expect(res.error).toContain("main"); // names the branch it would have written to
+    expect(await git(repo, "rev-parse", "main")).toBe(mainTip);
+    expect(fs.existsSync(path.join(repo, "feature.txt"))).toBe(false);
   });
 });
 

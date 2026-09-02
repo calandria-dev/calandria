@@ -1,4 +1,4 @@
-import { serializeAgentEnv } from "./agentEnv";
+import { serializeAgentEnv, taskProvider } from "./agentEnv";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -342,6 +342,7 @@ export type TaskWithUsage = Task & {
   cache_creation_tokens: number;
   subagent_tokens: number;
   context_tokens: number;
+  context_window: number;
   context_pct: number;
   context_estimated: boolean;
   depends_on: string[];
@@ -379,6 +380,12 @@ const CONTEXT_ESTIMATED_SQL = (t: string) =>
  */
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
+  // One read for the whole list: the provider override a row inherits is the
+  // project's, with only the task's own agent_env laid over it per row. Rows
+  // where NEITHER carries one skip the describe entirely — that is almost every
+  // row on almost every instance, and this runs on every task-list load.
+  const project = getProject(projectId);
+  const anyOverride = !!project?.agent_env;
   const rows = db
     .prepare(
       `SELECT t.*,
@@ -432,13 +439,18 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     if (list) list.push(m.tag_id);
     else tagsByTask.set(m.task_id, [m.tag_id]);
   }
-  return rows.map((r) => ({
-    ...r,
-    context_pct: contextPct(r.context_tokens, r.agent, r.model),
-    context_estimated: r.context_estimated === 1,
-    depends_on: byTask.get(r.id) ?? [],
-    tag_ids: tagsByTask.get(r.id) ?? [],
-  }));
+  return rows.map((r) => {
+    const override = (anyOverride || !!r.agent_env) && taskProvider(project, r).kind !== "cloud";
+    const window = taskContextWindow(r.agent, r.model, override);
+    return {
+      ...r,
+      context_window: window,
+      context_pct: contextPct(r.context_tokens, window),
+      context_estimated: r.context_estimated === 1,
+      depends_on: byTask.get(r.id) ?? [],
+      tag_ids: tagsByTask.get(r.id) ?? [],
+    };
+  });
 }
 
 // The task ids a given task is blocked by.
@@ -1399,6 +1411,32 @@ export function updateTag(
 }
 
 /**
+ * Persist "Refresh tag with AI" job state in isolation — the tag analogue of
+ * setProjectRefresh, and separate from updateTag for the same reason: a
+ * background run and a concurrent rename must not clobber each other, and
+ * updateTag's fixed column list must never carry refresh_* state.
+ *
+ * It deliberately does NOT stamp `updated_at`. That column is the tag's own
+ * edit clock; a job ticking through three stages would otherwise report the
+ * tag as freshly edited three times for work the user didn't do.
+ */
+export function setTagRefresh(
+  id: string,
+  fields: Partial<Pick<Tag, "refresh_status" | "refresh_stage" | "refresh_summary" | "refresh_error" | "refresh_started_at">>,
+): Tag | undefined {
+  const cur = getTag(id);
+  if (!cur) return undefined;
+  const n = { ...cur, ...fields };
+  getDb()
+    .prepare(
+      `UPDATE tags SET refresh_status = ?, refresh_stage = ?, refresh_summary = ?, refresh_error = ?, refresh_started_at = ?
+       WHERE id = ?`
+    )
+    .run(n.refresh_status, n.refresh_stage, n.refresh_summary, n.refresh_error, n.refresh_started_at, id);
+  return getTag(id);
+}
+
+/**
  * Hard delete, like everything else. Members are UNTAGGED, never deleted —
  * task_tags is ON DELETE CASCADE from this side, and that is the whole policy:
  * a tag is a label over work, not the work. A member carrying other tags keeps
@@ -1970,16 +2008,31 @@ export function getTaskUsage(taskId: string): UsageTotals {
 
 // ---------- context-window occupancy ----------
 
-// Percent (0–100, one decimal) of the model's window that `tokens` occupies.
-// The window itself comes from lib/agents/capabilities.ts (modelContextWindow).
-function contextPct(tokens: number, agent: string | null | undefined, model: string | null | undefined): number {
-  const window = modelContextWindow(agent, model);
+// The window this task's turns actually run in, or 0 for "we don't know".
+//
+// The catalog is the agent VENDOR's line-up, so it can only size a model the
+// vendor ships. Point a project at a local server (lib/agentEnv.ts) and every
+// id becomes one the catalog has never heard of — and worse, the override
+// rewrites ANTHROPIC_MODEL and the opus/sonnet/haiku aliases, so a task whose
+// picker still reads `sonnet` is not running Sonnet and must not be sized like
+// it. contextWindowFor's narrowest-on-miss guess is the right answer for an
+// unrecognised CLOUD id (see lib/contextWindow.ts) and the wrong one here: it
+// would report a 32K local model as 200K and draw a 4% gauge on a window about
+// to overflow. So an override reports nothing and the gauge says so.
+function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, override: boolean): number {
+  return override ? 0 : modelContextWindow(agent, model);
+}
+
+// Percent (0–100, one decimal) of that window `tokens` occupies. 0 when the
+// window is unknown — the UI reads context_window === 0 and shows the token
+// count without a percentage rather than an authoritative-looking 0%.
+function contextPct(tokens: number, window: number): number {
   return window > 0 ? Math.round((tokens / window) * 1000) / 10 : 0;
 }
 
 export interface TaskContext {
   context_tokens: number; // input-side tokens of the latest main-session request ≈ context sent to the model
-  context_window: number; // the model's window (tokens)
+  context_window: number; // the model's window (tokens); 0 = unknown (see taskContextWindow)
   context_pct: number; // context_tokens as a percent (0–100) of the window
   context_estimated: boolean; // true when derived from a usage report rather than measured (see below)
 }
@@ -2015,10 +2068,12 @@ export function getTaskContext(taskId: string): TaskContext {
     )
     .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
+  const override = taskProvider(task ? getProject(task.project_id) : null, task).kind !== "cloud";
+  const context_window = taskContextWindow(task?.agent, task?.model, override);
   return {
     context_tokens,
-    context_window: modelContextWindow(task?.agent, task?.model),
-    context_pct: contextPct(context_tokens, task?.agent, task?.model),
+    context_window,
+    context_pct: contextPct(context_tokens, context_window),
     context_estimated: row?.context_estimated === 1,
   };
 }

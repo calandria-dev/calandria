@@ -123,6 +123,7 @@ const JOBS: Record<string, { label: string; settings: string }> = {
   summarizeProjectRecap: { label: "Project recaps", settings: "run" },
   summarizeTranscript: { label: "Session summaries (/clear)", settings: "general" },
   draftProjectContext: { label: "Context drafts (Refresh with AI)", settings: "run" },
+  planTagRefresh: { label: "Tag refreshes (Refresh tag)", settings: "run" },
   verify: { label: "Agent verify", settings: "agents" },
 };
 

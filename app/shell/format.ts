@@ -1,6 +1,7 @@
 // Pure formatting + derivation helpers shared across the shell modules.
 import type { AskQuestion, AskAnswers } from "@/lib/types";
 import { contextWindowFor } from "@/lib/contextWindow";
+import type { AgentProvider } from "@/lib/agentEnv";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";
 
@@ -104,7 +105,18 @@ export interface CostDisplay {
   approx: boolean; // prefix it with ~
   note: string;    // tooltip clause explaining what the figure means ("" = a plain billed charge)
 }
-export function costDisplay(agent: AgentInfo | undefined): CostDisplay {
+export function costDisplay(agent: AgentInfo | undefined, provider?: AgentProvider): CostDisplay {
+  // A turn against a provider override (a local model server, or any other
+  // endpoint — lib/agentEnv.ts) has no price the vendor charged. The runner
+  // records cost_usd as 0 for a local server and NULL for a custom base URL
+  // (lib/runner.ts, off providerPricing), and neither reads honestly here:
+  // "$0.00" on screen reads as a measured price rather than an inapplicable
+  // one. The API-price equivalent the catalog would quote is worse still: it is
+  // the list price of a model that didn't run. So there is no figure, and the
+  // tooltip says why.
+  if (provider && provider.kind !== "cloud") {
+    return { show: false, approx: false, note: `ran on ${provider.host}, not the vendor's API — no cost to report` };
+  }
   const caps = agent?.capabilities;
   const estimated = caps?.costIsEstimated === true;
   const show = caps?.reportsCostUsd !== false || estimated;
@@ -146,6 +158,10 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
   }
   if (cost.show && costUsd > 0) {
     lines.push(`${cost.approx ? "~" : ""}${fmtCost(costUsd)}${cost.note ? ` ${cost.note}` : " billed"}`);
+  } else if (!cost.show && cost.note) {
+    // No figure to caveat, so the caveat IS the line — otherwise a task on a
+    // local endpoint shows tokens with no explanation of the missing price.
+    lines.push(cost.note);
   }
   // Said whether or not `cost.show` is on: the reason a figure is missing is
   // more useful than the figure would have been.
@@ -168,8 +184,13 @@ export { DEFAULT_CONTEXT_WINDOW } from "@/lib/contextWindow";
 export function contextWindowOf(model: string | null | undefined, caps?: AgentCapabilities): number {
   return contextWindowFor(caps?.models ?? [], model);
 }
-export function contextPct(tokens: number, model: string | null | undefined, caps?: AgentCapabilities): number {
-  return Math.round((tokens / contextWindowOf(model, caps)) * 1000) / 10;
+// Percent of a KNOWN window. The window is passed in rather than looked up
+// because the server already resolved it onto the row (TaskRow.context_window),
+// and it is the only one that can: a local-model override makes the catalog
+// inapplicable, which the catalog itself has no way to notice. 0 = unknown,
+// and an unknown window has no percentage — see lib/store.ts taskContextWindow.
+export function contextPct(tokens: number, window: number): number {
+  return window > 0 ? Math.round((tokens / window) * 1000) / 10 : 0;
 }
 
 // Friendly name for a resolved model id — the badge that answers "which model
@@ -380,24 +401,47 @@ export const isTerminal = (t: { status: TaskRow["status"] }) => t.status === "do
 // filing order there — "Auth" shouldn't sort after "auth migration".
 export const alphabetical = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" });
 
-// The tasks a "Blocked by" picker may offer. A terminal task can't block
-// anything by definition, so it isn't a choice — but one ALREADY selected stays
-// listed even after it finishes, or an edge drawn while the blocker was live
-// would become invisible and impossible to remove.
+// The tasks a "Blocked by" picker may offer. Two kinds are left out, because
+// offering them is offering an edge that means nothing yet: a TERMINAL task
+// can't block anything by definition, and an unreviewed SUGGESTION isn't on the
+// board — picking one would wait on work nobody has agreed to do.
+//
+// Both have the same exception, and it is the whole point of the exception: one
+// ALREADY selected stays listed. An edge drawn while the blocker was live must
+// survive it finishing, and an edge an agent drew onto a suggestion
+// (`update_task`'s `blocked_by`, which never checks `suggested`) has to be
+// visible somewhere — the picker is the only screen that can untick it, and a
+// suggestion DOES block server-side (issue #46).
 export const blockerCandidates = (candidates: TaskRow[], selected: string[]): TaskRow[] =>
   candidates
-    .filter((c) => !isTerminal(c) || selected.includes(c.id))
+    .filter((c) => (!isTerminal(c) && !c.suggested) || selected.includes(c.id))
     .sort((a, b) => alphabetical(a.title, b.title));
 
-// The titles of a task's unfinished blockers (dependencies not yet 'done'). A
-// task with any of these is "blocked" and can't be started until they complete.
-// A cancelled dependency doesn't block — it's terminal and will never finish,
-// so waiting on it would deadlock the dependent task forever.
+// One rule for "does this dependency still gate a start", shared by the chip
+// and by the two dialogs' Start gates. It mirrors `blocks()` in lib/autoStart.ts
+// — the predicate that actually decides — on both of its edges:
+//
+//   - a terminal blocker doesn't block. It will never finish, so waiting on it
+//     would deadlock the dependent forever.
+//   - a ref that resolves to NOTHING doesn't block either. `blocks()` returns
+//     false for a missing task, and the client disagreeing meant a deleted or
+//     not-yet-loaded blocker disabled a Start the server would have allowed.
+//
+// A SUGGESTED blocker does block, agreeing with the server. It is drawn as one
+// (`blockerCandidates` above lists it, `blockerTitles` names it as suggested)
+// rather than silently ignored.
+export const isBlocking = (b: TaskRow | undefined): b is TaskRow => !!b && !isTerminal(b);
+
+// The titles of a task's unfinished blockers. A task with any of these is
+// "blocked" and can't be started until they clear. A blocker still sitting in
+// the Suggested tray is named as such: it blocks like any other, but it clears
+// by being accepted, dismissed or unticked rather than by being worked, and the
+// chip is where a user finds out that's what they're waiting on.
 export const blockerTitles = (t: TaskRow, byId: Map<string, TaskRow>): string[] =>
   (t.depends_on ?? [])
     .map((id) => byId.get(id))
-    .filter((b): b is TaskRow => !!b && !isTerminal(b))
-    .map((b) => b.title);
+    .filter(isBlocking)
+    .map((b) => (b.suggested ? `${b.title} (suggested)` : b.title));
 
 // add/del/ctx class for a diff line's sign — shared by the peek and full views.
 export const diffCls = (sign: "+" | "-" | " ") => (sign === "+" ? "add" : sign === "-" ? "del" : "ctx");

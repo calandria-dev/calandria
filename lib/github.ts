@@ -653,6 +653,8 @@ interface RollupEntry {
   detailsUrl?: string;
   targetUrl?: string;
   workflowName?: string;
+  /** ISO stamp the entry began. Only used to pick the latest of a repeated name. */
+  startedAt?: string;
 }
 
 // The one verdict an entry carries, whichever shape it is.
@@ -663,6 +665,57 @@ interface RollupEntry {
 function verdictOf(e: RollupEntry): string {
   const raw = (e.status !== undefined ? (e.status === "COMPLETED" ? e.conclusion : "") : e.state) || "";
   return raw.toUpperCase();
+}
+
+// When did this entry start? Unstamped or unparseable reads as the beginning of
+// time, so it can only ever lose to an entry that carries a real stamp.
+function startedMs(e: RollupEntry): number {
+  const t = e.startedAt ? Date.parse(e.startedAt) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Keep only the LATEST entry per check, dropping superseded ones. Pure —
+ * exported for tests.
+ *
+ * statusCheckRollup is every check run recorded against the head commit, not
+ * the current verdict per job. A `gh run rerun --failed` and a run cancelled by
+ * a concurrency group both leave their dead entries in the array, on a head SHA
+ * that never changes — so without this a PR that has gone green keeps reporting
+ * the old FAILURE or CANCELLED, and no amount of re-reading clears it, because
+ * there is nothing newer to read. That is the whole bug: the poller was working
+ * and the collapse was wrong. `gh pr checks` shows such a PR green because it
+ * dedupes first; this is the same rule, so the chip and the CLI cannot disagree
+ * about the same PR.
+ *
+ * The key is gh's too: a legacy status context by its `context`, a check run by
+ * name AND workflow, since a reusable workflow re-reports the same job names
+ * under its caller ("Audit (npm)" and "test / Audit (npm)" are two real checks,
+ * not one repeated). An entry with NO identity is passed through rather than
+ * collapsed — it cannot be shown to be a duplicate of anything.
+ *
+ * Order is first appearance in gh's array, and a tie or a missing stamp keeps
+ * the earlier entry, so an unchanged rollup serializes identically into
+ * tasks.pr_failing and `changed()` in lib/prState.ts stays quiet.
+ */
+export function dedupeRollup<T extends RollupEntry>(entries: T[]): T[] {
+  const seen = new Map<string, number>();
+  const out: T[] = [];
+  for (const e of entries) {
+    const key = e.context ? `ctx:${e.context}` : e.name ? `run:${e.name}\u0000${e.workflowName || ""}` : "";
+    if (!key) {
+      out.push(e);
+      continue;
+    }
+    const prev = seen.get(key);
+    if (prev === undefined) {
+      seen.set(key, out.length);
+      out.push(e);
+    } else if (startedMs(e) > startedMs(out[prev])) {
+      out[prev] = e;
+    }
+  }
+  return out;
 }
 
 // A check run only has a verdict once it has COMPLETED; anything else (QUEUED,
@@ -683,7 +736,7 @@ export function rollupChecks(entries: RollupEntry[] | null | undefined): PrCheck
   if (!entries || entries.length === 0) return "none";
   let pending = false;
   let failing = false;
-  for (const e of entries) {
+  for (const e of dedupeRollup(entries)) {
     const v = verdictOf(e);
     if (!v || v === "PENDING" || v === "EXPECTED") pending = true;
     else if (CHECK_FAIL.has(v)) failing = true;
@@ -702,13 +755,14 @@ const MAX_FAILING = 8;
 
 /**
  * The red entries behind a "failing" rollup, in gh's order. Pure — exported for
- * tests, and shares verdictOf() with rollupChecks() so the two can never
- * disagree about which entries are the red ones.
+ * tests, and shares both verdictOf() and dedupeRollup() with rollupChecks() so
+ * the two can never disagree about which entries are the red ones, or about
+ * which of a repeated check's entries is the live one.
  */
 export function failingChecks(entries: RollupEntry[] | null | undefined): PrFailingCheck[] {
   if (!entries) return [];
   const out: PrFailingCheck[] = [];
-  for (const e of entries) {
+  for (const e of dedupeRollup(entries)) {
     if (out.length >= MAX_FAILING) break;
     const v = verdictOf(e);
     if (!CHECK_FAIL.has(v)) continue;

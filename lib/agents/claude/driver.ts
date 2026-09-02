@@ -23,7 +23,7 @@ import type {
   PermissionOutcome,
   PermissionRequest,
 } from "../../types";
-import type { AgentDriver, OneShotResult, TurnHooks } from "../types";
+import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
@@ -49,7 +49,7 @@ import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
-import { waitForAnswer } from "../../asks";
+import { waitForAnswer, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "../../asks";
 import {
   allowedByRules,
   blockedReason,
@@ -65,12 +65,14 @@ import {
   DENIED_UNATTENDED,
 } from "../../permissions";
 import {
+  AGENT_TOOL_TIMEOUT_MS,
   BACKGROUND_LINGER_ENABLED,
   BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
+import { guardToolHandler } from "../../agentToolGuard.mjs";
 import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
@@ -84,6 +86,7 @@ import {
   resultText,
   clip,
   clipKeepTail,
+  buildTagRefreshPrompt,
   type ResultKind,
 } from "../shared";
 import {
@@ -267,6 +270,25 @@ const TEXT_ONE_SHOT = {
   maxTurns: 1,
 };
 
+/**
+ * Every tool on the server above goes through lib/agentToolGuard.mjs, applied to
+ * the ARRAY rather than written into each handler. Two reasons it is done here
+ * and not fourteen times below: a tool added later cannot forget to be loud, and
+ * there is nowhere for the two ends of the seam to drift apart (the stdio bridge
+ * wraps its own registrations the same way, with the same module).
+ *
+ * The guard only ever replaces an answer that isn't one — a throw, a call that
+ * ran past its bound, or the empty result this whole thing is named for. A
+ * handler that returns normally is passed through untouched, `isError` included.
+ *
+ * The generic keeps each tool's own argument types: `never` parameters are
+ * assignable from any handler's, so this constraint accepts the heterogeneous
+ * array without widening any tool to `any`.
+ */
+function guardTools<T extends { name: string; handler: (args: never, extra: never) => Promise<unknown> }>(tools: T[]): T[] {
+  return tools.map((t) => ({ ...t, handler: guardToolHandler(t.name, t.handler, { timeoutMs: AGENT_TOOL_TIMEOUT_MS }) }) as T);
+}
+
 function calandriaServer(
   project: Project,
   task: Task,
@@ -286,7 +308,7 @@ function calandriaServer(
   return createSdkMcpServer({
     name: "calandria",
     version: "1.0.0",
-    tools: [
+    tools: guardTools([
       tool(
         EXPOSE_SERVICE.name,
         EXPOSE_SERVICE.description,
@@ -551,7 +573,7 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
-    ],
+    ]),
   });
 }
 
@@ -1090,7 +1112,12 @@ async function* runTurn(
                   reason = formatAnswers(questions, answers);
                 } catch {
                   // Turn torn down (Stop / disconnect) before an answer arrived.
-                  reason = "The user dismissed the question without answering.";
+                  // Settle the card here the way canUseTool's settle() does on
+                  // its abort path: an ask with neither answers nor a dismissal
+                  // renders live option buttons forever, indistinguishable from
+                  // a question somebody is actually waiting on.
+                  queue.push({ type: "ask_dismissed", id, dismissal: { reason: "interrupted", note: ASK_INTERRUPTED_NOTE } });
+                  reason = ASK_DISMISSED_REPLY;
                 }
                 return {
                   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
@@ -1371,7 +1398,12 @@ async function* runTurn(
  * Summarize a transcript into a concise handoff note for the /clear flow.
  * One-shot, genuinely no tools — just text in, summary out (see TEXT_ONE_SHOT).
  */
-async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+// The tier setting the caller resolved, in the shape query() wants. Omitted when
+// unset, so a one-shot keeps inheriting Claude Code's own configured default —
+// the behavior every one-shot had before the setting existed.
+const oneShotModel = (opts?: OneShotOptions) => (opts?.model ? { model: opts.model } : {});
+
+async function summarizeTranscript(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Summarize the following Claude Code session into a concise handoff note for a fresh session ` +
@@ -1381,6 +1413,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
     options: {
       cwd: project.repo_path || process.cwd(),
       ...TEXT_ONE_SHOT,
+      ...oneShotModel(opts),
     },
   });
 
@@ -1429,7 +1462,7 @@ const DRAFT_SETTING_SOURCES: SettingSource[] = ["user", "project"];
  * context and recent git activity. Returns markdown the user reviews before
  * saving — we deliberately don't persist here.
  */
-async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+async function draftProjectContext(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `You are refreshing the saved "project context" for the project "${project.name}". ` +
@@ -1457,6 +1490,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
     options: {
       cwd: project.repo_path || process.cwd(),
       ...ONE_SHOT_BASE,
+      ...oneShotModel(opts),
       settingSources: DRAFT_SETTING_SOURCES,
       tools: DRAFT_TOOLS,
       maxTurns: 40,
@@ -1483,13 +1517,48 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
 }
 
 /**
+ * Check a tag's plan against the code ("Refresh tag"). Same read-only shape as
+ * draftProjectContext — Read/Grep/Glob in the project's own checkout, no Bash —
+ * because this run's whole output is a JSON plan the SERVER applies. The agent
+ * deciding a task is stale and the app writing that decision down are kept
+ * apart on purpose: it is what makes every change land as a revertable agent
+ * edit instead of an unattended write.
+ *
+ * Returns the raw text; the caller parses it with parseTagPlan().
+ */
+async function planTagRefresh(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
+  const response = query({
+    prompt: buildTagRefreshPrompt(project, digest),
+    options: {
+      cwd: project.repo_path || process.cwd(),
+      ...ONE_SHOT_BASE,
+      ...oneShotModel(opts),
+      settingSources: DRAFT_SETTING_SOURCES,
+      tools: DRAFT_TOOLS,
+      maxTurns: 40,
+    },
+  });
+
+  let out = "";
+  let usage: TurnUsage | undefined;
+  for await (const message of response) {
+    if (message.type === "assistant") {
+      for (const block of message.message.content) {
+        if (block.type === "text") out += block.text;
+      }
+    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+  }
+  return { text: out, usage };
+}
+
+/**
  * Generate a short "where you left off" recap for a project, shown when the
  * user returns after time away. One-shot, genuinely no tools (see
  * TEXT_ONE_SHOT). `digest` is the assembled recent activity (task summaries,
  * statuses, recent commits). Describes what happened only — deliberately no
  * next-step suggestions.
  */
-async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+async function summarizeProjectRecap(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const response = query({
     prompt:
       `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns ` +
@@ -1500,6 +1569,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
     options: {
       cwd: project.repo_path || process.cwd(),
       ...TEXT_ONE_SHOT,
+      ...oneShotModel(opts),
     },
   });
 
@@ -1545,6 +1615,7 @@ export const claudeDriver: AgentDriver = {
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,
+  planTagRefresh,
   // Auth delegates to lib/claude-auth.ts (the headless `claude auth login`
   // flow); the interface shapes were modeled on it, so this is a direct map.
   authStatus: claudeStatus,

@@ -14,36 +14,56 @@ import { configuredProvider, claudeDefaultModels } from "./provider";
 // ("opus" → the current Opus), a `[1m]` variant (the 1M-context beta of that
 // family), or a full model id for a pinned older version. The internal picker
 // ids the CLI's own /model menu uses ("opus48", "sonnet46") are NOT accepted by
-// --model — it 404s on them — so pins are spelled as full ids. Labels carry the
-// version number on purpose: "Opus" alone can't tell you whether a turn ran on
-// Opus 5 or 4.8, which is the whole question when a family alias moves.
+// --model — it 404s on them — so pins are spelled as full ids.
+//
+// A PIN'S label names its version, because it pins one. An ALIAS's must not,
+// for the same reason `vertexModels()` below strips it (f82f66d): an alias is
+// resolved by the INSTALLED CLI at turn time, so any version in the label is a
+// guess about what that CLI will pick. The guess was measurably wrong — on CLI
+// 2.1.257 `fable` resolves to `claude-fable-5-1` while this row read "Fable 5",
+// and every alias breaks the same way the next time a family moves. So aliases
+// read "(latest)" and the version is reported where it is KNOWN rather than
+// guessed: `modelLabel()` parses it out of the id a turn actually billed, so
+// the picker offers "Fable (latest)" and the badge says "Fable 5.1".
+//
+// The resolution IS readable locally — `claude --model <alias> --output-format
+// stream-json` prints it on the `init` line before any API call, measured
+// against a dead ANTHROPIC_BASE_URL — but it costs a ~4s CLI spawn per value,
+// and this descriptor is read synchronously per request (modelContextWindow()
+// runs inside getTaskContext()). Showing the resolved id here wants a cached,
+// CLI-version-keyed background probe; that is a separate piece of work.
 //
 // contextWindow is the window Claude Code actually runs, not the model's API
 // maximum: a bare family alias runs the standard 200k window and the `[1m]`
-// variant opts into the 1M beta. Fable is the exception — it's 1M natively
-// (`fable[1m]` resolves to plain claude-fable-5), so there's no variant to list.
+// variant opts into the 1M beta. It is the same kind of guess as the label was,
+// and the probe above is what would settle it. Fable is the exception — it's 1M
+// natively (measured: a `fable` turn reports contextWindow 1000000), so there's
+// no variant to list; `fable[1m]` is accepted and resolves to the `[1m]`
+// spelling of the same model, but buys nothing.
 const K200 = 200_000;
 const M1 = 1_000_000;
 
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   models: [
-    // Pinned ahead of the alias because the alias can't reach it: `fable`
-    // resolves through the installed CLI's own catalog, and a CLI that predates
-    // 5.1 (or one with `DISABLE_AUTOUPDATER` set) still resolves it to
-    // `claude-fable-5` — measured, `--model fable` billed `claude-fable-5` on
-    // 2.1.252. The pinned id is the way to run 5.1 without waiting for a CLI
-    // bump. Such an id makes the CLI log `[claude-code:unrecognized_model]` and
-    // then pass it through unchanged, so the turn runs and bills as
-    // `claude-fable-5-1`; a genuinely bogus id (probed `claude-fable-6`) errors
-    // instead, which is what makes that a pass-through rather than a fallback.
+    // Pinned ahead of the alias because the alias MAY not reach it, and you
+    // can't tell by looking: `fable` resolves through the installed CLI's own
+    // catalog, so a CLI that predates 5.1 resolves it to `claude-fable-5`
+    // (measured: `--model fable` billed `claude-fable-5` on 2.1.252) while a
+    // newer one resolves it to `claude-fable-5-1` (measured on 2.1.257). The
+    // pin is the way to say which you meant either way — and it is the reason
+    // the alias row below can't be labelled with a version. Such an id makes
+    // the CLI log `[claude-code:unrecognized_model]` and then pass it through
+    // unchanged, so the turn runs and bills as `claude-fable-5-1`; a genuinely
+    // bogus id (probed `claude-fable-6`) errors instead, which is what makes
+    // that a pass-through rather than a fallback.
     { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
-    { value: "fable", label: "Fable 5", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
-    { value: "opus", label: "Opus 5", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
-    { value: "sonnet", label: "Sonnet 5", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
-    { value: "haiku", label: "Haiku 4.5", sub: "fastest, lowest cost", contextWindow: K200, group: "Latest" },
+    { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
+    { value: "opus", label: "Opus (latest)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
+    { value: "sonnet", label: "Sonnet (latest)", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
+    { value: "haiku", label: "Haiku (latest)", sub: "fastest, lowest cost", contextWindow: K200, group: "Latest" },
     { value: "opusplan", label: "Opus Plan Mode", sub: "Opus while planning, Sonnet after", contextWindow: K200, group: "Latest" },
-    { value: "opus[1m]", label: "Opus 5 (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
-    { value: "sonnet[1m]", label: "Sonnet 5 (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
+    { value: "opus[1m]", label: "Opus (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
+    { value: "sonnet[1m]", label: "Sonnet (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
     { value: "opusplan[1m]", label: "Opus Plan Mode (1M)", sub: "plan on Opus, run on Sonnet 1M", contextWindow: M1, group: "1M context" },
     { value: "claude-opus-4-8", label: "Opus 4.8", sub: "previous Opus", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-4-8[1m]", label: "Opus 4.8 (1M)", sub: "previous Opus, 1M context", contextWindow: M1, group: "Pinned versions" },
@@ -205,17 +225,19 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     opusplan: mapped.sonnet,
     "opusplan[1m]": mapped.sonnet,
   };
-  // An alias's label must not claim a version. "Opus 5" is a guess about where
-  // ANTHROPIC_DEFAULT_OPUS_MODEL points, and it's wrong the moment an instance
-  // maps opus at 4.8; the version now lives in the subtitle, which is measured.
-  // (This is f82f66d's relabel, applied only here — the pinned rows below DO
-  // name a version, correctly, because they pin one.)
+  // An alias's label must not claim a version — the rule f82f66d introduced
+  // here, now applied to the default catalog above as well, since a
+  // subscription alias is resolved by the installed CLI for the same reason a
+  // Vertex one is resolved by ANTHROPIC_DEFAULT_*_MODEL. What's different HERE
+  // is that we can NAME the resolution: it's an env mapping we can read, so
+  // "(provider default)" replaces "(latest)" and the measured id goes in the
+  // subtitle. Only the rows Vertex spells differently are listed; the `[1m]`
+  // ones already read "Opus (1M)" / "Sonnet (1M)" in the default catalog, and
+  // restating them here would be a second copy free to drift.
   const alias: Record<string, string> = {
     opus: "Opus (provider default)",
     sonnet: "Sonnet (provider default)",
     haiku: "Haiku (provider default)",
-    "opus[1m]": "Opus (1M)",
-    "sonnet[1m]": "Sonnet (1M)",
   };
   return CLAUDE_CAPABILITIES.models.filter((m) => !isFable(m.value)).map((m) => {
     const base = family[m.value];

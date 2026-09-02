@@ -626,6 +626,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .dep-row input{flex:0 0 auto;}
 .dep-row .dep-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dep-row .dep-status{font-family:var(--mono);font-size:10px;color:var(--ink-3);flex:0 0 auto;}
+.dep-row .dep-sugg{font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line-strong);border-radius:999px;padding:1px 6px;flex:0 0 auto;}
 /* the "Start when unblocked" opt-in shown under the dep list once blockers are picked */
 .dep-autostart{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 .dep-autostart input{flex:0 0 auto;}
@@ -835,6 +836,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* The agent's brand mark, shown only when two agents' meters share the bar. */
 .plan-pill .pp-mark{display:inline-flex;align-items:center;}
 .plan-pill .pp-mark svg{width:11px;height:11px;}
+/* only rendered when a second agent reports usage, so the two pills say who */
+.plan-pill .pp-who{opacity:.6;text-transform:uppercase;}
 .plan-pill .pp-left{opacity:.7;}
 .plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
 .plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
@@ -1383,9 +1386,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* ---------------- AskUserQuestion card ---------------- */
 .ask{border:1px solid var(--accent-soft);border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
-.ask.answered{border-color:var(--line-2);opacity:.92;}
+.ask.answered,.ask.dismissed{border-color:var(--line-2);opacity:.92;}
 .ask-head{display:flex;align-items:center;gap:7px;padding:9px 13px;font-size:11px;font-weight:700;letter-spacing:.02em;color:var(--accent-ink);background:var(--accent-soft);border-bottom:1px solid var(--accent-soft);}
-.ask.answered .ask-head{color:var(--ink-3);background:var(--panel-2);}
+.ask.answered .ask-head,.ask.dismissed .ask-head{color:var(--ink-3);background:var(--panel-2);}
 .ask-head svg{width:14px;height:14px;}
 .ask-q{padding:12px 13px;border-top:1px solid var(--line-2);}
 .ask-q:first-of-type{border-top:none;}
@@ -1403,6 +1406,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ask-other:focus{outline:none;border-color:var(--accent);}
 .ask-foot{display:flex;justify-content:flex-end;padding:11px 13px;border-top:1px solid var(--line-2);}
 .ask-picked{font-size:12.5px;color:var(--ink-2);font-weight:500;}
+.ask-note{padding:11px 13px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-3);}
 
 /* ---------------- tool permission card (the canUseTool gate) ---------------- */
 .perm{border:1px solid var(--amber,var(--line-2));border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
@@ -1601,6 +1605,16 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
 .comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;}
 .comp-area textarea::placeholder{color:var(--ink-4);}
+/* Empty box: the placeholder is the only text in it, so keep it on the one line
+   the box is (see autosize in Composer.tsx) rather than letting it wrap into a
+   second line the box doesn't have and a scrollbar nobody can use. The
+   placeholders are written to fit that line; this is the guarantee for the ones
+   that can't be (a long agent label, a hand-narrowed rail). No text-overflow:
+   Chromium ignores it on a textarea placeholder. Dropped the moment there's a
+   value, so typed text wraps normally. Named "blank" rather than "empty":
+   .empty above is the empty-STATE panel, and its text-align:center reached the
+   textarea's placeholder through the shared class name. */
+.comp-area textarea.blank{white-space:nowrap;overflow:hidden;}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
 .send:disabled{opacity:.4;cursor:default;filter:none;}
@@ -2474,6 +2488,17 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
 .gs-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));transition:width .2s;}
 .gs-desc{font-size:12px;color:var(--ink-2);white-space:pre-wrap;}
+/* The "Refresh tag" job band: an indeterminate sweep while the agent reads the
+   repo, then the one-line report of what it changed. Indeterminate because the
+   long phase has no measurable fraction — see TagStrip.tsx. */
+.gs-job{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink-2);}
+.gs-job.err{color:var(--danger,var(--ink-2));}
+.gs-job-sum{flex:1;min-width:0;white-space:pre-wrap;}
+.gs-job-stage{flex:1;min-width:0;}
+.gs-job-bar{flex:0 0 72px;height:4px;margin-top:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.gs-job-bar>span{display:block;width:40%;height:100%;border-radius:999px;background:var(--gc,var(--accent));animation:gs-job-sweep 1.1s ease-in-out infinite;}
+@keyframes gs-job-sweep{0%{transform:translateX(-100%);}100%{transform:translateX(250%);}}
+@media (prefers-reduced-motion:reduce){.gs-job-bar>span{animation:none;width:100%;opacity:.55;}}
 .gs-origin{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;font-size:11.5px;color:var(--ink-3);background:none;border:none;padding:0;cursor:pointer;text-align:left;}
 .gs-origin:hover{color:var(--accent);}
 .gs-origin svg{width:12px;height:12px;flex:0 0 auto;}

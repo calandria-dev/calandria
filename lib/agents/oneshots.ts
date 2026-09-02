@@ -19,12 +19,48 @@
 import { getDriver, listDrivers, DEFAULT_AGENT } from "./registry";
 import { resolveConnectedAgent } from "./connections";
 import { addInternalUsage, getSetting } from "../store";
-import type { AgentDriver, OneShotResult } from "./types";
+import type { AgentDriver, OneShotOptions, OneShotResult } from "./types";
 import type { Project, Task } from "../types";
 import { backgroundJobsEnabled } from "../backgroundJobs";
 
 // The one-shot helper names on AgentDriver, all optional.
-type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap";
+type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "planTagRefresh";
+
+/**
+ * Which model a one-shot runs on, in two tiers rather than one knob per job.
+ *
+ * The jobs really do split by difficulty, and the split is visible in the
+ * drivers themselves: the LIGHT ones are text in → text out, no tools, one turn
+ * (Claude's TEXT_ONE_SHOT, Codex's ONESHOT_MAX_ITEMS_TEXT = 20), while the
+ * HEAVY one explores the repo read-only over as many as 40 / 120 items to write
+ * a project brief. Condensing a transcript is what a small model is for;
+ * reading an unfamiliar codebase accurately is not.
+ *
+ * Two tiers, not three-and-a-picker-per-job: a per-job knob would be four
+ * settings that almost everyone sets to two values.
+ */
+export type OneShotTier = "light" | "heavy";
+
+const JOB_TIER: Record<OneShotKey, OneShotTier> = {
+  summarizeTranscript: "light",
+  summarizeProjectRecap: "light",
+  draftProjectContext: "heavy",
+  planTagRefresh: "heavy",
+};
+
+/**
+ * The tier settings are AGENT-SCOPED ("job_model_light:<agent>"), exactly like
+ * `default_model:<agent>` and for the same reason: a model id names one
+ * provider's catalog. It's scoped to the agent that ACTUALLY runs the job, so a
+ * Codex task's /clear note reads the Codex key even while recaps run on Claude.
+ *
+ * Unset is the default and means what the app did before this setting existed:
+ * pass no model and inherit the driver's own (Claude Code's configured default,
+ * or the codex CLI's).
+ */
+export function oneShotModel(agent: string, job: OneShotKey): string | null {
+  return getSetting(`job_model_${JOB_TIER[job]}:${agent}`);
+}
 
 export interface UtilityAgent {
   /** The agent that will actually run project-scoped one-shots; null when NOTHING is connected. */
@@ -91,7 +127,7 @@ async function run<K extends OneShotKey>(
   job: K,
   requested: string,
   preferred: () => AgentDriver,
-  invoke: (impl: NonNullable<AgentDriver[K]>) => Promise<OneShotResult>,
+  invoke: (impl: NonNullable<AgentDriver[K]>, opts: OneShotOptions) => Promise<OneShotResult>,
   scope: { project_id?: string; task_id?: string } = {},
   unattended = false,
 ): Promise<string> {
@@ -103,7 +139,10 @@ async function run<K extends OneShotKey>(
   try {
     const driver = resolveFor(preferred(), job);
     agent = driver.id;
-    const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>);
+    // Read the tier setting off the RESOLVED driver, not the requested one:
+    // when a fallback kicks in, the job runs on another provider whose catalog
+    // the requested agent's model id doesn't belong to.
+    const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>, { model: oneShotModel(agent, job) });
     // Keep older third-party/test drivers from breaking at runtime while the
     // TypeScript contract moves them to OneShotResult.
     const result: OneShotResult = typeof raw === "string" ? { text: raw } : raw;
@@ -135,7 +174,7 @@ async function run<K extends OneShotKey>(
 /** /clear handoff note — TASK-scoped (the task's agent, else the utility agent). */
 export async function summarizeTranscript(task: Task, transcript: string, project: Project): Promise<string> {
   const own = getDriver(task.agent);
-  return run("summarizeTranscript", own.id, () => own, (impl) => impl(transcript, project), {
+  return run("summarizeTranscript", own.id, () => own, (impl, opts) => impl(transcript, project, opts), {
     project_id: project.id,
     task_id: task.id,
   });
@@ -143,7 +182,20 @@ export async function summarizeTranscript(task: Task, transcript: string, projec
 
 /** Project-context draft ("Refresh with AI") — PROJECT-scoped (utility agent). */
 export async function draftProjectContext(project: Project, digest: string): Promise<string> {
-  return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest), {
+  return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
+    project_id: project.id,
+  });
+}
+
+/**
+ * Tag freshness check ("Refresh tag") — PROJECT-scoped (utility agent).
+ *
+ * Attended, so it is NOT gated on `background_jobs`: like the context draft
+ * above, the user pressed a button and is watching a bar. The gate governs work
+ * nobody asked for.
+ */
+export async function planTagRefresh(project: Project, digest: string): Promise<string> {
+  return run("planTagRefresh", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
     project_id: project.id,
   });
 }
@@ -154,7 +206,7 @@ export async function summarizeProjectRecap(
   digest: string,
   options: { unattended?: boolean } = {},
 ): Promise<string> {
-  return run("summarizeProjectRecap", resolveUtilityAgent().configured, utilityDriver, (impl) => impl(project, digest), {
+  return run("summarizeProjectRecap", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
     project_id: project.id,
   }, options.unattended ?? true);
 }

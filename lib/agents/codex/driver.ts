@@ -21,18 +21,20 @@
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, OneShotResult } from "../types";
+import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
+import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
-import { buildProjectContext } from "../shared";
+import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 import { agentTurnEnv } from "../../agentEnv";
 import { codexProviderConfig } from "./provider";
+import { verifyCodexProvider } from "./providerCheck";
+import { getCodexPlanUsage } from "./planUsage";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -81,6 +83,11 @@ export function calandriaMcpConfig(
           CALANDRIA_LANDING_MODE: project.landing_mode,
           CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
+          // The bridge is plain Node and can't read lib/config.ts, and this env
+          // block REPLACES the inherited environment, so the knob has to be
+          // handed over explicitly or every bridged tool would silently fall
+          // back to the built-in default (lib/agentToolGuard.mjs).
+          CALANDRIA_AGENT_TOOL_TIMEOUT_MS: String(AGENT_TOOL_TIMEOUT_MS),
         },
       },
     },
@@ -214,6 +221,29 @@ async function* runTurn(
     ...reasoningEffort(reasoning),
   };
 
+  // …and before spending anything on it, make the CLI confirm the mapping took.
+  // An unknown `-c` override is inert to codex, so a release that moves the
+  // config.toml schema silently drops the turn onto the built-in `openai`
+  // provider — the user's paid ChatGPT login — while the header still shows the
+  // `local` chip. Refuse instead (lib/agents/codex/providerCheck.ts). No-ops on
+  // the cloud path, which has no mapping to prove.
+  // `bin` mirrors what the SDK below is given: with CODEX_CLI_PATH set both
+  // halves drive the same file, and with it empty both fall back — the SDK to
+  // the binary vendored in @openai/codex, the probe to `codex` on PATH. Those
+  // are the same install in every shipped configuration (the image installs the
+  // package globally, and node_modules/.bin/codex is a shim onto that same
+  // vendored binary), and the same equivalence auth.ts and mcp.ts already rely
+  // on. Pinning CODEX_CLI_PATH removes the "in every shipped configuration".
+  const verdict = await verifyCodexProvider(local, {
+    cwd: threadOptions.workingDirectory,
+    env,
+    bin: CODEX_CLI_PATH || undefined,
+  });
+  if (!verdict.ok) {
+    yield { type: "error", content: verdict.message };
+    return;
+  }
+
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
     // The provider entry goes in as config rather than env: codex reads
@@ -281,7 +311,13 @@ const ONESHOT_MAX_ITEMS_EXPLORE = 120;
 // degrades to empty text (callers add their own "(no … produced)" fallback) so
 // a failed helper turn never rejects into the recap/refresh jobs — mirrors the
 // Claude driver. Usage received before an error or max-items abort is retained.
-async function oneShot(project: Project, prompt: string, maxItems: number, mode: SandboxMode = "read-only"): Promise<OneShotResult> {
+async function oneShot(
+  project: Project,
+  prompt: string,
+  maxItems: number,
+  opts?: OneShotOptions,
+  mode: SandboxMode = "read-only",
+): Promise<OneShotResult> {
   // Same MCP policy as a turn, and it bites harder here: a one-shot mounts no
   // Calandria bridge at all, so every inherited server is a subprocess
   // spawned purely to offer a recap or summary run tools it could never call.
@@ -290,10 +326,15 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
     codexPathOverride: CODEX_CLI_PATH || undefined,
     ...(Object.keys(inherited).length ? { config: { mcp_servers: inherited } } : {}),
   });
+  // Same shape as a turn's (see runTurn): OMIT the override when nothing was
+  // chosen, so the user's own ~/.codex/config.toml default still wins, but
+  // resolve the reported model to the CLI default either way for pricing.
+  const chosen = opts?.model || null;
   const thread = codex.startThread({
     workingDirectory: project.repo_path || process.cwd(),
     skipGitRepoCheck: true,
     sandboxMode: mode,
+    ...(chosen ? { model: chosen } : {}),
     ...approvalOverride(),
     networkAccessEnabled: false,
   });
@@ -302,7 +343,7 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   // The last agent_message wins — the same semantics as the SDK's finalResponse.
   let finalResponse = "";
   let usage: TurnUsage | undefined;
-  const state = newState(resolveCodexModel(null));
+  const state = newState(resolveCodexModel(chosen));
   try {
     const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
     for await (const ev of events) {
@@ -325,13 +366,14 @@ async function oneShot(project: Project, prompt: string, maxItems: number, mode:
   return { text: finalResponse.trim(), usage };
 }
 
-async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
+async function summarizeTranscript(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `Summarize the following Codex session into a concise handoff note for a fresh session continuing the ` +
       `same task. Cover: what was done, the current state of the code, decisions made, and what remains. Be ` +
       `specific about files and follow-ups. Output only the note.\n\n=== TRANSCRIPT ===\n${transcript}`,
-    ONESHOT_MAX_ITEMS_TEXT
+    ONESHOT_MAX_ITEMS_TEXT,
+    opts
   );
   return { text: result.text || "(no summary produced)", usage: result.usage };
 }
@@ -339,7 +381,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
 const CTX_OPEN = "<<<CONTEXT>>>";
 const CTX_CLOSE = "<<<END_CONTEXT>>>";
 
-async function draftProjectContext(project: Project, digest: string): Promise<OneShotResult> {
+async function draftProjectContext(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `You are refreshing the saved "project context" for the project "${project.name}". This context is prepended ` +
@@ -355,7 +397,8 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `~200–500 words. Wrap ONLY the final document between a line containing ${CTX_OPEN} and a line containing ` +
       `${CTX_CLOSE}.\n\n=== EXISTING SAVED CONTEXT (may be stale) ===\n${project.context || "(none)"}\n\n` +
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
-    ONESHOT_MAX_ITEMS_EXPLORE
+    ONESHOT_MAX_ITEMS_EXPLORE,
+    opts
   );
   const open = result.text.indexOf(CTX_OPEN);
   const close = result.text.lastIndexOf(CTX_CLOSE);
@@ -364,14 +407,24 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
   return { text: doc || "(no context produced)", usage: result.usage };
 }
 
-async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
+/**
+ * "Refresh tag" — the same read-only explore budget as the context draft, since
+ * it is the same kind of run: read enough of the repo to judge a plan. Returns
+ * the raw text for parseTagPlan(); the server, not this run, applies anything.
+ */
+async function planTagRefresh(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
+  return oneShot(project, buildTagRefreshPrompt(project, digest), ONESHOT_MAX_ITEMS_EXPLORE, opts);
+}
+
+async function summarizeProjectRecap(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult> {
   const result = await oneShot(
     project,
     `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns after ` +
       `time away. Output ONLY 2–4 terse markdown bullet points ("- " each), one line each, ideally under ~12 words. ` +
       `Be concrete about features, files, and tasks. No headings, no intro/outro, no next steps — recap only what has ` +
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
-    ONESHOT_MAX_ITEMS_TEXT
+    ONESHOT_MAX_ITEMS_TEXT,
+    opts
   );
   return { text: result.text || "(no recap produced)", usage: result.usage };
 }
@@ -381,9 +434,14 @@ export const codexDriver: AgentDriver = {
   label: "Codex",
   capabilities: CODEX_CAPABILITIES,
   runTurn,
+  // The titlebar session/week meter. Unlike Claude's, nothing rides the turn
+  // stream to feed it (the exec JSONL protocol carries no rate limits — see
+  // ./planUsage.ts), so this is a floored read against `codex app-server`.
+  planUsage: getCodexPlanUsage,
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,
+  planTagRefresh,
   // Auth delegates to lib/agents/codex/auth.ts (the headless `codex login
   // --device-auth` flow + `codex login status` / a one-shot verify turn).
   authStatus: codexStatus,

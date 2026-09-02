@@ -27,6 +27,7 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
     case "permission":
       return "awaiting_input";
     case "ask_answered":
+    case "ask_dismissed":
     case "permission_decided":
       return "ask_answered";
     case "suggested":

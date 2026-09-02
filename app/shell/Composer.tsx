@@ -104,7 +104,21 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // Mirror the draft to localStorage so it survives remounts/navigation.
   useEffect(() => { saveDraft(task.id, val); }, [task.id, val]);
   const ref = useRef<HTMLTextAreaElement>(null);
-  const autosize = (el: HTMLTextAreaElement) => { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px"; };
+  // Chromium counts the PLACEHOLDER in scrollHeight, so measuring an EMPTY box
+  // measured how many lines the placeholder wrapped to, not the message: 76px
+  // (three lines) at the 312px composer a 1440px window with the rail open
+  // gives, 112px (four) on an iPhone, against the 34px/40px a typed line is —
+  // so the box snapped shut on the first keystroke and the empty state read as
+  // a tall grey slab. An empty box has no content to fit, so it is left at its
+  // rows={1} height and the placeholder held to that one line
+  // (`.comp-area textarea.blank`). That is also what a just-sent composer has
+  // always done — submit() resets height to "auto" and nothing re-measures it —
+  // so this only makes mount, /clear and delete-to-empty agree with send.
+  const autosize = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    if (!el.value) return;
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  };
   // Grow the box to fit a restored draft and reflect the slash menu state.
   useEffect(() => {
     if (ref.current) autosize(ref.current);
@@ -307,6 +321,10 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
           <div className="comp-area">
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
+              // Empty: the placeholder is the only thing to lay out, so it's
+              // held to the one line the box is rather than wrapped out of
+              // sight (see autosize).
+              className={val ? undefined : "blank"}
               // These state the field's intent and are kept because they are
               // correct — NOT because they fix the mobile keyboard bug. They
               // don't, and neither did the attribute combinations tried before
@@ -361,7 +379,17 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // Inert: added on the since-disproven theory that an unnamed field
               // invited the one-time-code guess. Harmless, so left alone.
               name="message"
-              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent when this turn ends)" : `Reply to ${agentLabel} in “${task.title}”…  (try /clear, drop an image)`}
+              // Short enough to fit the ONE line the empty box now is (see
+              // autosize). A textarea placeholder can't ellipsize — Chromium
+              // ignores text-overflow there — so anything that doesn't fit is
+              // cut mid-word. Measured against the narrowest ordinary composer
+              // (312px at 1440px with the rail open; 287px on an iPhone): the
+              // task title alone rendered 920px of placeholder, and the
+              // "(try /clear, drop an image)" tail pushed the rest past the
+              // phone's width. Both were duplicates — the title is in the
+              // session header directly above, and the tail is the comp-foot's
+              // own "/ commands", "attach" and "/clear" affordances.
+              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent at turn end)" : `Reply to ${agentLabel}…`}
               onChange={(e) => {
                 const v = e.target.value;
                 setVal(v); autosize(e.target); setActive(0);

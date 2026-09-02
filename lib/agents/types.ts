@@ -175,6 +175,16 @@ export interface OneShotResult {
 }
 
 /**
+ * Per-call overrides for a one-shot. `model` is the id the caller resolved from
+ * the job's tier setting (see lib/agents/oneshots.ts); null/undefined means
+ * "inherit whatever the driver's own default is", which is what every one-shot
+ * did before the setting existed.
+ */
+export interface OneShotOptions {
+  model?: string | null;
+}
+
+/**
  * One slash command a task session would expand — a skill, a plugin command, a
  * user/project command in `.claude/commands`, or one of the CLI's built-ins.
  * `name` carries no leading slash and may be namespaced (`plugin:command`).
@@ -346,18 +356,32 @@ export interface AgentDriver {
 
   // ---------- one-shot helpers (no session, text in → text out) ----------
   //
-  // All three are OPTIONAL: a driver can ship runTurn() alone and the app
+  // All four are OPTIONAL: a driver can ship runTurn() alone and the app
   // backstops the missing helper with the configured utility agent (see
   // lib/agents/oneshots.ts). summarizeTranscript is task-scoped (runs on the
-  // task's own agent so the work bills the right login); draft/recap are
+  // task's own agent so the work bills the right login); the rest are
   // project-scoped and run on the utility agent.
 
+  //
+  // `opts` is TRAILING-OPTIONAL on all three so a driver that ignores it (or
+  // predates it) still satisfies the interface — a missing model means the same
+  // thing as no setting: inherit the driver's own default.
+
   /** Condense a session transcript into a handoff note for the /clear flow. */
-  summarizeTranscript?(transcript: string, project: Project): Promise<OneShotResult>;
+  summarizeTranscript?(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult>;
   /** Draft a fresh "what we're building" context by exploring the repo (read-only). */
-  draftProjectContext?(project: Project, digest: string): Promise<OneShotResult>;
+  draftProjectContext?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
   /** Short "where you left off" recap from a recent-activity digest. */
-  summarizeProjectRecap?(project: Project, digest: string): Promise<OneShotResult>;
+  summarizeProjectRecap?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
+  /**
+   * Check a tag's plan against the code and say what's gone stale — the
+   * "Refresh tag" button (lib/tagRefresh.ts). `digest` carries the tag, its
+   * saved description and every member's brief; the driver explores the repo
+   * READ-ONLY and returns a JSON plan (parsed by parseTagPlan()) rather than
+   * writing anything. The server applies it, so the edits land as revertable
+   * agent edits instead of unattended writes nobody can see.
+   */
+  planTagRefresh?(project: Project, digest: string, opts?: OneShotOptions): Promise<OneShotResult>;
 
   // ---------- auth (the setup wizard's connect / verify flow) ----------
 

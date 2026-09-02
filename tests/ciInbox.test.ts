@@ -112,6 +112,37 @@ describe("failingChecks", () => {
     expect(failingChecks(entries)).toHaveLength(8);
   });
 
+  it("names the rerun's own verdict, not the entry it superseded", () => {
+    // The rollup keeps both, so the red list has to pick the same live entry
+    // the rollup does or the chip names a job that has since passed.
+    const out = failingChecks([
+      { status: "COMPLETED", conclusion: "FAILURE", name: "e2e", workflowName: "test", detailsUrl: "old", startedAt: "2026-08-30T22:10:34Z" },
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", workflowName: "test", detailsUrl: "new", startedAt: "2026-08-30T22:36:29Z" },
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "unit", workflowName: "test", detailsUrl: "u", startedAt: "2026-08-30T22:10:34Z" },
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("still names a check whose LATEST attempt is the red one", () => {
+    // Rerunning a green job into a failure is the same shape in reverse, and
+    // must not be hidden by the pass it replaced.
+    const out = failingChecks([
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", workflowName: "test", detailsUrl: "old", startedAt: "2026-08-30T22:10:34Z" },
+      { status: "COMPLETED", conclusion: "FAILURE", name: "e2e", workflowName: "test", detailsUrl: "new", startedAt: "2026-08-30T22:36:29Z" },
+    ]);
+    expect(out).toEqual([{ name: "e2e", url: "new", workflow: "test", verdict: "FAILURE" }]);
+  });
+
+  it("dedupes a legacy status context by its own name", () => {
+    // A context has no workflow to key on, and a re-reported one arrives with a
+    // fresh state under the same `context`.
+    const out = failingChecks([
+      { state: "FAILURE", context: "ci/circleci", targetUrl: "old", startedAt: "2026-08-30T22:10:34Z" },
+      { state: "SUCCESS", context: "ci/circleci", targetUrl: "new", startedAt: "2026-08-30T22:36:29Z" },
+    ]);
+    expect(out).toEqual([]);
+  });
+
   it("says nothing about a rollup that hasn't got one", () => {
     expect(failingChecks(null)).toEqual([]);
     expect(failingChecks([])).toEqual([]);

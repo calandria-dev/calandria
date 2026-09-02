@@ -4,16 +4,17 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration, fmtJobCost, alphabetical, isTerminal } from "./format";
+import { relTime, duration, fmtJobCost, alphabetical, isBlocking } from "./format";
 import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
-import { StatusDot, Skel, ErrNote } from "./shared";
-import { Modal, BrowseDirButton, ModelField, PrioritySeg, DepPicker } from "./Modal";
+import { StatusDot, Skel, ErrNote, EndpointNote } from "./shared";
+import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
-import { describeProvider, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, type ProviderKind } from "@/lib/agentEnv";
+import { describeProvider, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type ProviderKind } from "@/lib/agentEnv";
+import { useEndpointModels } from "./modelEndpoint";
 
 // Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
 // to choose: one agent registered, OR one agent CONNECTED and it's the one
@@ -160,13 +161,11 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
   const can = title.trim().length > 0;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
-  // A blocker only holds this task back while it can still finish something —
-  // the same terminal rule blocks() enforces server-side, so the dialog and the
-  // board agree about a cancelled dependency (it never completes; waiting on it
-  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
-  // it may simply be one this list doesn't carry, and guessing "clear" would
-  // offer a Start the server then refuses.
-  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   // Can't launch a session on an agent that isn't signed in — but the task can
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
@@ -175,6 +174,14 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
+  // Which SHAPE the model field takes. A cloud project picks from the driver's
+  // catalog; a project pointed at a local server types an id, because the ids
+  // on that machine are whatever was pulled and no catalog can know them
+  // (lib/agentEnv.ts). The suggestions are what the endpoint reports, asked
+  // server-side — the browser generally can't reach a loopback model server.
+  const provider = useMemo(() => taskProvider(project), [project]);
+  const localModel = provider.kind !== "cloud";
+  const endpoint = useEndpointModels(project.id, "", localModel);
   // Permission modes and models are both provider-specific (each driver labels
   // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
   // sandbox modes and GPT ids), so a choice made under one agent may not exist
@@ -183,9 +190,12 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
   }, [permissionOpts, permission]);
+  // …except under an override, where the catalog isn't the authority on what is
+  // runnable and clearing a typed id would be the bug rather than the fix.
   useEffect(() => {
+    if (localModel) return;
     if (model && !modelOpts.some((m) => m.value === model)) setModel(null);
-  }, [modelOpts, model]);
+  }, [modelOpts, model, localModel]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Inherit"
@@ -221,6 +231,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       <ModelField options={modelOpts} value={model} onChange={setModel}
+        freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help=" (changeable later from the session rail)." />
       <div className="field">
         <div className="lab">Priority</div>
@@ -400,8 +411,9 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
   // A tag follows its whole membership or not at all (the both-ends rule the
   // dependency links get), so a task moving ALONE takes a tag with it exactly
   // when it is that tag's only member. Read off each tag's own derived count,
-  // not by filtering `tasks` — that list is the REAL tasks, and a sibling still
-  // sitting in the Suggested tray is a member like any other. Unlike the old
+  // not by filtering `tasks`, which is scoped to whatever the caller passed in,
+  // while a sibling sitting in the Suggested tray is a member like any other.
+  // Unlike the old
   // single group this can split both ways in one move: some of the task's tags
   // may be solo, others shared.
   const carriedTags: string[] = [];
@@ -886,15 +898,20 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // Same two gates the New-task dialog puts on "Start session immediately":
   // an unfinished blocker means the task isn't allowed to run yet, and a
   // disconnected agent has no session to launch.
-  // A blocker only holds this task back while it can still finish something —
-  // the same terminal rule blocks() enforces server-side, so the dialog and the
-  // board agree about a cancelled dependency (it never completes; waiting on it
-  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
-  // it may simply be one this list doesn't carry, and guessing "clear" would
-  // offer a Start the server then refuses.
-  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
+  // Same two shapes as the New-task dialog, over this task's OWN effective
+  // provider: the project's override with the task's laid over it, since a task
+  // can be sent to a local endpoint (or back to the cloud) on its own row.
+  const taskProject = projects.find((p) => p.id === task.project_id);
+  const provider = useMemo(() => taskProvider(taskProject, task), [taskProject, task]);
+  const localModel = provider.kind !== "cloud";
+  const endpoint = useEndpointModels(task.project_id, "", localModel);
   // Switching an unstarted task's agent invalidates a model chosen under the old
   // one, same as the New-task dialog: drop to Inherit rather than save an id the
   // new driver would never resolve. Gated on the agent actually having MOVED,
@@ -960,13 +977,14 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       <ModelField options={modelOpts} value={model} onChange={setModel}
+        freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
       <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
-      <BaseBranchField task={task} project={projects.find((p) => p.id === task.project_id)} />
+      <BaseBranchField task={task} project={taskProject} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {/* Unlike the agent picker above, this is NOT gated on the task being
           unstarted: a started one can move by discarding the worktree it cut
@@ -1051,6 +1069,12 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [providerModel, setProviderModel] = useState(savedProvider.model ?? "");
   const [providerToken, setProviderToken] = useState(savedProvider.auth_token ?? "");
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
+  // What the URL in the box right now actually has. Probed through the server
+  // (the endpoint is loopback THERE, not in this browser) and keyed on the
+  // TYPED url rather than the saved one, so the suggestions and the "reachable,
+  // 4 models" line follow the field being edited instead of appearing only
+  // after a save.
+  const endpoint = useEndpointModels(project.id, providerUrl || localDefaultUrl, providerKind !== "cloud");
   const agentEnvOut = () =>
     providerKind === "cloud" ? "" : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
@@ -1320,15 +1344,19 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
               <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
                 title="Base URL of the server. Ollama and LM Studio serve both APIs from one origin; /v1 is added where each CLI needs it."
                 onChange={(e) => setProviderUrl(e.target.value)} />
-              <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={providerModel} placeholder="model, e.g. qwen3-coder"
-                title="The model every task in this project runs unless the task picks its own. Claude Code's opus/sonnet/haiku aliases resolve to it too."
-                onChange={(e) => setProviderModel(e.target.value)} />
+              <FreeFormModel value={providerModel} onChange={setProviderModel} suggestions={endpoint.models}
+                style={{ flex: "0 0 190px" }} label="Model" placeholder="model, e.g. qwen3-coder"
+                title="The model every task in this project runs unless the task picks its own. Claude Code's opus/sonnet/haiku aliases resolve to it too. The suggestions are what this server reports; anything it has can be typed." />
             </div>
             {providerKind === "custom" && (
               <input type="text" className="ctx-mono" style={{ marginTop: 8 }} value={providerToken} placeholder="auth token (ollama)"
                 title="Sent as the Anthropic auth token. Ollama and LM Studio require one and ignore its value. The instance's own Anthropic/OpenAI keys are never sent to a custom endpoint."
                 onChange={(e) => setProviderToken(e.target.value)} />
             )}
+            {/* What the server just said, ahead of the advice about what to
+                type: an unreachable endpoint answers most of the questions
+                that advice is trying to pre-empt. */}
+            <div className="hlp"><EndpointNote state={endpoint} /></div>
             <div className="hlp">
               {providerModel.trim()
                 ? "Turns are not billed as cloud spend. Codex reaches the same server through a provider entry of its own, so ~/.codex/config.toml is left alone."

@@ -169,8 +169,12 @@ already queued. The transcript records that it was sent.
   (union by default, intersection behind an any/all toggle). Each task shows
   a tinted badge per tag, progress comes from the tasks, and finished tags
   fold away. One lit chip expands into a strip with the tag's brief and its
-  steps in dependency order; ⌘K, the project page, and the Insights
-  leaderboard all reach it by name. A tag can also set the git **base
+  steps in dependency order, plus **Refresh tag** — an agent reads the whole
+  plan against the code, rewords briefs that point at things that no longer
+  exist, retires work the repo shows is already done, and rewrites the
+  description; every task change arrives as a revertable "Changed by agent"
+  edit, and the job keeps running if you navigate away. ⌘K, the project page,
+  and the Insights leaderboard all reach a tag by name. A tag can also set the git **base
   branch** its tasks are cut from, merged into, and synced against, so a
   five-task feature is pointed at `feature/auth` once. Each session is told
   which plan it belongs to and which step it is.
@@ -179,11 +183,12 @@ already queued. The transcript records that it was sent.
   in one click. Each run creates a fresh task, with a box for this-run-only
   instructions.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
-  own timezone, with nobody logged in. Each firing creates a fresh task you
-  review like any other, and a schedule can fire a runbook so one recipe
-  serves both the clock and the button. A run that finished cleanly lands in
-  **Ran clean**, its own group outside the "needs you" pill, with a Mark done
-  button.
+  own timezone, with nobody logged in — or **once**, on a date you pick, for
+  the "there's a release overnight, check on it at 04:00" job. Each firing
+  creates a fresh task you review like any other, and a schedule can fire a
+  runbook so one recipe serves both the clock and the button. A run that
+  finished cleanly lands in **Ran clean**, its own group outside the "needs
+  you" pill, with a Mark done button.
 
   ![Project page with a tag, two runbooks, and a weekday schedule](docs/images/project.png)
 
@@ -199,7 +204,7 @@ already queued. The transcript records that it was sent.
   (recap, tags, runbooks, schedules) one tap from the task list.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   token and usage insights in one place, including a live session/week
-  plan-usage meter for a Claude Pro/Max login.
+  plan-usage meter for a Claude Pro/Max or ChatGPT login.
 
 <p align="center">
   <img src="docs/images/mobile-tasks.png" width="300" alt="Task list on a phone">
@@ -227,11 +232,15 @@ Either agent can run against a local model server. Set a project's **Model
 provider** to *Local model*, point it at Ollama (`http://localhost:11434`) or
 LM Studio (`http://localhost:1234`), name a model, and every task in that
 project runs there: Claude Code through `ANTHROPIC_BASE_URL`, Codex through a
-provider entry Calandria adds for the turn. Those turns are recorded at zero
-cost, because a model served off your own machine really is free. A **Custom
-base URL** may not be, so its turns are recorded as *unpriced* rather than as
-$0 — they are left out of every total, and the figures that omit them say so.
-A cloud session can also delegate a single task to the local model with
+provider entry Calandria adds for the turn. The model picker becomes a text box
+that suggests whatever the server reports it has, and Settings → Agents says
+whether that server is answering. A local turn is recorded at zero cost, because
+a model served off your own machine really is free. A **Custom base URL** may
+not be, so its turns are recorded as *unpriced* rather than as $0 — they are
+left out of every total, and the figures that omit them say so. Neither shows a
+context percentage: the window of a model the catalog has never seen is not
+knowable, so the chip reports tokens used instead. A cloud session can also
+delegate a single task to the local model with
 `suggest_task`'s `provider: "local"`. Set `CALANDRIA_LOCAL_MODEL_BASE_URL` once
 for a Docker instance.
 

@@ -9,7 +9,7 @@ import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, p
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow, type PickerOption,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
@@ -20,6 +20,7 @@ import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
+import { useEndpointModels } from "./modelEndpoint";
 import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
@@ -76,6 +77,21 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   useEffect(() => { if (!running) load(); }, [running, refresh, load]);
 
   if (!st || !st.isolated) return null;
+
+  // The base branch has no ref in this repository, so nothing below was measured:
+  // `behind` is 0 because the comparison never ran, and the screen underneath
+  // would read that as "up to date" and render nothing — which is how a task
+  // could sit looking healthy until merge and Fix with AI both refused with
+  // "base branch <name> not found". There is no action to offer here (the fix is
+  // to point the task or project at a branch that exists), so this says the one
+  // thing worth saying and stops.
+  if (st.baseMissing)
+    return (
+      <div className="sync-banner conflict" data-sync-state="base-missing" title={`Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`}>
+        <span className="sync-msg">{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</span>
+        <span className="sync-spacer" />
+      </div>
+    );
 
   const conflicts = st.conflicts?.length ?? 0;
   const paused = !!st.mergeInProgress;
@@ -534,7 +550,18 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // Run-control pickers + feature gates come from this task's agent capabilities,
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
-  const models = modelOptions(caps);
+  // The rail's model list. Under a provider override the driver's catalog is
+  // the vendor's cloud line-up and none of it is runnable here, so the list is
+  // what the endpoint itself reports instead — under the same inherit head, and
+  // with a model typed in the Edit dialog kept as an entry of its own so the
+  // chip shows what will actually run rather than reading as "Inherit".
+  const provider = useMemo(() => taskProvider(project, task), [project, task]);
+  const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
+  const models = useMemo<PickerOption[]>(() => {
+    if (provider.kind === "cloud") return modelOptions(caps);
+    const ids = endpoint.models.includes(task.model ?? "") || !task.model ? endpoint.models : [task.model, ...endpoint.models];
+    return [...modelOptions(undefined), ...ids.map((m) => ({ value: m, label: m, sub: `on ${provider.host}` }))];
+  }, [provider, endpoint.models, caps, task.model]);
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
   // Usage chip: tokens split into fresh work vs re-read cache (the raw total is
@@ -543,7 +570,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // figure is an API-price equivalent covered by plan quota, not a bill. Both
   // derivations live in ./format so the wording has one home.
   const usage = usageSplit(task);
-  const cost = costDisplay(findAgent(agents, task.agent));
+  const cost = costDisplay(findAgent(agents, task.agent), provider);
   const multiAgent = agents.agents.length > 1;
   // True while a question card is still unanswered — hides the "thinking" dots,
   // since Claude is parked on the user, not working.
@@ -741,7 +768,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         {Icon.spark()}
         {/* The chip says INHERIT_LABEL, never "Default" — the same word the
             picker's head uses, so the two can't read as different states. */}
-        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? INHERIT_LABEL}</span>
+        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? task.model ?? INHERIT_LABEL}</span>
         {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
         {Icon.chevDown()}
       </button>
@@ -944,7 +971,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 logo's width rather than a word's. */}
             <div className="sh-title">
               <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={multiAgent} />
-              <ProviderBadge provider={taskProvider(project, task)} />
+              <ProviderBadge provider={provider} />
               {task.title}
             </div>
           </div>
