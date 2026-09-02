@@ -55,6 +55,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
+import { waitForTree } from "@/tests/waitForTree";
 import { attachShellLog, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
 
 test.describe("Windows process termination", () => {
@@ -76,7 +77,7 @@ test.describe("Windows process termination", () => {
     const origin = shell.origin;
     const marker = await quitEventRecorder(shell);
     const electron = await electronPid(shell);
-    const sidecars = sidecarPids(electron);
+    const sidecars = await bothSidecars(electron);
 
     expect(sidecars.app, sidecars.why("no server.js child of the Electron process")).toBeTruthy();
     expect(sidecars.pty, sidecars.why("no pty-server.js child of the Electron process")).toBeTruthy();
@@ -118,7 +119,7 @@ test.describe("Windows process termination", () => {
     const origin = shell.origin;
     const marker = await quitEventRecorder(shell);
     const electron = await electronPid(shell);
-    const sidecars = sidecarPids(electron);
+    const sidecars = await bothSidecars(electron);
     const pids = [sidecars.app, sidecars.pty].filter((p): p is number => !!p);
     expect(pids, sidecars.why("no node sidecars under the Electron process")).toHaveLength(2);
 
@@ -346,6 +347,30 @@ function sidecarPids(electronPid: number): Sidecars {
       .join("\n");
 
   return { app, pty, why };
+}
+
+/**
+ * `sidecarPids`, waited on until BOTH children are discoverable (issue #101).
+ *
+ * `supervisor.spawnChild` returns as soon as the spawn is requested, and on
+ * win32 a new process takes a moment to show up in `Win32_Process` — so asking
+ * once, right after launch, was asking whether the OS had finished publishing
+ * the tree yet. It usually had. When it hadn't, the failure landed on a
+ * *release* commit, where this lane runs only after merge and a red run stops
+ * the publish outright.
+ *
+ * The last sample is returned even on timeout, unsettled, because it carries
+ * `why()` — every child process the query saw, plus whatever PowerShell said
+ * going wrong. The assertions at the call sites are unchanged and are still
+ * what fails; a shell that never brings its sidecars up still reddens this
+ * file, with the same report it always gave.
+ */
+async function bothSidecars(electronPid: number): Promise<Sidecars> {
+  return waitForTree(
+    () => sidecarPids(electronPid),
+    (s) => !!s.app && !!s.pty,
+    { timeoutMs: 60_000, intervalMs: 250 }
+  );
 }
 
 /**
