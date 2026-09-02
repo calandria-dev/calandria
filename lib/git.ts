@@ -799,7 +799,21 @@ export async function ensureWorktree(
   // refs/remotes/*, so it's safe alongside anything else in the repo, and holding
   // the per-repo lock across a network round trip would park every other task
   // launch behind one slow connection. Cannot throw; the guard is belt and braces.
-  if (baseBranch) await fetchBase(repoPath, baseBranch).catch(() => {});
+  if (baseBranch) {
+    await fetchBase(repoPath, baseBranch).catch(() => {});
+    // ...and materialise a base that exists ONLY as refs/remotes/<remote>/<branch>.
+    // Every base-branch check below and downstream goes through `branchExists`,
+    // which is local-only, so a branch a colleague pushed — or one a tag points a
+    // batch of tasks at — was invisible: the cut silently fell back to the main
+    // checkout's HEAD (not even the remote tip), the sync banner reported "in
+    // sync", and the first thing to say otherwise was Fix with AI refusing with
+    // "base branch <name> not found". The branch is real; only the local ref was
+    // missing, so make it, exactly as retargeting does (`--track`, so every later
+    // fetch, sync and PR resolves its upstream). Outside the lock because it can
+    // fetch, and best-effort because a genuinely absent branch is still allowed to
+    // fall back below.
+    await ensureLocalBaseBranch(repoPath, baseBranch).catch(() => {});
+  }
   // Serialize with merges and other worktree creations on the same repo: both
   // touch the shared worktree registry / read HEAD for the base sha, and a merge
   // racing this could hand back a base_sha read off a transient HEAD.
@@ -867,6 +881,9 @@ async function ensureWorktreeLocked(
   // The configured base branch if it exists, else current HEAD. The fallback
   // must stay — a freshly-initialized repo may have an unborn or differently-named
   // default branch, and a misconfigured project shouldn't block task isolation.
+  // It now fires only for a branch that is nowhere: `ensureWorktree` has already
+  // created a local ref for one that exists on the remote, so "no local ref" here
+  // means the branch really doesn't exist rather than merely hasn't been asked for.
   const localBase = baseBranch && (await branchExists(repoPath, baseBranch)) ? baseBranch : "";
 
   const reattaching = existing !== null;
@@ -1838,9 +1855,26 @@ export async function mergeTask(input: {
       await git(repoPath, ["merge", "--abort"]).catch(() => {});
     }
 
-    // Target: the configured base branch if it exists, else the repo's current branch.
+    // Target: the configured base branch, which has to exist. This used to fall
+    // back to whatever the main checkout had open — the quietest way a missing
+    // base went unremarked and by far the worst, since the task's work landed on
+    // an unrelated branch under a green "merged". The fallback can't be salvaged
+    // by asking whether the task forked from that branch either: a task whose
+    // base was missing was cut from HEAD, so it always did. A base that exists on
+    // the remote is now a local branch by cut time (`ensureLocalBaseBranch` in
+    // `ensureWorktree`), so reaching here means the branch is genuinely nowhere,
+    // and the honest answer is the same refusal `prepareWorktreeMerge` already
+    // gives — named alongside the branch we would otherwise have written to, so
+    // the user can see which one to fix.
     const current = await currentBranch(repoPath);
-    const target = (await branchExists(repoPath, baseBranch)) ? baseBranch : current || baseBranch;
+    if (!(await branchExists(repoPath, baseBranch)))
+      return {
+        ok: false,
+        targetBranch: baseBranch,
+        committed,
+        error: `base branch ${baseBranch} not found${current ? ` (this checkout is on ${current})` : ""}`,
+      };
+    const target = baseBranch;
 
     // Nothing to land? Answered before anything mutates — a re-click on an
     // already-merged task is "up to date" even when the checkout is dirty, and
@@ -2177,6 +2211,10 @@ export interface SyncStatus {
   baseTip: string; // the base branch tip — the new diff base after a successful sync
   mergeInProgress: boolean; // a base→work merge is paused in the worktree (MERGE_HEAD present), awaiting accept/discard
   unresolved: string[]; // while paused: files still carrying markers (or unstaged binaries) — `conflicts` mirrors this
+  // The base branch has no ref in this repository, so every number above is a
+  // zero meaning "couldn't compare" rather than "in sync". Set only in that case;
+  // absent otherwise, so nothing has to test it to read an ordinary status.
+  baseMissing?: boolean;
 }
 
 /**
@@ -2194,7 +2232,13 @@ export async function worktreeSyncStatus(input: {
   const none: SyncStatus = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
   if (!worktreePath || !workBranch) return none;
   const [baseOk, workOk] = await Promise.all([branchExists(repoPath, baseBranch), branchExists(repoPath, workBranch)]);
-  if (!baseOk || !workOk) return none;
+  // A missing WORK branch is transient — the checkout is being rebuilt, and the
+  // next launch self-heals it — so it stays silent. A missing BASE branch is a
+  // standing misconfiguration, and returning a bare `none` for it made the banner
+  // say "in sync" about a comparison that never happened, right up until merge and
+  // Fix with AI refused. Say which it is instead; the callers decide what to do.
+  if (!baseOk) return { ...none, baseMissing: true };
+  if (!workOk) return none;
 
   const countOf = async (range: string) => parseInt(await git(repoPath, ["rev-list", "--count", range]).catch(() => "0"), 10) || 0;
   const [baseTip, behind, ahead, isDirty] = await Promise.all([

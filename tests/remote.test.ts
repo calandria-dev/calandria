@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask } from "../lib/git";
+import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
 import { onPosix } from "./platform";
 
@@ -267,5 +267,84 @@ describe("pushBaseBranch", () => {
     expect(res).toMatchObject({ ok: false, prRequired: true, error: prRequiredMessage("main") });
     expect(res.error).not.toMatch(/GH006/);
     expect(res.detail).toContain("GH006");
+  });
+});
+
+// The bug: `pr-workflow` existed as refs/remotes/origin/pr-workflow and nowhere
+// else, because nobody in this checkout had ever asked for it. Every base-branch
+// check goes through the local-only `branchExists`, so the cut silently fell back
+// to HEAD, the sync banner said "in sync", and the first honest answer came from
+// Fix with AI: "base branch pr-workflow not found".
+describe("ensureWorktree — a base branch that exists only on the remote", () => {
+  const pushBranch = async (colleague: string, branch: string) => {
+    await git(colleague, "checkout", "-b", branch);
+    await commitFile(colleague, `${branch}.txt`, "on the tag branch\n", `${branch}: first`);
+    await git(colleague, "push", "origin", branch);
+    return git(colleague, "rev-parse", "HEAD");
+  };
+
+  it("materialises it as a tracked local branch and cuts from its tip", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    const tip = await pushBranch(colleague, "pr-workflow");
+    // The premise: no local ref for it at all.
+    await expect(git(repo, "rev-parse", "--verify", "refs/heads/pr-workflow")).rejects.toThrow();
+
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+
+    expect(await git(repo, "rev-parse", "refs/heads/pr-workflow")).toBe(tip);
+    expect(await git(repo, "config", "--get", "branch.pr-workflow.remote")).toBe("origin");
+    // ...and the cut used it, rather than falling back to the checkout's HEAD.
+    expect(wt?.baseBranch).toBe("pr-workflow");
+    expect(wt?.baseSha).toBe(tip);
+    expect(fs.existsSync(path.join(wt!.path, "pr-workflow.txt"))).toBe(true);
+  });
+
+  it("lets prepareWorktreeMerge run — the Fix-with-AI path that used to refuse", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushBranch(colleague, "pr-workflow");
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+    await commitFile(wt!.path, "task.txt", "task work\n", "task edit");
+    // The base moves on, the way it does while a task is in flight.
+    await commitFile(colleague, "base.txt", "base moved\n", "pr-workflow: second");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin", "pr-workflow:pr-workflow");
+
+    const res = await prepareWorktreeMerge({
+      repoPath: repo,
+      worktreePath: wt!.path,
+      baseBranch: "pr-workflow",
+      message: "sync base",
+    });
+
+    expect(res).toEqual({ ok: true, clean: true, conflicts: [], binaryConflicts: [] });
+    expect(fs.existsSync(path.join(wt!.path, "base.txt"))).toBe(true);
+  });
+
+  it("reports a real sync status for it instead of a silent 'in sync'", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushBranch(colleague, "pr-workflow");
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+    await commitFile(wt!.path, "task.txt", "task work\n", "task edit");
+    await commitFile(colleague, "base.txt", "base moved\n", "pr-workflow: second");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin", "pr-workflow:pr-workflow");
+
+    const st = await worktreeSyncStatus({
+      repoPath: repo,
+      worktreePath: wt!.path,
+      workBranch: wt!.branch,
+      baseBranch: "pr-workflow",
+    });
+
+    expect(st.baseMissing).toBeUndefined();
+    expect(st.behind).toBe(1);
+    expect(st.ahead).toBe(1);
+  });
+
+  it("still falls back to HEAD when the branch is nowhere at all", async () => {
+    const { repo } = await makeRepoWithOrigin();
+    const wt = await ensureWorktree(repo, uid(), "never-existed");
+    expect(wt?.baseBranch).toBe("");
+    expect(wt?.baseSha).toBe(await git(repo, "rev-parse", "HEAD"));
   });
 });
