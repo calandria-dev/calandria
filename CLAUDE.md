@@ -265,6 +265,19 @@ is reached out of band with no tool_use id, so it patches the newest unclaimed `
 instead — which is why the runner re-reads that one field before writing a `tool_result` over the
 top.
 
+**Every tool answers through `lib/agentToolGuard.mjs`, and adding one must not opt out.** Twice
+(2026-08-24, 2026-08-30) a live turn's tool calls started coming back with no content and no error
+for 20-50 minutes before healing themselves, and the sessions reported a withdrawal, a runbook and
+a pull request that were never written — an empty result is indistinguishable from a quiet success,
+so the model cannot notice. The guard rewrites a throw, an over-long call and a blank result as a
+sentence naming the tool, and passes a healthy answer through untouched. It is applied to the whole
+tools ARRAY in the Claude driver and to `registerTool` itself in the bridge, so a tool added later
+cannot forget; both use the one `.mjs` copy, because a guard on one end only is one the other
+loses. The bound (`CALANDRIA_AGENT_TOOL_TIMEOUT_MS`, 10 min; 0 for `ask_user`, which waits on a
+human) exists because nothing below has a usable one — the CLI's per-call MCP timeout defaults to
+~27.7 hours and can't be set per in-process server. `create_pr` names its PR by number and URL for
+the same reason: it is the only way a session says in git that its work is finished.
+
 Reads range as widely as filing does: `list_tasks` takes the same optional `project` and flags the
 caller `current: true`, and `get_task` reads any id, defaulting to the session's own.
 

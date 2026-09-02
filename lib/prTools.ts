@@ -101,8 +101,8 @@ export async function createPrForAgent(
   caller: Task,
   input: { title?: string; body?: string },
   onOpened?: (taskId: string) => void
-): Promise<{ url: string | null; text: string }> {
-  const fail = (text: string) => ({ url: null, text });
+): Promise<{ url: string | null; number: number | null; text: string }> {
+  const fail = (text: string) => ({ url: null, number: null, text });
 
   // Re-read: a detached turn's snapshot predates its own worktree cut and
   // outlives deletions, and work_branch is exactly the field that gets filled in
@@ -134,12 +134,21 @@ export async function createPrForAgent(
       `Could not open a PR: ${result.error || "gh reported no URL."}${result.detail ? `\n\n${result.detail}` : ""}`
     );
 
+  // Name the PR by NUMBER as well as URL. This tool is the one way a session says
+  // in git that its work is finished, and it has twice come back empty mid-turn
+  // while the session went on to report a PR that did not exist. A success the
+  // model can only relay by quoting a number and a link it was given is a success
+  // it cannot claim by accident. 0 = no number in the URL, which shouldn't happen
+  // for a GitHub PR link, so say "the pull request" rather than "#0".
+  const number = parsePrNumber(result.url);
+  const named = number ? `pull request #${number}` : "the pull request";
   return {
     url: result.url,
+    number: number || null,
     text: result.existing
-      ? `Pushed ${task.work_branch}, updating the pull request that was already open: ${result.url}\n\n` +
+      ? `Pushed ${task.work_branch}, updating ${named}, which was already open: ${result.url}\n\n` +
         `The user reviews and merges it — you cannot, and there is no tool that can.`
-      : `Pushed ${task.work_branch} and opened a pull request against ${resolveBaseBranch(task, project)}: ${result.url}\n\n` +
+      : `Pushed ${task.work_branch} and opened ${named} against ${resolveBaseBranch(task, project)}: ${result.url}\n\n` +
         `It is now waiting on review. Merging is the user's call — you cannot merge it, and there is no tool that can.`,
   };
 }

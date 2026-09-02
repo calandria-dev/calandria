@@ -46,6 +46,7 @@ const COPY_FILES = [
   "lib/schema-version.mjs",
   "scripts/calandria-mcp.mjs",
   "lib/agentToolDefs.mjs",
+  "lib/agentToolGuard.mjs",
   "scripts/start.mjs",
   "scripts/backup.mjs",
 ];

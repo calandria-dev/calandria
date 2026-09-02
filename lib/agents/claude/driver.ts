@@ -65,12 +65,14 @@ import {
   DENIED_UNATTENDED,
 } from "../../permissions";
 import {
+  AGENT_TOOL_TIMEOUT_MS,
   BACKGROUND_LINGER_ENABLED,
   BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
+import { guardToolHandler } from "../../agentToolGuard.mjs";
 import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
@@ -267,6 +269,25 @@ const TEXT_ONE_SHOT = {
   maxTurns: 1,
 };
 
+/**
+ * Every tool on the server above goes through lib/agentToolGuard.mjs, applied to
+ * the ARRAY rather than written into each handler. Two reasons it is done here
+ * and not fourteen times below: a tool added later cannot forget to be loud, and
+ * there is nowhere for the two ends of the seam to drift apart (the stdio bridge
+ * wraps its own registrations the same way, with the same module).
+ *
+ * The guard only ever replaces an answer that isn't one — a throw, a call that
+ * ran past its bound, or the empty result this whole thing is named for. A
+ * handler that returns normally is passed through untouched, `isError` included.
+ *
+ * The generic keeps each tool's own argument types: `never` parameters are
+ * assignable from any handler's, so this constraint accepts the heterogeneous
+ * array without widening any tool to `any`.
+ */
+function guardTools<T extends { name: string; handler: (args: never, extra: never) => Promise<unknown> }>(tools: T[]): T[] {
+  return tools.map((t) => ({ ...t, handler: guardToolHandler(t.name, t.handler, { timeoutMs: AGENT_TOOL_TIMEOUT_MS }) }) as T);
+}
+
 function calandriaServer(
   project: Project,
   task: Task,
@@ -286,7 +307,7 @@ function calandriaServer(
   return createSdkMcpServer({
     name: "calandria",
     version: "1.0.0",
-    tools: [
+    tools: guardTools([
       tool(
         EXPOSE_SERVICE.name,
         EXPOSE_SERVICE.description,
@@ -547,7 +568,7 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
-    ],
+    ]),
   });
 }
 
