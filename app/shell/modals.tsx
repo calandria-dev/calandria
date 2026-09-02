@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration, fmtJobCost, alphabetical, isTerminal } from "./format";
+import { relTime, duration, fmtJobCost, alphabetical, isBlocking } from "./format";
 import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
@@ -159,13 +159,11 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
   const can = title.trim().length > 0;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
-  // A blocker only holds this task back while it can still finish something —
-  // the same terminal rule blocks() enforces server-side, so the dialog and the
-  // board agree about a cancelled dependency (it never completes; waiting on it
-  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
-  // it may simply be one this list doesn't carry, and guessing "clear" would
-  // offer a Start the server then refuses.
-  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   // Can't launch a session on an agent that isn't signed in — but the task can
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
@@ -399,8 +397,9 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
   // A tag follows its whole membership or not at all (the both-ends rule the
   // dependency links get), so a task moving ALONE takes a tag with it exactly
   // when it is that tag's only member. Read off each tag's own derived count,
-  // not by filtering `tasks` — that list is the REAL tasks, and a sibling still
-  // sitting in the Suggested tray is a member like any other. Unlike the old
+  // not by filtering `tasks`, which is scoped to whatever the caller passed in,
+  // while a sibling sitting in the Suggested tray is a member like any other.
+  // Unlike the old
   // single group this can split both ways in one move: some of the task's tags
   // may be solo, others shared.
   const carriedTags: string[] = [];
@@ -885,13 +884,11 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // Same two gates the New-task dialog puts on "Start session immediately":
   // an unfinished blocker means the task isn't allowed to run yet, and a
   // disconnected agent has no session to launch.
-  // A blocker only holds this task back while it can still finish something —
-  // the same terminal rule blocks() enforces server-side, so the dialog and the
-  // board agree about a cancelled dependency (it never completes; waiting on it
-  // would deadlock). A blocker not in `tasks` at all is assumed to still block:
-  // it may simply be one this list doesn't carry, and guessing "clear" would
-  // offer a Start the server then refuses.
-  const blocked = deps.some((id) => { const b = tasks.find((t) => t.id === id); return !b || !isTerminal(b); });
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   // Switching an unstarted task's agent invalidates a model chosen under the old

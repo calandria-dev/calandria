@@ -791,9 +791,9 @@ export default function Shell() {
         <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
       )}
 
-      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}
+      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.tasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
-        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} tags={o.tags} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />
+        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.tasks} tags={o.tags} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />
       )}
       {bulkMoveIds && project && (
         <MoveTasksModal

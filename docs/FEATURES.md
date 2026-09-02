@@ -287,6 +287,15 @@ done. Opt in from the edit dialog's dependency picker, or straight from the bloc
 own start screen: its "Blocked until …" notice carries a **Start when unblocked** button, and
 the queued notice it becomes carries **Cancel** to hand the start back to you.
 
+A blocker doesn't have to be a task you accepted. An agent ordering a plan draws its edges
+while every step is still an unreviewed suggestion, so an accepted task can be waiting on
+siblings still sitting in the Suggested tray. Those blockers count — the chip names them
+`(suggested)` and server-side auto-start honors them — and the dependency picker lists them
+with a **Suggested** tag, so you can either accept them from the tray and work the plan in
+order, or untick them and start now. What the picker won't do is OFFER a suggestion you
+haven't already linked: waiting on work nobody has agreed to do yet isn't a choice worth
+putting on a menu.
+
 Everywhere tasks are listed (every group in the list, every board column, the Suggested
 tray), the top one is the most recently active: whatever was last created, edited, or worked
 on by a turn. Nothing has to be dragged to the top, and a backlog you haven't touched in a

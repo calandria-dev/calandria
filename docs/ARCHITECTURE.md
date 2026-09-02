@@ -361,6 +361,19 @@ UI's edit dialog. The supported recipe is two-phase, and the prompt in
 `buildProjectContext()` spells it out: file every task, wait for the ids, then call
 `update_task` per dependent task.
 
+Neither call screens a blocker on `suggested`, deliberately: the order an agent expresses is
+drawn while every step is still in the tray, so filtering those edges out would discard the
+plan's sequence at the moment it's stated. The cost, until issue #46, was that the edit
+dialog's picker was fed real tasks only. A suggested blocker had no row to untick and every
+save re-submitted it, while the "Blocked by" chip and `blocks()` both counted it — a task
+that couldn't start, with no visible cause and no way to clear it. One predicate decides now:
+`isBlocking()` in `app/shell/format.ts`, mirroring `blocks()` in `lib/autoStart.ts` on both
+edges. Terminal doesn't block, and neither does a ref that resolves to nothing — the client
+used to assume a missing row still blocked, disabling a Start the server would have allowed.
+`blockerCandidates()` lists a suggestion only when it is ALREADY selected, the same exception
+a terminal blocker gets and for the same reason: an edge nothing draws is an edge nobody can
+remove.
+
 `update_task`'s version of `blocked_by` differs from `suggest_task`'s in two ways, both
 because it replaces a set instead of filling a blank one. It is refused on the caller's own
 row, because blockers gate whether a task may start and a session calling this has already

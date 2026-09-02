@@ -359,24 +359,47 @@ export const isTerminal = (t: { status: TaskRow["status"] }) => t.status === "do
 // filing order there — "Auth" shouldn't sort after "auth migration".
 export const alphabetical = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" });
 
-// The tasks a "Blocked by" picker may offer. A terminal task can't block
-// anything by definition, so it isn't a choice — but one ALREADY selected stays
-// listed even after it finishes, or an edge drawn while the blocker was live
-// would become invisible and impossible to remove.
+// The tasks a "Blocked by" picker may offer. Two kinds are left out, because
+// offering them is offering an edge that means nothing yet: a TERMINAL task
+// can't block anything by definition, and an unreviewed SUGGESTION isn't on the
+// board — picking one would wait on work nobody has agreed to do.
+//
+// Both have the same exception, and it is the whole point of the exception: one
+// ALREADY selected stays listed. An edge drawn while the blocker was live must
+// survive it finishing, and an edge an agent drew onto a suggestion
+// (`update_task`'s `blocked_by`, which never checks `suggested`) has to be
+// visible somewhere — the picker is the only screen that can untick it, and a
+// suggestion DOES block server-side (issue #46).
 export const blockerCandidates = (candidates: TaskRow[], selected: string[]): TaskRow[] =>
   candidates
-    .filter((c) => !isTerminal(c) || selected.includes(c.id))
+    .filter((c) => (!isTerminal(c) && !c.suggested) || selected.includes(c.id))
     .sort((a, b) => alphabetical(a.title, b.title));
 
-// The titles of a task's unfinished blockers (dependencies not yet 'done'). A
-// task with any of these is "blocked" and can't be started until they complete.
-// A cancelled dependency doesn't block — it's terminal and will never finish,
-// so waiting on it would deadlock the dependent task forever.
+// One rule for "does this dependency still gate a start", shared by the chip
+// and by the two dialogs' Start gates. It mirrors `blocks()` in lib/autoStart.ts
+// — the predicate that actually decides — on both of its edges:
+//
+//   - a terminal blocker doesn't block. It will never finish, so waiting on it
+//     would deadlock the dependent forever.
+//   - a ref that resolves to NOTHING doesn't block either. `blocks()` returns
+//     false for a missing task, and the client disagreeing meant a deleted or
+//     not-yet-loaded blocker disabled a Start the server would have allowed.
+//
+// A SUGGESTED blocker does block, agreeing with the server. It is drawn as one
+// (`blockerCandidates` above lists it, `blockerTitles` names it as suggested)
+// rather than silently ignored.
+export const isBlocking = (b: TaskRow | undefined): b is TaskRow => !!b && !isTerminal(b);
+
+// The titles of a task's unfinished blockers. A task with any of these is
+// "blocked" and can't be started until they clear. A blocker still sitting in
+// the Suggested tray is named as such: it blocks like any other, but it clears
+// by being accepted, dismissed or unticked rather than by being worked, and the
+// chip is where a user finds out that's what they're waiting on.
 export const blockerTitles = (t: TaskRow, byId: Map<string, TaskRow>): string[] =>
   (t.depends_on ?? [])
     .map((id) => byId.get(id))
-    .filter((b): b is TaskRow => !!b && !isTerminal(b))
-    .map((b) => b.title);
+    .filter(isBlocking)
+    .map((b) => (b.suggested ? `${b.title} (suggested)` : b.title));
 
 // add/del/ctx class for a diff line's sign — shared by the peek and full views.
 export const diffCls = (sign: "+" | "-" | " ") => (sign === "+" ? "add" : sign === "-" ? "del" : "ctx");
