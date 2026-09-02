@@ -181,6 +181,7 @@ COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # they must be COPY'd explicitly (same gotcha as the auth/router .mjs above).
 COPY --from=build --chown=root:root /app/scripts/calandria-mcp.mjs ./scripts/calandria-mcp.mjs
 COPY --from=build --chown=root:root /app/lib/agentToolDefs.mjs ./lib/agentToolDefs.mjs
+COPY --from=build --chown=root:root /app/lib/agentToolGuard.mjs ./lib/agentToolGuard.mjs
 # The container boots through docker/entrypoint.sh, not `npm start` — but
 # package.json IS in this image, so a script it names has to exist or `npm start`
 # in a docker exec fails on a missing file rather than doing the obvious thing.

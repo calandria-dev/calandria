@@ -30,6 +30,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
@@ -83,6 +84,25 @@ async function callInternal(path, payload) {
 }
 
 const server = new McpServer({ name: "calandria", version: "1.0.0" });
+
+// Every tool below answers through lib/agentToolGuard.mjs, so a throw, a hang or
+// an empty result reaches the model as a sentence it can read instead of as
+// silence it would mistake for success (the bug in this module's header). The
+// wrap goes on registerTool itself rather than on each handler for the reason
+// the Claude driver wraps its whole tools array: a tool added later cannot
+// forget to be loud, and the two ends of the seam have nowhere to drift apart.
+//
+// ask_user is the one exception to the deadline — it is parked on a HUMAN, who
+// may take all day, and its own 24h poll is the deadline that belongs there.
+// Plain Node, so the knob is read from the environment directly rather than from
+// lib/config.ts; CALANDRIA_AGENT_TOOL_TIMEOUT_MS is the same name that file uses.
+const TOOL_TIMEOUT_MS = (() => {
+  const n = Number(process.env.CALANDRIA_AGENT_TOOL_TIMEOUT_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_TOOL_TIMEOUT_MS;
+})();
+const registerToolUnguarded = server.registerTool.bind(server);
+server.registerTool = (name, config, handler) =>
+  registerToolUnguarded(name, config, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }));
 
 server.registerTool(
   EXPOSE_SERVICE.name,

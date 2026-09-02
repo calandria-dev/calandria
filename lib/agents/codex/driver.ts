@@ -24,7 +24,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { CODEX_CAPABILITIES } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
+import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
@@ -80,6 +80,11 @@ export function calandriaMcpConfig(
           CALANDRIA_LANDING_MODE: project.landing_mode,
           CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
+          // The bridge is plain Node and can't read lib/config.ts, and this env
+          // block REPLACES the inherited environment, so the knob has to be
+          // handed over explicitly or every bridged tool would silently fall
+          // back to the built-in default (lib/agentToolGuard.mjs).
+          CALANDRIA_AGENT_TOOL_TIMEOUT_MS: String(AGENT_TOOL_TIMEOUT_MS),
         },
       },
     },

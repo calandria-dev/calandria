@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });
 
-  const { url, text } = await createPrForAgent(
+  const { url, number, text } = await createPrForAgent(
     caller,
     {
       title: typeof body.title === "string" ? body.title : undefined,
@@ -53,5 +53,5 @@ export async function POST(req: NextRequest) {
   // refused. `error` is what the bridge shows the agent as the tool's failure
   // text — which is what tells it how to retry.
   if (!url) return NextResponse.json({ error: text }, { status: 400 });
-  return NextResponse.json({ ok: true, url, text });
+  return NextResponse.json({ ok: true, url, number, text });
 }

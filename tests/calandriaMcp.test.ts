@@ -524,3 +524,56 @@ describe("create_pr is gated on the project's landing mode", () => {
     }
   });
 });
+
+describe("a tool that cannot answer says so", () => {
+  // The bug (2026-08-24, 2026-08-30): mid-turn, every Calandria tool call came
+  // back with no content and no error, and the sessions could not tell that from
+  // success — they announced a withdrawal, a runbook and a pull request that were
+  // never written. Whatever drops the answer lives below this seam; what is ours
+  // is that the model is never handed silence. lib/agentToolGuard.mjs is the
+  // shared enforcement (unit-tested in tests/agentToolGuard.test.ts); this pins
+  // that it survives the real stdio MCP round trip, which is the thing a model
+  // actually reads.
+
+  it("relays a dead app as an error, not an empty result", async () => {
+    // Nothing is listening on this port, so callInternal's fetch rejects. Before
+    // the guard the throw still reached the model, but a read-only call coming
+    // back blank is precisely what the live sessions saw and misread.
+    const { client, close } = await connectBridge({ CALANDRIA_BASE_URL: "http://127.0.0.1:1" });
+    try {
+      const res = await client.callTool({ name: "list_tasks", arguments: {} });
+      expect(res.isError).toBe(true);
+      const text = (res.content as { text: string }[])[0].text;
+      expect(text.trim()).not.toBe("");
+      // Names the tool and tells the session what NOT to do with the result.
+      expect(text).toContain("list_tasks");
+      expect(text).toMatch(/do not report this as done/i);
+    } finally {
+      await close();
+    }
+  });
+
+  it("relays a create_pr failure with its reason, and never as a bare flag", async () => {
+    // create_pr is the one way a session says in git that its work is finished:
+    // it cannot push and cannot merge, so a silent no-op here strands the work
+    // with no signal at all. The endpoint answers 400 with the reason; the model
+    // has to get that sentence, not an empty isError.
+    const { client, close } = await connectBridge({
+      CALANDRIA_LANDING_MODE: "pr",
+      CALANDRIA_BASE_URL: "http://127.0.0.1:1",
+    });
+    try {
+      const res = await client.callTool({
+        name: "create_pr",
+        // A body the size of the one that preceded the 2026-08-30 window.
+        arguments: { title: "fix: something", body: "## What\n\n".padEnd(6000, "x") },
+      });
+      expect(res.isError).toBe(true);
+      const text = (res.content as { text: string }[])[0].text;
+      expect(text.trim()).not.toBe("");
+      expect(text).toContain("create_pr");
+    } finally {
+      await close();
+    }
+  });
+});
