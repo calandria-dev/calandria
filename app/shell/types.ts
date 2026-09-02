@@ -112,8 +112,9 @@ export interface TaskRow {
 // Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
 
 /** The task field an agent tool changed — `update_task`'s, plus the base branch
- *  `set_base_branch` retargets (whose Revert re-runs the retarget, not a write). */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
+ *  `set_base_branch` retargets and the project `move_task` re-parents into
+ *  (whose Reverts re-run the operation, not a column write). */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
 
 /** One field's before/after within an edit — `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`

@@ -128,8 +128,9 @@ The app talks to coding agents only through the `AgentDriver` interface.
 
 `runTurn()` runs a turn via the Claude Agent SDK, resuming or starting fresh, with project
 context appended to the Claude Code system prompt. It exposes the Calandria MCP tools
-(`suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `create_pr`, `update_tag`, `list_projects`, `expose_service`),
+(`suggest_task`, `list_tasks`, `get_task`, `update_task`, `move_task`,
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `update_tag`, `list_projects`,
+`expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()`, a read-only agent loop
 that explores the repo to refresh a project's saved context. Auth delegates to
 `lib/claude-auth.ts`.
@@ -266,9 +267,10 @@ controls show their run count and API-price-equivalent cost without polling.
 
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
-`suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `create_pr`, `list_tags`, `update_tag`, `list_projects`, `expose_service`,
-and `ask_user` are the same Calandria tools every driver exposes. The Claude driver mounts all
+`suggest_task`, `list_tasks`, `get_task`, `update_task`, `move_task`,
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `list_tags`, `update_tag`,
+`list_projects`, `expose_service`, and `ask_user` are the same Calandria tools every driver
+exposes. The Claude driver mounts all
 but `ask_user` as an in-process SDK MCP server (`createSdkMcpServer`) and gets asks natively
 through its AskUserQuestion hook. The portable equivalent is **`scripts/calandria-mcp.mjs`**,
 a plain-Node stdio MCP server (`@modelcontextprotocol/sdk`) that non-Claude drivers spawn
@@ -405,6 +407,45 @@ argument straight through, while the bridge's endpoint takes the caller from the
 env-injected `CALANDRIA_TASK_ID` and the target from the request body. Because the target
 is model-supplied in both cases, `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge
 against the real endpoint and asserts on the database rather than on the refusal text.
+
+**`move_task(tasks, project)`** re-parents tasks between projects (issue #24). Before it,
+`suggest_task` picked a project at creation and nothing afterwards could change it, so the
+only route was re-filing into the target and retiring the original: N `get_task` calls to
+recover descriptions `list_tasks` omits, N `suggest_task` calls to retype them, and a
+dependency graph rebuilt by hand from the new ids afterwards — a second pass that looks
+identical whether or not it was done.
+
+The operation itself is `lib/taskMove.ts`'s, shared with the two user-facing move routes, so
+an agent's move and a board move can't mean different things. A dedicated verb rather than a
+`project` field on `update_task`, for `set_base_branch`'s reason plus one more:
+`updateTaskForAgent()` is a synchronous atomic write and this takes per-task locks and can
+run git, so folding it in would make the field-writer non-atomic for every other field. And
+it is a *set* operation — whether a `blocked_by` edge survives depends on which other tasks
+are moving in the same call, which a per-row field has nowhere to express. Chains are
+therefore moved whole in one call, which is the answer to the issue's first open question:
+an edge survives iff both ends move together, and every edge that doesn't is **reported** by
+name, since a task that looks ready and isn't is worse than a refusal.
+
+The issue's second question — scope — is answered by what the tool deliberately doesn't
+take. A started task's checkout was cut from the old repo and can only move by being
+destroyed; the bulk route demands that acknowledgement as a **list of ids** rather than a
+flag, precisely because one switch over eleven irreversible answers isn't consent. An
+agent-facing verb must not become the shortcut past that question, so `move_task` passes no
+acknowledgements at all and the internal endpoint ignores one sent anyway
+(`tests/agentMoveTask.test.ts`). Started tasks are refused with their checkouts untouched,
+the reply says the user gives that answer from the board's Move dialog, and everything
+movable in the same call still moves — refusals are per task, matching the bulk route. A
+task with a live turn is refused for the same reason it is on the board, including the
+caller's own row: a session can't move the worktree it is writing into.
+
+Moving a task the user had already accepted is recorded in `task_agent_edits` on
+`update_task`'s exact rule (`isInertSuggestion()` read off the pre-move row, so a move isn't
+judged by the state it produced), under a new `project` field on `AgentEditField`. Its
+Revert re-runs the move backwards through `moveTasksToProject()` rather than writing
+`project_id`, which would strand the task's sessions, usage and merge rows in the project it
+left; it goes first in the revert, ahead of even the base branch, so a refusal leaves the
+edit entirely un-reverted. If the user started the task in its new home before reverting,
+the undo is refused rather than destroying that checkout — still their answer to give.
 
 Tags reuse the same three tools plus one new read, and the create-vs-strict split is the
 whole policy (`resolveTagRefs()` in `lib/agentTools.ts`, over `resolveTag()` in the store).

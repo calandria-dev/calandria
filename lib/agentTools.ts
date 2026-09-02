@@ -1,6 +1,6 @@
 // Shared implementations of Calandria's agent-facing tools
-// (suggest_task / list_tasks / get_task / update_task / withdraw_suggestion /
-//  list_tags / expose_service / ask_user).
+// (suggest_task / list_tasks / get_task / update_task / move_task /
+//  withdraw_suggestion / list_tags / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
@@ -46,6 +46,9 @@ import { resolveBaseBranch, setTaskBaseBranch } from "./baseBranch";
 // perfectly ordinary-looking one.
 import { refNameSafe } from "./git";
 import { withTaskLock } from "./taskLock";
+// The re-parenting operation itself, shared with POST /api/tasks/[id]/move and
+// POST /api/tasks/move. SDK-free and pinned that way, like this module.
+import { moveTasksToProject } from "./taskMove";
 import { exposeService } from "./services";
 import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk } from "./asks";
@@ -89,7 +92,17 @@ export function listProjectsForAgent(currentId: string): AgentProjectInfo[] {
  * server closes over it), so even the no-ref path re-reads the row: the project
  * can be deleted while a turn runs.
  */
-export function resolveTargetProject(current: Project, ref?: string): { project: Project } | { error: string } {
+export function resolveTargetProject(
+  current: Project,
+  ref?: string,
+  /**
+   * How the refusal ends. Every caller has to say that nothing happened, and
+   * what "nothing" was differs per tool — `suggest_task` created no task,
+   * `move_task` moved none — so the sentence is the caller's rather than a
+   * generic one that would be wrong for one of them.
+   */
+  nothingHappened = "Nothing was created."
+): { project: Project } | { error: string } {
   const wanted = ref?.trim() ?? "";
   const projects = listProjectsPlain();
   const names = () => projects.map((p) => `"${p.name}"`).join(", ") || "(none)";
@@ -110,13 +123,13 @@ export function resolveTargetProject(current: Project, ref?: string): { project:
     return {
       error:
         `"${wanted}" is ambiguous — ${byName.length} projects share that name. ` +
-        `Pass one of these ids instead: ${byName.map((p) => p.id).join(", ")}. Nothing was created.`,
+        `Pass one of these ids instead: ${byName.map((p) => p.id).join(", ")}. ${nothingHappened}`,
     };
   }
   return {
     error:
       `No project matches "${wanted}". Pass an exact project id, or a project name (case-insensitive) from: ${names()}. ` +
-      `Call list_projects for the ids. Nothing was created.`,
+      `Call list_projects for the ids. ${nothingHappened}`,
   };
 }
 
@@ -1069,6 +1082,155 @@ export function withdrawSuggestionForAgent(
     // suggestion is now unblocked and must actually launch, or it waits forever.
     autoStartDependents: true,
   };
+}
+
+/**
+ * The `move_task` tool: re-parent tasks into another project, keeping the rows.
+ *
+ * A dedicated verb rather than a `project` field on `update_task`, for
+ * `set_base_branch`'s reason and one more. `updateTaskForAgent` is a
+ * synchronous, atomic better-sqlite3 write; this is asynchronous — it takes the
+ * per-task locks and can run git — so folding it in would make the field-writer
+ * non-atomic for every other field. And it is a SET operation: whether a
+ * `blocked_by` edge survives depends on which OTHER tasks are moving in the
+ * same call, which a per-row field has nowhere to express.
+ *
+ * The whole operation is lib/taskMove.ts's, shared with the two move routes, so
+ * an agent's move and a user's cannot mean two different things. What this adds
+ * is the trust split every agent tool makes (`caller` is the server's word,
+ * `refs` and `projectRef` are the model's), the destination resolution
+ * `suggest_task` uses, the audit row, and the report.
+ *
+ * **No discard acknowledgement is offered, and that is the point.** A started
+ * task's checkout was cut from the OLD repo, so it can only move by being
+ * destroyed; the bulk route takes that answer as a LIST OF IDS rather than a
+ * flag precisely because one switch over eleven irreversible answers isn't
+ * consent. An agent-facing verb must not become the shortcut past that
+ * question, so it passes no acknowledgements at all: every started task is
+ * refused with its checkout untouched, and the user gives the answer from the
+ * board's Move dialog. Same for a live turn, including the caller's own row —
+ * a session cannot move itself, because its worktree is open in front of it.
+ *
+ * Refusals are per task, matching the bulk route: three started tasks don't
+ * refuse the eight that can move. Only a missing destination fails the call.
+ *
+ * Dependency edges are the issue's (#24) open question, answered the way
+ * `moveTasks` already answers it for the UI: an edge survives iff both ends
+ * move together, and every edge that doesn't is REPORTED. Silently dropping
+ * them is the one outcome to avoid — a task that looks ready and isn't — so the
+ * text names each one and the model can redraw it with `update_task`.
+ *
+ * Recorded in `task_agent_edits` for every moved task the user had already
+ * accepted, on `updateTaskForAgent`'s rule: an unreviewed tray suggestion the
+ * agent filed itself is nobody's surprise. Its Revert re-runs this same move
+ * backwards (app/api/tasks/[id]/agent-edits/route.ts), never a `project_id`
+ * column write — that would leave the sessions, usage and merge rows billing
+ * the project the task no longer belongs to.
+ */
+export async function moveTasksForAgent(
+  caller: Task,
+  refs: string[],
+  projectRef: string
+): Promise<{ ok: boolean; moved: Task[]; text: string }> {
+  // `ok: false` is the WHOLE CALL failing — no ids, no destination, a
+  // destination that doesn't resolve. It is not "nothing moved": a selection
+  // that was entirely started tasks moved nothing and is still a well-formed
+  // answer the model has to read, so the two can't be told apart by counting
+  // rows. The callers turn this into isError / a 400.
+  const fail = (text: string) => ({ ok: false, moved: [] as Task[], text });
+  const ids = [...new Set(refs.map((r) => (typeof r === "string" ? r.trim() : "")).filter(Boolean))];
+  if (ids.length === 0)
+    return fail(`move_task needs at least one task id in \`tasks\`. Call list_tasks for them. Nothing was moved.`);
+
+  const current = getProject(caller.project_id);
+  if (!current) return fail(`Could not move: the project this session belongs to no longer exists.`);
+  const wanted = projectRef?.trim() ?? "";
+  if (!wanted)
+    return fail(
+      `move_task needs a destination: pass \`project\` as the id or exact name of the project to move into. ` +
+        `Call list_projects for them. Nothing was moved.`
+    );
+  const target = resolveTargetProject(current, wanted, "Nothing was moved.");
+  if ("error" in target) return fail(target.error);
+
+  // Read every row BEFORE the move: afterwards they all name the destination,
+  // and the report has to say where each one came from, what it was called if
+  // it turned out not to exist, and whether it was a row the user had accepted.
+  const before = new Map(ids.map((id) => [id, getTask(id)] as const));
+  // Falls through to a live read because a DROPPED edge names the task at its
+  // OTHER end, which by definition is one that didn't move and so was never
+  // captured above. A bare id there would be the least readable half of the
+  // one line in this report the model has to act on.
+  const name = (id: string) => `"${before.get(id)?.title ?? getTask(id)?.title ?? id}"`;
+
+  const result = await moveTasksToProject(ids, target.project.id, {
+    // Deliberately empty — see the block comment above. A started task is
+    // refused here rather than acknowledged away.
+  });
+  if (!result) return fail(`Project "${target.project.name}" no longer exists. Nothing was moved.`);
+
+  // One audit row per moved task the user had already accepted, attributed to
+  // this session. isInertSuggestion is the same screen update_task uses, read
+  // off the PRE-move row so a move can't be judged by the state it produced.
+  let recorded = false;
+  for (const task of result.moved) {
+    const was = before.get(task.id);
+    if (!was || isInertSuggestion(was)) continue;
+    recorded = true;
+    recordAgentEdit({
+      task_id: task.id,
+      project_id: target.project.id,
+      actor_task_id: caller.id,
+      actor_title: caller.title,
+      actor_agent: caller.agent,
+      changes: [
+        {
+          field: "project",
+          before: getProject(was.project_id)?.name ?? was.project_id,
+          after: target.project.name,
+          // The ids are what Revert moves back to; the names are only readable.
+          before_value: was.project_id,
+          after_value: target.project.id,
+        },
+      ],
+    });
+  }
+  const lines: string[] = [];
+  if (result.moved.length === 0) lines.push(`Nothing moved into "${target.project.name}".`);
+  else
+    lines.push(
+      `Moved ${result.moved.length} task${result.moved.length === 1 ? "" : "s"} into "${target.project.name}": ` +
+        `${result.moved.map((t) => `"${t.title}"`).join(", ")}.`
+    );
+  if (result.unchanged.length)
+    lines.push(`Already there, so left alone: ${result.unchanged.map(name).join(", ")}.`);
+  if (result.skipped.length) {
+    lines.push(`Not moved: ${result.skipped.map((s) => `${name(s.id)} — ${s.reason}`).join("; ")}.`);
+    // Said once rather than per row: the answer it asks for is the same one,
+    // and it is not one this tool can give on the user's behalf.
+    if (result.skipped.some((s) => s.reason.startsWith("a started task can't be moved")))
+      lines.push(
+        `Moving a started task means destroying the worktree it was cut from, which only the user can approve — ` +
+          `from the task's Move dialog on the board. Say which tasks are waiting on that rather than re-filing them.`
+      );
+  }
+  if (result.dropped.length)
+    lines.push(
+      `Dependency edges dropped, because only one end moved: ` +
+        `${result.dropped.map((e) => `${name(e.task_id)} was blocked by ${name(e.depends_on_id)}`).join("; ")}. ` +
+        `Redraw any that still apply with update_task's blocked_by, or move the other end too.`
+    );
+  if (result.untagged.length)
+    lines.push(
+      `Tags left behind, because some of their members stayed: ` +
+        `${result.untagged.map((u) => `${name(u.id)} lost "${u.tag_name}"`).join("; ")}.`
+    );
+  if (recorded)
+    lines.push(
+      `The tasks the user had already accepted show on their board as moved by an agent, with a one-click revert.`
+    );
+
+  return { ok: true, moved: result.moved, text: lines.join("\n") };
 }
 
 /**
