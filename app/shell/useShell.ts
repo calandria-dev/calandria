@@ -965,7 +965,7 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");

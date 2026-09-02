@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
+import { taskProvider } from "@/lib/agentEnv";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -925,9 +926,19 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           publish(id, ev);
         }
       } else if (ev.type === "usage") {
-        addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, usage: ev.usage });
-        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += ev.usage[k] || 0;
-        publish(id, ev);
+        // A turn against an overridden endpoint (a local model, a custom base
+        // URL — lib/agentEnv.ts) is not Anthropic or OpenAI spend, whatever the
+        // driver's own figure says: Claude Code prices whatever model id it was
+        // told, and the Codex estimate prices an unknown id at the CLI-default
+        // family. Zeroed HERE, once, before the ledger, the running total and
+        // the live chip all read it, and tagged with the endpoint so Insights
+        // can tell the row from real spend. Tokens are kept: a local turn still
+        // filled a context window.
+        const provider = taskProvider(project, task);
+        const usage = provider.kind === "cloud" ? ev.usage : { ...ev.usage, cost_usd: 0 };
+        addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
+        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] || 0;
+        publish(id, { ...ev, usage });
       } else if (ev.type === "context") {
         // Measured occupancy, persisted as it arrives (not at turn end) so a
         // Stop or a crash mid-turn doesn't lose what the window actually

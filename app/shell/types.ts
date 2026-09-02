@@ -26,6 +26,7 @@ export interface ProjectRow {
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
+  agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -44,6 +45,7 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
+  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
@@ -383,7 +385,10 @@ export interface AgentCapabilities {
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
 export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT }
+// `local_base_url` is where the project settings' "Local model" preset points
+// by default — the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
+// the form writes the instance's answer rather than a guess.
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

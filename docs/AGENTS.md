@@ -174,6 +174,55 @@ Three upstream differences are visible:
   **Settings → Agents** states which side of this it's on, so you can check before picking
   an agent for a task.
 
+## Local models
+
+A project, or a single task, can run its turns against a local model server instead of the
+agent's cloud login. There is no separate driver: both CLIs already accept a different
+endpoint, and Calandria sets it per turn. Claude Code reads `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_AUTH_TOKEN` from its environment. Codex reads its provider from
+`~/.codex/config.toml`, so Calandria passes a provider entry of its own as a config override
+(`model_provider = "calandria-local"`, on the Responses wire API) and leaves your
+`config.toml` alone. Everything else, worktrees, diff review, merge, tools, asks, works as
+it does in the cloud.
+
+**Setup.** Open the project's settings and set **Model provider** to *Local model*. The base
+URL defaults to the instance's `CALANDRIA_LOCAL_MODEL_BASE_URL` (`http://localhost:11434`;
+a Docker instance uses `http://host.docker.internal:11434`). Name a model the server has
+pulled. Save. From then on every task in the project runs there, and its session header
+carries a `local` chip beside the agent mark.
+
+- **Ollama** (0.14 or later for Claude Code, 0.13 or later for Codex): `ollama pull
+  qwen3-coder`, then base URL `http://localhost:11434`, model `qwen3-coder`. Ollama's
+  Anthropic endpoint requires an auth token and ignores its value; the preset sends
+  `ollama`. Run a model with at least a 32K context window.
+- **LM Studio**: start the local server, load a model, then base URL `http://localhost:1234`
+  and the model's identifier as LM Studio shows it.
+
+**What the override can and can't carry.** The stored form is `projects.agent_env`, a JSON
+object over a fixed allowlist: the two base URLs, the Anthropic auth token, the model
+variables Claude Code's `opus`/`sonnet`/`haiku` aliases resolve through, and the model Codex
+should run. Nothing else gets through, so the field can't set `PATH` or `NODE_OPTIONS` for
+the spawned CLI. The model you name is written to every alias, so a task whose picker says
+`sonnet` still lands on the local model.
+
+**Credentials.** Redirecting the base URL drops the instance's own Anthropic and OpenAI keys
+from that turn's environment: a custom endpoint is a third party, and it gets only the token
+you typed for it. The reverse holds too. A project-level `ANTHROPIC_AUTH_TOKEN` is honoured
+only when the same override points the base URL somewhere other than Anthropic, so the
+field is not a way around `CALANDRIA_ALLOW_API_KEY_ENV`.
+
+**Billing.** A turn against an override is recorded with a cost of zero and tagged with the
+endpoint's host in `task_usage.provider`. Token counts are still recorded, since the local
+model still filled a context window, and the context gauge still works. Project-scoped
+one-shots (recaps, *Refresh with AI*) run on the utility agent's own login, not the
+project's endpoint.
+
+**Delegating from a cloud session.** A task can override its project on its own row, which is
+what lets a frontier model hand routine work to a local one. `suggest_task` takes
+`provider: "local"` plus a `model`: the task it files runs against the instance's local
+endpoint whatever the project's setting, and `provider: "cloud"` does the reverse inside a
+local project. The same field is `agent_env` on `PATCH /api/tasks/[id]`.
+
 ## Adding another agent
 
 The app is agent-agnostic behind a small driver interface. A new driver supplies normalized
