@@ -45,8 +45,9 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
   );
 }
 
-// Post-setup nudge: once the required Claude connection is done, gently suggest
-// connecting the other available agents (Codex) so tasks can run on them too.
+// Post-setup nudge: once the wizard's one required connection is done, gently
+// suggest connecting the agents that are still unconnected (any of Codex,
+// Antigravity, Claude) so tasks can run on them too.
 // Optional and dismissible (once, via localStorage) — the wizard never requires
 // a second agent. Renders nothing until it confirms there's an unconnected agent
 // to offer, so it never flashes for a single-agent instance.
@@ -95,8 +96,12 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
 // Generic "connect an agent" card, driven entirely by the agent-scoped auth
 // routes (/api/agents/[id]/{login,login/code,verify,api-key}) and the driver's
 // capabilities from GET /api/agents. One component serves every agent — Claude's
-// paste-a-code OAuth and Codex's device-code flow both fit — so agent #3 is a
-// registry entry with no new UI. Used by the Settings "Agents" section and the
+// paste-a-code OAuth, Codex's device-code flow and Antigravity's Google login
+// all fit. Where the third one didn't fit it was made to fit with DATA rather
+// than a branch on an agent id: `loginCompletesOutOfBand` (this login can land
+// without the code box, so watch authStatus too) and `connectHint` (the one
+// caveat the generic prose can't carry — Antigravity's is that a container has
+// no keyring for its token). Used by the Settings "Agents" section and the
 // post-setup "connect another agent" nudge. (The first-run wizard keeps its own
 // Claude-specific step so it can drive the onboarding funnel.)
 export function AgentConnect({
@@ -261,6 +266,47 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
     return () => clearInterval(t);
   }, [login, base, succeed]);
 
+  // Some logins can finish WITHOUT the code box ever being used: Antigravity's
+  // OAuth redirect lands on Google's own callback page, which completes the
+  // exchange for the CLI waiting on it, so a user who closes the tab without
+  // copying anything is nonetheless signed in. The login session can't see
+  // that (nothing is written to the pty), so ask the driver's authStatus —
+  // its authoritative "is this CLI signed in" probe — alongside the poll
+  // above. Opt-in per driver (capabilities.loginCompletesOutOfBand) because it
+  // costs a real CLI probe each time, and pointless for a flow where the code
+  // IS the exchange.
+  //
+  // Keyed on the login's STATUS, never on the login object: the poll above
+  // replaces that object every 1.8s, so an effect depending on it would clear
+  // and re-arm this interval before it could ever fire.
+  const phase = login?.status ?? "idle";
+  useEffect(() => {
+    if (!agent.capabilities.loginCompletesOutOfBand) return;
+    if (phase !== "awaiting" && phase !== "submitting") return;
+    let stopped = false;
+    // One probe at a time: the answer is a CLI call of unknown latency, and a
+    // queue of them would outlive the login they were asked about.
+    let inflight = false;
+    const t = setInterval(() => {
+      if (inflight) return;
+      inflight = true;
+      jget<{ authenticated?: boolean; email?: string | null; plan?: string | null }>(`/api/agents/${agent.id}/status`)
+        .finally(() => { inflight = false; })
+        .then((s) => {
+          if (stopped || !s?.authenticated) return;
+          stopped = true;
+          clearInterval(t);
+          // Signed in, so nothing further is wanted from the pty the login is
+          // holding open on the CLI's onboarding screens.
+          jsend(base, "DELETE").catch(() => {});
+          setLogin((p) => ({ ...(p as AgentLoginT), status: "success", email: s.email ?? null, plan: s.plan ?? null }));
+          succeed();
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [agent.capabilities.loginCompletesOutOfBand, agent.id, phase, base, succeed]);
+
   const submitCode = async () => {
     if (!code.trim()) return;
     setBusy(true);
@@ -326,6 +372,19 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
             <div className="wiz-verify" style={{ marginTop: 10 }}><span className="wiz-spin" /> <span>Waiting for you to authorize in the browser…</span></div>
           </>
         )}
+        {/* Always reachable from here, not only from the error card. A login
+            can stall in this state with nothing to click: the authorization
+            link expires on the provider's clock (Antigravity's is 60s and not
+            configurable), and the code the user is holding is bound to THIS
+            child's PKCE verifier, so the only recovery is a fresh child and a
+            fresh URL — which is exactly what this does. */}
+        <div className="hlp" style={{ marginTop: 14 }}>
+          Link expired, or the code refused?{" "}
+          <button className="linkbtn" onClick={start} disabled={busy}>Start again</button>
+        </div>
+        {agent.capabilities.connectHint && (
+          <div className="hlp" style={{ marginTop: 6 }}>{agent.capabilities.connectHint}</div>
+        )}
         <LogToggle log={login.log} show={showLog} setShow={setShowLog} />
       </div>
     );
@@ -358,6 +417,12 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
       )}
       {verifyErr && !verifying && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 6 }}>⚠ {verifyErr}</div>
+      )}
+      {/* The one caveat the generic prose above can't carry, supplied by the
+          driver's capability descriptor rather than branched on here — the
+          card stays agent-agnostic (lib/agents/types.ts connectHint). */}
+      {agent.capabilities.connectHint && (
+        <div className="hlp" style={{ marginTop: 10 }}>{agent.capabilities.connectHint}</div>
       )}
     </div>
   );

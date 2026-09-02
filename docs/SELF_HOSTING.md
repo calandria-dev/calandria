@@ -144,6 +144,14 @@ reach the instance through the tunnel hostname, not `http://192.168.x.x`.
 The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted
 code, and the setup wizard drives that flow from the browser.
 
+Antigravity is the exception, and it is a hard one: `agy` stores its OAuth
+token in the OS keyring over the D-Bus Secret Service with no file fallback,
+and this image ships no keyring daemon, so the subscription sign-in cannot
+complete in a container at all. Set `GEMINI_API_KEY` (or paste a key on the
+agent's card in Settings → Agents) and the driver points the CLI at it
+instead. That path bills Google's API rather than drawing on an Antigravity
+subscription.
+
 For site-specific CLIs or config layered on the published image, see
 [`examples/overlay/`](../examples/overlay/); keep real overlays in a private
 repo, not committed here.
@@ -512,10 +520,14 @@ app from booting.
 | Web Push signing key | `<CALANDRIA_DB_DIR>/vapid.json` | `db-dir/` |
 | A persisted API key (only if you used the wizard's key path) | `<CALANDRIA_DB_DIR>/anthropic-api-key`, `openai-api-key` | `db-dir/` |
 | Boot mutex | `<CALANDRIA_DB_DIR>/*.lock.db`, `*.lock.json` | **excluded**: a pure lock holding no data; restoring one restores a stale claim |
-| Agent CLI logins | `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude/settings.json`, `~/.codex/auth.json`, `~/.codex/config.toml` | `agent-login/home/…` (`--no-logins` to skip) |
+| Agent CLI logins | `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude/settings.json`, `~/.codex/auth.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/settings.json` | `agent-login/home/…` (`--no-logins` to skip) |
 | Per-task git worktrees | `CALANDRIA_WORKTREES_DIR` (default `~/.calandria/worktrees`) | **opt-in** (`--worktrees`) |
 | Cloned project repos | `CALANDRIA_PROJECTS_DIR` (default `~/projects`) | **opt-in** (`--projects`) |
 | Your own repos | wherever you told the project they are | never (they're yours) |
+
+Antigravity's subscription token is NOT in that set — it lives in the OS keyring rather than in
+a file, so a restored instance signs in again (or uses `GEMINI_API_KEY`, which Calandria stores
+in its own database and the database backup does carry).
 
 `db-dir/` is captured by exclusion (everything in the DB dir that isn't a
 SQLite file, the lock pair, the backup directory, or a nested worktrees dir),

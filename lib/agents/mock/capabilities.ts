@@ -25,4 +25,6 @@ export const MOCK_CAPABILITIES: AgentCapabilities = {
   supportsResume: true,
   apiKeyHint: null,
   loginStyle: "paste_code",
+  loginCompletesOutOfBand: false,
+  connectHint: null,
 };

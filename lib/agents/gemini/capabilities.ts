@@ -4,7 +4,13 @@
 // the same separation lib/agents/capabilities.ts requires of every driver.
 
 import type { AgentCapabilities } from "../types";
-import { geminiApiKey } from "./auth";
+
+// The key-shape placeholder, owned HERE rather than read off ./auth, so this
+// module stays a leaf. auth.ts pulls in lib/store, which reaches back to
+// lib/agents/capabilities.ts, so a descriptor that imported auth could only be
+// evaluated in one import order — and any module that reached auth.ts first
+// (the plan-usage reader, a test) got `undefined` off a half-built module.
+export const GEMINI_API_KEY_HINT = "AIza…";
 
 // Gemini's published limits: 1,048,576 input tokens, 65,536 output, uniform
 // across every 3.x and 2.5 model in Google's catalog (ai.google.dev, 2026-09-01).
@@ -101,6 +107,20 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
   // conversation, which is spend, not occupancy — see ./events.ts.)
   reportsContext: false,
   supportsResume: true,
-  apiKeyHint: geminiApiKey.hint,
+  apiKeyHint: GEMINI_API_KEY_HINT,
   loginStyle: "paste_code",
+  // Google's redirect lands on antigravity.google/oauth-callback rather than a
+  // localhost port, and that page completes the sign-in for the CLI waiting on
+  // it. So the code box is one of two ways this login can finish, and the card
+  // has to watch for the other (see AgentCapabilities.loginCompletesOutOfBand).
+  loginCompletesOutOfBand: true,
+  // The container caveat, stated where the sign-in is offered rather than only
+  // in the docs: `agy` stores its OAuth token in the OS keyring over D-Bus and
+  // has no file fallback, and the published image ships no D-Bus session, so
+  // this button cannot work there.
+  connectHint:
+    "In a container, the subscription sign-in can't complete: the Antigravity CLI keeps its " +
+    "token in the OS keyring (D-Bus Secret Service) and the published image runs no keyring " +
+    "daemon. Use an API key there (GEMINI_API_KEY, or the tab above), which bills Google's API " +
+    "rather than your subscription.",
 };

@@ -27,6 +27,7 @@ import { buildProjectContext } from "../shared";
 import { mapAgyEvent, newState, ZERO_CUM, type GeminiCum, type GeminiMapState } from "./events";
 import { resolveGeminiModel, DEFAULT_GEMINI_MODEL } from "./pricing";
 import { prepareTaskHome } from "./home";
+import { getGeminiPlanUsage } from "./planUsage";
 import {
   geminiStatus,
   verifyGeminiTurn,
@@ -340,6 +341,10 @@ export const geminiDriver: AgentDriver = {
   cancelLogin: cancelGeminiLogin,
   verify: verifyGeminiTurn,
   apiKey: geminiApiKey,
+  // `agy -p "/usage"` is a real quota read that spends no quota (measured:
+  // num_turns 0, zero tokens), so the titlebar meter works on this agent the
+  // way it does on Claude — see ./planUsage.ts.
+  planUsage: getGeminiPlanUsage,
 };
 
 export { DEFAULT_GEMINI_MODEL };

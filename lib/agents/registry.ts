@@ -27,13 +27,16 @@ import { DEFAULT_AGENT } from "./capabilities";
 let DRIVERS: Record<string, AgentDriver> | null = null;
 function drivers(): Record<string, AgentDriver> {
   if (!DRIVERS) {
-    DRIVERS = { [claudeDriver.id]: claudeDriver, [codexDriver.id]: codexDriver };
-    // The Antigravity (Google) driver, still experimental — registered only when
-    // the instance opts in, so an installation with no `agy` binary never sees
-    // it in the agent picker. Same shape as the mock's gate below; the import
-    // above is unconditional but harmless, since this driver has no SDK and
-    // spawns nothing at module load.
-    if (process.env.CALANDRIA_EXPERIMENTAL_GEMINI === "1") DRIVERS[geminiDriver.id] = geminiDriver;
+    // Three first-class agents. Antigravity is registered unconditionally like
+    // the other two now that it is proven: an instance with no `agy` binary
+    // sees the same thing it sees for a missing `codex` — an agent it can pick
+    // in the picker and cannot connect, which is a legible state, where an
+    // agent hidden behind an env var is not.
+    DRIVERS = {
+      [claudeDriver.id]: claudeDriver,
+      [codexDriver.id]: codexDriver,
+      [geminiDriver.id]: geminiDriver,
+    };
     // The deterministic e2e driver (lib/agents/mock/) — registered only when the
     // Playwright suite's env flag is set, so it can never appear in a real
     // instance's agent picker. The import above is unconditional but harmless:

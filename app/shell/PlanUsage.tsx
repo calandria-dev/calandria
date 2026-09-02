@@ -3,9 +3,12 @@
 import { useState, useSyncExternalStore } from "react";
 import { Popover } from "./shared";
 import { jget } from "./api";
+import { AgentMark } from "../icons";
+import { agentLabel } from "./agents";
+import type { AgentsBundle } from "./types";
 import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
 
-// The titlebar subscription-usage meter — "how much of my Claude plan have my
+// The titlebar subscription-usage meter — "how much of my plan have my
 // parallel sessions burned" at a glance, which matters here more than in a
 // single terminal because this app's whole point is running many of them.
 // Compact pill: session % · week %, tinted by the worst window. Click for the
@@ -112,14 +115,33 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
   );
 }
 
-export function PlanUsagePill() {
-  const snap: PlanUsageSnapshot | null = usePlanUsage().claude ?? null;
+// One pill per agent that reports plan usage. Usually that is one (nobody runs
+// two metered subscriptions in the same instance by accident), but an
+// Antigravity + Claude workspace meters two independent quotas and hiding
+// either would misreport how much room the next batch of turns has. Each pill
+// wears its agent's brand mark once there is more than one to tell apart.
+export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
+  const map = usePlanUsage();
+  const metered = Object.entries(map).filter(([, s]) => s.available && s.windows.length > 0);
+  if (metered.length === 0) return null;
+  return (
+    <>
+      {metered.map(([id, snap]) => (
+        <AgentPlanPill key={id} agentId={id} label={agentLabel(agents, id)} snap={snap} multi={metered.length > 1} />
+      ))}
+    </>
+  );
+}
+
+function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label: string; snap: PlanUsageSnapshot; multi: boolean }) {
   const [open, setOpen] = useState(false);
 
-  if (!snap?.available || snap.windows.length === 0) return null;
-
-  const session = snap.windows.find((w) => w.id === "five_hour");
-  const week = snap.windows.find((w) => w.id === "seven_day");
+  // By kind rather than by id: every metered plan has a session window and a
+  // week window, but each provider spells them its own way ("five_hour",
+  // "gemini-5h"). The ids stay as the fallback for a driver that declares no
+  // kind (and for a snapshot cached before they existed).
+  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => w.id === "five_hour");
+  const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => w.id === "seven_day");
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
   // so its time-to-reset earns pill space where the week's doesn't — the
@@ -129,14 +151,17 @@ export function PlanUsagePill() {
   const worst = Math.max(...snap.windows.map((w) => w.utilization));
   const t = tone(worst, rejected);
   const planName = snap.plan ? snap.plan[0].toUpperCase() + snap.plan.slice(1) : null;
+  const who = `${label}${planName ? ` ${planName}` : ""}`;
+  const mark = AgentMark[agentId];
 
   return (
     <div style={{ position: "relative" }}>
       <button
         className={`plan-pill${t ? ` ${t}` : ""}`}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title={`Claude ${planName ? `${planName} ` : ""}plan usage: click for the breakdown`}
+        title={`${who} plan usage: click for the breakdown`}
       >
+        {multi && mark && <span className="pp-mark" aria-hidden>{mark()}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%
@@ -150,7 +175,7 @@ export function PlanUsagePill() {
       {open && (
         <Popover onClose={() => setOpen(false)}>
           <div className="pu-menu">
-            <div className="pop-sec">Claude {planName ? `${planName} ` : ""}plan usage</div>
+            <div className="pop-sec">{who} plan usage</div>
             {rejected && (
               <div className="pu-note limit">
                 Usage limit reached. Turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.

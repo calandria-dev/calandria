@@ -58,6 +58,15 @@ const WINDOW_LABELS: Record<string, string> = {
   seven_day_sonnet: "Current week (Sonnet)",
 };
 
+// Which of the two windows every metered plan has each key is — what the pill
+// and the queued-start button pick by, so neither has to know one provider's
+// spelling of "the 5-hour one". The per-model weeks are deliberately absent:
+// they are extra rows, not the week the plan is paced against.
+const WINDOW_KINDS: Record<string, "session" | "week"> = {
+  five_hour: "session",
+  seven_day: "week",
+};
+
 interface PassiveSignal {
   status: "allowed" | "allowed_warning" | "rejected";
   window: string | null; // rateLimitType — which window the status is about
@@ -172,7 +181,7 @@ export function parseUsagePayload(data: unknown): PlanUsageWindow[] {
     if (!w || typeof w !== "object") continue;
     const util = (w as { utilization?: unknown }).utilization;
     if (typeof util !== "number" || !Number.isFinite(util)) continue;
-    windows.push({ id, label: WINDOW_LABELS[id], utilization: clampPct(util), resetsAt: toEpochMs((w as { resets_at?: unknown }).resets_at) });
+    windows.push({ id, label: WINDOW_LABELS[id], utilization: clampPct(util), resetsAt: toEpochMs((w as { resets_at?: unknown }).resets_at), kind: WINDOW_KINDS[id] ?? null });
   }
   if (Array.isArray(d.limits)) {
     const have = new Set(windows.map((w) => w.label.toLowerCase()));
@@ -266,7 +275,7 @@ export async function getClaudePlanUsage(): Promise<PlanUsageSnapshot | null> {
     } else {
       // No fetch has succeeded (or the endpoint doesn't list this window) —
       // the passive figure alone still beats showing nothing.
-      windows.push({ id: p.window, label: WINDOW_LABELS[p.window] ?? p.window, utilization: p.utilization, resetsAt: p.resetsAt });
+      windows.push({ id: p.window, label: WINDOW_LABELS[p.window] ?? p.window, utilization: p.utilization, resetsAt: p.resetsAt, kind: WINDOW_KINDS[p.window] ?? null });
     }
   }
 

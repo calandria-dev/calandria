@@ -645,7 +645,7 @@ export default function Shell() {
         )}
 
         <div className="tb-right">
-          <PlanUsagePill />
+          <PlanUsagePill agents={o.agents} />
           {o.needsYouTotal > 0 && (
             <div style={{ position: "relative" }}>
               <button

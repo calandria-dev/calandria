@@ -23,6 +23,7 @@ function resetSettings() {
     "default_agent",
     "agent_conn_claude",
     "agent_conn_codex",
+    "agent_conn_gemini",
     "onboarding_method",
     "onboarding_account",
     "onboarding_complete",
@@ -64,6 +65,16 @@ describe("utilityDriver (connected-first)", () => {
   it("falls to the only connected agent on a Codex-only instance", () => {
     connect("codex");
     expect(utilityDriver().id).toBe("codex");
+  });
+
+  // Same rule, third driver, no new code: the resolvers enumerate the registry
+  // rather than a pair of ids, so an Antigravity-only instance gets its recaps
+  // and /clear summaries from Antigravity.
+  it("falls to the only connected agent on an Antigravity-only instance", () => {
+    connect("gemini");
+    expect(utilityDriver().id).toBe("gemini");
+    expect(resolveConnectedAgent(["claude", "codex"])).toBe("gemini");
+    expect(resolveUtilityAgent()).toEqual({ id: "gemini", configured: "claude", fallback: true });
   });
 
   it("prefers the built-in default when it is connected", () => {
@@ -190,6 +201,21 @@ describe("defaultAgentFor (client, connected-first)", () => {
       expect(agentPickerNeeded(bundle({ claude: true, codex: true }), "claude")).toBe(true);
     });
 
+    // The third driver is a third entry in the same bundle. Nothing about the
+    // picker or the default counts agents, so this is the whole "does a third
+    // agent id work" test the mock driver can't stand in for (its id is fixed
+    // at "mock", so the onboarding e2e can only ever exercise one extra).
+    it("treats a third agent id exactly like the second", () => {
+      const only = bundle({ claude: false, codex: false, gemini: true });
+      expect(defaultAgentFor(only, null)).toBe("gemini");
+      expect(defaultAgentFor(only, "codex")).toBe("gemini");
+      expect(agentPickerNeeded(only, "gemini")).toBe(false);
+      expect(agentPickerNeeded(only, "claude")).toBe(true);
+      const all = bundle({ claude: true, codex: true, gemini: true });
+      expect(defaultAgentFor(all, "gemini")).toBe("gemini");
+      expect(agentPickerNeeded(all, "gemini")).toBe(true);
+    });
+
     it("shows when nothing is connected, so the Connect CTA still renders", () => {
       expect(agentPickerNeeded(bundle({ claude: false, codex: false }), "claude")).toBe(true);
     });
@@ -247,6 +273,22 @@ describe("completeOnboarding adopts the connected agent", () => {
     expect(getTask(fresh.id)?.agent).toBe("codex");
     // A task that already ran keeps its agent — a session lineage can't switch CLIs.
     expect(getTask(started.id)?.agent).toBe("claude");
+  });
+
+  it("finishes a first run with ONLY Antigravity connected", () => {
+    const project = createProject({ name: "WelcomeSeedGemini" });
+    getDb().prepare("UPDATE projects SET seeded = 1, default_agent = 'claude' WHERE id = ?").run(project.id);
+    const fresh = createTask({ project_id: project.id, title: "Tutorial", description: "" });
+    getDb().prepare("UPDATE tasks SET agent = 'claude' WHERE id = ?").run(fresh.id);
+
+    connect("gemini");
+    completeOnboarding();
+
+    expect(getSetting("default_agent")).toBe("gemini");
+    expect(getTask(fresh.id)?.agent).toBe("gemini");
+    // …and a task suggested afterwards is born on it too.
+    const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
+    expect(getTask(task!.id)?.agent).toBe("gemini");
   });
 
   it("changes nothing when the default agent is connected", () => {
