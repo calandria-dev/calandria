@@ -361,6 +361,44 @@ describe("worktreePruneSafety", () => {
     const safety = await worktreePruneSafety({ repoPath: repo, worktreePath: "", workBranch: "", baseBranch: "main" });
     expect(safety).toMatchObject({ safe: true, isDirty: false, ahead: 0 });
   });
+
+  // A base branch with no ref here makes the count unknowable, and it used to
+  // come back as the same zero a fully-merged branch produces — which every
+  // caller reads as "no unlanded work, safe to prune" while it authorises
+  // deleting the checkout AND its branch.
+  it("reports an unknown count, not zero, when the base branch has no ref here", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
+
+    const safety = await worktreePruneSafety({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "gone" });
+
+    expect(safety.ahead).toBeNull();
+    expect(safety.baseMissing).toBe(true);
+    expect(safety.safe).toBe(false);
+    expect(safety.reason).toContain("gone");
+  });
+
+  it("still names the uncommitted half alongside the unknown count", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    writeFile(wt.path, "feature.txt", "unsaved\n");
+
+    const safety = await worktreePruneSafety({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "gone" });
+
+    expect(safety).toMatchObject({ safe: false, isDirty: true, ahead: null, baseMissing: true });
+    expect(safety.reason).toContain("uncommitted changes");
+    expect(safety.reason).toContain("gone");
+  });
+
+  // The other missing ref is NOT the same answer: with no work branch there are
+  // no commits left to orphan, so zero is the truth and pruning stays safe.
+  it("a missing WORK branch is a real zero, not an unknown", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+
+    const safety = await worktreePruneSafety({ repoPath: repo, worktreePath: wt.path, workBranch: "never-existed", baseBranch: "main" });
+
+    expect(safety).toMatchObject({ safe: true, ahead: 0 });
+    expect(safety.baseMissing).toBeUndefined();
+  });
 });
 
 describe("commitWorktree", () => {

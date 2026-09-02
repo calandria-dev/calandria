@@ -309,3 +309,56 @@ describe("POST/GET /api/tasks/:id/reclaim", () => {
     expect((await GET(req("nope"), params("nope"))).status).toBe(404);
   });
 });
+
+// A base branch that has no ref in this repository — a task pinned to a branch
+// since deleted locally, or a project pointed at one that only ever existed on
+// the remote. worktreePruneSafety used to answer that with `ahead: 0`, which
+// reads as "nothing unlanded, safe to prune" while it authorises deleting the
+// checkout AND its branch; catchUpBase saw the matching all-zero remote status
+// and reported nothing to do.
+describe("reclaiming against a base branch with no local ref", () => {
+  it("refuses a local-merge landing rather than reading the unknown count as zero", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `base-gone-${Math.random()}`, repo_path: repo, branch: "main" });
+    const task = createTask({ project_id: project.id, title: "based on a branch that's gone" });
+    const wt = await ensureWorktree(repo, task.id, "main");
+    if (!wt) throw new Error("worktree fixture failed");
+    await commitFile(wt.path, "landed.txt", "in main\n", "feat: landed");
+    await git(repo, "merge", "--no-ff", "-m", "merge the task", wt.branch);
+    updateTask(task.id, {
+      status: "in_progress", started: 1, worktree_path: wt.path, work_branch: wt.branch,
+      base_sha: wt.baseSha, merged_at: Date.now(), base_branch: "gone",
+    });
+
+    const res = await reclaimTask(task.id);
+
+    expect(res).toMatchObject({ ok: false, unsafe: true, landing: "merge" });
+    expect(res.reason).toContain("gone");
+    // Nothing was destroyed on the way to the refusal.
+    expect(fs.existsSync(wt.path)).toBe(true);
+    expect(await branchExists(repo, wt.branch)).toBe(true);
+
+    // And the acknowledgement still gets through, the way it does for any other
+    // unsafe reclaim.
+    expect(await reclaimTask(task.id, { discardUnsafe: true })).toMatchObject({ ok: true });
+    expect(fs.existsSync(wt.path)).toBe(false);
+  });
+
+  it("says why the base couldn't be caught up instead of silently advancing nothing", async () => {
+    const { repo, task, wt, land } = await taskAwaitingItsPr();
+    await land();
+    prMerged(task.id);
+    updateTask(task.id, { base_branch: "gone" });
+
+    const res = await reclaimTask(task.id);
+
+    // A PR landing never trusted the ahead count (a squash leaves every landed
+    // branch permanently ahead) and asks unpushedCommits instead — a question
+    // about the REMOTE, which the missing local base doesn't touch. So the
+    // reclaim still runs, and the base failure is reported rather than hidden.
+    expect(res).toMatchObject({ ok: true, landing: "pr", baseAdvanced: false, worktreeRemoved: true });
+    expect(res.baseError).toContain("gone");
+    expect(fs.existsSync(wt.path)).toBe(false);
+    expect(await branchExists(repo, wt.branch)).toBe(false);
+  });
+});
