@@ -725,12 +725,16 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
 );
 
 /**
- * Floor between two fetches of a provider's plan-usage API. Anthropic
+ * Floor between two reads of a provider's plan usage, per agent. Anthropic
  * rate-limits its usage endpoint aggressively, so the app fetches at most this
  * often — and only while a browser is actually asking (the meter polls; no tab
  * open means no fetches at all). 300s matches the Claude CLI's own minimum
  * interval for the same endpoint. Between fetches the display coasts on the
  * cache plus the passive rate-limit telemetry that rides every turn for free.
+ *
+ * It floors the Codex side too, where the cost is different but no smaller: a
+ * throwaway `codex app-server` process per read, since that CLI's turn stream
+ * carries no rate-limit telemetry to coast on (lib/agents/codex/planUsage.ts).
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
 
