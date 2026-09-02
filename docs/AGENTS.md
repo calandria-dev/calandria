@@ -222,6 +222,23 @@ carries a `local` chip beside the agent mark.
 - **LM Studio**: start the local server, load a model, then base URL `http://localhost:1234`
   and the model's identifier as LM Studio shows it.
 
+**Which `codex` this works with: 0.146.0 or newer.** The Codex half of the override is the one
+piece here that reaches into another program's configuration schema, and the `codex` CLI
+autoupdates on your machine independently of Calandria. That would be a footnote if a broken
+mapping failed loudly, but it doesn't: an override the CLI no longer recognises is *inert*, so
+it would quietly fall back to the built-in `openai` provider and bill your ChatGPT login while
+the session header still showed the `local` chip. So Calandria asks the CLI to confirm, once per
+endpoint, that `model_provider` really did resolve to `calandria-local` (`codex doctor --json`,
+about a second) and **refuses the turn** if it can't get that confirmation, naming the version it
+saw. The answer is remembered against the CLI version that gave it and re-earned whenever that
+version moves. Set `CALANDRIA_CODEX_PROVIDER_CHECK=off` to skip the check and accept the risk, or
+pin a known-good binary with `CODEX_CLI_PATH`. On Windows, if your `codex` is the npm `.cmd`
+shim the check stands down and says so in the log — the shim's command line can't carry the
+settings faithfully enough to check them; point `CODEX_CLI_PATH` at the real executable to get
+it back. Claude Code needs none of this: it reads
+`ANTHROPIC_BASE_URL` directly, and measured against a sink endpoint on 2.1.257 it sends every
+request there under a subscription login rather than falling back to Anthropic.
+
 **Picking a model.** Once a project is on an endpoint, the model field stops being
 the driver's catalog and becomes a text box: the vendor's line-up is not what that
 machine has, and only the machine knows. Its suggestions are what the server itself

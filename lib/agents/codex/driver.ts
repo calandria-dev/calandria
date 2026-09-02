@@ -33,6 +33,7 @@ import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 import { agentTurnEnv } from "../../agentEnv";
 import { codexProviderConfig } from "./provider";
+import { verifyCodexProvider } from "./providerCheck";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -218,6 +219,29 @@ async function* runTurn(
     ...(chosen ? { model: chosen } : {}),
     ...reasoningEffort(reasoning),
   };
+
+  // …and before spending anything on it, make the CLI confirm the mapping took.
+  // An unknown `-c` override is inert to codex, so a release that moves the
+  // config.toml schema silently drops the turn onto the built-in `openai`
+  // provider — the user's paid ChatGPT login — while the header still shows the
+  // `local` chip. Refuse instead (lib/agents/codex/providerCheck.ts). No-ops on
+  // the cloud path, which has no mapping to prove.
+  // `bin` mirrors what the SDK below is given: with CODEX_CLI_PATH set both
+  // halves drive the same file, and with it empty both fall back — the SDK to
+  // the binary vendored in @openai/codex, the probe to `codex` on PATH. Those
+  // are the same install in every shipped configuration (the image installs the
+  // package globally, and node_modules/.bin/codex is a shim onto that same
+  // vendored binary), and the same equivalence auth.ts and mcp.ts already rely
+  // on. Pinning CODEX_CLI_PATH removes the "in every shipped configuration".
+  const verdict = await verifyCodexProvider(local, {
+    cwd: threadOptions.workingDirectory,
+    env,
+    bin: CODEX_CLI_PATH || undefined,
+  });
+  if (!verdict.ok) {
+    yield { type: "error", content: verdict.message };
+    return;
+  }
 
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
