@@ -12,11 +12,14 @@
  * only way to remove it would be gone.
  */
 import { describe, it, expect } from "vitest";
-import { blockerCandidates, alphabetical, isTerminal } from "@/app/shell/format";
+import { blockerCandidates, alphabetical, isTerminal, isBlocking, blockerTitles } from "@/app/shell/format";
 import type { TaskRow } from "@/app/shell/types";
 
 const row = (id: string, title: string, status: TaskRow["status"]) =>
   ({ id, title, status }) as TaskRow;
+/** A task still sitting in the Suggested tray — nobody has agreed to do it yet. */
+const sugg = (id: string, title: string, status: TaskRow["status"] = "not_started") =>
+  ({ id, title, status, suggested: 1 }) as TaskRow;
 
 describe("blockerCandidates", () => {
   const all = [
@@ -59,6 +62,55 @@ describe("blockerCandidates", () => {
 
   it("has nothing to offer when every other task is terminal", () => {
     expect(blockerCandidates([row("d", "Done thing", "done")], [])).toEqual([]);
+  });
+
+  // Issue #46. A suggestion isn't a choice — waiting on work nobody has agreed
+  // to do is not something the picker should invite — but an edge already drawn
+  // onto one (an agent's `blocked_by`, which never checks `suggested`) blocks
+  // for real, so it has to be listed or it can never be removed.
+  it("doesn't offer an unreviewed suggestion as a fresh choice", () => {
+    const ids = blockerCandidates([row("n", "Marmot migration", "not_started"), sugg("s", "Proposed step")], []).map((t) => t.id);
+    expect(ids).toEqual(["n"]);
+  });
+
+  it("lists a suggestion that is already a blocker, so it can be unticked", () => {
+    const ids = blockerCandidates([row("n", "Marmot migration", "not_started"), sugg("s", "Proposed step")], ["s"]).map((t) => t.id);
+    expect(ids).toContain("s");
+  });
+});
+
+describe("isBlocking", () => {
+  it("agrees with blocks() that a missing row doesn't block", () => {
+    expect(isBlocking(undefined)).toBe(false);
+  });
+
+  it("agrees with blocks() that terminal doesn't block and everything else does", () => {
+    expect(isBlocking(row("d", "Done", "done"))).toBe(false);
+    expect(isBlocking(row("c", "Cancelled", "cancelled"))).toBe(false);
+    expect(isBlocking(row("n", "New", "not_started"))).toBe(true);
+    expect(isBlocking(row("h", "Held", "on_hold"))).toBe(true);
+  });
+
+  it("counts an unreviewed suggestion, which is what the server does", () => {
+    expect(isBlocking(sugg("s", "Proposed step"))).toBe(true);
+    expect(isBlocking(sugg("w", "Withdrawn step", "cancelled"))).toBe(false);
+  });
+});
+
+describe("blockerTitles", () => {
+  const dependent = { id: "dep", title: "Accepted step", depends_on: ["s", "d", "n", "ghost"] } as TaskRow;
+  const byId = new Map<string, TaskRow>([
+    ["s", sugg("s", "Proposed step")],
+    ["d", row("d", "Finished thing", "done")],
+    ["n", row("n", "Live thing", "not_started")],
+  ]);
+
+  it("names a suggested blocker as suggested, so the chip says what it's waiting on", () => {
+    expect(blockerTitles(dependent, byId)).toEqual(["Proposed step (suggested)", "Live thing"]);
+  });
+
+  it("drops a blocker whose row is gone, matching blocks()", () => {
+    expect(blockerTitles(dependent, byId).join(" ")).not.toContain("ghost");
   });
 });
 
