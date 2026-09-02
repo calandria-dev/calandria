@@ -4,6 +4,7 @@ import { readEnv } from "./env.mjs";
 import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
+import { DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "./agentToolGuard.mjs";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
@@ -162,6 +163,19 @@ export const PERMISSION_PROMPT_TIMEOUT_MS = ms(readEnv("CALANDRIA_PERMISSION_PRO
  * 0 disables the unattended shortcut, making every prompt use the attended cap.
  */
 export const PERMISSION_UNATTENDED_MS = ms(readEnv("CALANDRIA_PERMISSION_UNATTENDED_MS"), 45_000);
+
+/**
+ * Bound on a single Calandria agent-tool call (suggest_task, create_pr, the rest
+ * of lib/agentToolGuard.mjs's charges), after which the model is told the call
+ * was abandoned instead of waiting on it. This is a backstop, not a tuning knob:
+ * nothing legitimate comes close, and the layer below has no usable deadline of
+ * its own — the CLI's per-call MCP timeout defaults to ~27.7 hours and cannot be
+ * set per in-process server, so without this a wedged tool call stalls the turn
+ * for the rest of the day. Read here for the Claude driver's in-process server
+ * and directly from the environment by scripts/calandria-mcp.mjs, which is plain
+ * Node and can't import this file; keep the name in sync. 0 disables the bound.
+ */
+export const AGENT_TOOL_TIMEOUT_MS = ms(readEnv("CALANDRIA_AGENT_TOOL_TIMEOUT_MS"), DEFAULT_AGENT_TOOL_TIMEOUT_MS);
 
 /**
  * Master switch for background linger. Each Claude turn is one SDK query

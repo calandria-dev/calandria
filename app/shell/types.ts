@@ -265,6 +265,7 @@ export interface SyncStatusResp {
   conflicts?: string[];
   mergeInProgress?: boolean; // a base→work merge is paused in the worktree, awaiting accept/discard in Changes
   unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
+  baseMissing?: boolean; // the base branch has no ref in the repo — the zeros above mean "couldn't compare"
 }
 
 // How the project's LOCAL base branch stands against its remote — the thing

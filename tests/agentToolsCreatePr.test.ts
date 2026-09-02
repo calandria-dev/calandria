@@ -61,8 +61,15 @@ describe("create_pr", () => {
     writeFile(wt.path, "new.txt", "from the session\n");
     createTaskPrMock.mockResolvedValue({ ok: true, url: "https://github.com/o/r/pull/7" });
 
-    const { url, text } = await createPrForAgent(task, {});
+    const { url, number, text } = await createPrForAgent(task, {});
     expect(url).toBe("https://github.com/o/r/pull/7");
+    // The success result names the PR by number as well as URL. This tool has
+    // twice come back EMPTY mid-turn while the session went on to report a PR
+    // that did not exist; a success the model can only relay by quoting a number
+    // and a link it was handed is one it cannot claim by accident.
+    expect(number).toBe(7);
+    expect(text).toContain("#7");
+    expect(text).toContain("https://github.com/o/r/pull/7");
 
     const arg = createTaskPrMock.mock.calls[0][0];
     expect(arg.workBranch).toBe(wt.branch);
@@ -102,7 +109,9 @@ describe("create_pr", () => {
   it("re-pushing an already-open PR reports it as an update, not a second PR", async () => {
     const { task } = await prTask();
     createTaskPrMock.mockResolvedValue({ ok: true, url: "https://github.com/o/r/pull/7", existing: true });
-    const { url, text } = await createPrForAgent(task, {});
+    const { url, number, text } = await createPrForAgent(task, {});
+    expect(number).toBe(7);
+    expect(text).toContain("#7");
     expect(url).toBe("https://github.com/o/r/pull/7");
     expect(text).toContain("already open");
   });
