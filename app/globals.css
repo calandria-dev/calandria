@@ -936,6 +936,22 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .msg-nav-btn:hover{background:var(--surface-2);transform:translateY(-1px);}
 .msg-nav-btn svg{width:16px;height:16px;}
 
+/* ---------------- pending-question dock ---------------- */
+/* The one card the turn is parked on lives here rather than in the transcript.
+   Inline, it is just another row: a subagent returning a screenful after the
+   question was asked scrolls it off the top, and the user is left with no sign
+   that anything is waiting on them. Docked, it cannot be pushed anywhere by
+   later output and stays put whatever the scroll position. Sized like the
+   transcript's own column (--text-width, the same 28px gutters as .tw) so the
+   card doesn't jump sideways when it settles back inline on being answered. */
+.prompt-dock{flex:none;border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -6px 18px rgba(0,0,0,.10);}
+/* Capped, not free: a multi-question ask is tall, and a dock that grows without
+   limit would push the transcript it is meant to annotate off the screen. */
+.prompt-dock-in{max-width:var(--text-width);margin:0 auto;padding:14px 28px;max-height:min(46vh,460px);overflow-y:auto;overflow-x:hidden;}
+/* .msg's inter-message gap is dead space here — the dock's padding is the gap. */
+.prompt-dock-in .msg{margin-bottom:0;}
+.prompt-dock-in .msg + .msg{margin-top:12px;}
+
 /* ===== workspace split: transcript beside the DIFF/PREVIEW/CONTEXT rail ===== */
 /* Track order: transcript · 0px drag seam · DIFF/CONTEXT rail. The rail width is
    driven by an inline gridTemplateColumns from layout state (resizable); the
