@@ -6,11 +6,25 @@
 declare global {
   // eslint-disable-next-line no-var
   var __calandriaAbort: Map<string, AbortController> | undefined;
+  // eslint-disable-next-line no-var
+  var __calandriaClearing: Set<string> | undefined;
 }
 
 function registry(): Map<string, AbortController> {
   if (!global.__calandriaAbort) global.__calandriaAbort = new Map();
   return global.__calandriaAbort;
+}
+
+// Tasks whose generation is being retired by POST /clear right now. A second
+// registry rather than a fake entry in the one above, because the two facts are
+// read for different things: `hasTurn` feeds the SSE snapshot's running flag,
+// the `calandria_turns_active` metric and the shutdown drain (which waits for a
+// turn_end a clear never publishes), and none of those should see a clear as a
+// streaming turn. What a clear DOES need is the launch veto, so the guard lives
+// in claimTurn/handoffTurn — the two chokepoints every launch path goes through.
+function clearing(): Set<string> {
+  if (!global.__calandriaClearing) global.__calandriaClearing = new Set();
+  return global.__calandriaClearing;
 }
 
 // Atomically claim the turn slot for a task: register a fresh controller and
@@ -21,9 +35,14 @@ function registry(): Map<string, AbortController> {
 // with Stop only able to reach the second. Callers must either hand the
 // controller to the runner (whose finally releases it) or release it
 // themselves via unregisterTurn on every non-launch path.
+//
+// A task mid-/clear is refused the same way an occupied slot is: the route
+// aborts the live turn, then spends minutes in summarizeTranscript before it
+// advances the generation, and a turn launched into that window would run
+// against a generation being retired (issue #36).
 export function claimTurn(taskId: string): AbortController | null {
   const reg = registry();
-  if (reg.has(taskId)) return null;
+  if (reg.has(taskId) || clearing().has(taskId)) return null;
   const controller = new AbortController();
   reg.set(taskId, controller);
   return controller;
@@ -36,6 +55,10 @@ export function claimTurn(taskId: string): AbortController | null {
 // slip a parallel turn in between the two.
 export function handoffTurn(taskId: string, prev: AbortController): AbortController | null {
   const reg = registry();
+  // Same veto as claimTurn: a clear in flight is retiring the generation this
+  // follow-up was parked against, and will discard the queue it came from. The
+  // caller leaves the message parked and settles instead of draining it.
+  if (clearing().has(taskId)) return null;
   if (reg.get(taskId) !== prev) return null;
   const controller = new AbortController();
   reg.set(taskId, controller);
@@ -89,6 +112,33 @@ export function activeTurnCount(): number {
 // array rather than walking the live registry.
 export function activeTurnIds(): string[] {
   return [...registry().keys()];
+}
+
+// Claim the task for a generation retirement (POST /clear). Returns false if a
+// clear is already in flight — the caller must NOT release a claim it didn't
+// take. Deliberately does not fail on a live turn: /clear's job is to abort
+// that turn, and it takes this claim first so the slot the abort frees can't be
+// re-taken while it summarizes.
+export function beginClearing(taskId: string): boolean {
+  const set = clearing();
+  if (set.has(taskId)) return false;
+  set.add(taskId);
+  return true;
+}
+
+// Release the clearing claim. Must run from a finally: a summarize that throws,
+// or a task deleted mid-clear, would otherwise leave the task unable to ever
+// start another turn for the life of the process.
+export function endClearing(taskId: string): void {
+  clearing().delete(taskId);
+}
+
+// Whether a generation retirement is in flight for this task. Read by the POST
+// /messages launch path, which claims the turn slot BEFORE it takes the per-task
+// lock: a /clear can land in that window, abort the claimed-but-not-yet-launched
+// controller, and start retiring the generation the POST is about to run on.
+export function isClearing(taskId: string): boolean {
+  return clearing().has(taskId);
 }
 
 // Signal abort for a task's active turn. Returns true if one was running.
