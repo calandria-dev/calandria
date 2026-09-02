@@ -31,9 +31,52 @@
 // thing people leave running for weeks, not a thing they relaunch hourly.
 const FIRST_CHECK_DELAY_MS = 45_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-// If the installer hands back instead of taking the process down, do not leave
-// a drained, sidecar-less window sitting there looking alive.
-const INSTALL_FALLBACK_MS = 10_000;
+
+/**
+ * How long the drain's tail waits for the installer to take the process down,
+ * BY STAGE, before it gives up and exits: a drained, sidecar-less window is not
+ * something to leave on screen looking alive, but an install killed halfway
+ * through is worse, and the two failures have very different clocks.
+ *
+ * This used to be one fixed 10s timer, and on macOS that timer was the bug.
+ * electron-updater's MacUpdater does not hand the downloaded zip to Squirrel.Mac
+ * when its own `update-downloaded` fires — with `autoInstallOnAppQuit` off (see
+ * the header: it has to be) Squirrel does NOTHING until `quitAndInstall()` is
+ * called, which is inside finishQuit(), after the drain. Only then does Squirrel
+ * fetch the zip from electron-updater's local proxy, extract a ~200 MB bundle,
+ * verify its signature and stage it, and only after all that does the app go
+ * down. Ten seconds is not enough for that on any machine that is not idle, so
+ * the fallback exited over the top of a working install every time, and the
+ * app relaunched unchanged: exactly the reported symptom, signed build or not.
+ *
+ * Stages are what Squirrel.Mac reports through Electron's native `autoUpdater`
+ * (which MacUpdater drives but does not re-emit; main.js listens to it
+ * directly): `handoff` is quitAndInstall() called and nothing heard yet,
+ * `fetching` is Squirrel working (its `checking-for-update` /
+ * `update-available`), `staged` is the bundle verified and swapped in
+ * (`update-downloaded`, after which MacUpdater calls the native quitAndInstall),
+ * `quitting` is Squirrel's `before-quit-for-update`. Windows and the AppImage
+ * spawn their installer and exit within the `handoff` window; they never leave
+ * it. `fetching` is long on purpose: the cost of waiting is a "finishing…"
+ * title on screen, the cost of not waiting is the update.
+ */
+const INSTALL_STAGE_TIMEOUT_MS = Object.freeze({
+  handoff: 30_000,
+  fetching: 10 * 60_000,
+  staged: 60_000,
+  quitting: 60_000,
+});
+
+/** Where a build that cannot update itself is sent instead. */
+const RELEASES_URL = "https://github.com/calandria-dev/calandria/releases/latest";
+
+/**
+ * The day the release lane started signing and notarizing macOS artifacts
+ * (.github/workflows/release-desktop.yml). Every macOS install older than this,
+ * and every locally built one, is ad-hoc signed and can never self-update — see
+ * `macDisposition()` — so this is the date the unsigned-build message names.
+ */
+const MAC_SIGNED_SINCE = "2026-08-30";
 
 const OFF_VALUES = new Set(["0", "off", "false", "no", "disabled"]);
 
@@ -63,8 +106,13 @@ function autoUpdateEnabled(env = {}) {
  * path of the running image. It is the only trustworthy runtime answer to "am I
  * an AppImage", and the AppImage is the only Linux artifact that can replace
  * itself.
+ *
+ * `mac` is `{ bundlePath, signature }` for a packaged macOS build: where the
+ * .app is and what `codesign` says about it (see `parseCodesign()`). Only read
+ * on darwin, and optional there, because main.js fills it in from a subprocess
+ * that can fail; with it absent the answer is the old one, "try and see".
  */
-function updaterDisposition({ env = {}, platform, packaged, appImage = null } = {}) {
+function updaterDisposition({ env = {}, platform, packaged, appImage = null, mac = null } = {}) {
   if (!autoUpdateEnabled(env)) {
     return {
       enabled: false,
@@ -101,7 +149,157 @@ function updaterDisposition({ env = {}, platform, packaged, appImage = null } = 
       reason: "Installed from a system package — updates come from your package manager.",
     };
   }
+  if (platform === "darwin" && mac) {
+    const verdict = macDisposition(mac);
+    if (verdict) return verdict;
+  }
   return { enabled: true, code: "ok", reason: "" };
+}
+
+/**
+ * The three ways a macOS install cannot update itself, decided at boot from
+ * facts about the bundle rather than discovered at install time.
+ *
+ * Discovery is what used to happen, and it happened in the worst place.
+ * electron-updater does no signature check of its own on macOS (none in
+ * MacUpdater or AppUpdater, 6.8.9); Squirrel.Mac does, and with
+ * `autoInstallOnAppQuit` off Squirrel first runs inside finishQuit() — after the
+ * drain, tray gone, on the way out. So an ad-hoc build's "could not get code
+ * signature" error surfaced only at the moment nothing could show it, the
+ * `fatal` classification in `classifyUpdaterError()` only ever reached the log,
+ * and every automatic check before that had cheerfully downloaded an update the
+ * build could never install. Reading `codesign` once at startup puts the answer
+ * in the menu before the first check, where a greyed item says what a failed
+ * quit could not.
+ *
+ * The three:
+ * - `mac-dmg`: running from the mounted disk image (`/Volumes/…`), where the
+ *   bundle directory is read-only and Squirrel has nowhere to swap the new
+ *   bundle in.
+ * - `mac-translocated`: Gatekeeper app translocation
+ *   (`…/AppTranslocation/<uuid>/d/Calandria.app`), a read-only randomized mount
+ *   macOS uses for a quarantined app run from where it was unzipped; the real
+ *   bundle is elsewhere and Squirrel would update the wrong path.
+ * - `mac-unsigned`: ad-hoc or unsigned. Squirrel.Mac refuses to update an app
+ *   whose own signature it cannot read. Every build from before
+ *   MAC_SIGNED_SINCE and every local `dist:mac` (desktop/signing.js defaults
+ *   to the ad-hoc identity) is in this bucket, and the only way out is a manual
+ *   download of a signed one.
+ */
+function macDisposition({ bundlePath = "", signature = null } = {}) {
+  const p = String(bundlePath || "");
+  if (/^\/Volumes\//.test(p)) {
+    return {
+      enabled: false,
+      code: "mac-dmg",
+      reason: "Calandria is running from its disk image. Drag it to Applications and relaunch to get updates.",
+    };
+  }
+  if (/\/AppTranslocation\//.test(p)) {
+    return {
+      enabled: false,
+      code: "mac-translocated",
+      reason:
+        "macOS is running this copy from a quarantine location. Move Calandria to Applications and relaunch to get updates.",
+    };
+  }
+  if (signature === "adhoc" || signature === "unsigned") {
+    return {
+      enabled: false,
+      code: "mac-unsigned",
+      reason:
+        `This build is not signed with a Developer ID, so macOS will not let it update itself. ` +
+        `Installs from before ${MAC_SIGNED_SINCE}, and local builds, need a manual download of the latest release.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * What `codesign -dv --verbose=4 <bundle>` said. Its report goes to STDERR, and
+ * an unsigned bundle is exit 1 with one line, so both streams and the exit code
+ * are read together.
+ *
+ * `developer-id` is the only answer Squirrel.Mac will update; `adhoc` and
+ * `unsigned` are the two it refuses; `other` is a real certificate that is not
+ * Developer ID (an Apple Development cert, say), which is left alone because
+ * Squirrel accepts a new bundle whose designated requirement matches the
+ * running one, whoever signed them; `unknown` is "codesign said nothing usable"
+ * and is also left alone, since a probe that failed must not disable a working
+ * updater.
+ */
+function parseCodesign({ stdout = "", stderr = "" } = {}) {
+  const text = `${stdout || ""}\n${stderr || ""}`;
+  if (/code object is not signed at all/i.test(text)) return { signature: "unsigned", authority: null };
+  if (/^Signature=adhoc\s*$/m.test(text)) return { signature: "adhoc", authority: null };
+  const authorities = [...text.matchAll(/^Authority=(.+?)\s*$/gm)].map((m) => m[1]);
+  if (authorities.some((a) => /^Developer ID Application\b/i.test(a))) {
+    return { signature: "developer-id", authority: authorities[0] };
+  }
+  if (authorities.length) return { signature: "other", authority: authorities[0] };
+  return { signature: "unknown", authority: null };
+}
+
+/**
+ * The bundle a running macOS binary belongs to: `Calandria.app/Contents/MacOS/
+ * Calandria` → `Calandria.app`. Pure string work so it can be tested off-Mac.
+ */
+function macBundlePath(execPath) {
+  if (!execPath) return null;
+  const m = /^(.*?\.app)\/Contents\/MacOS\/[^/]+$/.exec(String(execPath));
+  return m ? m[1] : null;
+}
+
+/**
+ * The watchdog the drain's tail arms after `quitAndInstall()`: how long to wait
+ * at this stage before deciding the installer is not going to take the process
+ * down. See INSTALL_STAGE_TIMEOUT_MS for the stages and why they differ.
+ */
+function installStageTimeout(stage) {
+  return INSTALL_STAGE_TIMEOUT_MS[stage] ?? INSTALL_STAGE_TIMEOUT_MS.handoff;
+}
+
+/**
+ * Which stage a native Squirrel.Mac event moves the install to, or null for one
+ * that says nothing about progress. `update-not-available` is null on purpose:
+ * Squirrel answering "nothing to install" to a feed electron-updater built from
+ * the file it just downloaded is not progress, it is a failure the `error`
+ * event will not report, and the `handoff` clock is the right one to let run.
+ */
+function installStageOf(nativeEvent) {
+  switch (nativeEvent) {
+    case "checking-for-update":
+    case "update-available":
+      return "fetching";
+    case "update-downloaded":
+      return "staged";
+    case "before-quit-for-update":
+      return "quitting";
+    default:
+      return null;
+  }
+}
+
+/**
+ * What the next launch says about an install that did not happen.
+ *
+ * The failure lands after the drain, when the tray is gone and the window is on
+ * its way out, so it cannot be shown where it happens. main.js writes a record
+ * and exits; the next boot reads it and shows this. `stage` is where the
+ * watchdog was when it gave up (or "error" for an installer error), and the
+ * log path is named because the updater's own trace is in it and that trace is
+ * the thing a bug report needs.
+ */
+function installFailureNotice({ version = null, stage = "handoff", message = "", logPath = "" } = {}) {
+  const what = version ? `Calandria ${version}` : "The update";
+  const why =
+    stage === "error"
+      ? message || "The installer reported an error."
+      : `The installer did not finish (gave up while ${stage}). The app you are running is unchanged.`;
+  const detail = [why, logPath ? `Details are in ${logPath}.` : "", `You can download it from ${RELEASES_URL}.`]
+    .filter(Boolean)
+    .join("\n\n");
+  return { message: `${what} did not install`, detail };
 }
 
 /**
@@ -153,6 +351,11 @@ function disabledLabel(code) {
       return "Updates come from your package manager";
     case "unpackaged":
       return "Updates are off in a development build";
+    case "mac-dmg":
+    case "mac-translocated":
+      return "Move Calandria to Applications to get updates";
+    case "mac-unsigned":
+      return "Updates need a manual download (unsigned build)";
     case "off":
     default:
       return "Automatic updates are off";
@@ -205,7 +408,9 @@ function classifyUpdaterError(err) {
   const text = String(err?.message || err || "");
   if (/code signature|not signed|codesign/i.test(text)) {
     return {
-      message: "This build is not signed, so macOS will not install updates into it. Download a new version instead.",
+      message:
+        `This build is not signed, so macOS will not install updates into it. ` +
+        `Download the latest release instead: ${RELEASES_URL}`,
       fatal: true,
     };
   }
@@ -221,10 +426,18 @@ function classifyUpdaterError(err) {
 module.exports = {
   CHECK_INTERVAL_MS,
   FIRST_CHECK_DELAY_MS,
-  INSTALL_FALLBACK_MS,
+  INSTALL_STAGE_TIMEOUT_MS,
+  MAC_SIGNED_SINCE,
+  RELEASES_URL,
   autoUpdateEnabled,
   classifyUpdaterError,
+  installFailureNotice,
+  installStageOf,
+  installStageTimeout,
+  macBundlePath,
+  macDisposition,
   parseActiveTurns,
+  parseCodesign,
   quitAction,
   restartNotice,
   updateMenuItem,
