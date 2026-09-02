@@ -73,7 +73,8 @@ import {
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
-import { guardToolHandler } from "../../agentToolGuard.mjs";
+import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolInterruptedMessage } from "../../agentToolGuard.mjs";
+import { createLogger } from "../../log.mjs";
 import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
@@ -100,6 +101,8 @@ import {
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
+
+const log = createLogger("claude");
 
 // Which on-disk setting sources every Claude query loads, pinned explicitly
 // rather than left to the SDK default (sdk.d.ts: "when omitted, all sources
@@ -674,6 +677,10 @@ async function* runTurn(
   let askSeq = 0;
   // tool_use id -> how to summarize its eventual result into a peek.
   const resultKinds = new Map<string, ResultKind>();
+  // tool_use id -> tool name, for Calandria's own tools only. The CLI can
+  // answer one of these itself without the call ever reaching a handler, and
+  // this is the only place that is visible (see lib/agentToolGuard.mjs).
+  const calandriaCalls = new Map<string, string>();
   // tool_use ids whose tool_result has streamed. A task_notification for a
   // call NOT yet in here is a foreground completion — the CLI announces
   // every Bash/Agent task it registers (measured on 2.1.240: task_started +
@@ -1264,6 +1271,7 @@ async function* runTurn(
               if (block.name === "AskUserQuestion") continue;
               const { title, detail, peek, diff, resultKind, file } = describeToolUse(block.name, block.input as Record<string, unknown>);
               if (resultKind) resultKinds.set(block.id, resultKind);
+              if (isCalandriaToolName(block.name)) calandriaCalls.set(block.id, block.name);
               // The tool's own name travels with the row: the runner matches
               // on it to settle a suggestion card onto a suggest_task call, and
               // the title it would otherwise have to match is human prose.
@@ -1280,7 +1288,22 @@ async function* runTurn(
                 resultSeen.add(b.tool_use_id);
                 // The deny-result of an answered ask is already shown via ask_answered.
                 if (askIds.has(b.tool_use_id)) continue;
-                const raw = resultText(b.content);
+                let raw = resultText(b.content);
+                // A Calandria tool the CLI answered on its own behalf: it cut
+                // the call off above the MCP seam, so lib/agentToolGuard.mjs
+                // never saw it and the sentence the model is holding is the
+                // CLI's. Say whose it is and what to do about it, and log it —
+                // otherwise a turn whose Calandria calls all failed still
+                // reports `turn ok` with nothing in the journal to find it by.
+                const cut = calandriaCalls.get(b.tool_use_id);
+                if (cut && isCliInterruptedToolResult(raw)) {
+                  log.warn("agent tool call cut off before Calandria answered", {
+                    task: task.id,
+                    tool: cut,
+                    tool_use_id: b.tool_use_id,
+                  });
+                  raw = toolInterruptedMessage(cut);
+                }
                 const kind = resultKinds.get(b.tool_use_id);
                 // Summarize from the raw (pre-clip) output so counts are exact.
                 // A failure ("Exit code N" + output, stderr last) is peeked
