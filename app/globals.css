@@ -1268,6 +1268,9 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
    baseline rather than the flex cross-axis. */
 .sess-head .sh-title .agent-badge{vertical-align:-3px;margin-right:8px;}
 .sess-head .sh-title .agent-badge svg{width:16px;height:16px;}
+/* The endpoint chip beside the agent mark (ProviderBadge): fixed and non-shrinking for the same reason as .agent-badge. */
+.provider-badge{display:inline-flex;align-items:center;flex:0 0 auto;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;line-height:1.3;color:var(--ink-2);border:1px solid var(--line);vertical-align:2px;margin-right:8px;}
+.provider-badge.local{color:var(--green);border-color:var(--green);background:var(--green-soft);}
 
 .btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;transition:background .12s,filter .12s;}
 .btn svg{width:15px;height:15px;}

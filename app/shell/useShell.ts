@@ -288,7 +288,7 @@ export function useShell() {
   useEffect(() => { setHomeProj((h) => (h === selProj ? h : null)); }, [selProj]);
 
   // ---------- prefs (appearance/settings/layout/view) + persistence ----------
-  const { view, setView, taskView, setTaskView, appearance, setAppearance, settings, setSetting, setSettings, layout, setLayout, hydrated } =
+  const { view, setView, taskView, setTaskView, appearance, setAppearance, settings, setSetting, setSettings, layout, setLayout, hydrated, goBack } =
     usePrefs({ selProj, selTask, projectHome, selectionReady: booted, urlSelRef, setSelProj, setSelTask, setProjectHome });
 
   // ---------- project recaps + landing decision ----------
@@ -965,7 +965,7 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
@@ -1049,7 +1049,7 @@ export function useShell() {
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
-    projectHome, setSelTask, showProjectHome, setProjectHome, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
+    projectHome, setSelTask, showProjectHome, setProjectHome, goBack, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,

@@ -7,6 +7,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
 import { isAgentId } from "@/lib/agents/capabilities";
+import { serializeAgentEnv } from "@/lib/agentEnv";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     ...task,
     cost_usd: usage.cost_usd,
+    // Turns whose endpoint had no price, making `cost_usd` a floor. Without it
+    // a page load would drop the marker the live stream had already put on the
+    // chip, and the total would silently go back to reading as complete.
+    unpriced_turns: usage.unpriced_turns,
     total_tokens: usage.total_tokens,
     // The cache buckets travel with the total so the usage chip can split
     // "fresh work" from re-read context instead of showing one inflated number.
@@ -43,7 +48,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "withdrawn_reason", "snoozed_until", "start_at"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "agent_env", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -79,6 +84,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         return NextResponse.json({ error: "invalid model id" }, { status: 400 });
       allowed.model = model || null;
     }
+  }
+  // Provider override (lib/agentEnv.ts): which endpoint and model this task's
+  // turns run against, laid over the project's. Object or JSON text; the
+  // allowlist is enforced by the store's serialize, so an unlisted key is
+  // dropped rather than stored. Refused only for a shape that can't be read.
+  if ("agent_env" in body) {
+    const v = (body as { agent_env?: unknown }).agent_env;
+    if (v !== null && typeof v !== "string" && (typeof v !== "object" || Array.isArray(v)))
+      return NextResponse.json({ error: "agent_env must be an object, JSON text or null" }, { status: 400 });
+    allowed.agent_env = serializeAgentEnv(v);
   }
   // Snoozing. Two spellings, because they answer to two different clocks:
   //   - `snoozed_until` is a deadline the USER picked, so it's theirs to state;

@@ -13,6 +13,7 @@ import { Modal, BrowseDirButton, ModelField, PrioritySeg, DepPicker } from "./Mo
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
+import { describeProvider, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, type ProviderKind } from "@/lib/agentEnv";
 
 // Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
 // to choose: one agent registered, OR one agent CONNECTED and it's the one
@@ -1022,7 +1023,7 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1036,6 +1037,19 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
+  // Which endpoint the project's turns run against (lib/agentEnv.ts). The
+  // stored form is an env-shaped override; the form edits the three things a
+  // person actually chooses — kind, base URL, model (plus a token for a custom
+  // endpoint) — and writes the override back through providerPresetEnv, so the
+  // form and the presets `suggest_task` writes can't produce different shapes.
+  const savedProvider = describeProvider(parseAgentEnv(project.agent_env));
+  const [providerKind, setProviderKind] = useState<ProviderKind>(savedProvider.kind);
+  const [providerUrl, setProviderUrl] = useState(normalizeBaseUrl(savedProvider.anthropic_base_url ?? savedProvider.openai_base_url ?? ""));
+  const [providerModel, setProviderModel] = useState(savedProvider.model ?? "");
+  const [providerToken, setProviderToken] = useState(savedProvider.auth_token ?? "");
+  const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
+  const agentEnvOut = () =>
+    providerKind === "cloud" ? "" : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
@@ -1158,7 +1172,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1278,6 +1292,47 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           label="Default agent for new tasks"
           help="New tasks in this project default to this agent. Existing tasks keep the agent they were created with."
         />
+      </div>
+      {/* The endpoint behind that agent. Cloud is the agent's own login; the
+          other two point BOTH CLIs at an Anthropic-/OpenAI-compatible server
+          (Claude Code via ANTHROPIC_BASE_URL, Codex via a config.toml provider
+          entry the driver writes) with no new driver. A task can override this
+          on its own row — that is how a session delegates to a local model. */}
+      <div className="field" style={{ marginTop: 14 }}>
+        <div className="lab">{Icon.spark()} Model provider</div>
+        <div className="model-field">
+          <select value={providerKind} aria-label="Model provider" onChange={(e) => {
+            const kind = e.target.value as ProviderKind;
+            setProviderKind(kind);
+            if (kind === "local" && (!providerUrl || providerKind === "cloud")) setProviderUrl(localDefaultUrl);
+          }}>
+            <option value="cloud">Cloud — the agent&apos;s own login</option>
+            <option value="local">Local model — Ollama or LM Studio</option>
+            <option value="custom">Custom base URL</option>
+          </select>
+        </div>
+        {providerKind !== "cloud" && (
+          <>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
+                title="Base URL of the server. Ollama and LM Studio serve both APIs from one origin; /v1 is added where each CLI needs it."
+                onChange={(e) => setProviderUrl(e.target.value)} />
+              <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={providerModel} placeholder="model, e.g. qwen3-coder"
+                title="The model every task in this project runs unless the task picks its own. Claude Code's opus/sonnet/haiku aliases resolve to it too."
+                onChange={(e) => setProviderModel(e.target.value)} />
+            </div>
+            {providerKind === "custom" && (
+              <input type="text" className="ctx-mono" style={{ marginTop: 8 }} value={providerToken} placeholder="auth token (ollama)"
+                title="Sent as the Anthropic auth token. Ollama and LM Studio require one and ignore its value. The instance's own Anthropic/OpenAI keys are never sent to a custom endpoint."
+                onChange={(e) => setProviderToken(e.target.value)} />
+            )}
+            <div className="hlp">
+              {providerModel.trim()
+                ? "Turns are not billed as cloud spend. Codex reaches the same server through a provider entry of its own, so ~/.codex/config.toml is left alone."
+                : "Name a model, or the CLIs will ask the server for their cloud defaults and fail. Codex needs an OpenAI Responses endpoint: Ollama 0.13+ and LM Studio."}
+            </div>
+          </>
+        )}
       </div>
       {showServices && (
         <div className="field" style={{ marginTop: 14 }}>

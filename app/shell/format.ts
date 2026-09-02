@@ -25,6 +25,19 @@ export function fmtCost(n: number): string {
   return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 }
 
+/**
+ * The dollar figure the usage chip prints, which is not always a dollar figure.
+ * A task whose turns ALL ran against an endpoint nobody has priced has nothing
+ * to show — "—" is the honest answer and "$0.00" is a claim we can't make — and
+ * one with a MIX shows what the priced turns came to, with a "+" saying there
+ * is more that isn't counted. `usageTooltip` spells out which.
+ */
+export function fmtCostTotal(costUsd: number, unpricedTurns: number): string {
+  if (unpricedTurns <= 0) return fmtCost(costUsd);
+  if (costUsd <= 0) return "—";
+  return `${fmtCost(costUsd)}+`;
+}
+
 export function fmtJobCost(e: InternalUsageEstimate): string {
   const cost = e.cost_usd <= 0 ? "$0.00" : e.cost_usd < 0.01 ? "<$0.01" : `$${e.cost_usd.toFixed(2)}`;
   return `~${fmtTokens(e.tokens)} tokens (~${cost})`;
@@ -111,7 +124,7 @@ export function costDisplay(agent: AgentInfo | undefined): CostDisplay {
 // The usage chip's tooltip: the full breakdown the compact chip can't fit, one
 // fact per line. Exact counts here (the chip rounds) — this is the view someone
 // opens precisely because the rounded number surprised them.
-export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDisplay): string {
+export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDisplay, unpricedTurns = 0): string {
   const n = (v: number) => v.toLocaleString();
   const lines = [
     `${n(split.fresh)} new tokens this task: ${n(split.inOut)} in/out · ${n(split.cacheWrite)} written to cache`,
@@ -133,6 +146,14 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
   }
   if (cost.show && costUsd > 0) {
     lines.push(`${cost.approx ? "~" : ""}${fmtCost(costUsd)}${cost.note ? ` ${cost.note}` : " billed"}`);
+  }
+  // Said whether or not `cost.show` is on: the reason a figure is missing is
+  // more useful than the figure would have been.
+  if (unpricedTurns > 0) {
+    const turns = `${n(unpricedTurns)} turn${unpricedTurns === 1 ? "" : "s"}`;
+    lines.push(costUsd > 0
+      ? `${turns} ran against a custom endpoint with no price set — the figure above covers only the rest`
+      : `${turns} ran against a custom endpoint with no price set, so there is no cost to show — unknown, not $0.00`);
   }
   return lines.join("\n");
 }

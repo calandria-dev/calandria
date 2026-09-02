@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
 import TaskChanges from "./TaskChanges";
 import { PROJ_W, TASK_W, DEFAULT_LAYOUT, AUTO_COLLAPSE_BELOW } from "./shell/types";
+import { INITIAL_POLICY, applyShed, applyOverride, isCollapsed, shedLabel, type Col, type CollapsePolicy } from "./shell/collapsePolicy";
 import { useShell } from "./shell/useShell";
 import { ProjectsColumn } from "./shell/ProjectsColumn";
 import { TasksColumn } from "./shell/TasksColumn";
@@ -61,25 +62,31 @@ function useMacDesktopChrome() {
 }
 
 // Which side columns the window is too narrow to keep open, per
-// AUTO_COLLAPSE_BELOW. Same matchMedia contract as useIsMobile: SSR renders the
-// full-width layout (nothing shed) and the effect corrects on mount, so the
-// first paint never disagrees with the server. Below 760px it stops mattering —
-// the phone layout mounts one pane at a time and none of these coexist.
-type Col = "proj" | "task" | "rail";
-function useAutoCollapse(): Record<Col, boolean> {
-  const [shed, setShed] = useState({ proj: false, task: false, rail: false });
+// AUTO_COLLAPSE_BELOW, together with the spines' "show it anyway" overrides —
+// one value, because an override is only good at the shed set it was granted
+// under (collapsePolicy.ts has the why). Same matchMedia contract as
+// useIsMobile: SSR renders the full-width layout (nothing shed) and the effect
+// corrects on mount, so the first paint never disagrees with the server. Below
+// 760px it stops mattering — the phone layout mounts one pane at a time and
+// none of these coexist.
+function useAutoCollapse(): { policy: CollapsePolicy; override: (col: Col, open: boolean) => void } {
+  const [policy, setPolicy] = useState<CollapsePolicy>(INITIAL_POLICY);
   useEffect(() => {
     const qs: Record<Col, MediaQueryList> = {
       proj: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.proj - 1}px)`),
       task: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.task - 1}px)`),
       rail: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.rail - 1}px)`),
     };
-    const sync = () => setShed({ proj: qs.proj.matches, task: qs.task.matches, rail: qs.rail.matches });
+    // Functional, so two change events that land in one batch each apply in
+    // turn and each drops the overrides — the intermediate shed set is never
+    // rendered, and doesn't need to be.
+    const sync = () => setPolicy((p) => applyShed(p, { proj: qs.proj.matches, task: qs.task.matches, rail: qs.rail.matches }));
     sync();
     for (const mq of Object.values(qs)) mq.addEventListener("change", sync);
     return () => { for (const mq of Object.values(qs)) mq.removeEventListener("change", sync); };
   }, []);
-  return shed;
+  const override = useCallback((col: Col, open: boolean) => setPolicy((p) => applyOverride(p, col, open)), []);
+  return { policy, override };
 }
 
 // Phone terminal: a full-screen sheet (vs. the cramped desktop bottom-drawer) so
@@ -147,20 +154,18 @@ export default function Shell() {
   // keeps the spine's button honest — without it, clicking "Show projects
   // panel" at 1024px would flip `layout.projCollapsed` and change nothing
   // visible — and it is deliberately session-only. Persisting it would carry a
-  // decision made at one size into every later window; instead it is cleared
-  // whenever the shed set changes, so widening and re-narrowing starts the
-  // policy over. `layout` itself is never written by the policy, only by the
-  // user's own collapse/expand clicks, which do persist.
-  const shed = useAutoCollapse();
-  const [reopened, setReopened] = useState<Partial<Record<Col, boolean>>>({});
-  const shedKey = `${shed.proj}${shed.task}${shed.rail}`;
-  useEffect(() => { setReopened((r) => (Object.keys(r).length ? {} : r)); }, [shedKey]);
-  const projCollapsed = layout.projCollapsed || (shed.proj && !reopened.proj);
-  const taskCollapsed = layout.taskCollapsed || (shed.task && !reopened.task);
-  const railCollapsed = layout.railCollapsed || (shed.rail && !reopened.rail);
+  // decision made at one size into every later window; instead it lives with
+  // the shed set it was granted under and goes with it, so widening and
+  // re-narrowing starts the policy over (collapsePolicy.ts). `layout` itself is
+  // never written by the policy, only by the user's own collapse/expand clicks,
+  // which do persist.
+  const { policy: collapse, override } = useAutoCollapse();
+  const projCollapsed = isCollapsed(collapse, "proj", layout.projCollapsed);
+  const taskCollapsed = isCollapsed(collapse, "task", layout.taskCollapsed);
+  const railCollapsed = isCollapsed(collapse, "rail", layout.railCollapsed);
   const setCollapsed = (col: Col, v: boolean) => {
     o.setLayout((l) => (col === "proj" ? { ...l, projCollapsed: v } : col === "task" ? { ...l, taskCollapsed: v } : { ...l, railCollapsed: v }));
-    setReopened((r) => ({ ...r, [col]: !v }));
+    override(col, !v);
   };
 
   const features = clientFeatures();
@@ -330,7 +335,7 @@ export default function Shell() {
   const tasksColumn = project && (
     <TasksColumn
       mobile={isMobile}
-      onBack={isMobile ? () => window.history.back() : undefined}
+      onBack={isMobile ? o.goBack : undefined}
       width={layout.taskW}
       onCollapse={() => setCollapsed("task", true)}
       project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} tags={o.tags} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
@@ -355,7 +360,7 @@ export default function Shell() {
           <SessionView
             key={task.id}
             mobile={isMobile}
-            onBack={isMobile ? () => window.history.back() : undefined}
+            onBack={isMobile ? o.goBack : undefined}
             project={project} task={task} tagsById={tagsById} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
             transcriptLoading={o.transcriptLoading}
             onSend={(text) => o.runTurn(task.id, text, false)}
@@ -709,7 +714,9 @@ export default function Shell() {
           than inside the task that happened to hit it first. */}
       <AgentAuthBanner broken={o.brokenAgents} onReconnect={() => openSettings("agents")} />
 
-      <div className={`body${isMobile ? " mobile" : ""}`}>
+      {/* data-shed: the auto-collapse policy as the app currently sees it, its
+          one observable (collapsePolicy.ts). */}
+      <div className={`body${isMobile ? " mobile" : ""}`} data-shed={shedLabel(collapse.shed)}>
         {o.bootError ? (
           // The very first fetch failed — nothing to render behind this, so a
           // centered retry beats an empty workspace that looks "hung".
