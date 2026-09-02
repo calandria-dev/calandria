@@ -170,6 +170,47 @@ login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the tas
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
 
+### …and `codex/providerCheck.ts` proves the mapping took
+
+That mapping is three assumptions about another tool's config schema — `model_providers.<name>`,
+`model_provider`, `wire_api = "responses"` — none of them a public contract, against a CLI the
+SDK resolves off PATH and the user's package manager updates on its own schedule. What makes it
+worth a subprocess rather than a comment is the failure mode: an override codex no longer
+recognises is **inert, not an error**, so a renamed key silently reinstates the built-in `openai`
+provider — the user's paid ChatGPT login — while the header still shows the `local` chip and the
+ledger records the endpoint. Same silent-wrong-backend class as the connection/provider mismatch
+above, same answer: refuse.
+
+`codex doctor --json` accepts the same `-c` overrides the SDK passes and reports what it resolved
+under `checks["config.load"].details["model provider"]`. The driver asks before building the Codex
+client and yields an `error` instead of running when the answer isn't `calandria-local`.
+Load-bearing details:
+
+- **Only that one field is read.** `overallStatus` is `fail` whenever the local server happens to
+  be down, which says nothing about whether the mapping took; gating on it would refuse turns for
+  the wrong reason.
+- **Fail-closed.** A missing `doctor`, a non-JSON report or a report without that field all refuse.
+  "Can't prove it" is not "probably fine" when being wrong spends the user's money.
+  `CALANDRIA_CODEX_PROVIDER_CHECK=off` is the escape hatch, named in the error.
+- **The verdict is cached against the CLI version that earned it** (`codex_provider_ok:<baseUrl>`),
+  since the binary is what moves. `codex --version` is ~30ms warm and guards the ~1.1s probe; the
+  cloud path does neither, having no mapping to prove.
+- **Which binary gets probed.** With `CODEX_CLI_PATH` set, the probe and the SDK drive the same
+  file. With it empty they resolve separately — the SDK to the binary vendored in
+  `@openai/codex`, the probe to `codex` on PATH via `bin.ts` — which are the same install in
+  every shipped configuration and the same equivalence `auth.ts` and `mcp.ts` already lean on.
+  Pinning `CODEX_CLI_PATH` is what removes the "in every shipped configuration", which is one
+  more reason the refusal message recommends it.
+- **`serializeCodexConfigOverrides` restates the SDK's own `--config` flattener**, because the
+  probe has to send byte-identical arguments or it certifies a shape no turn uses. That's a
+  duplicate, so `tests/codexProviderCheck.test.ts` pins it against the argv the real SDK spawns a
+  fake binary with, and separately drives the real `codex` to show it still answers
+  `calandria-local` for the mapping and something else without it.
+
+The Claude side was checked rather than assumed: pointed at a sink on `ANTHROPIC_BASE_URL`,
+claude-cli 2.1.257 under a subscription login sent all six `/v1/messages` attempts to the sink and
+never fell back to `api.anthropic.com`. No mapping, no fallback, nothing to verify.
+
 ## Agent MCP inheritance is asymmetric
 
 A **Claude** task session is meant to feel like the user's own `claude` terminal.

@@ -359,6 +359,27 @@ export const LOCAL_MODEL_BASE_URL =
 export const MODEL_PROBE_MS = ms(readEnv("CALANDRIA_MODEL_PROBE_MS"), 2500);
 
 /**
+ * Whether a Codex turn against a local endpoint must PROVE the provider mapping
+ * took before it runs (lib/agents/codex/providerCheck.ts). On by default and
+ * fail-closed, because the failure it catches is silent: an unknown `-c`
+ * override is inert to the codex CLI, so a release that changes the config.toml
+ * schema drops the turn back onto the built-in `openai` provider and bills the
+ * user's ChatGPT login while the UI still says `local`. Turning this off trades
+ * ~1.1s on the first turn per endpoint (the verdict is cached against the CLI
+ * version that earned it) for exactly that risk.
+ */
+export const CODEX_PROVIDER_CHECK = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_CODEX_PROVIDER_CHECK") || "").toLowerCase(),
+);
+
+/**
+ * How long that check will wait for `codex doctor --json`. It runs at the head
+ * of a turn, so a wedged CLI must not hang the turn forever — a timeout is
+ * reported as "couldn't verify" and refuses, like any other unreadable answer.
+ */
+export const CODEX_PROVIDER_CHECK_MS = ms(readEnv("CALANDRIA_CODEX_PROVIDER_CHECK_MS"), 15_000);
+
+/**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
  * ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY). Off by default: both entrypoints
  * strip those vars at boot (lib/env-keys.mjs — server.js and pty-server.js read
