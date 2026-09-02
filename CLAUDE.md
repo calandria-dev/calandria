@@ -429,8 +429,11 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the
   scheduler; it reaches the runner, so it is not pinned.
 - `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job, polled via GET rather
-  than held open. `lib/recap.ts` — the staleness and activity sweep. Both are project-scoped
-  one-shots that run on the utility agent via `lib/agents/oneshots.ts`.
+  than held open. `lib/tagRefresh.ts` — the same shape for a tag ("Refresh tag"), except that it
+  APPLIES its outcome instead of drafting one: task edits go through `lib/agentTools.ts` and land
+  as revertable "Changed by agent" rows, and only work with nothing in it may be retired.
+  `lib/recap.ts` — the staleness and activity sweep. All three are project-scoped one-shots that
+  run on the utility agent via `lib/agents/oneshots.ts`.
 - `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15),
   riding `lib/scheduler.ts`'s ticker on its own much longer clock, because this process owns the
   database and a second daemon would need a second lock. `prunableTaskIds()` is the whole policy,

@@ -886,6 +886,26 @@ export interface Tag {
   created_at: number;
   updated_at: number;
   /**
+   * "Refresh tag with AI" job state (lib/tagRefresh.ts). Persisted on the row
+   * rather than held in memory for the reason the project draft is: the job
+   * outlives the click. A user who fires it and then lights a different chip,
+   * switches project or reloads the tab must come back to the same bar, and a
+   * server that dies mid-run must leave something a later poll can unstick.
+   *
+   * Unlike the project context draft this one has NO draft field: the outcome
+   * is applied, not reviewed. The tag description is written directly and the
+   * task edits land in `task_agent_edits`, where the "Changed by agent" chip
+   * and its per-edit Revert are the review surface — a second, tag-shaped
+   * approval queue would be a different way to say the same thing.
+   */
+  refresh_status: "idle" | "running" | "done" | "error";
+  /** Which phase a running job is in, for the bar's label. "" when idle. */
+  refresh_stage: string;
+  /** What the last finished run actually changed, in the server's words, not the model's. */
+  refresh_summary: string;
+  refresh_error: string; // failure message (when status="error")
+  refresh_started_at: number; // when the current/last job started (ms epoch, 0 = never)
+  /**
    * Derived per read, never stored. `done`/`cancelled` are terminal the way
    * lib/autoStart's blocks() counts them (a withdrawn suggestion is cancelled);
    * `awaiting` uses the same NEEDS_YOU predicate as the project badge.

@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import type { TurnUsage } from "./types";
 
-export type InternalJob = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "verify";
+export type InternalJob = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "planTagRefresh" | "verify";
 
 export interface InternalJobUsage30d {
   job: InternalJob;

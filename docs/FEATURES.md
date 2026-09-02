@@ -369,10 +369,24 @@ during a search.
 Lighting exactly one chip opens the **tag strip** beneath the bar: the description, a
 progress bar reading `3 done · 2 withdrawn`, a link back to the planning session
 (**Planned in …**, when an agent filed it), and its tasks in dependency order, each with a
-status dot and a step number. Its two actions are **Edit** (rename, describe, recolor from
-the badge palette) and **Delete tag**, which asks twice and names how many tasks stay;
-deleting a tag removes the label from its tasks without deleting them or touching their other
-tags. With two chips lit, the strip stays shut.
+status dot and a step number. Its three actions are **Refresh tag** (below), **Edit** (rename,
+describe, recolor from the badge palette) and **Delete tag**, which asks twice and names how
+many tasks stay; deleting a tag removes the label from its tasks without deleting them or
+touching their other tags. With two chips lit, the strip stays shut.
+
+**Refresh tag** checks the whole plan against the code. The utility agent explores the
+repository read-only, reads every member task's brief against what it finds, and reports what
+has drifted; the app applies the report. A brief pointing at files or an approach that no
+longer exists is reworded, the tag's description is rewritten to say where the plan actually
+stands, and a task the code shows is already handled is retired. Every task change lands as a
+**Changed by agent** edit with a per-field before/after and a one-click Revert, so the review
+happens after the write rather than in a second approval queue. Retiring is limited to work
+that has none in it: an unreviewed suggestion is withdrawn into the tray with the reason on
+it, a task accepted but never started is cancelled (revertably), and a task that has been
+started — it has a checkout and probably a diff — is only *named* in the report, never
+touched. The run is a detached background job: an inline bar under the progress bar says which
+phase it is in, and it keeps going if you light another chip, switch project or reload the
+tab. Spend shows up in **Insights** as *Tag refreshes*.
 
 Tags are reachable outside the task list too. The project landing page has a **Tags** card
 between the recap and Runbooks, showing active tags with their progress and what needs you (a
