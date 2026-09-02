@@ -19,7 +19,8 @@ import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
-import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
+import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
+import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -940,6 +941,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 logo's width rather than a word's. */}
             <div className="sh-title">
               <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={multiAgent} />
+              <ProviderBadge provider={taskProvider(project, task)} />
               {task.title}
             </div>
           </div>

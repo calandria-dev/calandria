@@ -119,9 +119,11 @@ server.registerTool(
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
+      provider: z.enum(SUGGEST_TASK.providers).optional().describe(SUGGEST_TASK.params.provider),
+      model: z.string().optional().describe(SUGGEST_TASK.params.model),
     },
   },
-  async ({ title, description, priority, project, blocked_by, tags }) => {
+  async ({ title, description, priority, project, blocked_by, tags, provider, model }) => {
     // Resolve refs (id passes through; a title from earlier this turn, filed
     // into the same project → its id) before handing off — the endpoint just
     // forwards ids to setTaskDeps, which only keeps same-project ones.
@@ -132,7 +134,7 @@ server.registerTool(
     // `tags` are forwarded as the model typed them: the endpoint resolves them in
     // the project the task actually lands in (creating it on a miss), which is
     // the only place that knows what `project` resolved to.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags });
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model });
     if (data.id) {
       // The ref as typed is the alias that always exists ("" when omitted); the
       // resolved id/name (echoed by the endpoint) additionally let a later call

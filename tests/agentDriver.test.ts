@@ -63,12 +63,13 @@ vi.mock("@openai/codex-sdk", () => {
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createProject, createTask, getTask, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { createProject, createTask, getTask, getProject, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe, subscribeGlobal } from "@/lib/events";
 import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
+import { cloudOverrideEnv } from "@/lib/agentEnv";
 
 // Collect every event the runner publishes for a task until turn_end.
 function collectEvents(taskId: string): { events: TaskStreamEvent[]; done: Promise<void> } {
@@ -506,5 +507,50 @@ describe("codex driver contract through the runner", () => {
     expect(afterSecond.total_tokens - afterFirst.total_tokens).toBe(1_250);
     const secondUsage = second.events.find((e) => e.type === "usage") as { usage?: { input_tokens: number; cache_read_tokens: number; output_tokens: number } } | undefined;
     expect(secondUsage?.usage).toMatchObject({ input_tokens: 1_000, cache_read_tokens: 200, output_tokens: 50 });
+  });
+});
+
+// A turn against a provider override (lib/agentEnv.ts, local models) is not
+// the vendor's spend: whatever the driver reports as cost, the ledger row is
+// stored at 0, tagged with the endpoint's host, and the published usage event
+// agrees with the row, so the live chip and Insights can't disagree. Tokens
+// are kept — the local model still filled a context window.
+describe("provider override usage accounting", () => {
+  it("zeroes cost and tags the row with the endpoint for a local-model project", async () => {
+    const project = createProject({ name: "Local" });
+    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" }) });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([
+      { type: "session", sessionId: "local-1" },
+      { type: "usage", usage: { cost_usd: 0.5, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_creation_tokens: 40 } },
+      { type: "done", sessionId: "local-1" },
+    ]);
+    const { events, done } = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, total_tokens: 100, turns: 1 });
+    const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
+    expect(usageEv.usage.cost_usd).toBe(0);
+    expect(usageEv.usage.input_tokens).toBe(10);
+    const { getDb } = await import("@/lib/db");
+    const row = getDb().prepare("SELECT provider, cost_usd FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string; cost_usd: number };
+    expect(row).toEqual({ provider: "localhost:11434", cost_usd: 0 });
+  });
+
+  it("bills a task-level cloud override at the driver's figure inside a local project", async () => {
+    const project = createProject({ name: "Local-2" });
+    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434" }) });
+    const task = createTask({ project_id: project.id, title: "T", description: "", agent_env: cloudOverrideEnv() as Record<string, string> });
+    script([
+      { type: "session", sessionId: "cloud-1" },
+      { type: "usage", usage: { cost_usd: 0.25, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 } },
+      { type: "done", sessionId: "cloud-1" },
+    ]);
+    const { done } = collectEvents(task.id);
+    await startResumeTurn(getTask(task.id)!, getProject(project.id)!, "go");
+    await done;
+    expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0.25, turns: 1 });
+    const { getDb } = await import("@/lib/db");
+    expect((getDb().prepare("SELECT provider FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string }).provider).toBe("");
   });
 });
