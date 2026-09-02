@@ -149,6 +149,20 @@ workflow runs weekly and on manual dispatch, never on push, because `current` mo
 commit in this repo and a Node release must not turn unrelated pull requests red. For the
 same reason it is not a required check.
 
+Its first run, on 2026-08-31, was red on Windows for a reason with nothing to do with the Node
+it was testing, and the correction is a Windows fact worth keeping here: **a `build/`
+directory under `node_modules/node-pty` does not mean anything compiled.** `node-pty`'s
+`postinstall` (`scripts/post-install.js`) runs on every install, whichever branch the `install`
+script took, and on Windows it creates `build/Release/conpty/` itself in order to copy
+`conpty.dll` and `OpenConsole.exe` out of `third_party/`. That run's log is unambiguous —
+`> Checking prebuilds...` exited 0, `node-gyp` was never invoked, and there was a `build/`
+anyway. The marker is `build/config.gypi`, which only `node-gyp` writes, and which it writes at
+configure time so a half-finished build counts too; that is the same signal the whole-tree
+sweep in the same workflow was already keyed on. The lane now also asks `node-pty`'s own loader
+which directory it took, since the fallback order is `build/Release`, `build/Debug`,
+`prebuilds/<triple>` — a stray compiled binary shadows the bundled one, and a check that only
+looks at `prebuilds/` would still call that clean.
+
 The unit lane earned its place on its first run: 83 of 135 test files failed, despite
 everything having been written, reviewed and merged as portable with the Ubuntu suite green
 throughout. Two were product bugs in the document-collaboration file route:
