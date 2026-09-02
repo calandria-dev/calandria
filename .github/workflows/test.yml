@@ -236,34 +236,46 @@ jobs:
   changes:
     name: Changed paths
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      pull-requests: read
+    # NO `permissions:` block, and the file list comes from git rather than the
+    # pulls API for exactly that reason. This job is reached through
+    # workflow_call from publish-image.yml, and a CALLED workflow may not
+    # request a scope above its caller's ceiling — GitHub rejects the whole run
+    # with `startup_failure` before a single job starts. Asking for
+    # `pull-requests: read` here did precisely that, and `startup_failure` does
+    # not appear in `gh pr checks`, so the PR still read CLEAN: the same shape
+    # as the bug this file is being changed to fix. `git diff` needs only the
+    # top-level `contents: read`, which every caller already has.
     outputs:
       app: ${{ steps.filter.outputs.app }}
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          # Full history: the diff is against the base SHA, which a shallow
+          # clone of the merge ref does not necessarily contain.
+          fetch-depth: 0
       - id: filter
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != "pull_request" ] || [ -z "${PR:-}" ]; then
+          if [ "$EVENT" != "pull_request" ] || [ -z "${BASE:-}" ]; then
             echo "app=true" >> "$GITHUB_OUTPUT"
             echo "not a pull request ($EVENT) — running everything"
             exit 0
           fi
-          # `|| echo` rather than letting `set -e` kill the step. This job is
-          # reached through workflow_call from publish-image.yml, where the
-          # token's scopes are capped by the CALLER's `permissions:` and the
-          # `pull-requests: read` asked for above may simply not be granted. A
-          # cost optimisation must never be the thing that reddens CI, so a
-          # failed read falls through to the empty case below.
-          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' 2>/dev/null || echo "")
+          # A cost optimisation must never be the thing that reddens CI, so a
+          # diff that cannot be computed falls through to the empty case below
+          # rather than letting `set -e` kill the step.
+          # Three dots, not two: compare against the MERGE BASE. A two-dot diff
+          # also reports whatever landed on the base branch since this PR was
+          # cut, so one unrelated app commit on main would make a website-only
+          # PR look like an app change and the saving would never apply.
+          files=$(git diff --name-only "$BASE...$HEAD_SHA" 2>/dev/null || echo "")
           if [ -z "$files" ]; then
-            echo "::warning::could not read the PR file list — running everything"
+            echo "::warning::could not read the changed-file list — running everything"
           fi
           # Empty means we could not tell what changed. Fail OPEN — running the
           # suite unnecessarily costs minutes, skipping it wrongly ships a
