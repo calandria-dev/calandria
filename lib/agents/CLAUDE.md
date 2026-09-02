@@ -170,6 +170,46 @@ login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the tas
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
 
+## Antigravity / Gemini driver (`gemini/`), experimental
+
+Behind `CALANDRIA_EXPERIMENTAL_GEMINI=1` in both `registry.ts` and `capabilities.ts`, the same
+gate shape the mock driver uses. Google's `agy` CLI has no SDK, so this driver owns the process:
+`spawn`, NDJSON off stdout, `gemini/events.ts` to normalize. Everything in it is pinned to a
+recorded capture (`tests/fixtures/gemini/`), because the CLI's own documentation describes a
+different wire format than it emits — the corrections are catalogued in
+`docs/design/gemini-driver.md` under "Settled by the driver".
+
+**Each task runs under its own `HOME`.** `agy` reads MCP servers from exactly one user-global
+file, `~/.gemini/config/mcp_config.json`, and the bridge takes its identity from that entry's env
+— so a shared file means whichever task wrote last owns every other task's `suggest_task` and
+`ask_user` calls. The workspace customization roots the CLI documents (`.agents/` and friends) are
+real for skills, rules and hooks but **not** for MCP; a config placed in all seven candidate
+locations at once was still invisible. A per-task `HOME` is what works, with two wrinkles
+`gemini/home.ts` handles: a bare override loses the login (so `~/.gemini/antigravity-cli` is
+symlinked back), and `HOME` reaches every shell command the agent runs (so the rest of the real
+home is symlinked across, or the agent has no git identity). `scripts/calandria-mcp.mjs` is
+untouched.
+
+**Usage is cumulative per conversation**, like Codex and unlike the design doc's claim, so a turn's
+spend is a delta against a baseline in `sessions.usage_cum`. Cost is estimated from Google's
+published prices (`gemini/pricing.ts`); the CLI reports no dollar figure at all.
+
+**A denied tool is nearly silent.** Headless mode cannot prompt, so it auto-denies, and that
+changes neither the exit code (0) nor reliably the status — the same denial was seen ending a run
+both `CANCELED` and `SUCCESS`. So `CANCELED` must NOT be read as "the user stopped it" unless our
+own abort fired, and the driver additionally reads stderr for the denial line. For the same reason
+the descriptor offers no ask-style permission mode: the CLI's default mode cannot complete a
+single tool call headlessly, so offering it would offer a mode guaranteed to do nothing.
+
+**Reasoning effort is part of the model slug** (`gemini-3.8-flash-high`), so `reasoningOptions` is
+empty and `--effort` is never sent. The catalog also serves Anthropic and open-weights models.
+
+**Login drives a pty.** The headless flow dies after a hard 61 seconds, and the authorization code
+is bound to that child's PKCE verifier, so respawning for a fresh window invalidates the code the
+user is holding. The interactive CLI has no timeout, so `gemini/auth.ts` runs it under node-pty
+(lazily imported — it is needed by this one flow, not by every turn). `agy models` is the status
+probe: no `--output-format` flag exists, and it exits 0 either way, so its text is the only signal.
+
 ## Agent MCP inheritance is asymmetric
 
 A **Claude** task session is meant to feel like the user's own `claude` terminal.
@@ -310,10 +350,22 @@ A related fix in the same path: a `/clear` typed in full **mid-turn** used to be
 ordinary follow-up and reach the CLI's own `/clear`, wiping the session's context behind
 Calandria's back with no handoff note and no new generation. The composer now refuses it outright.
 
-## Adding a third agent
+## Adding another agent
 
 Implement `AgentDriver` in `lib/agents/<id>/driver.ts` (only `runTurn()` is required), register
-it in `registry.ts`, and ship its CLI in the `Dockerfile`. Nothing else changes: the runner,
-routes, recap and refresh jobs, and UI data flow are all seam-generic. Pin it with the
-driver-contract test `tests/agentDriver.test.ts`, which mocks a driver's CLI at the SDK boundary
-and runs it through the real runner.
+it in `registry.ts` **and** `capabilities.ts` (the second one is what `listAgentIds()`/`isAgentId()`
+read, so a driver registered only in the first is connectable but invisible to every id-level
+lookup), and ship its CLI in the `Dockerfile`. Nothing else changes: the runner, routes, recap and
+refresh jobs, and UI data flow are all seam-generic. Pin it with the driver-contract test
+`tests/agentDriver.test.ts`, which mocks a driver's CLI at the SDK boundary and runs it through the
+real runner.
+
+`gemini/` is the worked example for a CLI with **no SDK**: mock `node:child_process.spawn` instead
+(`tests/geminiDriver.test.ts`) and replay recorded NDJSON. Ship an agent behind an env gate while
+it is unproven, as that one is.
+
+The lesson from building it, worth repeating for the next one: **capture the CLI's real output
+before writing the mapping.** Every one of that driver's event-shape assumptions taken from vendor
+documentation and the binary's own embedded prose turned out wrong — step-type spelling, how MCP
+calls are named, whether usage is per-turn, where the session id lives — and each would have been
+a plausible-looking bug rather than a crash.
