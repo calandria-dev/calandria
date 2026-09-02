@@ -10,12 +10,25 @@ in README's "Name and lineage" section; this changelog only covers Calandria.
 
 ## [0.7.0](https://github.com/calandria-dev/calandria/compare/v0.6.2...v0.7.0) (2026-09-02)
 
+Calandria 0.7.0 adds a third agent: Google's Antigravity (Gemini) CLI joins Claude Code and
+Codex as a first-class driver, with its own connect flow and plan-usage meter. Local models
+arrive too: a project can point Claude Code or Codex at Ollama or LM Studio and pick from the
+endpoint's live model list, and the internal jobs (recaps, context drafts, `/clear` summaries)
+can be pinned to a model of their own. The titlebar meters ChatGPT plan usage beside Claude's.
+Plans got sturdier: a tag's tasks can build on their own base branch and the strip says when it
+drifts from the project default, a session is told when its worktree was cut from a stale base,
+a whole plan can be refreshed against the code from the tag strip, and agents gain `move_task`.
+Fixes cover the `/clear` turn slot, remote-only base branches, silent agent and connection
+fallbacks, the Codex local-provider mapping, dependency gating on a manual start, reclaiming a
+squash-merged branch, a project saved with no base branch, and the pane-visibility race that
+flaked CI. Thanks to @hardiksh28 for the Codex test-isolation fix (#106)!
+
 
 ### Features
 
 * **agents:** add Antigravity (Gemini) as a first-class agent driver ([#166](https://github.com/calandria-dev/calandria/issues/166)) ([96e8f8e](https://github.com/calandria-dev/calandria/commit/96e8f8e60bd93a8d182adfbe2738fbe5016f1a2d))
 * **agents:** add move_task so an agent can re-parent tasks ([#24](https://github.com/calandria-dev/calandria/issues/24)) ([64f90ae](https://github.com/calandria-dev/calandria/commit/64f90aeb2aa499f41632d0b42605b18d743729b7))
-* **agents:** per-project provider override and live model picker for local models ([#132](https://github.com/calandria-dev/calandria/issues/132)) ([6982ddf](https://github.com/calandria-dev/calandria/commit/6982ddf9ce928839b9553fa2e6418886f6011088))
+* **agents:** free-form model picker and live model list for a local endpoint ([#132](https://github.com/calandria-dev/calandria/issues/132)) ([6982ddf](https://github.com/calandria-dev/calandria/commit/6982ddf9ce928839b9553fa2e6418886f6011088))
 * **agents:** per-project provider override for local models (Ollama / LM Studio) ([#114](https://github.com/calandria-dev/calandria/issues/114)) ([#121](https://github.com/calandria-dev/calandria/issues/121)) ([b91aad8](https://github.com/calandria-dev/calandria/commit/b91aad8060b0a95bb59b44bacd50e8a996d6569b))
 * **agents:** pick the model Calandria's internal jobs run on ([#141](https://github.com/calandria-dev/calandria/issues/141)) ([f3679cd](https://github.com/calandria-dev/calandria/commit/f3679cd13b7b20f188c2758af05e26055112a48a))
 * **agents:** pin Fable 5.1 so a stale CLI can still reach it ([#107](https://github.com/calandria-dev/calandria/issues/107)) ([eb10c78](https://github.com/calandria-dev/calandria/commit/eb10c786c412e9a4d1f9344f44572c1bafa2a39b))
@@ -44,11 +57,10 @@ in README's "Name and lineage" section; this changelog only covers Calandria.
 * **projects:** refuse an empty base branch instead of saving it ([#167](https://github.com/calandria-dev/calandria/issues/167)) ([3eaa772](https://github.com/calandria-dev/calandria/commit/3eaa77247554a12501b0df8451111b6c518659a9))
 * **reclaim:** stop reading a synced, squash-merged branch as unpushed work ([#137](https://github.com/calandria-dev/calandria/issues/137)) ([d0f815c](https://github.com/calandria-dev/calandria/commit/d0f815cdd421422cf27f5feb04e0bfd3ce7334d1))
 * **shell:** derive pane visibility from current state, not from a transition ([#104](https://github.com/calandria-dev/calandria/issues/104)) ([#115](https://github.com/calandria-dev/calandria/issues/115)) ([#118](https://github.com/calandria-dev/calandria/issues/118)) ([d41f673](https://github.com/calandria-dev/calandria/commit/d41f6734b019ad060dbed11dc4045773fdeafc30))
-* **shell:** derive pane visibility from current state, not from a transition ([#130](https://github.com/calandria-dev/calandria/issues/130)) ([be640c8](https://github.com/calandria-dev/calandria/commit/be640c8876d04b4d7e69d171256a4f0c2e435d21))
 * **tasks:** gate a manual start on dependencies server-side ([#139](https://github.com/calandria-dev/calandria/issues/139)) ([79843e8](https://github.com/calandria-dev/calandria/commit/79843e8463dab9639323c20189cb722d3a95c17f))
-* **tests:** reset codex_approval_downgraded in beforeEach to fix shuffled test isolation ([#106](https://github.com/calandria-dev/calandria/issues/106)) ([e1b6fb5](https://github.com/calandria-dev/calandria/commit/e1b6fb57fd9285d015d9ea9b287d96b116fee4d5))
+* **tests:** reset codex_approval_downgraded in beforeEach to fix shuffled test isolation — thanks @hardiksh28! ([#106](https://github.com/calandria-dev/calandria/issues/106)) ([e1b6fb5](https://github.com/calandria-dev/calandria/commit/e1b6fb57fd9285d015d9ea9b287d96b116fee4d5))
 * **transcript:** settle an AskUserQuestion card the turn never answered ([#157](https://github.com/calandria-dev/calandria/issues/157)) ([a40d6df](https://github.com/calandria-dev/calandria/commit/a40d6dfc14737c4f63e5192d02efe212599aadfe))
-* **ui:** correct the mobile composer, the dependency picker and the PR check rollup ([#133](https://github.com/calandria-dev/calandria/issues/133)) ([dc2cd65](https://github.com/calandria-dev/calandria/commit/dc2cd65d9cefeef3826fa5d678c9d0d8f32ea574))
+* **ui:** show suggested blockers in the dependency picker, and read a check's latest attempt in the PR rollup ([#133](https://github.com/calandria-dev/calandria/issues/133)) ([dc2cd65](https://github.com/calandria-dev/calandria/commit/dc2cd65d9cefeef3826fa5d678c9d0d8f32ea574))
 * **usage:** record a custom endpoint's cost as unknown, not as zero ([#129](https://github.com/calandria-dev/calandria/issues/129)) ([4e3291b](https://github.com/calandria-dev/calandria/commit/4e3291b65dadf120630c5bf2fbb56aa739e705f1))
 
 ## [0.6.2](https://github.com/calandria-dev/calandria/compare/v0.6.1...v0.6.2) (2026-09-01)
