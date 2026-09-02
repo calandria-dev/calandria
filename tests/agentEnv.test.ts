@@ -5,6 +5,7 @@ import {
   applyProviderEnv,
   cloudOverrideEnv,
   describeProvider,
+  providerPricing,
   parseAgentEnv,
   providerEnvFor,
   providerPresetEnv,
@@ -241,6 +242,22 @@ describe("describeProvider / taskProvider", () => {
   it("is custom for any other host, and reads the OpenAI URL when only that is set", () => {
     expect(describeProvider({ ANTHROPIC_BASE_URL: "https://gw.example.com" })).toMatchObject({ kind: "custom", host: "gw.example.com" });
     expect(describeProvider({ OPENAI_BASE_URL: "http://localhost:1234/v1" })).toMatchObject({ kind: "local", host: "localhost:1234", anthropic_base_url: null });
+  });
+
+  // `pricing` is what the usage ledger keys off (lib/runner.ts), so it must
+  // never be derived a second time somewhere else: cloud is the driver's own
+  // figure, a local server is genuinely free, and a custom base URL is a price
+  // nobody has stated — which is NOT the same as free, and is the whole reason
+  // this field exists rather than a `kind !== "cloud"` test at the call site.
+  it("prices cloud by the vendor, local as free and custom as unknown", () => {
+    expect(describeProvider({}).pricing).toBe("vendor");
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }).pricing).toBe("free");
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api" }).pricing).toBe("unknown");
+    // Every kind maps, so a fourth one added later can't quietly fall through
+    // to being billed as the vendor's spend.
+    for (const kind of ["cloud", "local", "custom"] as const) {
+      expect(providerPricing(kind), kind).toBe(kind === "cloud" ? "vendor" : kind === "local" ? "free" : "unknown");
+    }
   });
 
   it("taskProvider merges project and task the way the turn env does", () => {

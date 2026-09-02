@@ -269,11 +269,40 @@ export function cloudOverrideEnv(): AgentEnv {
 
 export type ProviderKind = "cloud" | "local" | "custom";
 
+/**
+ * What a turn against this endpoint is worth, which is a different question
+ * from where the endpoint is:
+ *
+ * - `vendor` — the driver's own figure IS the answer. Claude Code and Codex
+ *   price the model they actually ran against the catalog they actually bill.
+ * - `free` — the endpoint charges nothing. A model served by Ollama or LM
+ *   Studio on this machine or this network costs electricity, not dollars, so
+ *   a recorded 0 is a measurement rather than a placeholder.
+ * - `unknown` — nobody has told us what this endpoint charges. A custom base
+ *   URL is free text plus an optional token, and it is just as likely to be
+ *   OpenRouter, Together, Fireworks or a Bedrock proxy as anything free. The
+ *   driver's figure prices a model id it was merely TOLD, against the vendor's
+ *   own catalog, so it is not a measurement of this endpoint at all: recording
+ *   it over-reports and recording 0 under-reports. Neither number is defensible,
+ *   so the ledger records neither — see `task_usage.cost_usd`, which is NULL
+ *   here and is left out of every total rather than folded in as a fake zero.
+ */
+export type ProviderPricing = "vendor" | "free" | "unknown";
+
+export function providerPricing(kind: ProviderKind): ProviderPricing {
+  return kind === "cloud" ? "vendor" : kind === "local" ? "free" : "unknown";
+}
+
 export interface AgentProvider {
   /** cloud = the agent's own login, nothing overridden. local = an endpoint on
    *  this machine / the Docker host / a private network. custom = any other
-   *  base URL. Both non-cloud kinds are "not the vendor's spend" for billing. */
+   *  base URL. Both non-cloud kinds are "not the vendor's spend" for billing,
+   *  but they are not the same fact — see `pricing`. */
   kind: ProviderKind;
+  /** How the ledger should treat this turn's dollar figure. Derived from
+   *  `kind` so the badge, the ledger and the settings form can never disagree
+   *  about which endpoints are free and which are merely unpriced. */
+  pricing: ProviderPricing;
   /** The endpoint's host[:port], "" for cloud — what `task_usage.provider`
    *  stores, so Insights can tell endpoints apart without a second column. */
   host: string;
@@ -299,9 +328,11 @@ export function describeProvider(env: AgentEnv): AgentProvider {
   const first = anthropic ?? openai;
   const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || null;
   const auth_token = env.ANTHROPIC_AUTH_TOKEN || null;
-  if (!first) return { kind: "cloud", host: "", anthropic_base_url: null, openai_base_url: null, model, auth_token };
+  if (!first) return { kind: "cloud", pricing: "vendor", host: "", anthropic_base_url: null, openai_base_url: null, model, auth_token };
+  const kind: ProviderKind = isLocalEndpoint(first) ? "local" : "custom";
   return {
-    kind: isLocalEndpoint(first) ? "local" : "custom",
+    kind,
+    pricing: providerPricing(kind),
     host: hostOf(first) ?? first,
     anthropic_base_url: anthropic,
     openai_base_url: openai,

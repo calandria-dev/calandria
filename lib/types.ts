@@ -487,6 +487,22 @@ export interface UsageTotals extends TurnUsage {
   total_tokens: number;
   subagent_tokens: number;
   turns: number;
+  /** How many of those `turns` had no price to record — a custom base URL,
+   *  whose cost nobody has stated (see LedgerUsage). `cost_usd` is the sum over
+   *  the OTHER turns, so a non-zero count here means the dollar figure beside
+   *  it is a floor rather than the whole story, and the UI must say so. */
+  unpriced_turns: number;
+}
+
+/**
+ * A turn's usage as the LEDGER stores it, which differs from what a driver
+ * reports in exactly one place: `cost_usd` may be null, meaning nobody knows
+ * what this turn cost. Only the runner mints that null, from the provider's
+ * `pricing` (lib/agentEnv.ts) — a driver has no way to know its endpoint is a
+ * third party. Distinct from 0, which asserts the turn was free.
+ */
+export interface LedgerUsage extends Omit<TurnUsage, "cost_usd"> {
+  cost_usd: number | null;
 }
 
 // One rolling rate-limit window of a subscription plan (Claude Pro/Max's
@@ -585,7 +601,12 @@ export type StreamEvent =
   // tool row so the transcript can render a live card that re-reads the task
   // (started? accepted? deleted?) instead of freezing a snapshot.
   | { type: "suggested"; title: string; projectId: string; taskId?: string }
-  | { type: "usage"; usage: TurnUsage }
+  // `usage.cost_usd` is 0 when `unpriced` is set, because the client ADDS this
+  // to the task's running total and an unknown price must not inflate it. The
+  // flag is what stops the client reading that 0 as "this turn was free": it
+  // bumps the row's `unpriced_turns` instead, so the chip marks the total as a
+  // floor mid-turn rather than only after the next refetch. See LedgerUsage.
+  | { type: "usage"; usage: TurnUsage; unpriced?: boolean }
   // How full the context window is RIGHT NOW: the input-side token count
   // (input + cache_read + cache_creation) of the latest model request in the
   // main session, as reported by the agent's own stream. Emitted whenever the
