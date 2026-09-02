@@ -27,6 +27,16 @@ const M1 = 1_000_000;
 
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   models: [
+    // Pinned ahead of the alias because the alias can't reach it: `fable`
+    // resolves through the installed CLI's own catalog, and a CLI that predates
+    // 5.1 (or one with `DISABLE_AUTOUPDATER` set) still resolves it to
+    // `claude-fable-5` — measured, `--model fable` billed `claude-fable-5` on
+    // 2.1.252. The pinned id is the way to run 5.1 without waiting for a CLI
+    // bump. Such an id makes the CLI log `[claude-code:unrecognized_model]` and
+    // then pass it through unchanged, so the turn runs and bills as
+    // `claude-fable-5-1`; a genuinely bogus id (probed `claude-fable-6`) errors
+    // instead, which is what makes that a pass-through rather than a fallback.
+    { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "fable", label: "Fable 5", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "opus", label: "Opus 5", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
     { value: "sonnet", label: "Sonnet 5", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
@@ -160,16 +170,23 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
 //    measured against a fifth of its real window. The aliases below take their
 //    window and their subtitle from the id the mapping actually resolves to.
 //
-// The one entry that does NOT run is `fable`: HTTP 403, "Access to this model
-// requires data sharing to be enabled for publisher 'anthropic'". It's dropped
-// rather than labeled with that reason, because on this fork the answer isn't
-// "flip a GCP setting" — Fable arrives when the direct-platform arrangement with
-// Anthropic is finalized, and until then an entry that 403s every turn is just a
-// trap. Restoring it is deleting one line from the filter below.
+// The entries that do NOT run are the Fable rows: HTTP 403, "Access to this
+// model requires data sharing to be enabled for publisher 'anthropic'". They're
+// dropped rather than labeled with that reason, because on this fork the answer
+// isn't "flip a GCP setting" — Fable arrives when the direct-platform
+// arrangement with Anthropic is finalized, and until then an entry that 403s
+// every turn is just a trap. The filter matches the family rather than the one
+// value `fable`, so a pinned Fable id is dropped for the same reason the alias
+// is; that gate is per publisher, so it doesn't need probing per version.
+// Restoring them all is deleting one line from the filter below.
+
+/** Whether a picker value or resolved id names the Fable family — the alias
+ *  `fable` or any pinned `claude-fable-*`, with or without a `[1m]` suffix. */
+const isFable = (id: string): boolean => /fable/i.test(id);
 
 /** The window Claude Code runs for a resolved model id: `[1m]` opts into the 1M
  *  beta, everything else gets the standard window. Fable is 1M natively. */
-const windowFor = (id: string): number => (/\[1m\]/i.test(id) || /fable/i.test(id) ? M1 : K200);
+const windowFor = (id: string): number => (/\[1m\]/i.test(id) || isFable(id) ? M1 : K200);
 
 function vertexModels(env: Record<string, string | undefined>): AgentModelOption[] {
   const mapped = claudeDefaultModels(env);
@@ -198,7 +215,7 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     "opus[1m]": "Opus (1M)",
     "sonnet[1m]": "Sonnet (1M)",
   };
-  return CLAUDE_CAPABILITIES.models.filter((m) => m.value !== "fable").map((m) => {
+  return CLAUDE_CAPABILITIES.models.filter((m) => !isFable(m.value)).map((m) => {
     const base = family[m.value];
     if (!base) return m; // a pinned id, or a family this instance doesn't map
 

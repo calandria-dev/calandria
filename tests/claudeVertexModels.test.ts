@@ -128,9 +128,14 @@ describe("claudeCapabilities on Vertex", () => {
     caps = claudeCapabilities({ CLAUDE_CONFIG_DIR: configDir(VERTEX_SETTINGS) });
   });
 
-  it("drops only fable — every value measured as working is still offered", () => {
+  // Spelled out rather than derived from the same predicate the implementation
+  // uses, so a filter that widened by accident fails here instead of agreeing
+  // with itself.
+  const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-1"];
+
+  it("drops only the Fable rows — every value measured as working is still offered", () => {
     expect(caps.models.map((m) => m.value)).toEqual(
-      CLAUDE_CAPABILITIES.models.map((m) => m.value).filter((v) => v !== "fable")
+      CLAUDE_CAPABILITIES.models.map((m) => m.value).filter((v) => !DROPPED_ON_VERTEX.includes(v))
     );
   });
 
@@ -192,14 +197,17 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "sonnet[1m]").sub).toContain("same as sonnet");
   });
 
-  // The one entry that genuinely fails here (403, publisher data sharing not
+  // The entries that genuinely fail here (403, publisher data sharing not
   // enabled). Dropped rather than labeled: on this fork Fable arrives with the
   // direct-platform arrangement with Anthropic, not by flipping a GCP setting,
-  // so until then it would 403 every turn it was picked for.
-  it("drops fable, which 403s on this project", () => {
-    expect(caps.models.find((m) => m.value === "fable")).toBeUndefined();
-    // still offered on the plain Anthropic path, where it works
+  // so until then they would 403 every turn they were picked for. The gate is
+  // per publisher, so a pinned Fable version goes for the alias's reason — it
+  // is not a separately probed result.
+  it("drops every Fable row, which 403s on this project", () => {
+    for (const v of DROPPED_ON_VERTEX) expect(caps.models.find((m) => m.value === v)).toBeUndefined();
+    // still offered on the plain Anthropic path, where they work
     expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable 5");
+    expect(optionFor(CLAUDE_CAPABILITIES, "claude-fable-5-1").label).toBe("Fable 5.1");
   });
 
   it("leaves an unmapped family alone rather than inventing a resolution for it", () => {

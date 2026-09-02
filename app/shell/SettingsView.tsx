@@ -118,11 +118,12 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
           <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {Icon.spark()} {a.label}
             {a.id === def && <span className="opt">(default)</span>}
-            {a.connected && (a.authBroken
-              // Connected on record but its login died — a green check here would
-              // contradict the card below it (and the titlebar banner).
-              ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Sign-in stopped working">{Icon.bolt()}</span>
-              : <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>)}
+            {a.authBroken
+              // Its login died (still on record) or its record was dropped for a
+              // provider change — either way a green check here would contradict
+              // the card below it (and the titlebar banner).
+              ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Needs reconnecting">{Icon.bolt()}</span>
+              : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
           </div>
           <McpInheritance agent={a} />
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
