@@ -22,6 +22,34 @@ because every agent verified locally and nobody watched Actions.
   six jobs were queued the whole time. Confirm with `gh run list --branch <branch>` (or
   `gh pr view --json statusCheckRollup`) that checks EXIST before believing an empty watch, and
   re-watch if they do. An empty result is never terminal state.
+- **A PR into a non-main base used to conclude without having run anything.** `test.yml` filtered
+  `pull_request` on `branches: [main]`, so a PR into a tag tree's integration branch
+  (`pr-workflow`, `core-fixes`, …) started no audit, typecheck, unit or Windows job at all. It
+  still went green, on the one check that survives: "PR title (Conventional Commits)", which fires
+  because `pr-title.yml` carries no branch filter. Six such PRs (#123-#128) each concluded on a
+  single 4-second check, and #62 was covered only by dispatching `test.yml` by hand. Watching to
+  terminal state cannot catch this — there was a conclusion, and it was green. The filter is now
+  `branches: ["**"]`, so this is history rather than a thing to check for; what it leaves behind is
+  the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
+  fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
+  among them find out why before merging.
+- **`gh pr checks` cannot see a run that never started.** A workflow rejected at startup —
+  invalid YAML, or a called workflow requesting a permission scope above its caller's ceiling —
+  concludes `startup_failure`, contributes NO check runs, and is therefore absent from
+  `gh pr checks` and from `mergeStateStatus`. PR #142 read `CLEAN` with six passing checks while
+  `publish-image.yml` had been failing at startup for two commits. Same shape as the bullet above:
+  green because the thing that would have gone red never ran. `gh pr checks` answers "did the
+  checks that exist pass", which is not the question. **After changing anything under
+  `.github/workflows/`, list the RUNS:**
+  `gh run list --branch <branch> --json workflowName,headSha,status,conclusion`, and compare the
+  set of workflows against the commit before yours.
+- **Name a long-lived integration branch `integration/<something>`.** A tag tree's PRs target one,
+  and `integration/**` is what the `integration-require-checks` ruleset matches, so a branch named
+  outside the namespace is tested but still mergeable red. `.github/rulesets/README.md` has the
+  payloads, the five required contexts and the one ordering rule that matters: a required check
+  must ALREADY be produced by the base branch's `test.yml` before the rule goes on, or every PR
+  into that branch hangs on "Expected — waiting for status" with only an admin bypass to clear it.
+  Same incompatibility keeps `paths-ignore` off `test.yml`'s `pull_request` trigger.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
