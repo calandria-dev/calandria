@@ -112,6 +112,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 #   docker build --build-arg CODEX_VERSION=0.147.0 .
 ARG CLAUDE_CODE_VERSION=2.1.228
 ARG CODEX_VERSION=0.146.0
+ARG AGY_VERSION=1.1.24
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
 # volume). Pinned location via CLAUDE_CLI_PATH; updates ship as image rebuilds,
@@ -128,6 +129,45 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claud
 # JSONL to this exact binary, so a minor skew between them is a real risk.
 RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
+# The `agy` CLI (Antigravity — the Gemini agent driver spawns it directly; there
+# is no SDK). Not on npm: the vendor ships a per-platform tarball named by a
+# manifest, and their install.sh just reads that manifest, downloads, checks a
+# SHA-512 and drops the single binary in place. We do those steps ourselves
+# against a PINNED version rather than piping the script, so a build is
+# reproducible and the checksum is reviewed in this file rather than fetched.
+#
+# Refresh both digests together when bumping AGY_VERSION; they come from
+#   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
+# (and .../linux_arm64.json), whose `version` field is what the ARG must match.
+#
+# The binary self-updates in the background by default, which would silently
+# replace this pin mid-turn — AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
+# image-wide, and the driver sets it on every spawn as a second belt.
+ARG AGY_SHA512_AMD64=ed4df91ea7ced986aa14507a0ab8225d92985190f7d551010eba0c46c569587e602cb36af81c9cde7af0d6b380e8dd3a82131361806cd96012d44a3e47fb369a
+ARG AGY_SHA512_ARM64=316ca00d50389a08b162c66066b4e2db201e4ffb85acea05029e3c4532c69d5b8f7c741cf027325889f898ea8f747af8cd15c802e15fcf5d73b7137b6e2420a1
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
+      arm64) manifest=linux_arm64; sha="${AGY_SHA512_ARM64}" ;; \
+      *) echo "unsupported architecture for the agy CLI: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    # The download URL carries an opaque build id after the version, so it is
+    # read from the manifest rather than templated from AGY_VERSION alone.
+    url="$(curl -fsSL "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json" \
+            | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+    # The manifest always serves the LATEST build, so a stale pin has to fail the
+    # build loudly rather than install a version whose checksum we never reviewed.
+    case "$url" in *"/${AGY_VERSION}-"*) : ;; \
+      *) echo "manifest no longer serves AGY_VERSION=${AGY_VERSION} (got ${url}); bump the ARG and both SHA-512s" >&2; exit 1 ;; \
+    esac; \
+    workdir="$(mktemp -d)"; \
+    curl -fsSL -o "${workdir}/agy.tar.gz" "$url"; \
+    echo "${sha}  ${workdir}/agy.tar.gz" | sha512sum -c -; \
+    tar -xzf "${workdir}/agy.tar.gz" -C "${workdir}"; \
+    install -m 0755 "$(find "${workdir}" -type f -name antigravity | head -1)" /usr/local/bin/agy; \
+    rm -rf "${workdir}"; \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true agy --version
+
 # Replace the base image's `node` user so uid 1000 owns /home/calandria — named
 # volumes initialize from this skeleton with correct ownership on first mount.
 #
@@ -141,7 +181,7 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # one inode; drop it only once old paths are known to be gone.
 RUN userdel -r node \
   && useradd --create-home --uid 1000 --home-dir /home/calandria --shell /bin/bash calandria \
-  && mkdir -p /home/calandria/.calandria /home/calandria/worktrees /home/calandria/projects /home/calandria/.claude /home/calandria/.codex \
+  && mkdir -p /home/calandria/.calandria /home/calandria/worktrees /home/calandria/projects /home/calandria/.claude /home/calandria/.codex /home/calandria/.gemini \
   && chown -R calandria:calandria /home/calandria \
   && ln -s /home/calandria /home/orch
 
@@ -208,6 +248,8 @@ ENV NODE_ENV=production \
     CALANDRIA_WORKTREES_DIR=/home/calandria/worktrees \
     CLAUDE_CLI_PATH=/usr/local/bin/claude \
     CODEX_CLI_PATH=/usr/local/bin/codex \
+    AGY_CLI_PATH=/usr/local/bin/agy \
+    AGY_CLI_DISABLE_AUTO_UPDATE=true \
     DISABLE_AUTOUPDATER=1
 
 USER calandria

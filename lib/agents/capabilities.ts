@@ -18,6 +18,7 @@ import type { AgentCapabilities } from "./types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import { claudeCapabilities } from "./claude/capabilities";
 import { CODEX_CAPABILITIES } from "./codex/capabilities";
+import { GEMINI_CAPABILITIES } from "./gemini/capabilities";
 import { MOCK_CAPABILITIES } from "./mock/capabilities";
 
 export const DEFAULT_AGENT = "claude";
@@ -30,6 +31,12 @@ const CAPABILITIES: Record<string, () => AgentCapabilities> = {
   claude: () => claudeCapabilities(),
   codex: () => CODEX_CAPABILITIES,
 };
+
+// The experimental Antigravity agent, under the same env gate registry.ts uses.
+// It has to be here and not only there for the reason spelled out below: this
+// file backs listAgentIds()/isAgentId(), so without it the agent would be
+// connectable but invisible to every id-level lookup.
+if (process.env.CALANDRIA_EXPERIMENTAL_GEMINI === "1") CAPABILITIES.gemini = () => GEMINI_CAPABILITIES;
 
 // The deterministic e2e agent, under the same env gate registry.ts uses. It has
 // to be here and not only there: this file backs listAgentIds()/isAgentId(), so
