@@ -33,6 +33,13 @@ because every agent verified locally and nobody watched Actions.
   the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
   fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
   among them find out why before merging.
+- **Name a long-lived integration branch `integration/<something>`.** A tag tree's PRs target one,
+  and `integration/**` is what the `integration-require-checks` ruleset matches, so a branch named
+  outside the namespace is tested but still mergeable red. `.github/rulesets/README.md` has the
+  payloads, the five required contexts and the one ordering rule that matters: a required check
+  must ALREADY be produced by the base branch's `test.yml` before the rule goes on, or every PR
+  into that branch hangs on "Expected — waiting for status" with only an admin bypass to clear it.
+  Same incompatibility keeps `paths-ignore` off `test.yml`'s `pull_request` trigger.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
