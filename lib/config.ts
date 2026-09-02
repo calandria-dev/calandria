@@ -349,6 +349,16 @@ export const LOCAL_MODEL_BASE_URL =
   String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
 
 /**
+ * How long Calandria will wait for a local model server to say which models it
+ * has (lib/modelEndpoint.ts) before calling it unreachable. Short on purpose:
+ * this probe runs inside GET /api/agents, which every tab loads, and the answer
+ * is a picker's suggestion list — a slow one must not hold up the app. A server
+ * on this machine answers in single-digit milliseconds; the budget only matters
+ * for a host that black-holes the connection instead of refusing it.
+ */
+export const MODEL_PROBE_MS = ms(readEnv("CALANDRIA_MODEL_PROBE_MS"), 2500);
+
+/**
  * Opt-in to billing an environment-provided agent API key (ANTHROPIC_API_KEY /
  * ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY). Off by default: both entrypoints
  * strip those vars at boot (lib/env-keys.mjs — server.js and pty-server.js read

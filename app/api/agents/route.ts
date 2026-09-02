@@ -4,6 +4,7 @@ import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
 import { LOCAL_MODEL_BASE_URL } from "@/lib/config";
+import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,14 @@ export const dynamic = "force-dynamic";
 // verify / api-key save, rather than shelling out to every agent's CLI on each
 // page load. `authenticated` mirrors `connected` for the run-control pickers.
 export async function GET() {
+  // Is anything actually listening at the instance's local endpoint, and how
+  // many models does it have? An agent's `connected` above is its CLI LOGIN,
+  // which says nothing about a local server: a project on Ollama runs fine with
+  // a "connected" Claude whose login is irrelevant, and fails with a perfectly
+  // healthy login when Ollama isn't up. So the two states are reported
+  // separately. Cached (lib/modelEndpoint.ts) and time-boxed, because every tab
+  // loads this route.
+  const local = summarizeEndpoint(await endpointModels(LOCAL_MODEL_BASE_URL));
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -29,6 +38,8 @@ export async function GET() {
     // (CALANDRIA_LOCAL_MODEL_BASE_URL). The client can't read the env, and the
     // preset must write the instance's answer, not the form's guess.
     local_base_url: LOCAL_MODEL_BASE_URL,
+    // …and whether that endpoint answered just now.
+    local_endpoint: local,
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
       // Effective-credential overlay (issue #4): the settings record says how

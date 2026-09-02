@@ -9,7 +9,7 @@ import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, p
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow, type PickerOption,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
@@ -20,6 +20,7 @@ import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
+import { useEndpointModels } from "./modelEndpoint";
 import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
@@ -549,7 +550,18 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // Run-control pickers + feature gates come from this task's agent capabilities,
   // never a hardcoded list — so the options always match the agent it runs under.
   const caps = capsFor(agents, task.agent);
-  const models = modelOptions(caps);
+  // The rail's model list. Under a provider override the driver's catalog is
+  // the vendor's cloud line-up and none of it is runnable here, so the list is
+  // what the endpoint itself reports instead — under the same inherit head, and
+  // with a model typed in the Edit dialog kept as an entry of its own so the
+  // chip shows what will actually run rather than reading as "Inherit".
+  const provider = useMemo(() => taskProvider(project, task), [project, task]);
+  const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
+  const models = useMemo<PickerOption[]>(() => {
+    if (provider.kind === "cloud") return modelOptions(caps);
+    const ids = endpoint.models.includes(task.model ?? "") || !task.model ? endpoint.models : [task.model, ...endpoint.models];
+    return [...modelOptions(undefined), ...ids.map((m) => ({ value: m, label: m, sub: `on ${provider.host}` }))];
+  }, [provider, endpoint.models, caps, task.model]);
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
   // Usage chip: tokens split into fresh work vs re-read cache (the raw total is
@@ -558,7 +570,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // figure is an API-price equivalent covered by plan quota, not a bill. Both
   // derivations live in ./format so the wording has one home.
   const usage = usageSplit(task);
-  const cost = costDisplay(findAgent(agents, task.agent));
+  const cost = costDisplay(findAgent(agents, task.agent), provider);
   const multiAgent = agents.agents.length > 1;
   // True while a question card is still unanswered — hides the "thinking" dots,
   // since Claude is parked on the user, not working.
@@ -756,7 +768,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         {Icon.spark()}
         {/* The chip says INHERIT_LABEL, never "Default" — the same word the
             picker's head uses, so the two can't read as different states. */}
-        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? INHERIT_LABEL}</span>
+        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? task.model ?? INHERIT_LABEL}</span>
         {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
         {Icon.chevDown()}
       </button>
@@ -959,7 +971,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 logo's width rather than a word's. */}
             <div className="sh-title">
               <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={multiAgent} />
-              <ProviderBadge provider={taskProvider(project, task)} />
+              <ProviderBadge provider={provider} />
               {task.title}
             </div>
           </div>

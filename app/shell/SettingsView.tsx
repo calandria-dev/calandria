@@ -11,13 +11,14 @@ import { ModelField } from "./Modal";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
+import { endpointSummary } from "./modelEndpoint";
 import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
 import { relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
-import type { AgentInfoT, AgentsResponseT } from "./types";
+import type { AgentInfoT, AgentsResponseT, EndpointStatusT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 // Account / session panel. Shows who's signed in to this instance and a Logout
@@ -99,10 +100,16 @@ function AccountSection() {
 function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onChanged?: () => void }) {
   const [agents, setAgents] = useState<AgentInfoT[] | null>(null);
   const [def, setDef] = useState<string>(defaultAgent);
+  // Reachability of the instance's local model endpoint, which is NOT any
+  // agent's connection state: a project on Ollama runs through a Claude login
+  // it never uses, and fails with a perfectly good one when Ollama is down. The
+  // server probes it (lib/modelEndpoint.ts); this is the only place the
+  // instance-wide default endpoint is reported.
+  const [endpoint, setEndpoint] = useState<EndpointStatusT | null>(null);
 
   const load = () =>
     jget<AgentsResponseT>("/api/agents")
-      .then((r) => { setAgents(r.agents); setDef(r.default); })
+      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); })
       .catch(() => setAgents([]));
   useEffect(() => { load(); }, []);
 
@@ -129,6 +136,20 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
+      {endpoint?.base_url && (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {Icon.spark()} Local model endpoint
+            {endpoint.reachable
+              ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
+              : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
+          </div>
+          <div className="hlp">
+            {endpointSummary(endpoint)}. A project runs here by setting its <strong>Model provider</strong> to
+            {" "}<em>Local model</em>; the address is <code className="ctx-mono">CALANDRIA_LOCAL_MODEL_BASE_URL</code>.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
