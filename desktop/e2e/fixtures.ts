@@ -295,11 +295,15 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   //
   // The loop is deliberately tight, and short. What we are recording is
   // replaced by the app url within a second or two of the server answering
-  // /api/version, so a generous poll would trade one wrong answer for another;
-  // and because the window is CREATED on loading.html, the first non-empty
-  // value can only ever be that (or `about:blank`, which the assertion also
-  // accepts) and never the app. Staying "" past the deadline is a real failure
-  // and still fails.
+  // /api/version, so a generous poll would trade one wrong answer for another.
+  // Staying "" past the deadline is a real failure and still fails.
+  //
+  // This used to add that the first non-empty value "can only ever be
+  // loading.html (or `about:blank`) and never the app". That was wrong, and
+  // #75 is the counterexample: on a fast macOS boot the swap lands before the
+  // first read, and the first thing this sees is already the app. The
+  // consumer's predicate is `isBootHandoffUrl` in ./bootUrl, which accepts
+  // either side of that race.
   let firstUrl = win.url();
   const firstUrlDeadline = Date.now() + 5_000;
   while (firstUrl === "" && Date.now() < firstUrlDeadline) {
