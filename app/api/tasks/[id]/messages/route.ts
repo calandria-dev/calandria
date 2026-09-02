@@ -5,7 +5,7 @@ import { startTurn, startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
 // imported by the driver — see AUTO_START_HOOKS. Static import: lib/autoStart
 // has no static path to an agent SDK, so it can't make this route entry async.
 import { AUTO_START_HOOKS } from "@/lib/autoStart";
-import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
+import { claimTurn, hasTurn, isClearing, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
 import { ensureWorktree } from "@/lib/git";
@@ -96,7 +96,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Re-read under the lock — the task may have moved while we waited (a
       // merge advancing base_sha, a /clear bumping the generation, a delete).
       // No hasTurn re-check is needed here: the claim above owns the slot
-      // atomically, so no other turn can have launched in the meantime.
+      // atomically, so no other turn can have launched in the meantime. A
+      // /clear is the one thing that can take the slot back out from under us —
+      // see the isClearing guard below.
       const fresh = getTask(id);
       if (!fresh) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
       // Including a re-parent (POST /move, unstarted tasks only): re-read the
@@ -124,6 +126,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : String(text ?? "").trim();
       if (!userText) return new Response(JSON.stringify({ error: "empty message" }), { status: 400 });
       if (userText.length > MAX_MESSAGE_CHARS) return new Response(JSON.stringify({ error: TOO_LARGE }), { status: 413 });
+
+      // The claim above was taken before this lock, and a /clear landing in that
+      // window aborts the live turn — which releases OUR controller too, since
+      // abortTurn drops whatever holds the slot. So the claim no longer proves
+      // it's safe to launch: the generation `fresh` reports is the one /clear is
+      // partway through retiring, and it will be summarized away and reset while
+      // this turn streams (issue #36). Park the message, the same outcome as
+      // arriving a moment later and being refused the claim outright.
+      if (isClearing(id)) {
+        const pm = addPendingMessage(id, fresh.generation, userText);
+        publish(id, { type: "queued", msgId: pm.id, content: userText, generation: fresh.generation, ts: pm.created_at });
+        return new Response(JSON.stringify({ ok: true, queued: true }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
 
       // Give the task its own git worktree + branch so parallel tasks in the same
       // repo never collide. This runs on the first turn, but also self-heals a task
