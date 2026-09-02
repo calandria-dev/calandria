@@ -927,6 +927,19 @@ async function* runTurn(
   // number does — the CLI splits one API response into several assistant
   // messages (one per content block) that all carry the same usage.
   let lastContext = 0;
+  // What has already been reported as PARTIAL spend for the assistant message
+  // currently arriving, keyed by its id. Same split as above — one API response
+  // becomes several messages carrying the same usage — but where the gauge can
+  // simply ignore an unchanged number, spend summed per message would bill that
+  // response once per content block. So each copy reports only its GROWTH over
+  // the last one: an identical repeat contributes nothing, and an
+  // `output_tokens` figure that was a mid-stream snapshot on the first copy
+  // still lands in full. Copies of one response arrive consecutively, so one
+  // slot is enough; a message with no id gets its own so two of them never
+  // collapse into each other.
+  let partialFor: string | undefined;
+  let partialSeq = 0;
+  let partialSent = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
   // The held-open input is a real message CHANNEL, not just a latch: the CLI
   // reads stdin for the life of the query, so a message the user sends while
   // the turn lingers can be yielded straight into the open session as a second
@@ -1262,6 +1275,42 @@ async function* runTurn(
               lastContext = ctx;
               queue.push({ type: "context", tokens: ctx });
             }
+            // The same numbers are also this request's SPEND, and reporting it
+            // as it happens is what stops a Stopped turn recording nothing: the
+            // result message is the only other source and a turn can run for
+            // half an hour of tool calls without producing one, so a Stop three
+            // minutes or thirty into that segment used to write zero tokens for
+            // work the API had already billed. These are provisional — the
+            // result message's usage is exactly the sum over the main-session
+            // assistant messages of its segment (verified to the token; see
+            // claudeSubagentTokens), so the runner drops what it accumulated
+            // here the moment a full report arrives rather than billing both.
+            // Sidechains are excluded for the reason above and because summing
+            // their messages undercounts by half; a Stopped turn's subagent
+            // spend is therefore unrecorded, which is the same floor the
+            // stored token totals have always been.
+            const seen = {
+              input_tokens: u?.input_tokens ?? 0,
+              output_tokens: u?.output_tokens ?? 0,
+              cache_read_tokens: u?.cache_read_input_tokens ?? 0,
+              cache_creation_tokens: u?.cache_creation_input_tokens ?? 0,
+            };
+            const mid = message.message.id || `anon-${partialSeq++}`;
+            if (mid !== partialFor) {
+              partialFor = mid;
+              partialSent = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+            }
+            const partial: TurnUsage = { cost_usd: 0, ...partialSent };
+            let any = false;
+            for (const k of Object.keys(partialSent) as (keyof typeof partialSent)[]) {
+              const grew = Math.max(0, seen[k] - partialSent[k]);
+              partial[k] = grew;
+              if (grew > 0) {
+                partialSent[k] = seen[k];
+                any = true;
+              }
+            }
+            if (any) queue.push({ type: "usage", usage: partial, partial: true });
           }
           for (const block of message.message.content) {
             if (block.type === "text" && block.text.trim()) {
