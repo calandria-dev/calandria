@@ -461,6 +461,36 @@ past its own guard and every event arrives twice. Only `notifications` is named
 there; every other check keeps Electron's default, so the request handler stays
 the single statement of the deny-by-default policy.
 
+**The Web Push panel stands down too, and it is a decision, not a gap.**
+Settings → Notifications has two fields that read the page's notification
+channel: "Browser notifications" and "Push notifications". The first learned
+about the shell when the check handler landed (`notificationPermission()`
+returns `desktop_shell` off the user-agent token, and the field says the desktop
+app owns the channel). The second didn't: `pushSupport()` in
+`app/shell/usePush.ts` read only secure context, service worker and
+`PushManager`, so inside the shell it offered "Enable push on this device", and
+the click called `Notification.requestPermission()` against the denied
+permission and failed with "unblock them in the browser's site settings" — a
+page the shell cannot open. On an Electron whose Chromium has no `PushManager`
+wired, the same field said "This browser can't receive push notifications"
+instead, which is wrong the other way round. Both fields now branch on the same
+token: `pushSupport()` returns `desktop_shell` before any capability check, the
+button is withheld, `enablePush()` refuses rather than prompting, and the copy
+says native notifications are already on and names the OS notification settings
+as the place to manage them. There is no link to that pane because the shell has
+no bridge (no preload, by the reasoning below), so there is nothing for the
+renderer to call.
+
+The alternative was to *allow* the `notifications` permission check for the
+subscription path and let this desktop be pushed to from the server like a
+phone. It is rejected on purpose: a push to this window is the same
+server-composed payload the main process already renders natively, so every
+event would arrive twice, and a subscription in a window that can be hidden to
+the tray or destroyed adds nothing the native channel lacks. Push stays the
+phone's channel. The device list in the same field still shows, and still
+removes, the phones subscribed elsewhere, since the list is the server's, not
+this browser's.
+
 **Clicking a toast** raises the window and selects the task, through the app's
 existing `calandria:goto-task` window event — the same one the browser channel
 and the service worker dispatch. Evaluated into the page from the main process
