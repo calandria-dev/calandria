@@ -176,6 +176,21 @@ taken at face value rather than clamped to zero. The three token buckets are als
 the disjoint shape the contract expects: codex folds cache reads and cache writes into
 `input_tokens`, which would otherwise double-count them in the task total and the context gauge.
 
+**Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
+the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn
+stream carries no equivalent, and this was verified against the shipped CLI rather than
+assumed, because the failure mode is a meter that silently reports nothing: the SDK's
+`ThreadEvent` union is closed at eight members, `turn.completed.usage` is token counts only,
+and the exec JSONL serializer's own field table in the 0.146.0 binary lists no `token_count`
+and no `rate_limits` (older codex builds did emit one; the dotted exec protocol doesn't). Nor
+is it cached on disk — the rollout transcripts under `$CODEX_HOME/sessions` hold no
+rate-limit entry. So `codex/planUsage.ts` reads `account/rateLimits/read` from a throwaway
+`codex app-server` (`codex/appServer.ts`, where the verified JSON-RPC handshake is
+transcribed), behind the same `PLAN_USAGE_MIN_FETCH_MS` floor. Field names come from the
+CLI's own `codex app-server generate-json-schema` and are camelCase (`usedPercent`,
+`windowDurationMins`, `resetsAt` in seconds) with windows named by RANK — `primary` /
+`secondary`, not by duration — which is why `PlanUsagePill` matches two id vocabularies.
+
 Enterprise-managed approval requirements can disallow the driver's `approval_policy=never`,
 which the exec transport can't survive. The driver spots the CLI's downgrade warning and
 self-heals to `on-request`, recording the `codex_approval_downgraded` setting.

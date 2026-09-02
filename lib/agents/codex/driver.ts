@@ -34,6 +34,7 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 import { agentTurnEnv } from "../../agentEnv";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
+import { getCodexPlanUsage } from "./planUsage";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -424,6 +425,10 @@ export const codexDriver: AgentDriver = {
   label: "Codex",
   capabilities: CODEX_CAPABILITIES,
   runTurn,
+  // The titlebar session/week meter. Unlike Claude's, nothing rides the turn
+  // stream to feed it (the exec JSONL protocol carries no rate limits — see
+  // ./planUsage.ts), so this is a floored read against `codex app-server`.
+  planUsage: getCodexPlanUsage,
   summarizeTranscript,
   draftProjectContext,
   summarizeProjectRecap,

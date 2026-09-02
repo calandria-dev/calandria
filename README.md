@@ -200,7 +200,7 @@ already queued. The transcript records that it was sent.
   (recap, tags, runbooks, schedules) one tap from the task list.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   token and usage insights in one place, including a live session/week
-  plan-usage meter for a Claude Pro/Max login.
+  plan-usage meter for a Claude Pro/Max or ChatGPT login.
 
 <p align="center">
   <img src="docs/images/mobile-tasks.png" width="300" alt="Task list on a phone">
