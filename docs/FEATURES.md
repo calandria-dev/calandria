@@ -755,6 +755,7 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
 preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
 connected agent automatically, so a Claude-only or Codex-only installation works without
-special configuration.
+special configuration, and they can be pinned to their own models — a small one for the
+short summarizing jobs, a stronger one for the draft that reads your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.

@@ -684,6 +684,10 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // The model default has no legacy un-suffixed key to fall back to: it shipped
   // agent-scoped, and a model id names one provider's catalog anyway.
   const modelVal = appDefaults[`default_model:${editAgent}`] ?? null;
+  // The internal one-shots, in the two tiers lib/agents/oneshots.ts routes them
+  // by. Agent-scoped like the model default above, and for the same reason.
+  const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
+  const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
   // What the agent being edited calls its never-asks mode — the labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
   // "workspace-write"), so the help copy resolves the name per agent instead of
@@ -844,6 +848,11 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                   <UtilityEffective agents={agents} />
+                  <div className="hlp" style={{ marginTop: 8 }}>
+                    Which MODEL these jobs run on is set per agent under <strong>Run defaults</strong>, split into quick jobs
+                    (recaps, <strong>/clear</strong> notes) and repo-reading ones (<strong>Refresh with AI</strong>). Left alone, each
+                    inherits the agent&apos;s own default.
+                  </div>
                   <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Utility agent jobs", utilityUsage)}</div>
                 </div>
               </>
@@ -893,6 +902,30 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                       The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
                       always override this, and <strong>{INHERIT_LABEL}</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
+                    </div>
+                  }
+                />
+                <ModelField
+                  label="Quick internal jobs"
+                  options={modelOptions(caps, inheritSub)}
+                  value={lightJobModel}
+                  onChange={(m) => setAppDefault(`job_model_light:${editAgent}`, m)}
+                  note={
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
+                      project recaps. Both are one turn of text in, text out with no tools, so a small model is usually the right call.
+                    </div>
+                  }
+                />
+                <ModelField
+                  label="Repo-reading internal jobs"
+                  options={modelOptions(caps, inheritSub)}
+                  value={heavyJobModel}
+                  onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
+                  note={
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      The <strong>Refresh with AI</strong> project-context draft, which explores the repository read-only before it
+                      writes. It reads an unfamiliar codebase and is prepended to every new session in the project, so accuracy pays here.
                     </div>
                   }
                 />
