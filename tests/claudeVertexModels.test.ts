@@ -175,14 +175,28 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "haiku").sub).toBe("claude-haiku-4-5@20251001");
   });
 
-  // "Opus 5" is a guess about where the mapping points; the subtitle carries
-  // the measured answer, so the label must stop claiming a version.
-  it("drops the version claim from an alias label, but keeps it on a real pin", () => {
-    expect(optionFor(CLAUDE_CAPABILITIES, "opus").label).toBe("Opus 5");
+  // No alias label claims a version on EITHER catalog now — the default one
+  // says "(latest)" because the installed CLI picks, this one says "(provider
+  // default)" because the env mapping picks and we can read it. Both are honest
+  // about who resolves; only a real pin names a version.
+  it("names the resolver in an alias label, but keeps the version on a real pin", () => {
+    expect(optionFor(CLAUDE_CAPABILITIES, "opus").label).toBe("Opus (latest)");
     expect(optionFor(caps, "opus").label).toBe("Opus (provider default)");
     expect(optionFor(caps, "haiku").label).toBe("Haiku (provider default)");
     expect(optionFor(caps, "opus[1m]").label).toBe("Opus (1M)");
     expect(optionFor(caps, "claude-opus-4-8").label).toBe("Opus 4.8");
+  });
+
+  // Neither catalog may leak a version into an alias row, which is the whole
+  // point of this change and the thing a future model launch will retest.
+  it("lets no alias row on either catalog carry a version number", () => {
+    const aliases = ["fable", "opus", "sonnet", "haiku", "opusplan", "opus[1m]", "sonnet[1m]", "opusplan[1m]"];
+    for (const list of [CLAUDE_CAPABILITIES.models, caps.models]) {
+      for (const m of list.filter((o) => aliases.includes(o.value))) {
+        // "(1M)" is a window, not a model version, and is the only digit allowed.
+        expect(m.label.replace("(1M)", ""), `${m.value} label claims a version`).not.toMatch(/\d/);
+      }
+    }
   });
 
   // opusplan plans on Opus and runs on Sonnet afterwards; probing it resolved
@@ -205,8 +219,9 @@ describe("claudeCapabilities on Vertex", () => {
   // is not a separately probed result.
   it("drops every Fable row, which 403s on this project", () => {
     for (const v of DROPPED_ON_VERTEX) expect(caps.models.find((m) => m.value === v)).toBeUndefined();
-    // still offered on the plain Anthropic path, where they work
-    expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable 5");
+    // still offered on the plain Anthropic path, where they work — the alias
+    // naming its resolver, the pin naming the version it pins
+    expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable (latest)");
     expect(optionFor(CLAUDE_CAPABILITIES, "claude-fable-5-1").label).toBe("Fable 5.1");
   });
 
