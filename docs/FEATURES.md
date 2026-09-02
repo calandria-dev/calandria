@@ -285,7 +285,10 @@ Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other task
 **Start when unblocked** launches an opted-in task as soon as its final blocker is marked
 done. Opt in from the edit dialog's dependency picker, or straight from the blocked task's
 own start screen: its "Blocked until …" notice carries a **Start when unblocked** button, and
-the queued notice it becomes carries **Cancel** to hand the start back to you.
+the queued notice it becomes carries **Cancel** to hand the start back to you. The block is
+enforced by the server on the start itself, not just by the disabled button, so a stale tab or
+a scripted call is refused too — and only for a task's first turn, since blockers order starts
+rather than conversations.
 
 A blocker doesn't have to be a task you accepted. An agent ordering a plan draws its edges
 while every step is still an unreviewed suggestion, so an accepted task can be waiting on

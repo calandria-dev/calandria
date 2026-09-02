@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import { getTask, getProject, updateTask, addMessage, listMessages, listPendingMessages, addPendingMessage } from "@/lib/store";
+import { getTask, getProject, updateTask, addMessage, listMessages, listPendingMessages, addPendingMessage, getTaskDeps } from "@/lib/store";
 import { startTurn, startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
 // The sweep this turn's tool calls may need, handed to the runner rather than
 // imported by the driver — see AUTO_START_HOOKS. Static import: lib/autoStart
 // has no static path to an agent SDK, so it can't make this route entry async.
-import { AUTO_START_HOOKS } from "@/lib/autoStart";
+import { AUTO_START_HOOKS, blocks } from "@/lib/autoStart";
 import { claimTurn, hasTurn, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
@@ -117,6 +117,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
 
       const isInitial = !fresh.started;
+      // Dependencies gate whether a task may START, and until now this — the
+      // manual path — was the one launcher that didn't check. The block was
+      // enforced by whichever client happened to render the Start button, so a
+      // second tab with a stale list, a curl, or the suggestion Start in the
+      // tray/board/transcript (which never checked at all) launched a blocked
+      // task without complaint, while the two unattended launchers refused.
+      // Same predicate they use, not a fourth copy of it, and re-read here
+      // under the lock so a blocker that finished while this request waited
+      // unblocks the start rather than 409ing it.
+      //
+      // First turn ONLY. Once a session is open the blockers are inert: they
+      // order *starts*, which is the same reason update_task refuses
+      // `blocked_by` on the caller's own started row. Gating follow-ups would
+      // strand a live conversation the moment someone added a blocker to it.
+      if (isInitial) {
+        const blockerIds = getTaskDeps(fresh.id).filter(blocks);
+        if (blockerIds.length) {
+          // Worded as the start screen's own "Blocked until …" notice, so the
+          // 409 a stale tab gets reads the same as the disabled button it
+          // missed. `blockedBy` carries the ids for a client that wants to
+          // resolve fresher titles than this snapshot.
+          const titles = blockerIds.map((depId) => getTask(depId)?.title || depId);
+          return new Response(
+            JSON.stringify({
+              error: `Blocked until ${titles.join(", ")} ${titles.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.`,
+              blockedBy: blockerIds,
+            }),
+            { status: 409 }
+          );
+        }
+      }
       // buildProjectContext() is the canonical source for task title/details;
       // the opening user turn only tells the fresh session to begin that task.
       const userText = isInitial
