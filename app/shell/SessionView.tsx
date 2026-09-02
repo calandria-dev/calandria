@@ -76,6 +76,21 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
 
   if (!st || !st.isolated) return null;
 
+  // The base branch has no ref in this repository, so nothing below was measured:
+  // `behind` is 0 because the comparison never ran, and the screen underneath
+  // would read that as "up to date" and render nothing — which is how a task
+  // could sit looking healthy until merge and Fix with AI both refused with
+  // "base branch <name> not found". There is no action to offer here (the fix is
+  // to point the task or project at a branch that exists), so this says the one
+  // thing worth saying and stops.
+  if (st.baseMissing)
+    return (
+      <div className="sync-banner conflict" data-sync-state="base-missing" title={`Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`}>
+        <span className="sync-msg">{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</span>
+        <span className="sync-spacer" />
+      </div>
+    );
+
   const conflicts = st.conflicts?.length ?? 0;
   const paused = !!st.mergeInProgress;
   const resolved = paused && conflicts === 0;

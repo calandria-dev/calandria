@@ -57,6 +57,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       workBranch: task.work_branch,
       baseBranch,
     });
+    // Nothing was compared, so "up to date" would be a lie — and every tier below
+    // would fail against a branch git doesn't have. Refuse and name it.
+    if (status.baseMissing)
+      return NextResponse.json(
+        { ok: false, baseMissing: true, error: `base branch ${baseBranch} not found in this repository` },
+        { status: 409 }
+      );
     if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true, behind: 0 });
 
     // Tier 1: fast-forward (no divergent work + clean tree). After it, the work
