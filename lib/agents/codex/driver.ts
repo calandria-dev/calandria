@@ -32,6 +32,7 @@ import { inheritedServerOverrides } from "./mcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 import { agentTurnEnv } from "../../agentEnv";
+import { codexProviderConfig } from "./provider";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -176,7 +177,16 @@ async function* runTurn(
   // What the turn asks for: the task's own choice, else this agent's Settings
   // default ("default_model:<agent>"; agent-scoped only, since a model id names
   // one provider's catalog). Null = ask for nothing.
-  const chosen = task.model ?? getSetting(`default_model:${task.agent}`);
+  // The env the CLI subprocess runs with: the server's, minus NODE_ENV, with
+  // the project/task provider override laid over it and PORT repointed — see
+  // lib/agentEnv.ts. Built first because the override also decides the
+  // provider entry and the fallback model below.
+  const env = agentTurnEnv(project, task);
+  const local = codexProviderConfig(env);
+  // Below the task's own choice and the agent's Settings default sits the
+  // override's CODEX_MODEL: a local endpoint serves its own model names, and
+  // with no choice at all the CLI would ask a local server for gpt-5.x.
+  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? local.model;
   // The model the turn effectively runs: that choice, else the CLI's default
   // (codex emits no model event of its own, so this resolved value is the best
   // truth available). It prices the cost estimate and is reported as a `model`
@@ -211,11 +221,11 @@ async function* runTurn(
 
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,
-    config: calandriaMcpConfig(project, task, await inheritedServerOverrides()),
-    // Drops NODE_ENV and repoints PORT at the project's own port — see
-    // lib/agentEnv.ts for why the CLI subprocess can't just inherit the
-    // server's own env.
-    env: agentTurnEnv(project),
+    // The provider entry goes in as config rather than env: codex reads
+    // `model_provider` from config.toml, never from the environment, and with
+    // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
+    config: { ...calandriaMcpConfig(project, task, await inheritedServerOverrides()), ...local.config },
+    env,
   });
   const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
 

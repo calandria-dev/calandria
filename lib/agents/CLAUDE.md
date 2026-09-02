@@ -84,9 +84,27 @@ corrects the catalog when `configuredProvider()` reports Vertex. The driver's `c
 getter and the thunks in `lib/agents/capabilities.ts` both go through it, so `GET /api/agents`
 and `modelContextWindow()` agree with the CLI and pick up a settings edit without a restart.
 
-The Vertex list is a set of measured corrections, not a second catalog. Every entry was probed
-with a one-shot `claude -p --model <value>` and 13 of 14 ran;
-`tests/claudeVertexModels.test.ts` records the table. What the probe found:
+The catalog itself is a hardcoded array, not a list fetched from anywhere. Nothing queries the
+Anthropic API for it on the subscription path, and nothing reads GCP config for it on Vertex — a
+new model shows up only by being added here. Half the entries are Claude Code's family *aliases*
+(`fable`, `opus`, `sonnet`, `haiku`, `opusplan`), so what they resolve to is the installed CLI's
+decision at turn time; the rest are literal ids handed to `--model`. That split is why a new
+version can need a pinned row even when its family alias already exists: `fable` resolves through
+the CLI's own catalog, so an instance whose CLI predates the version — likely wherever
+`DISABLE_AUTOUPDATER` is set — never reaches it. Measured on 2.1.252, `--model fable` billed
+`claude-fable-5` after 5.1 shipped, which is what `claude-fable-5-1` is pinned for.
+
+Pinning an id the installed CLI doesn't know is safe, and the failure mode is legible: the CLI
+logs `[claude-code:unrecognized_model]` and passes the string through unchanged, so the turn runs
+and bills as the id asked for. It is a pass-through and not a silent fallback — probing a bogus
+`claude-fable-6` alongside it errored out rather than quietly running something else, which is the
+control that makes the `claude-fable-5-1` result mean anything.
+
+The Vertex list is a set of measured corrections, not a second catalog. Every entry the catalog
+held at the time was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran;
+`tests/claudeVertexModels.test.ts` records the table. `claude-fable-5-1` postdates that sweep and
+was not probed on Vertex — it is dropped with the rest of its family below, on the alias's
+measured 403, rather than credited with a result of its own. What the probe found:
 
 - Bare Anthropic ids do resolve on Vertex, so the "Pinned versions" group is unchanged.
   `@version` (`claude-haiku-4-5@20251001`) is an optional pin there rather than the required
@@ -101,10 +119,13 @@ with a one-shot `claude -p --model <value>` and 13 of 14 ran;
 - `settings.json`'s `env` block beats the process env. Measured, not assumed: exporting a
   different `ANTHROPIC_DEFAULT_OPUS_MODEL` while settings.json said otherwise still ran
   settings.json's choice.
-- `fable` is the one entry that fails (403, because the GCP project has no `anthropic` publisher
-  data sharing) and is dropped from the Vertex list. On this fork Fable arrives through the
-  direct arrangement with Anthropic rather than by flipping a GCP setting, so until then it would
-  403 every turn it was picked for. It stays on the default catalog, where it works.
+- `fable` is the one probed entry that fails (403, because the GCP project has no `anthropic`
+  publisher data sharing) and is dropped from the Vertex list. On this fork Fable arrives through
+  the direct arrangement with Anthropic rather than by flipping a GCP setting, so until then it
+  would 403 every turn it was picked for. It stays on the default catalog, where it works. The
+  filter matches the whole family rather than the single value `fable`, so `claude-fable-5-1`
+  goes with it — that gate is per publisher, not per version, so the pinned row is dropped for
+  the alias's measured reason rather than claiming a probe of its own.
 
 Bedrock stays on the default catalog. There's no Bedrock instance here to measure.
 
@@ -140,6 +161,14 @@ the disjoint shape the contract expects: codex folds cache reads and cache write
 Enterprise-managed approval requirements can disallow the driver's `approval_policy=never`,
 which the exec transport can't survive. The driver spots the CLI's downgrade warning and
 self-heals to `on-request`, recording the `codex_approval_downgraded` setting.
+
+A provider override (`lib/agentEnv.ts`, docs/AGENTS.md "Local models") reaches Codex as
+config, not env: `codex/provider.ts` maps the merged turn env's `OPENAI_BASE_URL` onto a
+`model_providers.calandria-local` entry on the Responses wire API and selects it with
+`model_provider`, because the CLI reads its provider from config.toml and under a ChatGPT
+login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the task's pick and
+the Settings default in the model fallback. Claude Code needs no mapping: the same override
+IS its environment.
 
 ## Agent MCP inheritance is asymmetric
 

@@ -26,6 +26,7 @@ export interface ProjectRow {
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
+  agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -33,6 +34,10 @@ export interface ProjectRow {
   last_activity: number;
   awaiting_count: number; // in-progress tasks waiting on the user (across this project)
   cost_usd: number; // cumulative dollar spend across all this project's tasks
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor rather than the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
 }
 export interface TaskRow {
   id: string;
@@ -44,6 +49,7 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
+  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
@@ -74,6 +80,10 @@ export interface TaskRow {
   position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the tag strip numbers its steps by it
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor rather than the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
@@ -384,7 +394,10 @@ export interface AgentCapabilities {
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
 export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT }
+// `local_base_url` is where the project settings' "Local model" preset points
+// by default — the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
+// the form writes the instance's answer rather than a guess.
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

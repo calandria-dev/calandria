@@ -1,46 +1,61 @@
 import { describe, it, expect } from "vitest";
-import { agentTurnEnv } from "@/lib/agentEnv";
-import type { Project } from "@/lib/types";
+import {
+  AGENT_ENV_KEYS,
+  agentTurnEnv,
+  applyProviderEnv,
+  cloudOverrideEnv,
+  describeProvider,
+  providerPricing,
+  parseAgentEnv,
+  providerEnvFor,
+  providerPresetEnv,
+  serializeAgentEnv,
+  taskProvider,
+} from "@/lib/agentEnv";
+import type { Project, Task } from "@/lib/types";
 
 // Issue #102: a main-turn agent process must not inherit the server's own
 // NODE_ENV=production (it makes `npm install` in the user's project skip
 // devDependencies and still exit 0) or its PORT (buildProjectContext tells
 // every agent to bind its dev server to $PORT, so an unedited PORT points a
 // task's server at Calandria itself).
+//
+// Plus the provider override (local models): projects.agent_env / tasks.agent_env
+// are laid over the copied env through an allowlist, after the copy and before
+// the PORT edit, with the credential rules applyProviderEnv documents.
 
-const project = (port: number) => ({ port }) as Pick<Project, "port">;
+const project = (port: number, agent_env = "") => ({ port, agent_env }) as Pick<Project, "port" | "agent_env">;
+const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
 
 describe("agentTurnEnv", () => {
   it("drops NODE_ENV even when the base env carries it", () => {
-    const out = agentTurnEnv(project(4301), { NODE_ENV: "production", PATH: "/usr/bin" });
+    const out = agentTurnEnv(project(4301), null, { NODE_ENV: "production", PATH: "/usr/bin" });
     expect("NODE_ENV" in out).toBe(false);
     expect(out.PATH).toBe("/usr/bin");
   });
 
   it("sets PORT from the project's own port", () => {
-    const out = agentTurnEnv(project(4301), { PATH: "/usr/bin" });
+    const out = agentTurnEnv(project(4301), null, { PATH: "/usr/bin" });
     expect(out.PORT).toBe("4301");
   });
 
   it("deletes PORT when the project's port is 0", () => {
-    const out = agentTurnEnv(project(0), { PORT: "3000", PATH: "/usr/bin" });
+    const out = agentTurnEnv(project(0), null, { PORT: "3000", PATH: "/usr/bin" });
     expect("PORT" in out).toBe(false);
   });
 
   it("deletes PORT when there is no project at all", () => {
-    const out = agentTurnEnv(null, { PORT: "3000", PATH: "/usr/bin" });
+    const out = agentTurnEnv(null, null, { PORT: "3000", PATH: "/usr/bin" });
     expect("PORT" in out).toBe(false);
-    const outUndef = agentTurnEnv(undefined, { PORT: "3000" });
-    expect("PORT" in outUndef).toBe(false);
   });
 
   it("drops entries whose value is undefined", () => {
-    const out = agentTurnEnv(project(4301), { PATH: "/usr/bin", GHOST: undefined });
+    const out = agentTurnEnv(project(4301), null, { PATH: "/usr/bin", GHOST: undefined });
     expect("GHOST" in out).toBe(false);
   });
 
   it("preserves PATH and other ordinary vars untouched", () => {
-    const out = agentTurnEnv(project(4301), { PATH: "/usr/bin:/bin", HOME: "/home/x", ANTHROPIC_API_KEY: "sk-x" });
+    const out = agentTurnEnv(project(4301), null, { PATH: "/usr/bin:/bin", HOME: "/home/x", ANTHROPIC_API_KEY: "sk-x" });
     expect(out.PATH).toBe("/usr/bin:/bin");
     expect(out.HOME).toBe("/home/x");
     expect(out.ANTHROPIC_API_KEY).toBe("sk-x");
@@ -49,7 +64,206 @@ describe("agentTurnEnv", () => {
   it("never mutates the base object", () => {
     const base = { NODE_ENV: "production", PORT: "3000", PATH: "/usr/bin" };
     const snapshot = { ...base };
-    agentTurnEnv(project(4301), base);
+    agentTurnEnv(project(4301), null, base);
     expect(base).toEqual(snapshot);
+  });
+
+  // ---- the provider override ----
+
+  it("lays the project's override over the copied env, after the copy and before PORT", () => {
+    const env = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
+    const out = agentTurnEnv(project(4301, env), null, {
+      PATH: "/usr/bin",
+      ANTHROPIC_BASE_URL: "https://proxy.example.com", // instance-wide value loses to the project's
+      PORT: "3000",
+    });
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
+    expect(out.ANTHROPIC_MODEL).toBe("qwen3-coder");
+    expect(out.PATH).toBe("/usr/bin");
+    expect(out.PORT).toBe("4301");
+  });
+
+  it("cannot smuggle PATH, NODE_OPTIONS, PORT or NODE_ENV through the override", () => {
+    const env = JSON.stringify({
+      PATH: "/evil",
+      NODE_OPTIONS: "--require /evil.js",
+      LD_PRELOAD: "/evil.so",
+      PORT: "1",
+      NODE_ENV: "production",
+      ANTHROPIC_BASE_URL: "http://localhost:11434",
+    });
+    const out = agentTurnEnv(project(4301, env), null, { PATH: "/usr/bin" });
+    expect(out.PATH).toBe("/usr/bin");
+    expect("NODE_OPTIONS" in out).toBe(false);
+    expect("LD_PRELOAD" in out).toBe(false);
+    expect("NODE_ENV" in out).toBe(false);
+    expect(out.PORT).toBe("4301");
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
+  });
+
+  it("lays the task's override over the project's, key by key", () => {
+    const proj = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
+    const out = agentTurnEnv(project(0, proj), task(JSON.stringify({ ANTHROPIC_MODEL: "gemma3" })), { PATH: "/usr/bin" });
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
+    expect(out.ANTHROPIC_MODEL).toBe("gemma3");
+  });
+
+  it("reads an empty-string value as 'unset', which is how a task goes back to the cloud", () => {
+    const proj = serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }));
+    const out = agentTurnEnv(project(0, proj), task(serializeAgentEnv(cloudOverrideEnv())), { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-real" });
+    for (const k of AGENT_ENV_KEYS) expect(k in out, k).toBe(false);
+    // Nothing redirected in the end, so the inherited credential survives.
+    expect(out.ANTHROPIC_API_KEY).toBe("sk-real");
+  });
+});
+
+describe("applyProviderEnv credential rules", () => {
+  it("keeps an override's ANTHROPIC_AUTH_TOKEN only when the same override redirects the base URL", () => {
+    const redirected: Record<string, string> = {};
+    applyProviderEnv(redirected, { ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_AUTH_TOKEN: "ollama" });
+    expect(redirected.ANTHROPIC_AUTH_TOKEN).toBe("ollama");
+
+    const bare: Record<string, string> = {};
+    applyProviderEnv(bare, { ANTHROPIC_AUTH_TOKEN: "sk-ant-real" });
+    expect("ANTHROPIC_AUTH_TOKEN" in bare).toBe(false);
+
+    // A base URL that still points at Anthropic is not a redirect.
+    const anthropic: Record<string, string> = {};
+    applyProviderEnv(anthropic, { ANTHROPIC_BASE_URL: "https://api.anthropic.com", ANTHROPIC_AUTH_TOKEN: "sk-ant-real" });
+    expect("ANTHROPIC_AUTH_TOKEN" in anthropic).toBe(false);
+    expect(anthropic.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+  });
+
+  it("drops the inherited Anthropic credentials when the base URL is redirected", () => {
+    const out: Record<string, string> = { ANTHROPIC_API_KEY: "sk-real", ANTHROPIC_AUTH_TOKEN: "kept-by-opt-in" };
+    applyProviderEnv(out, { ANTHROPIC_BASE_URL: "https://gateway.example.com" });
+    expect("ANTHROPIC_API_KEY" in out).toBe(false);
+    expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
+  });
+
+  it("drops the inherited OPENAI_API_KEY when OPENAI_BASE_URL is redirected", () => {
+    const out: Record<string, string> = { OPENAI_API_KEY: "sk-real" };
+    applyProviderEnv(out, { OPENAI_BASE_URL: "http://localhost:11434/v1" });
+    expect("OPENAI_API_KEY" in out).toBe(false);
+    expect(out.OPENAI_BASE_URL).toBe("http://localhost:11434/v1");
+  });
+
+  it("leaves inherited credentials alone when nothing is redirected", () => {
+    const out: Record<string, string> = { ANTHROPIC_API_KEY: "sk-real", OPENAI_API_KEY: "sk-o" };
+    applyProviderEnv(out, { ANTHROPIC_MODEL: "claude-opus-5" });
+    expect(out.ANTHROPIC_API_KEY).toBe("sk-real");
+    expect(out.OPENAI_API_KEY).toBe("sk-o");
+  });
+});
+
+describe("parseAgentEnv / serializeAgentEnv", () => {
+  it("accepts JSON text or an object, keeps only allowlisted string values", () => {
+    const obj = { ANTHROPIC_BASE_URL: " http://localhost:11434 ", PATH: "/x", CODEX_MODEL: 7, OPENAI_BASE_URL: null };
+    expect(parseAgentEnv(obj)).toEqual({ ANTHROPIC_BASE_URL: "http://localhost:11434" });
+    expect(parseAgentEnv(JSON.stringify(obj))).toEqual({ ANTHROPIC_BASE_URL: "http://localhost:11434" });
+  });
+
+  it("returns {} for null, blank, garbage and non-object JSON", () => {
+    expect(parseAgentEnv(null)).toEqual({});
+    expect(parseAgentEnv("")).toEqual({});
+    expect(parseAgentEnv("   ")).toEqual({});
+    expect(parseAgentEnv("{not json")).toEqual({});
+    expect(parseAgentEnv("[1,2]")).toEqual({});
+    expect(parseAgentEnv(42)).toEqual({});
+  });
+
+  it("refuses control characters and oversized values", () => {
+    expect(parseAgentEnv({ ANTHROPIC_MODEL: "a\nb" })).toEqual({});
+    expect(parseAgentEnv({ ANTHROPIC_MODEL: "x".repeat(3000) })).toEqual({});
+  });
+
+  it("serializes to '' when empty and to key-ordered compact JSON otherwise", () => {
+    expect(serializeAgentEnv(null)).toBe("");
+    expect(serializeAgentEnv({ PATH: "/x" })).toBe("");
+    const a = serializeAgentEnv({ OPENAI_BASE_URL: "http://h/v1", ANTHROPIC_BASE_URL: "http://h" });
+    const b = serializeAgentEnv({ ANTHROPIC_BASE_URL: "http://h", OPENAI_BASE_URL: "http://h/v1" });
+    expect(a).toBe(b);
+    expect(a).toBe('{"ANTHROPIC_BASE_URL":"http://h","OPENAI_BASE_URL":"http://h/v1"}');
+  });
+
+  it("round-trips an empty-string 'unset' value", () => {
+    expect(parseAgentEnv(serializeAgentEnv({ ANTHROPIC_BASE_URL: "" }))).toEqual({ ANTHROPIC_BASE_URL: "" });
+  });
+});
+
+describe("presets", () => {
+  it("writes both CLIs' endpoints, the token, the model aliases and the quiet flag from one base URL", () => {
+    const env = providerPresetEnv({ baseUrl: "http://host.docker.internal:11434/v1/", model: "qwen3-coder" });
+    expect(env).toEqual({
+      ANTHROPIC_BASE_URL: "http://host.docker.internal:11434",
+      ANTHROPIC_AUTH_TOKEN: "ollama",
+      OPENAI_BASE_URL: "http://host.docker.internal:11434/v1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      ANTHROPIC_MODEL: "qwen3-coder",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3-coder",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3-coder",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3-coder",
+      ANTHROPIC_SMALL_FAST_MODEL: "qwen3-coder",
+      CODEX_MODEL: "qwen3-coder",
+    });
+  });
+
+  it("omits the model keys when no model is given and takes a custom token", () => {
+    const env = providerPresetEnv({ baseUrl: "https://gw.example.com", token: "secret" });
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("secret");
+    expect("ANTHROPIC_MODEL" in env).toBe(false);
+    expect("CODEX_MODEL" in env).toBe(false);
+  });
+
+  it("is empty for a blank base URL", () => {
+    expect(providerPresetEnv({ baseUrl: "  " })).toEqual({});
+  });
+
+  it("cloudOverrideEnv unsets every allowlisted key", () => {
+    const env = cloudOverrideEnv();
+    expect(Object.keys(env).sort()).toEqual([...AGENT_ENV_KEYS].sort());
+    expect(Object.values(env).every((v) => v === "")).toBe(true);
+  });
+});
+
+describe("describeProvider / taskProvider", () => {
+  it("is cloud with nothing set, with the model still reported", () => {
+    expect(describeProvider({})).toMatchObject({ kind: "cloud", host: "", model: null });
+    expect(describeProvider({ ANTHROPIC_MODEL: "claude-opus-5" })).toMatchObject({ kind: "cloud", model: "claude-opus-5" });
+  });
+
+  it("is local for loopback, docker-host and private-network endpoints", () => {
+    for (const url of ["http://localhost:11434", "http://127.0.0.1:11434", "http://host.docker.internal:11434", "http://192.168.1.50:1234", "http://10.0.0.7:11434", "http://mac-studio.local:11434"]) {
+      expect(describeProvider({ ANTHROPIC_BASE_URL: url }).kind, url).toBe("local");
+    }
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }).host).toBe("localhost:11434");
+  });
+
+  it("is custom for any other host, and reads the OpenAI URL when only that is set", () => {
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "https://gw.example.com" })).toMatchObject({ kind: "custom", host: "gw.example.com" });
+    expect(describeProvider({ OPENAI_BASE_URL: "http://localhost:1234/v1" })).toMatchObject({ kind: "local", host: "localhost:1234", anthropic_base_url: null });
+  });
+
+  // `pricing` is what the usage ledger keys off (lib/runner.ts), so it must
+  // never be derived a second time somewhere else: cloud is the driver's own
+  // figure, a local server is genuinely free, and a custom base URL is a price
+  // nobody has stated — which is NOT the same as free, and is the whole reason
+  // this field exists rather than a `kind !== "cloud"` test at the call site.
+  it("prices cloud by the vendor, local as free and custom as unknown", () => {
+    expect(describeProvider({}).pricing).toBe("vendor");
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }).pricing).toBe("free");
+    expect(describeProvider({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api" }).pricing).toBe("unknown");
+    // Every kind maps, so a fourth one added later can't quietly fall through
+    // to being billed as the vendor's spend.
+    for (const kind of ["cloud", "local", "custom"] as const) {
+      expect(providerPricing(kind), kind).toBe(kind === "cloud" ? "vendor" : kind === "local" ? "free" : "unknown");
+    }
+  });
+
+  it("taskProvider merges project and task the way the turn env does", () => {
+    const proj = project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" })));
+    expect(taskProvider(proj, null)).toMatchObject({ kind: "local", model: "qwen3-coder" });
+    expect(taskProvider(proj, task(serializeAgentEnv(cloudOverrideEnv()))).kind).toBe("cloud");
+    expect(providerEnvFor(proj, task(JSON.stringify({ CODEX_MODEL: "gpt-oss:20b" }))).CODEX_MODEL).toBe("gpt-oss:20b");
   });
 });

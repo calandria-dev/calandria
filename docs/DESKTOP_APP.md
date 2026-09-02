@@ -128,8 +128,10 @@ Working and tested (`desktop/test-supervisor.js`, 34 assertions; `desktop/test-r
   identically where SIGTERM is not deliverable.
 - The db-lock exit (`server.js` exits 1 when another instance holds the database) reported
   as "another Calandria is already running," not as a crash.
-- A boot screen that streams sidecar logs, because a cold first launch is otherwise
-  indistinguishable from a hang.
+- A boot screen: a spinner, and — because a cold first launch is otherwise
+  indistinguishable from a hang — a line that appears on its own once the wait
+  passes 12s. The sidecar logs still stream into it, off screen, where the tests
+  read them and a `--inspect` session can see them.
 - The notification and badge policy (§5.1): which events raise a toast, what the instance-wide "needs you" count adds up to, when a toast would be redundant, and a reconnecting subscription to `/api/events` driven against a stub server.
 
 Also working and tested, since 2026-08-27, by the Playwright `_electron` suite in
@@ -137,10 +139,12 @@ Also working and tested, since 2026-08-27, by the Playwright `_electron` suite i
 `.github/workflows/test.yml` runs it on every push to main and on any PR
 carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
 
-- The window appears on the boot screen, the boot screen streams the supervisor's
-  log, and the window swaps to the app's own origin. (It did not stream anything
+- The window appears on the boot screen, the boot screen receives the supervisor's
+  log, and the window swaps to the app's own origin. (It did not receive anything
   before this suite existed: `loading.html`'s CSP blocked its own inline script,
-  silently. Fixed.)
+  silently. Fixed.) The pane is off screen now — the boot screen shows a spinner —
+  but it is still written and still asserted on, since it is where the
+  supervisor's earliest lines survive.
 - The application menu and its roles, and the two items the View menu owns.
 - The renderer is still a hardened browser tab — `contextIsolation`, `sandbox`,
   no `nodeIntegration`, no preload.
@@ -460,6 +464,36 @@ when no check handler is set. Without `setPermissionCheckHandler` the hook sails
 past its own guard and every event arrives twice. Only `notifications` is named
 there; every other check keeps Electron's default, so the request handler stays
 the single statement of the deny-by-default policy.
+
+**The Web Push panel stands down too, and it is a decision, not a gap.**
+Settings → Notifications has two fields that read the page's notification
+channel: "Browser notifications" and "Push notifications". The first learned
+about the shell when the check handler landed (`notificationPermission()`
+returns `desktop_shell` off the user-agent token, and the field says the desktop
+app owns the channel). The second didn't: `pushSupport()` in
+`app/shell/usePush.ts` read only secure context, service worker and
+`PushManager`, so inside the shell it offered "Enable push on this device", and
+the click called `Notification.requestPermission()` against the denied
+permission and failed with "unblock them in the browser's site settings" — a
+page the shell cannot open. On an Electron whose Chromium has no `PushManager`
+wired, the same field said "This browser can't receive push notifications"
+instead, which is wrong the other way round. Both fields now branch on the same
+token: `pushSupport()` returns `desktop_shell` before any capability check, the
+button is withheld, `enablePush()` refuses rather than prompting, and the copy
+says native notifications are already on and names the OS notification settings
+as the place to manage them. There is no link to that pane because the shell has
+no bridge (no preload, by the reasoning below), so there is nothing for the
+renderer to call.
+
+The alternative was to *allow* the `notifications` permission check for the
+subscription path and let this desktop be pushed to from the server like a
+phone. It is rejected on purpose: a push to this window is the same
+server-composed payload the main process already renders natively, so every
+event would arrive twice, and a subscription in a window that can be hidden to
+the tray or destroyed adds nothing the native channel lacks. Push stays the
+phone's channel. The device list in the same field still shows, and still
+removes, the phones subscribed elsewhere, since the list is the server's, not
+this browser's.
 
 **Clicking a toast** raises the window and selects the task, through the app's
 existing `calandria:goto-task` window event — the same one the browser channel
@@ -1411,13 +1445,125 @@ app.quit()                          →  before-quit  (preventDefault)
                                     →  finishQuit()
                                          quitAction() === "install" → quitAndInstall()
                                          otherwise                  → app.exit(0)
+macOS only, AFTER quitAndInstall()  →  Squirrel.Mac fetches the zip from
+                                       electron-updater's local proxy, extracts
+                                       the bundle, verifies its signature,
+                                       stages it, then quits the app
 ```
 
 `quitAndInstall()` calls `app.quit()` itself, which re-enters `before-quit` —
 harmless, because `quitting` is already true there and the handler returns
-without preventing it. A 10s fallback exits anyway if the installer hands back
-instead of taking the process down, because a drained shell with no sidecars is
-not something to leave on screen looking alive.
+without preventing it. If the installer hands back instead of taking the process
+down, a watchdog exits anyway, because a drained shell with no sidecars is not
+something to leave on screen looking alive. That watchdog is **staged**, and the
+last block of the diagram is why.
+
+#### The macOS install that never happened (2026-09-01)
+
+Reported on a Mac: "Restart and update" quits the app and it relaunches
+unchanged. Three causes were suspected (an unsigned build, the fallback timer,
+a read-only bundle path); read against electron-updater 6.8.9's actual
+`MacUpdater` source, the second is structural and the other two are real but
+were invisible for the same reason.
+
+With `autoInstallOnAppQuit` off — which it has to be, see above —
+`MacUpdater`'s `update-downloaded` event means only that the zip is in
+electron-updater's cache and a local HTTP proxy is up in front of it.
+Squirrel.Mac has not been told anything. It is `quitAndInstall()` that first
+calls the native `checkForUpdates()`, and from there Squirrel downloads the zip
+from the proxy, unpacks a bundle in the hundreds of megabytes, verifies its
+code signature and stages it before it ever quits the app
+(`MacUpdater.js:240-256` and `:208-227` in 6.8.9). The tail of the drain used
+to arm a fixed `app.exit(0)` ten seconds after `quitAndInstall()`. On any Mac
+that is not idle, ten seconds lands in the middle of that work: the app went
+down, Squirrel went with it, nothing was swapped in, and the next launch was
+the old bundle. Signed or not.
+
+So the fallback is now a watchdog re-armed by Squirrel's own progress, which it
+reports on Electron's native `autoUpdater` (MacUpdater drives that object but
+does not re-emit its events; `finishQuit()` listens to it directly):
+
+| Stage | Set by | Timeout |
+|-|-|-|
+| `handoff` | `quitAndInstall()` called, nothing heard | 30s |
+| `fetching` | Squirrel `checking-for-update` / `update-available` | 10 min |
+| `staged` | Squirrel `update-downloaded` (MacUpdater then calls the native install) | 60s |
+| `quitting` | Squirrel `before-quit-for-update` | 60s |
+
+Windows and the AppImage spawn their installer and exit inside `handoff`; they
+never see the other rows. `fetching` is long on purpose: the cost of waiting is
+a "finishing in-flight turns…" title on screen, the cost of not waiting is the
+update. A Squirrel `error` exits immediately, since nothing more will happen.
+`INSTALL_STAGE_TIMEOUT_MS` in `desktop/updater.js` holds the numbers and
+`tests/desktopUpdater.test.ts` pins that `finishQuit()` arms no fixed short exit
+of its own.
+
+Whatever fails there fails in the one place it cannot be shown: the tray is
+destroyed and the window is on its way out. So the failure — which stage the
+watchdog gave up at, or the installer's error — is written to
+`update-install-failed.json` in userData, and the **next launch** reads it,
+deletes it, and shows *"Calandria 0.7.0 did not install"* with the log path and
+a *Download latest release* button, instead of relaunching unchanged as if
+nothing had been asked.
+
+The other two causes are decided at boot now rather than discovered on the way
+out. electron-updater does no signature check of its own on macOS (none in
+`MacUpdater` or `AppUpdater`), and Squirrel's "could not get code signature"
+refusal used to arrive only inside that same post-drain window, where the
+`fatal` classification reached nothing but the console. `startUpdater()` on a
+packaged macOS build now runs `codesign -dv --verbose=4` against the bundle
+(found from `process.execPath`; five-second timeout; a probe that fails answers
+"unknown" and disables nothing) and hands the verdict plus the bundle path to
+`updaterDisposition()`, which adds three codes to the "cannot update" set:
+
+| Code | When | Menu label |
+|-|-|-|
+| `mac-unsigned` | `Signature=adhoc`, or not signed at all | `Updates need a manual download (unsigned build)` |
+| `mac-dmg` | bundle under `/Volumes/` | `Move Calandria to Applications to get updates` |
+| `mac-translocated` | bundle under an `AppTranslocation` mount | same |
+
+The `mac-unsigned` reason names the date: *"Installs from before 2026-08-30,
+and local builds, need a manual download of the latest release."* That is the
+day the release lane started signing and notarizing macOS artifacts, so every
+install older than it is ad-hoc signed by construction (`desktop/signing.js`
+defaults to `-`), and — since it is running the old shell, not this one — it
+can only be told by the release notes and this document, not by code. Pressing
+`Check for updates…` in any of the three states raises a dialog with a
+*Download latest release* button. And an automatic check that hits a fatal
+error on any platform now raises an OS notification (*"Calandria cannot update
+itself"*, click opens the releases page) rather than a console line, since a
+packaged app has no terminal for the line to land in.
+
+To confirm which case a given Mac is in:
+
+```
+codesign -dv --verbose=4 /Applications/Calandria.app 2>&1 | grep -E '^(Authority|Signature)='
+```
+
+`Authority=Developer ID Application: …` can self-update; `Signature=adhoc` or
+`code object is not signed at all` cannot. The shell logs the same verdict at
+boot as `[shell] bundle /Applications/Calandria.app: signature developer-id`.
+
+#### Logs
+
+`desktop/main.js` routes `console.log` through `electron-log` (the shell's
+second runtime dependency, in `dependencies` for the same reason
+`electron-updater` is), so everything it prints — including every sidecar line
+the Supervisor relays — also lands in a file:
+
+| | Path |
+|-|-|
+| macOS | `~/Library/Logs/Calandria/main.log` |
+| Linux | `~/.config/Calandria/logs/main.log` |
+| Windows | `%APPDATA%\Calandria\logs\main.log` |
+
+Rotated at 5 MB to `main.old.log`. `electron-updater` is given the same logger
+at debug level, so the file carries `MacUpdater`'s account of its proxy server
+and the Squirrel handoff, and the drain tail's `[shell] squirrel: <event> →
+<stage>` lines. That is the evidence the reported bug had none of: the failure
+happened after the drain, in a packaged app nobody had launched from a
+terminal. The console transport is pinned to bare text so stdout is unchanged;
+`desktop/e2e` reads `[shell] …` lines off it with `startsWith`.
 
 `quitAction()` requires **both** an explicit user request and a completed
 download. Neither half is redundant: a quit is not consent to be upgraded, and a
@@ -1477,7 +1623,7 @@ has no updates"; `Updates come from your package manager` reads as what it is.
 | | Updates? | Notes |
 |-|-|-|
 | Windows (NSIS) | Yes | Works unsigned; signing improves the SmartScreen story, not the update path. |
-| macOS (zip) | **Only if signed** | Squirrel.Mac verifies the signature of the downloaded bundle and refuses an app whose own signature it cannot read. An ad-hoc build cannot auto-update at all — on/off, not a warning. That is why §6.4's Developer ID is a dependency and not a nicety, and why the `.zip` target in §6.1 is mandatory: a dmg-only build produces no `latest-mac.yml`. The error is classified `fatal` and stops the six-hourly retry for the session. |
+| macOS (zip) | **Only if signed, and only from `/Applications`** | Squirrel.Mac verifies the signature of the downloaded bundle and refuses an app whose own signature it cannot read. An ad-hoc build cannot auto-update at all — on/off, not a warning. That is why §6.4's Developer ID is a dependency and not a nicety, and why the `.zip` target in §6.1 is mandatory: a dmg-only build produces no `latest-mac.yml`. Decided at boot from `codesign` and the bundle path (`mac-unsigned` / `mac-dmg` / `mac-translocated`, above), so the menu says so before the first check; installs from before 2026-08-30 are all in the first bucket. |
 | Linux AppImage | Yes | Replaces itself in place. Detected by `process.env.APPIMAGE`, which the AppImage runtime sets — the only trustworthy runtime answer to "am I an AppImage". |
 | Linux .deb | **No, deliberately** | See below. |
 

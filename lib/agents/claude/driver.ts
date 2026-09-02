@@ -334,8 +334,10 @@ function calandriaServer(
           project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
+          provider: z.enum(["local", "cloud"]).optional().describe(SUGGEST_TASK.params.provider),
+          model: z.string().optional().describe(SUGGEST_TASK.params.model),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[] }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: "local" | "cloud"; model?: string }) => {
           // Which project this lands in, before anything else: the task's agent,
           // send_context and board position all come from it, and a wrong answer
           // is a misfiled task rather than a visible failure. Strict — an
@@ -360,6 +362,8 @@ function calandriaServer(
             // lands. The origin is the closed-over caller, never a parameter.
             tags: args.tags,
             origin_task_id: originTaskId,
+            provider: args.provider,
+            model: args.model,
           });
           // A null task = the project was deleted mid-turn; `text` already says so.
           if (created) {
@@ -1001,7 +1005,7 @@ async function* runTurn(
       cwd,
       // Drops NODE_ENV and repoints PORT at the project's own port — see
       // lib/agentEnv.ts for why a turn can't just inherit the server's env.
-      env: agentTurnEnv(project),
+      env: agentTurnEnv(project, task),
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias) — the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.

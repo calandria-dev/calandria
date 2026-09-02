@@ -23,7 +23,7 @@ import { emitTestNotification, resetNotificationDedupe } from "@/lib/notificatio
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { DELETE as unsubscribeRoute, GET as listRoute, POST as subscribeRoute } from "@/app/api/notifications/push/route";
 import { DELETE as removeRoute } from "@/app/api/notifications/push/[id]/route";
-import { classifyPushSupport, deviceLabel } from "@/app/shell/usePush";
+import { classifyPushSupport, deviceLabel, pushSupport } from "@/app/shell/usePush";
 
 // RFC 8291 Appendix A — every intermediate value the spec publishes.
 const RFC = {
@@ -386,13 +386,48 @@ describe("the service worker", () => {
 
 describe("the browser half", () => {
   it("classifies push support with the secure-context check first and iOS's install rule second", () => {
-    const base = { secureContext: true, hasServiceWorker: true, hasPushManager: true, ios: false, standalone: false };
+    const base = { desktopShell: false, secureContext: true, hasServiceWorker: true, hasPushManager: true, ios: false, standalone: false };
     expect(classifyPushSupport(base)).toBe("ready");
     expect(classifyPushSupport({ ...base, secureContext: false, hasPushManager: false })).toBe("insecure");
     expect(classifyPushSupport({ ...base, hasPushManager: false, ios: true })).toBe("needs_install");
     expect(classifyPushSupport({ ...base, hasPushManager: false, ios: true, standalone: true })).toBe("unsupported");
     expect(classifyPushSupport({ ...base, ios: true })).toBe("ready");
     expect(classifyPushSupport({ ...base, hasServiceWorker: false })).toBe("unsupported");
+  });
+
+  it("stands the desktop shell down before any capability check", () => {
+    // The verdict is about the renderer, not what Chromium exposes: the shell
+    // raises native toasts off the same payload and denies the page's
+    // notification permission, so a PushManager being present must not turn
+    // the window "ready", and its absence must not report "unsupported" — both
+    // used to send the user to a browser site setting the shell has no page for.
+    const base = { desktopShell: true, secureContext: true, hasServiceWorker: true, hasPushManager: true, ios: false, standalone: false };
+    expect(classifyPushSupport(base)).toBe("desktop_shell");
+    expect(classifyPushSupport({ ...base, hasPushManager: false, hasServiceWorker: false })).toBe("desktop_shell");
+    expect(classifyPushSupport({ ...base, secureContext: false })).toBe("desktop_shell");
+  });
+
+  it("pushSupport() reads the desktop shell off the user agent", () => {
+    // A window that would be "ready" in every other respect — secure context,
+    // service worker, PushManager — so the desktop verdict is provably the
+    // user-agent token's doing and nothing else's.
+    const chrome = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+    const env = (userAgent: string) => {
+      vi.stubGlobal("window", { isSecureContext: true, PushManager: class {}, matchMedia: undefined });
+      vi.stubGlobal("navigator", { userAgent, serviceWorker: {}, platform: "Linux x86_64", maxTouchPoints: 0 });
+    };
+    try {
+      env(chrome);
+      expect(pushSupport()).toBe("ready");
+      // desktop/main.js appends the token to Chromium's own string.
+      env(`${chrome} Electron/33.0.0 Calandria-Desktop/0.6.2`);
+      expect(pushSupport()).toBe("desktop_shell");
+      // A packaged build that predates the token still carries Electron's.
+      env(`${chrome} Electron/33.0.0`);
+      expect(pushSupport()).toBe("desktop_shell");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("labels a device from its user agent", () => {

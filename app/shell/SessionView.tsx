@@ -5,7 +5,7 @@ import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDec
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown } from "../Markdown";
-import { fmtTokens, fmtCost, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
@@ -19,7 +19,8 @@ import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
 import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
-import { StatusDot, Avatar, Popover, AgentBadge, Skel } from "./shared";
+import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
+import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -703,12 +704,15 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 
   // Cumulative spend for the task. The first thing off the rail when the pane
   // gets narrow: it answers a question nobody asks mid-turn.
-  const showUsage = task.cost_usd > 0 || task.total_tokens > 0;
+  const showUsage = task.cost_usd > 0 || task.total_tokens > 0 || task.unpriced_turns > 0;
   const usageChip = (
-    <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost)}>
+    <span className="usage-chip" title={usageTooltip(usage, task.cost_usd, cost, task.unpriced_turns)}>
       {fmtTokens(usage.fresh)} tok
       {usage.cacheRead > 0 && <> <span className="usage-dot">·</span> <span className="usage-cached">{fmtTokens(usage.cacheRead)} cached</span></>}
-      {cost.show && <> <span className="usage-dot">·</span> {cost.approx && "~"}{fmtCost(task.cost_usd)}</>}
+      {/* The "~" qualifies a NUMBER (an estimate, or a plan-quota equivalent).
+          When every turn was unpriced there is no number — fmtCostTotal prints
+          an em dash — and "~—" would qualify nothing. */}
+      {cost.show && <> <span className="usage-dot">·</span> {cost.approx && !(task.unpriced_turns > 0 && task.cost_usd <= 0) && "~"}{fmtCostTotal(task.cost_usd, task.unpriced_turns)}</>}
     </span>
   );
 
@@ -924,7 +928,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     railItems.map((i) => i.key).join(","), task.status, awaiting, task.model ?? "", task.resolved_model ?? "",
     task.reasoning ?? "", task.priority, isSnoozed(task) && wakeLabel(task.snoozed_until),
     isQueuedStart(task) && wakeLabel(task.start_at), fmtTokens(usage.fresh), fmtTokens(usage.cacheRead),
-    cost.show && fmtCost(task.cost_usd), task.pr_state ?? "", task.pr_checks ?? "", task.pr_review ?? "",
+    cost.show && fmtCostTotal(task.cost_usd, task.unpriced_turns), task.pr_state ?? "", task.pr_checks ?? "", task.pr_review ?? "",
   ].join("|");
   const hiddenCount = useOverflowRail(railRef, dropOrder.length, railSig, !toolsOpen);
   const hiddenKeys = new Set(dropOrder.slice(0, hiddenCount).map((i) => i.key));
@@ -955,6 +959,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 logo's width rather than a word's. */}
             <div className="sh-title">
               <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={multiAgent} />
+              <ProviderBadge provider={taskProvider(project, task)} />
               {task.title}
             </div>
           </div>

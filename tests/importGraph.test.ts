@@ -35,6 +35,7 @@ const PINNED = [
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
+  "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only

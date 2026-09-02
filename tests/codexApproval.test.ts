@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { approvalOverride, noteApprovalDowngrade } from "@/lib/agents/codex/driver";
 import { setSetting } from "@/lib/store";
 
@@ -12,6 +12,7 @@ import { setSetting } from "@/lib/store";
 const DOWNGRADE =
   "Configured value for `approval_policy` is disallowed by requirements; falling back to required value UnlessTrusted.";
 
+beforeEach(() => setSetting("codex_approval_downgraded", null));
 afterAll(() => setSetting("codex_approval_downgraded", null));
 
 describe("codex approval-policy negotiation", () => {
