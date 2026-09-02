@@ -167,10 +167,18 @@ picker entry can't quietly resolve to something else.
 remembered rules, then to a human. A prompt reuses the ask machinery wholesale
 (`lib/asks.ts`, `POST /answer`, `tasks.awaiting_input`), yielding a `permission` StreamEvent
 that the runner persists as an answerable transcript card and settles as
-`permission_decided`. Remembered rules (`permission_rules`) are Bash-only and
-project-scoped, because a command is the one input a user can read in full and generalize;
-non-Bash tools get allow-once plus the CLI's own session-scoped suggestion. Every non-answer path denies: Stop, the SDK cancelling its own request, an expired prompt,
-an unparseable answer, or a turn ending with a card still open (settled by the runner's
+`permission_decided`. While it is still open the card is lifted OUT of the transcript's flow
+into a dock below it (`app/shell/pendingPrompt.ts`, rendered by `SessionView`), asks
+included: inline, anything that streams in afterwards scrolls the thing the turn is parked on
+off the top — one subagent returning a screenful is enough — leaving nothing on screen to say
+an answer is owed. That module decides liveness rather than trusting the row, because nothing
+backfills an ask card a Stop tore down and `awaiting_input` is zeroed by the next turn either
+way, so "has no answer" alone would dock a dead question forever.
+
+Remembered rules (`permission_rules`) are Bash-only and project-scoped, because a command is
+the one input a user can read in full and generalize; non-Bash tools get allow-once plus the
+CLI's own session-scoped suggestion. Every non-answer path denies: Stop, the SDK cancelling
+its own request, an expired prompt, an unparseable answer, or a turn ending with a card still open (settled by the runner's
 `finally`, or by a restart for any left in the DB). An unattended auto-deny also parks
 queued follow-ups, the same way a dead login does.
 

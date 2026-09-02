@@ -55,10 +55,16 @@ test("a turn parks on a permission card and continues once it's allowed once", a
   await expect(card).toBeVisible();
   // The card shows the command being authorized, not just the tool name.
   await expect(card.locator(".perm-pre")).toContainText("npm run lint");
+  // And it is DOCKED below the transcript rather than sitting in it. Inline, a
+  // card is at the mercy of whatever streams in after it — one subagent
+  // returning a screenful scrolls the thing the turn is parked on off the top.
+  await expect(page.locator(".prompt-dock .perm")).toBeVisible();
 
   await card.getByRole("button", { name: "Allow once" }).click();
 
   await expect(page.locator(".perm.settled")).toContainText("You allowed this once");
+  // Decided, so it belongs back in the transcript where it happened.
+  await expect(page.locator(".prompt-dock")).toHaveCount(0);
   const settled = await waitForIdle(request, task.id);
   expect(settled.awaiting_input).toBe(1); // turn ended — ordinary "your move"
   expect(settled.running).toBe(0);
