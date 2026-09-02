@@ -33,6 +33,16 @@ because every agent verified locally and nobody watched Actions.
   the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
   fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
   among them find out why before merging.
+- **`gh pr checks` cannot see a run that never started.** A workflow rejected at startup —
+  invalid YAML, or a called workflow requesting a permission scope above its caller's ceiling —
+  concludes `startup_failure`, contributes NO check runs, and is therefore absent from
+  `gh pr checks` and from `mergeStateStatus`. PR #142 read `CLEAN` with six passing checks while
+  `publish-image.yml` had been failing at startup for two commits. Same shape as the bullet above:
+  green because the thing that would have gone red never ran. `gh pr checks` answers "did the
+  checks that exist pass", which is not the question. **After changing anything under
+  `.github/workflows/`, list the RUNS:**
+  `gh run list --branch <branch> --json workflowName,headSha,status,conclusion`, and compare the
+  set of workflows against the commit before yours.
 - **Name a long-lived integration branch `integration/<something>`.** A tag tree's PRs target one,
   and `integration/**` is what the `integration-require-checks` ruleset matches, so a branch named
   outside the namespace is tested but still mergeable red. `.github/rulesets/README.md` has the
