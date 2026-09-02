@@ -108,6 +108,20 @@ with a one-shot `claude -p --model <value>` and 13 of 14 ran;
 
 Bedrock stays on the default catalog. There's no Bedrock instance here to measure.
 
+**The connection record carries the provider it was verified against** (issue #38). A verify
+proves a login works against ONE backend, and the backend is instance config the user can flip
+under a running app, so `lib/agents/connections.ts` stamps `configuredProvider()` into
+`agent_conn_claude` (`method|email|plan|provider`) on every login / verify / api-key save, and a
+read whose stored provider differs from the current one is NOT a connection: the record is
+dropped and the agent is flagged exactly as a dead login flags it (`agent_auth_broken_claude`
+plus one `agent_auth` event on the bus, keyed `""` since no task detected it), so the titlebar
+banner and the Settings card say which backend the login was for and which the CLI now routes
+through. Reconnecting writes a record against the new provider and clears the flag. Rows written
+before the field existed read as `anthropic`, the only backend that path verified, so an instance
+that never left Anthropic is untouched, while one that had already moved to Vertex asks for one
+reconnect. Codex stores no provider and never mismatches. `tests/agentConnectionProvider.test.ts`
+pins the mismatch, the legacy read and the once-per-outage announcement.
+
 ## Codex driver (`codex/`)
 
 `@openai/codex-sdk` spawns the `codex` CLI and talks JSONL over stdio; `codex/events.ts`

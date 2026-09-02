@@ -1,4 +1,8 @@
 import { getSetting, setSetting } from "../store";
+import { publish } from "../events";
+// SDK-free (fs + env only), the same file capabilities.ts reads the catalog
+// corrections from — see the note in claude/provider.ts.
+import { configuredProvider, type ClaudeProvider } from "./claude/provider";
 // capabilities.ts, not registry.ts, on purpose: this module only enumerates and
 // validates agent IDS — it never drives an agent — and importing the registry
 // would drag both agent SDKs into every consumer's graph (the async-external
@@ -15,25 +19,105 @@ import { listAgentIds, isAgentId, DEFAULT_AGENT } from "./capabilities";
 // generalized /api/agents/[id]/* routes write on a successful login / verify /
 // api-key save.
 //
-// Stored as "method|email|plan" (same compact encoding as onboarding_account),
-// where method is "subscription" | "api_key". An absent key = not connected.
+// Stored as "method|email|plan|provider" (same compact encoding as
+// onboarding_account), where method is "subscription" | "api_key" and provider
+// is the backend the verify ran against. An absent key = not connected.
+//
+// The provider field is what makes the record honest across a config change
+// (issue #38). A verify proves "this login works against THIS backend": an OAuth
+// session proves nothing about Vertex, and Vertex ADC proves nothing about
+// Bedrock. Claude Code picks its backend from ~/.claude/settings.json and the
+// env, which the user can flip under a running instance, so a record verified
+// against one provider must not keep reading "connected" once the CLI routes
+// elsewhere — every turn would fail against a login that no longer applies,
+// with nothing in the UI saying why. A record whose provider doesn't match the
+// CLI's current one is therefore read as NOT connected, cleared, and flagged the
+// way a dead login is, so the titlebar banner explains it and Reconnect writes
+// a record against the new provider. Rows written before the field existed
+// carry no provider and are read as "anthropic", the only backend that path
+// ever verified; an instance that has been on Anthropic all along never notices.
 
 export type AgentConnMethod = "subscription" | "api_key";
+
+/** The backend a connection was verified against. Claude reports one of its
+ *  `ClaudeProvider`s; an agent with no provider concept (Codex) stores null,
+ *  and null never mismatches. */
+export type AgentConnProvider = ClaudeProvider | null;
 
 export interface AgentConnection {
   method: AgentConnMethod;
   email: string | null;
   plan: string | null;
+  provider: AgentConnProvider;
 }
 
 const key = (agentId: string) => `agent_conn_${agentId}`;
 
+// The agent whose backend the CLI config selects. DEFAULT_AGENT happens to be
+// the same id, but that is the app's default, not "the agent with providers".
+const CLAUDE_AGENT = "claude";
+
+const PROVIDERS: readonly ClaudeProvider[] = ["anthropic", "vertex", "bedrock"];
+
+/** The provider a connection for this agent would be verified against right
+ *  now, or null for an agent whose connection isn't provider-specific. */
+export function currentConnectionProvider(agentId: string, env: NodeJS.ProcessEnv = process.env): AgentConnProvider {
+  return agentId === CLAUDE_AGENT ? configuredProvider(env) : null;
+}
+
+/** Parse the stored provider field. Absent on rows written before the field
+ *  existed: those were verified on the plain Anthropic path, so a Claude row
+ *  reads "anthropic"; any other agent reads null. */
+function parseProvider(agentId: string, raw: string | undefined): AgentConnProvider {
+  if (raw && (PROVIDERS as readonly string[]).includes(raw)) return raw as ClaudeProvider;
+  return agentId === CLAUDE_AGENT ? "anthropic" : null;
+}
+
 export function getAgentConnection(agentId: string): AgentConnection | null {
   const raw = getSetting(key(agentId));
-  if (!raw) return agentId === DEFAULT_AGENT ? legacyClaudeConnection() : null;
-  const [method, email, plan] = raw.split("|");
+  const conn = raw ? parseConnection(agentId, raw) : agentId === DEFAULT_AGENT ? legacyClaudeConnection() : null;
+  if (!conn) return null;
+  const current = currentConnectionProvider(agentId);
+  if (current === null || conn.provider === current) return conn;
+  invalidateForProvider(agentId, conn.provider, current);
+  return null;
+}
+
+function parseConnection(agentId: string, raw: string): AgentConnection | null {
+  const [method, email, plan, provider] = raw.split("|");
   if (method !== "subscription" && method !== "api_key") return null;
-  return { method, email: email || null, plan: plan || null };
+  return { method, email: email || null, plan: plan || null, provider: parseProvider(agentId, provider) };
+}
+
+const PROVIDER_LABEL: Record<ClaudeProvider, string> = {
+  anthropic: "Anthropic",
+  vertex: "Vertex AI",
+  bedrock: "Amazon Bedrock",
+};
+
+/**
+ * The record was verified against one backend and the CLI now routes through
+ * another. Drop the record (it proves nothing about the new backend) and raise
+ * the same instance-wide flag a dead login raises, so the banner shows in every
+ * tab and the connect card leads with the reason. Deliberately NOT
+ * `clearAgentConnection()`, which clears the flag: that is the user
+ * disconnecting on purpose, and this is the opposite. Idempotent — the flag
+ * records the first sighting only and the event is published once per outage,
+ * so a legacy onboarding-only record (nothing to delete) re-read on every
+ * `/api/agents` doesn't re-announce.
+ */
+function invalidateForProvider(agentId: string, stored: AgentConnProvider, current: ClaudeProvider): void {
+  setSetting(key(agentId), null);
+  const was = stored ? PROVIDER_LABEL[stored] : "another backend";
+  const reason =
+    `This connection was verified against ${was}, but Claude Code is now configured for ` +
+    `${PROVIDER_LABEL[current]}. Reconnect to verify the ${PROVIDER_LABEL[current]} login.`;
+  if (markAgentAuthBroken(agentId, reason, Date.now())) {
+    // Same event the runner publishes on a dead login (lib/runner.ts). No task
+    // detected this one, so the bus key is empty; /api/events relays it
+    // verbatim without re-reading a row, exactly as it does for the runner's.
+    publish("", { type: "agent_auth", agent: agentId, broken: true, reason });
+  }
 }
 
 // Pre-seam instances recorded their first-run Claude connection only in the
@@ -46,7 +130,8 @@ function legacyClaudeConnection(): AgentConnection | null {
   if (method !== "subscription" && method !== "api_key") return null;
   const acct = getSetting("onboarding_account");
   const [email, plan] = acct ? acct.split("|") : [null, null];
-  return { method, email: email || null, plan: plan || null };
+  // Pre-seam verifies only ever ran the plain Anthropic path.
+  return { method, email: email || null, plan: plan || null, provider: "anthropic" };
 }
 
 /** Whether this agent has a working connection on record (login/verify/api-key). */
@@ -73,8 +158,15 @@ export function resolveConnectedAgent(preferred: (string | null | undefined)[]):
   return firstConnectedAgent();
 }
 
-export function setAgentConnection(agentId: string, conn: AgentConnection): void {
-  setSetting(key(agentId), `${conn.method}|${conn.email ?? ""}|${conn.plan ?? ""}`);
+/**
+ * Record a working connection. The provider is stamped HERE from the CLI's
+ * current config rather than taken from the caller, because every caller is a
+ * login / verify / api-key route that just proved the login against whatever
+ * backend the CLI is configured for right now — that is the fact worth keeping.
+ */
+export function setAgentConnection(agentId: string, conn: Omit<AgentConnection, "provider">): void {
+  const provider = currentConnectionProvider(agentId) ?? "";
+  setSetting(key(agentId), `${conn.method}|${conn.email ?? ""}|${conn.plan ?? ""}|${provider}`);
   // A fresh login / verify / api-key save IS the repair — never leave a stale
   // "reconnect me" banner up after the user just did.
   clearAgentAuthBroken(agentId);
