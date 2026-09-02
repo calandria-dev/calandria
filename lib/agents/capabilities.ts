@@ -18,6 +18,7 @@ import type { AgentCapabilities } from "./types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import { claudeCapabilities } from "./claude/capabilities";
 import { CODEX_CAPABILITIES } from "./codex/capabilities";
+import { GEMINI_CAPABILITIES } from "./gemini/capabilities";
 import { MOCK_CAPABILITIES } from "./mock/capabilities";
 
 export const DEFAULT_AGENT = "claude";
@@ -29,6 +30,7 @@ export const DEFAULT_AGENT = "claude";
 const CAPABILITIES: Record<string, () => AgentCapabilities> = {
   claude: () => claudeCapabilities(),
   codex: () => CODEX_CAPABILITIES,
+  gemini: () => GEMINI_CAPABILITIES,
 };
 
 // The deterministic e2e agent, under the same env gate registry.ts uses. It has

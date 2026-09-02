@@ -15,6 +15,7 @@
 import type { AgentDriver } from "./types";
 import { claudeDriver } from "./claude/driver";
 import { codexDriver } from "./codex/driver";
+import { geminiDriver } from "./gemini/driver";
 import { mockDriver } from "./mock/driver";
 
 export { DEFAULT_AGENT } from "./capabilities";
@@ -26,7 +27,16 @@ import { DEFAULT_AGENT } from "./capabilities";
 let DRIVERS: Record<string, AgentDriver> | null = null;
 function drivers(): Record<string, AgentDriver> {
   if (!DRIVERS) {
-    DRIVERS = { [claudeDriver.id]: claudeDriver, [codexDriver.id]: codexDriver };
+    // Three first-class agents. Antigravity is registered unconditionally like
+    // the other two now that it is proven: an instance with no `agy` binary
+    // sees the same thing it sees for a missing `codex` — an agent it can pick
+    // in the picker and cannot connect, which is a legible state, where an
+    // agent hidden behind an env var is not.
+    DRIVERS = {
+      [claudeDriver.id]: claudeDriver,
+      [codexDriver.id]: codexDriver,
+      [geminiDriver.id]: geminiDriver,
+    };
     // The deterministic e2e driver (lib/agents/mock/) — registered only when the
     // Playwright suite's env flag is set, so it can never appear in a real
     // instance's agent picker. The import above is unconditional but harmless:

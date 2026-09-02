@@ -527,6 +527,13 @@ export interface PlanUsageWindow {
   label: string;
   utilization: number;
   resetsAt: number | null;
+  /**
+   * Which of the two windows every metered plan has this is, when the driver
+   * can say. The ids are the PROVIDER's ("five_hour", "gemini-5h"), so this is
+   * what the pill and lib/usageReset.ts pick the session/week rows by; absent
+   * on a window that is neither (Claude's per-model weeks) and on older rows.
+   */
+  kind?: "session" | "week" | null;
 }
 
 // Instance-wide snapshot of one agent's subscription-plan usage — what the

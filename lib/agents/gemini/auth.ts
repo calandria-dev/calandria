@@ -1,0 +1,441 @@
+// Antigravity (Gemini) auth — status, the guided Google OAuth login, verify,
+// and the API-key fallback. The counterpart to lib/agents/codex/auth.ts.
+//
+// WHY THIS DRIVES A PTY. The obvious headless flow — `agy -p "/help"` with
+// stdin held open — prints the authorize URL and then hard-fails after exactly
+// 61 seconds ("Error: authentication timed out"), measured. That window is not
+// configurable by any flag or env var, and it is far too short for the real
+// round trip this login needs: read the card, open Google in a browser, consent,
+// copy the code back. The paste field would be dead before most users reached
+// it, and because the code is bound to that child's PKCE verifier, respawning to
+// get a fresh window invalidates the code the user is holding.
+//
+// The INTERACTIVE CLI has no such timeout — measured alive and accepting a
+// pasted code many minutes after printing its URL. So the login runs the real
+// CLI under a pty, answers its one menu prompt, scrapes the URL, and writes the
+// code when the user submits it. That is the only shape of this flow that works.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import type { AgentAuthStatus, AgentLoginSession, AgentVerifyResult, AgentApiKeyAuth } from "../types";
+import { AGY_CLI_PATH } from "../../config";
+import { getSetting, setSetting } from "../../store";
+import { GEMINI_API_KEY_HINT } from "./capabilities";
+
+const execFileAsync = promisify(execFile);
+
+const AGY = () => AGY_CLI_PATH || "agy";
+
+/** Never let a self-update replace the pinned binary mid-flow. */
+const AGY_ENV = { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" };
+
+/** What a signed-out CLI says, on `agy models` and on a turn. Matched loosely
+ *  because the two spellings differ and both mean the same thing. */
+const SIGNED_OUT = /please sign in|not logged into antigravity|authentication required/i;
+
+// ---------- status ----------
+
+/**
+ * Is the CLI signed in? `agy models` is the cheapest probe — it spends no
+ * quota — but note two measured traps it has to work around:
+ *
+ *   - It takes NO `--output-format` flag, despite the spike's notes. Passing one
+ *     makes it exit with a usage error, so the output is parsed as the TSV
+ *     (`slug<TAB>label`) it actually prints.
+ *   - It exits 0 EITHER WAY. A signed-out CLI prints "Error: Please sign in to
+ *     view available models." and still returns success, so the exit code says
+ *     nothing and the text is the only signal.
+ */
+export async function geminiStatus(): Promise<AgentAuthStatus> {
+  const out = await runAgy(["models"], 60_000);
+  const text = `${out.stdout}\n${out.stderr}`;
+  if (SIGNED_OUT.test(text)) {
+    return { authenticated: false, method: null, email: null, plan: null, error: null };
+  }
+  if (out.error && !modelSlugs(out.stdout).length) {
+    return { authenticated: false, method: null, email: null, plan: null, error: out.error };
+  }
+  if (!modelSlugs(out.stdout).length) {
+    return { authenticated: false, method: null, email: null, plan: null, error: "Could not read the model list" };
+  }
+  return {
+    authenticated: true,
+    method: hasApiKey() ? "api key" : "google account",
+    // The CLI exposes neither on any no-quota command; the connect card renders
+    // "signed in" without them rather than inventing values.
+    email: null,
+    plan: null,
+    error: null,
+  };
+}
+
+/** Model slugs from `agy models` TSV output, skipping its "Fetching…" chatter. */
+export function modelSlugs(stdout: string): string[] {
+  return stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^fetching/i.test(l) && !/^error/i.test(l))
+    .map((l) => l.split("\t")[0].trim())
+    .filter((s) => /^[a-z0-9][a-z0-9.\-]*$/i.test(s));
+}
+
+// ---------- verify ----------
+
+/**
+ * Prove the connection end-to-end by running a real (tiny) turn. Costs one
+ * request, which is the point: `agy models` can succeed on a token that the
+ * model backend then refuses.
+ */
+export async function verifyGeminiTurn(): Promise<AgentVerifyResult> {
+  const out = await runAgy(["-p", "Reply with exactly: OK", "--output-format", "json"], 180_000);
+  const text = `${out.stdout}\n${out.stderr}`;
+  if (SIGNED_OUT.test(text)) return { ok: false, output: trimTail(text), error: "Not signed in" };
+  const parsed = parseJsonResult(out.stdout);
+  if (!parsed) return { ok: false, output: trimTail(text), error: out.error || "No result from the CLI" };
+  if ((parsed.status || "").toUpperCase() !== "SUCCESS") {
+    return { ok: false, output: trimTail(text), error: parsed.error || `Run ${parsed.status}` };
+  }
+  return { ok: true, output: (parsed.response || "").trim() || "OK", error: null };
+}
+
+interface AgyJsonResult {
+  status?: string;
+  response?: string;
+  error?: string;
+  conversation_id?: string;
+}
+
+/** `--output-format json` prints one JSON object; take the last parseable line
+ *  so any leading CLI chatter is ignored. */
+export function parseJsonResult(stdout: string): AgyJsonResult | null {
+  const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].startsWith("{")) continue;
+    try {
+      return JSON.parse(lines[i]) as AgyJsonResult;
+    } catch {
+      // keep walking back
+    }
+  }
+  return null;
+}
+
+// ---------- login ----------
+
+// HMR-surviving, like every other long-lived server registry in this app.
+interface LoginState {
+  session: AgentLoginSession;
+  write: ((data: string) => void) | null;
+  kill: (() => void) | null;
+  buf: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const g = globalThis as unknown as { __calandriaGeminiLogin?: LoginState };
+
+/** How long a started-but-unfinished login is kept alive before it is reaped.
+ *  Generous because the whole reason for the pty is that the CLI's own 60s
+ *  window is too short for a human. */
+const LOGIN_REAP_MS = 30 * 60 * 1000;
+
+const AUTH_URL = /https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?[^\s"']+/;
+
+/** What the CLI prints when a code was refused or its window closed. */
+const AUTH_FAILED = /authentication (?:failed|timed out)/i;
+
+/** Exported so a test can pin the wording: this message is the only signal that
+ *  a still-running login child will never finish, and the connect card's
+ *  "Start again" recovery hangs off it. */
+export function isAuthFailure(cliOutput: string): boolean {
+  return AUTH_FAILED.test(cliOutput);
+}
+
+/** Strip ANSI so the URL and the CLI's own words survive the TUI's redraws. */
+export function stripAnsi(s: string): string {
+  return s
+    .replace(/\][^]*(?:|\\)/g, "")
+    .replace(/\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/[()][A-B0]/g, "");
+}
+
+/**
+ * Pull the authorize URL out of the CLI's terminal output. The TUI prints it
+ * twice — once plain and once inside an OSC 8 hyperlink — and wraps it across
+ * lines, so the LONGEST match is the intact one.
+ */
+export function findAuthUrl(text: string): string | null {
+  const clean = stripAnsi(text);
+  const hits = clean.match(new RegExp(AUTH_URL.source, "g"));
+  if (!hits?.length) return null;
+  return hits.sort((a, b) => b.length - a.length)[0];
+}
+
+function blank(): AgentLoginSession {
+  return { status: "starting", url: null, code: null, email: null, plan: null, error: null, log: "" };
+}
+
+export function getGeminiLogin(): AgentLoginSession | null {
+  return g.__calandriaGeminiLogin?.session ?? null;
+}
+
+export function cancelGeminiLogin(): void {
+  const st = g.__calandriaGeminiLogin;
+  if (!st) return;
+  if (st.timer) clearTimeout(st.timer);
+  try {
+    st.kill?.();
+  } catch {
+    // already gone
+  }
+  g.__calandriaGeminiLogin = undefined;
+}
+
+/**
+ * Start the guided login: spawn the interactive CLI under a pty, select
+ * "Google OAuth" from its one menu, and surface the authorize URL.
+ *
+ * node-pty is required lazily. It is a native module and a serverExternalPackage,
+ * and it is only ever needed by this one flow — a static import would put it in
+ * the graph of every turn.
+ */
+export async function startGeminiLogin(): Promise<AgentLoginSession> {
+  cancelGeminiLogin();
+  const session = blank();
+  const st: LoginState = { session, write: null, kill: null, buf: "", timer: null };
+  g.__calandriaGeminiLogin = st;
+
+  let pty: typeof import("node-pty");
+  try {
+    pty = await import("node-pty");
+  } catch (err) {
+    session.status = "error";
+    session.error = `Could not load the terminal backend for the Google login: ${msg(err)}`;
+    return session;
+  }
+
+  let child: import("node-pty").IPty;
+  try {
+    child = pty.spawn(AGY(), [], {
+      name: "xterm-256color",
+      cols: 200,
+      rows: 50,
+      cwd: os.tmpdir(),
+      env: AGY_ENV as Record<string, string>,
+    });
+  } catch (err) {
+    session.status = "error";
+    session.error = `Could not start ${AGY()}: ${msg(err)}`;
+    return session;
+  }
+
+  st.write = (d) => child.write(d);
+  st.kill = () => child.kill();
+
+  // One menu stands between a fresh CLI and the URL: "1. Google OAuth" /
+  // "2. Use a Google Cloud project", with the first already selected. Enter
+  // takes it. Sent once, on a short delay, so the TUI has drawn by then.
+  const pickOAuth = setTimeout(() => {
+    try {
+      child.write("\r");
+    } catch {
+      // the child died; the exit handler below reports it
+    }
+  }, 1_500);
+
+  child.onData((data) => {
+    st.buf = (st.buf + data).slice(-40_000);
+    const clean = stripAnsi(st.buf);
+    session.log = trimTail(clean);
+    if (!session.url) {
+      const url = findAuthUrl(st.buf);
+      if (url) {
+        session.url = url;
+        session.status = "awaiting";
+      }
+    }
+    if (/successfully authenticated|welcome to antigravity/i.test(clean) && session.status !== "error") {
+      session.status = "success";
+    }
+    // The CLI reports a refused or expired code by printing this and RETURNING
+    // TO ITS PROMPT — it doesn't exit — so without watching for it the card
+    // would sit on a dead paste box until the 30-minute reaper. The failure is
+    // routine rather than exceptional: the authorize URL is only good for the
+    // provider's own 60-second window, which is not configurable, and the code
+    // is bound to this child's PKCE verifier, so the only recovery is the
+    // fresh child "Start again" spawns.
+    if (session.status !== "success" && isAuthFailure(clean)) {
+      session.status = "error";
+      session.error = session.error || "The sign-in failed or timed out. Start again for a fresh link.";
+    }
+  });
+
+  child.onExit(() => {
+    clearTimeout(pickOAuth);
+    if (session.status !== "success") {
+      session.status = "error";
+      session.error = session.error || "The Antigravity CLI exited before the login finished.";
+    }
+    st.write = null;
+    st.kill = null;
+  });
+
+  st.timer = setTimeout(() => cancelGeminiLogin(), LOGIN_REAP_MS);
+
+  // Give the menu keystroke and the CLI's first paint time to land, so the
+  // caller usually gets a URL back on this very response instead of polling.
+  await waitFor(() => !!session.url || session.status === "error", 20_000);
+  return session;
+}
+
+/**
+ * Hand the CLI the authorization code the user copied out of Google's callback
+ * page. The code is bound to THIS child's PKCE verifier, which is why the
+ * process is kept alive rather than respawned per attempt.
+ */
+export async function submitGeminiCode(code: string): Promise<AgentLoginSession> {
+  const st = g.__calandriaGeminiLogin;
+  if (!st) {
+    const s = blank();
+    s.status = "error";
+    s.error = "No login is in progress. Start again.";
+    return s;
+  }
+  const { session } = st;
+  const trimmed = code.trim();
+  if (!trimmed) {
+    session.error = "Enter the authorization code from the Google page.";
+    return session;
+  }
+  if (!st.write) {
+    session.status = "error";
+    session.error = "The login session has closed. Start again.";
+    return session;
+  }
+
+  session.status = "submitting";
+  session.error = null;
+  st.write(`${trimmed}\r`);
+
+  // Signing in, then the CLI's first-run onboarding, take a few seconds. Poll
+  // the status the data handler maintains rather than guessing a fixed delay.
+  await waitFor(() => session.status === "success" || session.status === "error", 60_000);
+
+  if (session.status === "submitting") {
+    // The CLI accepted the paste but hasn't confirmed yet. Fall back to the
+    // authoritative check rather than reporting a failure that didn't happen:
+    // the token is written to disk before the TUI finishes its onboarding
+    // screens, so `agy models` can already succeed here.
+    const status = await geminiStatus();
+    if (status.authenticated) session.status = "success";
+  }
+  if (session.status === "success") {
+    // The interactive CLI stays open on its onboarding screens; nothing further
+    // is needed from it, and leaving it running would hold a pty forever.
+    cancelGeminiLogin();
+    return { ...session, status: "success" };
+  }
+  return session;
+}
+
+// ---------- API key ----------
+
+/**
+ * The container path. `agy` keeps OAuth tokens in the D-Bus Secret Service and
+ * the published image ships no D-Bus, so a subscription login cannot be
+ * completed there; an API key can. Setting one also writes
+ * `{"modelProvider":"gemini"}` into the CLI's settings, which is what makes it
+ * read GEMINI_API_KEY instead of looking for a token.
+ */
+const API_KEY_SETTING = "gemini_api_key";
+const SETTINGS_REL = path.join(".gemini", "antigravity-cli", "settings.json");
+
+function settingsPath(): string {
+  return path.join(os.homedir(), SETTINGS_REL);
+}
+
+/** Merge a key into the CLI's settings without discarding what's already there. */
+function writeProvider(useKey: boolean): void {
+  const file = settingsPath();
+  let current: Record<string, unknown> = {};
+  try {
+    current = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    // Missing or unparseable: start from empty rather than refusing to write.
+  }
+  if (useKey) current.modelProvider = "gemini";
+  else delete current.modelProvider;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(current, null, 2) + "\n");
+  } catch {
+    // Non-fatal: the env var below is the part that actually authenticates.
+  }
+}
+
+function hasApiKey(): boolean {
+  return !!(getSetting(API_KEY_SETTING) || process.env.GEMINI_API_KEY);
+}
+
+export const geminiApiKey: AgentApiKeyAuth = {
+  hint: GEMINI_API_KEY_HINT,
+  looksValid: (key: string) => key.trim().length >= 20 && !/\s/.test(key.trim()),
+  has: hasApiKey,
+  set(key: string) {
+    const k = key.trim();
+    setSetting(API_KEY_SETTING, k);
+    process.env.GEMINI_API_KEY = k;
+    writeProvider(true);
+  },
+  clear() {
+    setSetting(API_KEY_SETTING, "");
+    delete process.env.GEMINI_API_KEY;
+    writeProvider(false);
+  },
+};
+
+/** Apply a persisted key to the environment a turn will inherit. */
+export function applyStoredApiKey(env: Record<string, string>): Record<string, string> {
+  const stored = getSetting(API_KEY_SETTING);
+  if (stored) env.GEMINI_API_KEY = stored;
+  return env;
+}
+
+// ---------- helpers ----------
+
+interface AgyRun {
+  stdout: string;
+  stderr: string;
+  error: string | null;
+}
+
+/** Run `agy` and capture both streams. Never throws: a non-zero exit (or a
+ *  missing binary) is data the callers above classify, not an exception. */
+async function runAgy(args: string[], timeoutMs: number): Promise<AgyRun> {
+  try {
+    const { stdout, stderr } = await execFileAsync(AGY(), args, {
+      timeout: timeoutMs,
+      maxBuffer: 8 * 1024 * 1024,
+      env: AGY_ENV,
+    });
+    return { stdout, stderr, error: null };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", error: e.message ?? "failed to run agy" };
+  }
+}
+
+const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+const trimTail = (s: string, n = 4000): string => (s.length <= n ? s : s.slice(-n));
+
+/** Poll a predicate until it holds or the budget runs out. */
+async function waitFor(done: () => boolean, budgetMs: number): Promise<void> {
+  const step = 250;
+  for (let waited = 0; waited < budgetMs; waited += step) {
+    if (done()) return;
+    await new Promise((r) => setTimeout(r, step));
+  }
+}

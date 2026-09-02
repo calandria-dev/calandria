@@ -3,15 +3,16 @@
 import { useState, useSyncExternalStore } from "react";
 import { Popover } from "./shared";
 import { jget } from "./api";
+import { AgentMark } from "../icons";
 import { agentLabel } from "./agents";
 import type { AgentsBundle } from "./types";
 import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
 
-// The titlebar subscription-usage meter — "how much of my plan have my parallel
-// sessions burned" at a glance, which matters here more than in a single
-// terminal because this app's whole point is running many of them. Compact
-// pill: session % · week %, tinted by the worst window. Click for the full
-// per-window breakdown (all the windows the provider reports, including
+// The titlebar subscription-usage meter — "how much of my plan have my
+// parallel sessions burned" at a glance, which matters here more than in a
+// single terminal because this app's whole point is running many of them.
+// Compact pill: session % · week %, tinted by the worst window. Click for the
+// full per-window breakdown (all the windows the provider reports, including
 // per-model weeks) with reset times and data freshness.
 //
 // One pill per agent that reports usage, driven entirely by the keys in the
@@ -123,43 +124,45 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
 
 // Which window is "the session" and which is "the week", across providers.
 // The popover renders every window the agent reports and takes its labels from
-// the driver, but the PILL has room for two numbers and has to know which two:
-// Claude names its windows by duration (`five_hour` / `seven_day`), Codex's
-// app-server by rank (`primary` / `secondary`, the ~5h and weekly limits). A
-// provider whose keys match neither still gets a pill — the single worst-window
-// percentage below — rather than being dropped.
+// the driver, but the PILL has room for two numbers and has to know which two.
+// Claude and Antigravity tag every window with `kind` directly; Codex's
+// app-server names its windows by rank instead of duration (`primary` /
+// `secondary`, the ~5h and weekly limits) and reports no kind at all, so these
+// id lists are `AgentPlanPill`'s fallback. A provider whose keys match neither
+// still gets a pill — the single worst-window percentage below — rather than
+// being dropped.
 const SESSION_IDS = ["five_hour", "primary"];
 const WEEK_IDS = ["seven_day", "secondary"];
-const pick = (windows: PlanUsageWindow[], ids: string[]) => windows.find((w) => ids.includes(w.id));
 
-/**
- * One pill per agent reporting plan usage, in the order GET /api/plan-usage
- * lists them (driver registration order). An instance with both a Claude and a
- * ChatGPT login meters both; the common single-agent case is unchanged.
- */
-export function PlanUsagePill({ agents }: { agents?: AgentsBundle }) {
+// One pill per agent that reports plan usage, in the order GET /api/plan-usage
+// lists them (driver registration order). Usually that is one (nobody runs two
+// metered subscriptions in the same instance by accident), but an Antigravity
+// + Claude workspace — or a Claude + ChatGPT one — meters two independent
+// quotas, and hiding either would misreport how much room the next batch of
+// turns has. Each pill wears its agent's brand mark once there is more than
+// one to tell apart.
+export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
   const map = usePlanUsage();
-  const ids = Object.keys(map);
-  if (ids.length === 0) return null;
+  const metered = Object.entries(map).filter(([, s]) => s.available && s.windows.length > 0);
+  if (metered.length === 0) return null;
   return (
     <>
-      {ids.map((id) => (
-        // Two pills of bare percentages would be unreadable, so a second agent
-        // makes both of them name who they're about. A lone pill stays bare —
-        // on a one-login instance there is nothing to tell it apart from.
-        <AgentPill key={id} snap={map[id]} name={agents ? agentLabel(agents, id) : id} showName={ids.length > 1} />
+      {metered.map(([id, snap]) => (
+        <AgentPlanPill key={id} agentId={id} label={agentLabel(agents, id)} snap={snap} multi={metered.length > 1} />
       ))}
     </>
   );
 }
 
-function AgentPill({ snap, name, showName }: { snap: PlanUsageSnapshot; name: string; showName: boolean }) {
+function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label: string; snap: PlanUsageSnapshot; multi: boolean }) {
   const [open, setOpen] = useState(false);
 
-  if (!snap?.available || snap.windows.length === 0) return null;
-
-  const session = pick(snap.windows, SESSION_IDS);
-  const week = pick(snap.windows, WEEK_IDS);
+  // By kind where the driver says so: every metered plan has a session window
+  // and a week window, but each provider spells them its own way ("five_hour",
+  // "gemini-5h"), and Codex's app-server reports no kind at all. The id lists
+  // above are the fallback, covering both providers' spellings.
+  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => SESSION_IDS.includes(w.id));
+  const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => WEEK_IDS.includes(w.id));
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
   // so its time-to-reset earns pill space where the week's doesn't — the
@@ -169,15 +172,18 @@ function AgentPill({ snap, name, showName }: { snap: PlanUsageSnapshot; name: st
   const worst = Math.max(...snap.windows.map((w) => w.utilization));
   const t = tone(worst, rejected);
   const planName = snap.plan ? snap.plan[0].toUpperCase() + snap.plan.slice(1) : null;
+  const who = `${label}${planName ? ` ${planName}` : ""}`;
+  const mark = AgentMark[agentId];
 
   return (
     <div style={{ position: "relative" }}>
       <button
         className={`plan-pill${t ? ` ${t}` : ""}`}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title={`${name} ${planName ? `${planName} ` : ""}plan usage: click for the breakdown`}
+        title={`${who} plan usage: click for the breakdown`}
       >
-        {showName && <span className="pp-who">{name.split(" ")[0]}</span>}
+        {multi && mark && <span className="pp-mark" aria-hidden>{mark()}</span>}
+        {multi && <span className="pp-who">{label.split(" ")[0]}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%
@@ -191,7 +197,7 @@ function AgentPill({ snap, name, showName }: { snap: PlanUsageSnapshot; name: st
       {open && (
         <Popover onClose={() => setOpen(false)}>
           <div className="pu-menu">
-            <div className="pop-sec">{name} {planName ? `${planName} ` : ""}plan usage</div>
+            <div className="pop-sec">{who} plan usage</div>
             {rejected && (
               <div className="pu-note limit">
                 Usage limit reached. Turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.

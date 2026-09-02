@@ -833,6 +833,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
 .plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
 .plan-pill .pp-div{opacity:.5;}
+/* The agent's brand mark, shown only when two agents' meters share the bar. */
+.plan-pill .pp-mark{display:inline-flex;align-items:center;}
+.plan-pill .pp-mark svg{width:11px;height:11px;}
 /* only rendered when a second agent reports usage, so the two pills say who */
 .plan-pill .pp-who{opacity:.6;text-transform:uppercase;}
 .plan-pill .pp-left{opacity:.7;}
@@ -1279,6 +1282,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .agent-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--ink-2);}
 .agent-badge svg{width:14px;height:14px;}
 .agent-badge.claude{color:#D97757;}
+.agent-badge.gemini{color:#4285F4;}
 /* Nudge the mark onto the first line of a title that wraps (both cards clamp to
    two lines, so their rows are top-aligned like the status dot beside them). */
 .task-top .agent-badge,.bc-top .agent-badge{margin-top:2px;}
@@ -1325,6 +1329,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .msg .who .av.cc{color:var(--ink-2);}
 .msg .who .av.cc.claude{color:#D97757;}
 .msg .who .av.cc.codex{color:var(--ink);}
+.msg .who .av.cc.gemini{color:#4285F4;}
 .msg .who .av svg{width:11px;height:11px;}
 .msg .who .av.cc svg{width:16px;height:16px;}
 .msg-body{font-size:14px;line-height:1.6;color:var(--ink);}
@@ -2536,6 +2541,14 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-base-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .gs-base-note{font-size:11.5px;color:var(--ink-3);display:flex;flex-direction:column;gap:2px;margin-top:-2px;}
 .gs-base-badge{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:1px 6px;border-radius:999px;}
+/* Drift of the tag's base branch from the project default, above both strip
+   modes. Warn is the ordinary state of a branch that has fallen behind, not an
+   error — the whole point is that it is surfaced early and fixed in one click. */
+.gs-drift{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);}
+.gs-drift.warn .gs-drift-msg{color:var(--amber);}
+.gs-drift.bad .gs-drift-msg{color:var(--red);}
+.gs-drift-note{color:var(--ink-3);}
+.gs-drift-err{color:var(--red);}
 .gs-colors{display:flex;align-items:center;gap:6px;}
 .gs-colors .spacer{flex:1;}
 .gs-sw{width:18px;height:18px;border-radius:50%;border:1px solid var(--line-strong);cursor:pointer;padding:0;}

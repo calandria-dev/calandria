@@ -4,11 +4,11 @@ title: "Supported agents"
 
 # Supported agents
 
-Calandria supports Claude Code and OpenAI Codex as first-class task agents. Connect either
-one or both, choose a default, and override the agent for an individual task. With only one
-agent connected, the New-task and Edit-task dialogs skip the agent picker, since there is
-nothing to choose. It reappears once a second agent is connected, or when a task already
-points at an agent that isn't.
+Calandria supports Claude Code, OpenAI Codex and Google's Antigravity as first-class task
+agents. Connect one, two or all three, choose a default, and override the agent for an
+individual task. With only one agent connected, the New-task and Edit-task dialogs skip the
+agent picker, since there is nothing to choose. It reappears once a second agent is connected,
+or when a task already points at an agent that isn't.
 
 ## Support matrix
 
@@ -16,10 +16,12 @@ points at an agent that isn't.
 |-|-|-|-|
 | Claude Code | Max/Pro login or optional API key | Full | Reference driver; supports interactive questions and reported cost data |
 | OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Calandria's bridge; estimated cost data |
+| Antigravity | Google login, or an API key (the only path in a container) | Full | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
 
-Connecting either agent completes first-run setup and makes it the initial default. Claude
-is not required when only Codex is connected, or vice versa. Project recaps, context drafts,
-and other utility jobs prefer a connected agent automatically.
+Connecting ANY one of them completes first-run setup and makes it the initial default. No
+particular agent is required: an instance with only Codex connected, or only Antigravity, is
+a supported configuration. Project recaps, context drafts, and other utility jobs prefer a
+connected agent automatically.
 
 ## Choosing a model
 
@@ -146,11 +148,13 @@ tools go through the permission modes above like everything else.
 
 Skills follow the same inheritance: a Claude session sees `~/.claude/skills` and the
 repository's `.claude/skills`; a Codex session sees `~/.agents/skills` and the repository's
-`.agents/skills`. Neither reads the other's directory, and neither reads the other's
-instruction file: Claude Code reads `CLAUDE.md`, Codex reads `AGENTS.md`. A project you
-might open with either agent needs both files present, even if one is a stub pointing at
-the other. Calandria ships a skill for preparing a repo to be worked on in many worktrees
-at once; `skills/README.md` covers installing it for both agents.
+`.agents/skills`. Antigravity reads the repository's `.agents/` customization roots too —
+skills, rules and hooks, with MCP config the one thing it does not take from there. No agent
+reads another's directory, and none reads another's instruction file: Claude Code reads
+`CLAUDE.md`, Codex and Antigravity read `AGENTS.md`. A project you might open with more than
+one of them needs both files present, even if one is a stub pointing at the other. Calandria
+ships a skill for preparing a repo to be worked on in many worktrees at once;
+`skills/README.md` covers installing it for both directories.
 
 Calandria's own background jobs don't inherit any of this. A `/clear` handoff note, a
 project recap, a "Refresh with AI" context draft and a "Refresh tag" plan check are internal
@@ -200,15 +204,83 @@ Three upstream differences are visible:
   **Settings → Agents** states which side of this it's on, so you can check before picking
   an agent for a task.
 
+## Antigravity (Gemini)
+
+Antigravity is Google's coding agent and Gemini is what it runs. There is no JavaScript SDK for
+it, so Calandria drives the `agy` CLI directly — spawning the binary and normalizing its NDJSON
+stream (`lib/agents/gemini/`). Tasks get parallel worktrees, diff review and merge, `/clear`
+lineage, project context, interactive questions through Calandria's MCP bridge, and usage
+tracking, the same as the other two.
+
+Sign in with your Google account from **Settings → Agents**. Two things about that login differ
+from Claude's and Codex's, and the card handles both:
+
+- **The authorize link is short-lived.** The CLI waits 60 seconds for the callback and that
+  window is not configurable, so **Start again** stays on the card throughout. It is not a retry:
+  the code is bound to the process that printed the link, so a new attempt means a new link.
+- **The code box is one of two ways this finishes.** Google's callback page completes the sign-in
+  for the CLI waiting on it, so a user who never copies anything is nonetheless signed in. The
+  card polls for that as well, and closes itself when the CLI reports it is connected.
+
+**In a container, use an API key.** `agy` keeps its OAuth token in the OS keyring over the D-Bus
+Secret Service and has no file fallback, and the published image runs no keyring daemon — so the
+subscription sign-in cannot complete there at all. Set `GEMINI_API_KEY`, or paste a key on the
+agent's card, and the driver points the CLI at it. That path bills Google's API rather than
+drawing on your Antigravity subscription. A desktop install with a running keyring uses the
+subscription login as normal.
+
+Four upstream differences are visible:
+
+- **Three permission modes, and not the CLI's own default one.** Calandria offers **skip
+  permissions** (auto-approve every tool, the default on this agent), **accept-edits** and
+  **plan**. The CLI's default mode asks a human about each tool call, and a headless run has
+  nobody to ask, so
+  every tool is auto-denied and the turn ends having done nothing — measured. That mode is
+  therefore not offered rather than offered-and-broken, the same judgement Calandria makes about
+  Codex's unreachable approval policies.
+- **A denied tool is nearly silent.** The auto-denial changes neither the exit code (0) nor
+  reliably the status: the same denial has been seen ending a run both `CANCELED` and `SUCCESS`.
+  So the driver reads the denial line off stderr, and never reads `CANCELED` alone as "the user
+  stopped it" unless Calandria's own Stop fired.
+- **No cost is reported at all.** The usage report carries token counts and no dollar figure, so
+  Calandria prices those tokens at Google's published API rates and marks the result `~`, the
+  same convention as Codex's estimate. The context gauge is a heuristic for a related reason: the
+  CLI emits no per-request context figure, and its usage totals accumulate over the whole
+  conversation, which is spend rather than occupancy.
+- **Reasoning effort is part of the model id.** The catalog sells effort in the slug
+  (`gemini-3.8-flash-high`), so there is no separate effort picker — choosing the model is
+  choosing the effort. That catalog also serves Claude and open-weights models through the same
+  Antigravity subscription.
+
+Plan usage works here the way it does for Claude: the CLI's own `/usage` reports the weekly and
+5-hour quota remaining, and reports it without spending any, so the titlebar meter works on this
+agent too. It lists two PAIRS of windows, because an Antigravity subscription meters the Gemini
+models and the Claude/GPT models it also serves against separate limits; the pill itself shows
+the Gemini pair.
+
+An Antigravity task gets Calandria's own tools and **not** the MCP servers in your
+`~/.gemini/config/mcp_config.json`. The CLI reads MCP config from that one user-global file, so
+each task is handed its own copy containing only Calandria's bridge — which is what lets tasks
+run in parallel without stealing each other's tool identity. Each agent's card in
+**Settings → Agents** states this.
+
+Calandria always runs the CLI with `AGY_CLI_DISABLE_AUTO_UPDATE=true`, so a self-update can never
+swap the binary out mid-turn or mid-login. `AGY_CLI_PATH` pins a specific binary when PATH is
+trimmed; the published image installs a version the `Dockerfile` records and reviews the checksum
+of.
+
 ## Local models
 
 A project, or a single task, can run its turns against a local model server instead of the
-agent's cloud login. There is no separate driver: both CLIs already accept a different
-endpoint, and Calandria sets it per turn. Claude Code reads `ANTHROPIC_BASE_URL` and
-`ANTHROPIC_AUTH_TOKEN` from its environment. Codex reads its provider from
-`~/.codex/config.toml`, so Calandria passes a provider entry of its own as a config override
-(`model_provider = "calandria-local"`, on the Responses wire API) and leaves your
-`config.toml` alone. Everything else, worktrees, diff review, merge, tools, asks, works as
+agent's cloud login. There is no separate driver: the Claude and Codex CLIs both accept a
+different endpoint, and Calandria sets it per turn. **Antigravity does not take part** — its
+CLI exposes no endpoint override, so a local-model project runs an Antigravity task against
+Google as usual; point such a task at Claude or Codex instead.
+
+Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from its environment. Codex
+reads its provider from `~/.codex/config.toml`, so Calandria passes a provider entry of its
+own as a config override (`model_provider = "calandria-local"`, on the Responses wire API)
+and leaves your `config.toml` alone. Everything else, worktrees, diff review, merge, tools, asks, works as
 it does in the cloud.
 
 **Setup.** Open the project's settings and set **Model provider** to *Local model*. The base
@@ -319,8 +391,9 @@ See [Architecture: the agent-driver seam](ARCHITECTURE.md#the-agent-driver-seam-
 for the implementation guide. Proposals for another agent are welcome in
 [GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/ideas).
 
-A Google driver is in progress. The spike that chose its backend, the Antigravity CLI
-(`agy`) rather than Gemini CLI, is recorded in
+The third driver is the worked example for a CLI with no SDK. The spike that chose its
+backend, the Antigravity CLI (`agy`) rather than Gemini CLI, is recorded in
 [design/gemini-driver.md](design/gemini-driver.md): why (Gemini CLI stopped serving Google
 AI Pro, Ultra and free accounts on 2026-06-18), the measured headless surface of both CLIs,
-the event mapping, the login flow and the open questions the driver has to settle.
+the event mapping, the login flow, and which of its assumptions the driver then had to
+correct against a real capture.

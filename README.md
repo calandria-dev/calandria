@@ -2,7 +2,7 @@
 
 ![Calandria](docs/design/og.png)
 
-### Run Claude Code and Codex in parallel across every project, from any browser.
+### Run Claude Code, Codex and Antigravity in parallel across every project, from any browser.
 
 Calandria is a self-hosted web control room for your coding agents. Run it
 on your laptop or a server and use the same workspace from your computer,
@@ -45,7 +45,10 @@ covers it. No API key needed.
 - **Point a task at any branch.** A task can use its own base branch instead
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
-  rest keep shipping to `main`.
+  rest keep shipping to `main`. A tag can set that branch for a whole plan —
+  and says when it has fallen behind the project default ("3 behind main"),
+  with a Sync that merges the default into it. Left alone, an integration
+  branch drifts and every task cut from it is minted stale.
 - **Say how work lands.** A project lands by merge or by pull request, and
   every session in it is told which. On a repo whose base branch requires a
   PR, agents stop reaching for a Merge that GitHub will reject — and so does
@@ -218,9 +221,11 @@ already queued. The transcript records that it was sent.
 
 ## Supported agents
 
-Calandria supports **Claude Code** and **OpenAI Codex** end to end. Choose an
-agent per task, or connect only the one you use. Both work with subscription
-login; API keys stay optional.
+Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity**
+(the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
+one you use. All three work with subscription login; API keys stay optional —
+except in a container, where Antigravity needs one, since its CLI stores its
+token in the OS keyring.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 

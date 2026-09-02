@@ -207,7 +207,7 @@ jobs:
       #
       #   Windows/macOS — prebuilds/<platform>-<arch>/ ships in the package and
       #     scripts/prebuild.js exits 0 on merely finding it, so node-gyp is
-      #     never reached and a build/ tree means something changed upstream.
+      #     never reached and a config.gypi means something changed upstream.
       #   Linux — no prebuild is bundled for any linux triple, so the install
       #     ALWAYS falls through to `node-gyp rebuild` against the running
       #     Node's headers. Nothing to assert about a prebuild; the compile
@@ -216,48 +216,119 @@ jobs:
       # The linux branch is written so that upstream starting to ship a linux
       # prebuild passes and says so, rather than failing a check that was
       # phrased as "it must have compiled".
+      #
+      # `build/` EXISTING IS NOT THE SIGNAL, which is what the first run of this
+      # lane got wrong (run 33428739132, 2026-08-31, Windows, v26.8.1: "node-pty
+      # compiled from source ... despite bundling a win32-x64 prebuild"). Nothing
+      # had compiled and no Node release was involved — the same false red was
+      # waiting on every Windows run since this lane was written. node-pty's
+      # `postinstall` (scripts/post-install.js) runs on EVERY install, whichever
+      # branch the `install` script took, and on Windows it mkdirs
+      # build/Release/conpty/ and copies conpty.dll and OpenConsole.exe there out
+      # of third_party/. That run's log is unambiguous: `> Checking prebuilds...`
+      # exited 0, no node-gyp was invoked at all, `> Moving conpty.dll...` created
+      # the directory, and the assertion then called it a compile. So the marker
+      # is node-gyp's own `build/config.gypi` — written at CONFIGURE time, before
+      # anything is compiled, so a half-finished build counts too. That is the
+      # same marker the whole-tree sweep at the end of this file keys on, for the
+      # same reason; the two now agree instead of one being a directory check.
       - name: Assert node-pty resolved a binary the right way for this platform
         shell: bash
         run: |
           pkg=node_modules/node-pty
           triple=$(node -p "process.platform + '-' + process.arch")
+          if [ -f "$pkg/build/config.gypi" ]; then compiled=yes; else compiled=no; fi
           if [ -d "$pkg/prebuilds/$triple" ]; then
-            if [ -d "$pkg/build" ]; then
-              echo "::error::node-pty compiled from source on $(node -v) despite bundling a $triple prebuild. Something made npm_config_build_from_source true, or prebuild.js rejected the bundled directory. Read the npm ci step's output."
+            if [ "$compiled" = yes ]; then
+              echo "::error::node-pty compiled from source on $(node -v) despite bundling a $triple prebuild: build/config.gypi exists, and only node-gyp writes that. Something made npm_config_build_from_source true, or prebuild.js rejected the bundled directory. Read the npm ci step's output."
               exit 1
             fi
+            # Deliberately NOT an assertion that build/ is absent: on Windows the
+            # postinstall creates build/Release/conpty/ on the prebuild path too.
+            expect_dir="prebuilds/$triple"
             echo "- node-pty: bundled \`$triple\` prebuild, nothing compiled" >> "$GITHUB_STEP_SUMMARY"
           else
-            if [ ! -f "$pkg/build/Release/pty.node" ]; then
+            if [ "$compiled" = no ] || [ ! -f "$pkg/build/Release/pty.node" ]; then
               echo "::error::node-pty neither bundles a $triple prebuild nor produced build/Release/pty.node — the node-gyp rebuild did not run or did not succeed on $(node -v). This is the failure mode this lane exists for: read the npm ci step's output for the compiler error."
               exit 1
             fi
+            expect_dir="build/Release"
             echo "- node-pty: no bundled \`$triple\` prebuild, **compiled from source** with node-gyp on $(node -v)" >> "$GITHUB_STEP_SUMMARY"
           fi
           # A loadable binary is not the same as a working one: node-pty's
           # loader falls back across build/Release, build/Debug and prebuilds/,
           # and on macOS the spawn-helper's exec bit (scripts/fix-pty.js) only
           # bites at spawn time. So open a real pty and read from it.
+          #
+          # And ask the loader which directory it actually took, rather than
+          # inferring it from what is on disk. That is the whole contract of the
+          # step above stated as a measurement: the fallback order is
+          # build/Release, build/Debug, prebuilds/<triple>, so on Windows a
+          # compiled pty.node SHADOWS the bundled one and every check that only
+          # looks at prebuilds/ would still pass. lib/utils is internal to
+          # node-pty, so its absence is reported and skipped rather than failing
+          # the run — this lane is unattended and the disk check above is the
+          # assertion; this is the corroboration.
+          export PTY_EXPECT_DIR="$expect_dir"
           cat > pty-smoke.cjs <<'EOF'
           const pty = require("node-pty");
-          const isWin = process.platform === "win32";
-          const file = isWin ? "cmd.exe" : "/bin/sh";
-          const args = isWin ? ["/c", "echo calandria-pty-ok"] : ["-c", "echo calandria-pty-ok"];
-          const term = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
-          let out = "";
-          term.onData((d) => { out += d; });
-          const timer = setTimeout(() => {
-            console.error("timed out waiting for pty output; got " + JSON.stringify(out));
-            process.exit(1);
-          }, 30000);
-          term.onExit(() => {
-            clearTimeout(timer);
-            if (!out.includes("calandria-pty-ok")) {
-              console.error("pty exited without producing the sentinel; got " + JSON.stringify(out));
-              process.exit(1);
+
+          // EVERY exit here is explicit, including the successful one, because
+          // on Windows this script does not end on its own: once a pty has been
+          // opened the conpty agent keeps handles on the event loop, so the
+          // process sits there after onExit has fired and said everything went
+          // well. The watchdog below does not save it either — onExit clears the
+          // timer first. That cost run 33646504832 the Windows leg's whole
+          // 25-minute budget, printing both successes and then hanging; it had
+          // never surfaced because until this commit the step always failed
+          // before reaching the spawn on Windows.
+          //
+          // Write-then-exit rather than console.log followed by process.exit:
+          // stdout here is a pipe, writes to a pipe are asynchronous, and
+          // process.exit discards ones that have not flushed. The message IS the
+          // diagnosis on the failing paths, so it must not be the thing dropped.
+          function finish(code, msg) {
+            (code === 0 ? process.stdout : process.stderr).write(msg + "\n", () => process.exit(code));
+          }
+
+          // null means node-pty moved its internals and there is nothing to
+          // corroborate, which is reported and skipped rather than failed.
+          function loadedDir() {
+            let utils;
+            try { utils = require("node-pty/lib/utils"); } catch { return null; }
+            if (typeof utils.loadNativeModule !== "function") return null;
+            return utils.loadNativeModule("pty").dir.replace(/\\/g, "/");
+          }
+
+          function main() {
+            const expected = process.env.PTY_EXPECT_DIR;
+            const dir = loadedDir();
+            if (dir === null) {
+              console.log("note: node-pty/lib/utils.loadNativeModule is gone upstream; skipped the loaded-directory check");
+            } else if (!dir.includes(expected)) {
+              return finish(1, "node-pty loaded pty.node from " + dir + ", but this platform's contract is " + expected + ". The loader prefers build/Release over prebuilds/, so a stray compiled binary shadows the bundled one.");
+            } else {
+              console.log("node-pty loaded pty.node from " + dir + " (expected " + expected + ")");
             }
-            console.log("node-pty opened a real pty and read its output");
-          });
+
+            const isWin = process.platform === "win32";
+            const file = isWin ? "cmd.exe" : "/bin/sh";
+            const args = isWin ? ["/c", "echo calandria-pty-ok"] : ["-c", "echo calandria-pty-ok"];
+            const term = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
+            let out = "";
+            term.onData((d) => { out += d; });
+            const timer = setTimeout(() => finish(1, "timed out waiting for pty output; got " + JSON.stringify(out)), 30000);
+            term.onExit(() => {
+              clearTimeout(timer);
+              if (!out.includes("calandria-pty-ok")) {
+                finish(1, "pty exited without producing the sentinel; got " + JSON.stringify(out));
+              } else {
+                finish(0, "node-pty opened a real pty and read its output");
+              }
+            });
+          }
+
+          main();
           EOF
           node pty-smoke.cjs
           rm -f pty-smoke.cjs
@@ -270,6 +341,12 @@ jobs:
       # Anything else means a package compiled an addon during `npm ci`, which
       # is a toolchain requirement this repo does not document and that a user
       # on Windows or a slim image does not have.
+      #
+      # The node-pty exemption is per-platform rather than blanket, because
+      # "node-pty compiles" is only true where it bundles no prebuild. An
+      # unconditional allowance would quietly agree with a Windows or macOS
+      # compile that the step above exists to flag — the two steps have to
+      # encode one contract, not two.
       - name: Assert nothing else in the tree compiled a native addon
         shell: bash
         run: |
@@ -279,8 +356,12 @@ jobs:
           # lockfile bug (see the header) leaves a build/ with a config.gypi and
           # no linked binary, and `npm ci` still exits 0 because the bundled
           # prebuild loads anyway. Keying on the output would call that clean.
+          triple=$(node -p "process.platform + '-' + process.arch")
           compiled=$(find node_modules -type f -name config.gypi -path '*/build/*' -print | sed 's#^node_modules/##; s#/build/config.gypi$##' | sort -u || true)
-          unexpected=$(printf '%s\n' "$compiled" | grep -v '^node-pty$' | grep -v '^$' || true)
+          unexpected=$(printf '%s\n' "$compiled" | grep -v '^$' || true)
+          if [ ! -d "node_modules/node-pty/prebuilds/$triple" ]; then
+            unexpected=$(printf '%s\n' "$unexpected" | grep -v '^node-pty$' || true)
+          fi
           if [ -n "$unexpected" ]; then
             echo "::error::Packages compiled a native addon from source during npm ci on $(node -v): $(printf '%s ' $unexpected). Either it ships no prebuild for this platform, or it fell back from a per-ABI one this Node has no binary for — the failure mode this lane watches for. Decide whether it needs a prebuild, a platform note, or a place on this allowlist."
             exit 1

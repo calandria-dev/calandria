@@ -9,9 +9,9 @@ contains the longer feature inventory kept out of the project README.
 
 ## Parallel work without collisions
 
-Each task runs in its own git worktree and branch, with an independent Claude Code or Codex
-session. Projects and tasks share one workspace, so you can run many sessions without mixing
-their files, terminals, or transcripts.
+Each task runs in its own git worktree and branch, with an independent Claude Code, Codex or
+Antigravity session. Projects and tasks share one workspace, so you can run many sessions
+without mixing their files, terminals, or transcripts.
 
 The cross-project **Needs you** signal identifies sessions waiting for input. Turns run on
 the server and their events are persisted, so reloading the page or sleeping your laptop
@@ -182,6 +182,27 @@ base branch, the **first tag on the task** (in the order its badges render) wins
 strip names it. Resolution order: the task's own base, then the first of its tags that sets
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
+
+**And the strip says when that branch has fallen behind** — "3 behind main", with a **Sync**
+beside it. A long-lived integration branch drifts as work lands on the default, and every new
+task the tag cuts is then minted stale: the session builds on superseded commits and its pull
+request proposes reverting whatever landed in between. The reading is taken against the
+commit a new task would actually be cut from (the fetched remote tip when your local default
+is merely behind it), so a stale checkout of your own can't hide it.
+
+Sync **merges the default into the tag's branch**. It never resets it: proving a branch has
+been fully superseded is unreliable under squash merges — `git cherry` called 30 and 10
+commits "not upstream" on two branches `main` had in fact entirely absorbed — and a reset also
+force-moves a ref a live session may have checked out. A merge needs no such proof and can't
+drop a commit. If a worktree is holding the branch, the merge happens inside it so its files
+move too, and is refused outright when that worktree has uncommitted work, naming it. A
+conflict is reported and changes nothing. A tag pinned to a branch that has since been
+**deleted** says so here too, rather than silently cutting new tasks from whatever `HEAD` is.
+
+The strip is the half of this you can act on; the other half reaches the session. A task whose
+worktree was cut from a base branch already behind the default is told so in its opening
+context, before it writes a pull request — same measurement, said in the two places it
+matters.
 
 ### How work lands: merge or pull request
 
@@ -791,10 +812,11 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
-preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
-connected agent automatically, so a Claude-only or Codex-only installation works without
-special configuration, and they can be pinned to their own models — a small one for the
-short summarizing jobs, a stronger one for the draft that reads your repository.
+Claude Code, OpenAI Codex and Google's Antigravity are first-class agent drivers. Calandria
+detects expired connections, preserves queued follow-ups, and provides a reconnect action.
+Background jobs choose a connected agent automatically, so an installation with only one of
+the three connected works without special configuration, and each can be pinned to its own
+models — a small one for the short summarizing jobs, a stronger one for the draft that reads
+your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.
