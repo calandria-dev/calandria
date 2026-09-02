@@ -24,7 +24,8 @@
  *               exclusion (skip *.db*, the lock pair, the backup dir itself)
  *               so a file added beside the database later is captured without
  *               anyone remembering to list it here.
- *   agent-login/ the CLI login state the agents run on (~/.claude*, ~/.codex).
+ *   agent-login/ the CLI login state the agents run on (~/.claude*, ~/.codex,
+ *                ~/.gemini).
  *               Small, and its absence is the difference between "restored" and
  *               "restored, now re-authenticate every agent".
  *   worktrees/  --worktrees, off by default
@@ -64,7 +65,7 @@ Options:
                   else <CALANDRIA_DB_DIR>/backups.
   --worktrees     Also archive per-task git worktrees (large; reconstructible).
   --projects      Also archive cloned project repos (large; reconstructible).
-  --no-logins     Skip the agent CLI login state (~/.claude*, ~/.codex).
+  --no-logins     Skip the agent CLI login state (~/.claude*, ~/.codex, ~/.gemini).
   --no-archive    Leave the staging directory instead of tarring it up.
   --quiet         Only print the resulting path.
   -h, --help      This.
@@ -223,6 +224,11 @@ function copyAgentLogin(home, destDir) {
     path.join(".claude", "settings.json"),
     path.join(".codex", "auth.json"),
     path.join(".codex", "config.toml"),
+    // Antigravity's CLI settings (which model provider it uses). Its OAuth
+    // TOKEN is deliberately absent: `agy` keeps that in the OS keyring, not in
+    // any file, so a restored instance signs in again — or runs on the API key,
+    // which Calandria stores in its own database and the db backup carries.
+    path.join(".gemini", "antigravity-cli", "settings.json"),
   ];
   const included = [];
   const missing = [];

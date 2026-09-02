@@ -832,6 +832,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
 .plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
 .plan-pill .pp-div{opacity:.5;}
+/* The agent's brand mark, shown only when two agents' meters share the bar. */
+.plan-pill .pp-mark{display:inline-flex;align-items:center;}
+.plan-pill .pp-mark svg{width:11px;height:11px;}
 .plan-pill .pp-left{opacity:.7;}
 .plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
 .plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
@@ -1260,6 +1263,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .agent-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--ink-2);}
 .agent-badge svg{width:14px;height:14px;}
 .agent-badge.claude{color:#D97757;}
+.agent-badge.gemini{color:#4285F4;}
 /* Nudge the mark onto the first line of a title that wraps (both cards clamp to
    two lines, so their rows are top-aligned like the status dot beside them). */
 .task-top .agent-badge,.bc-top .agent-badge{margin-top:2px;}
@@ -1306,6 +1310,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .msg .who .av.cc{color:var(--ink-2);}
 .msg .who .av.cc.claude{color:#D97757;}
 .msg .who .av.cc.codex{color:var(--ink);}
+.msg .who .av.cc.gemini{color:#4285F4;}
 .msg .who .av svg{width:11px;height:11px;}
 .msg .who .av.cc svg{width:16px;height:16px;}
 .msg-body{font-size:14px;line-height:1.6;color:var(--ink);}

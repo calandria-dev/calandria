@@ -37,7 +37,10 @@ export function usageResetAt(snap: PlanUsageSnapshot | null | undefined, now: nu
   if (snap.status === "rejected" && ahead(snap.statusResetsAt)) return snap.statusResetsAt;
   const spent = snap.windows.filter((w) => w.utilization >= 100 && ahead(w.resetsAt)).map((w) => w.resetsAt as number);
   if (spent.length) return Math.min(...spent);
-  const session = snap.windows.find((w) => w.id === "five_hour");
+  // By kind, not by id: "the 5-hour one" is spelled differently per provider
+  // (Claude "five_hour", Antigravity "gemini-5h"). The id stays as the fallback
+  // for a snapshot written before drivers declared a kind.
+  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => w.id === "five_hour");
   return session && ahead(session.resetsAt) ? session.resetsAt : null;
 }
 

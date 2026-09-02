@@ -170,14 +170,18 @@ login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the tas
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
 
-## Antigravity / Gemini driver (`gemini/`), experimental
+## Antigravity / Gemini driver (`gemini/`)
 
-Behind `CALANDRIA_EXPERIMENTAL_GEMINI=1` in both `registry.ts` and `capabilities.ts`, the same
-gate shape the mock driver uses. Google's `agy` CLI has no SDK, so this driver owns the process:
-`spawn`, NDJSON off stdout, `gemini/events.ts` to normalize. Everything in it is pinned to a
-recorded capture (`tests/fixtures/gemini/`), because the CLI's own documentation describes a
-different wire format than it emits — the corrections are catalogued in
-`docs/design/gemini-driver.md` under "Settled by the driver".
+Registered unconditionally in both `registry.ts` and `capabilities.ts`, like the other two — the
+`CALANDRIA_EXPERIMENTAL_GEMINI` gate is gone. An instance with no `agy` on PATH sees what it sees
+for a missing `codex`: an agent it can pick and cannot connect, which is a state the connect card
+explains, where an agent hidden behind an env var is not. Google's `agy` CLI has no SDK, so this
+driver owns the process: `spawn`, NDJSON off stdout, `gemini/events.ts` to normalize. Every CLI
+invocation in this directory carries `AGY_CLI_DISABLE_AUTO_UPDATE=true`, so a self-update can't
+swap the binary out mid-turn — or, worse, mid-login, where the code the user is holding is bound
+to the running child. Everything in it is pinned to a recorded capture (`tests/fixtures/gemini/`),
+because the CLI's own documentation describes a different wire format than it emits — the
+corrections are catalogued in `docs/design/gemini-driver.md` under "Settled by the driver".
 
 **Each task runs under its own `HOME`.** `agy` reads MCP servers from exactly one user-global
 file, `~/.gemini/config/mcp_config.json`, and the bridge takes its identity from that entry's env
@@ -209,6 +213,33 @@ is bound to that child's PKCE verifier, so respawning for a fresh window invalid
 user is holding. The interactive CLI has no timeout, so `gemini/auth.ts` runs it under node-pty
 (lazily imported — it is needed by this one flow, not by every turn). `agy models` is the status
 probe: no `--output-format` flag exists, and it exits 0 either way, so its text is the only signal.
+
+**And the login has two ends the connect card had to grow for**, both declared as capability
+data rather than branched on by agent id, since the card serves every agent
+(`app/shell/AgentConnect.tsx`):
+
+- `loginCompletesOutOfBand: true` — the OAuth redirect lands on Google's own callback page, not a
+  localhost port, and that page completes the exchange for the CLI waiting on it. So a user who
+  never copies the code is nonetheless signed in, and nothing is written to the pty to say so. The
+  card polls `authStatus()` alongside the login session while the code box shows, and kills the
+  login's pty once it lands. It is opt-in per driver because each poll is a real CLI spawn.
+- `connectHint` — the container caveat, stated where the button is rather than only in the docs:
+  `agy` keeps its token in the OS keyring over D-Bus with no file fallback, and the image ships no
+  keyring daemon, so in a container the API-key tab is the only path.
+
+A refused or expired code is also watched for in the CLI's output (`AUTH_FAILED`), because the CLI
+prints it and RETURNS TO ITS PROMPT rather than exiting — without that the card would sit on a
+dead paste box until the 30-minute reaper.
+
+**Plan quota is readable and free.** `agy -p "/usage" --output-format json` returns a structured
+`command.data.groups[]` payload — a weekly and a 5-hour bucket per model group, as
+`remaining_fraction` — and spends nothing doing it (measured: `num_turns: 0`, zero tokens). So
+`gemini/planUsage.ts` implements the optional `planUsage()` hook and the titlebar meter works here
+as it does for Claude, with two differences it converts away: the CLI reports what is LEFT where
+the snapshot wants percent SPENT, and there is no passive half at all (nothing in the turn stream
+carries rate-limit telemetry), so `status` stays null and the data is only as fresh as the last
+poll. Each poll is a process spawn, hence the same `PLAN_USAGE_MIN_FETCH_MS` floor and
+single-flight the Claude reader uses, for CPU rather than for a provider's rate limit.
 
 ## Agent MCP inheritance is asymmetric
 
@@ -361,8 +392,15 @@ refresh jobs, and UI data flow are all seam-generic. Pin it with the driver-cont
 real runner.
 
 `gemini/` is the worked example for a CLI with **no SDK**: mock `node:child_process.spawn` instead
-(`tests/geminiDriver.test.ts`) and replay recorded NDJSON. Ship an agent behind an env gate while
-it is unproven, as that one is.
+(`tests/geminiDriver.test.ts`) and replay recorded NDJSON. Ship it behind an env gate while it is
+unproven — that one was, in `registry.ts` and `capabilities.ts` together — and take the gate off
+in the change that makes it first class, rather than leaving a flag nobody sets.
+
+What that promotion cost outside the driver is the measure of the seam: a brand mark in
+`app/icons.tsx`, a pinned chart hue, two capability fields for the connect card, and one
+generalization each in `lib/usageReset.ts` and `app/shell/PlanUsage.tsx` (both had picked the
+5-hour window by Claude's own id for it, so `PlanUsageWindow.kind` now names the two windows every
+metered plan has). Nothing in the runner, the routes or the task model.
 
 The lesson from building it, worth repeating for the next one: **capture the CLI's real output
 before writing the mapping.** Every one of that driver's event-shape assumptions taken from vendor

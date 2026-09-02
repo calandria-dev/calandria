@@ -142,6 +142,8 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   supportsResume: true,
   apiKeyHint: "sk-ant-…",
   loginStyle: "paste_code",
+  loginCompletesOutOfBand: false,
+  connectHint: null,
 };
 
 // ---------- Vertex ----------

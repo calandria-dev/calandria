@@ -23,6 +23,7 @@ import { promisify } from "node:util";
 import type { AgentAuthStatus, AgentLoginSession, AgentVerifyResult, AgentApiKeyAuth } from "../types";
 import { AGY_CLI_PATH } from "../../config";
 import { getSetting, setSetting } from "../../store";
+import { GEMINI_API_KEY_HINT } from "./capabilities";
 
 const execFileAsync = promisify(execFile);
 
@@ -142,6 +143,16 @@ const LOGIN_REAP_MS = 30 * 60 * 1000;
 
 const AUTH_URL = /https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?[^\s"']+/;
 
+/** What the CLI prints when a code was refused or its window closed. */
+const AUTH_FAILED = /authentication (?:failed|timed out)/i;
+
+/** Exported so a test can pin the wording: this message is the only signal that
+ *  a still-running login child will never finish, and the connect card's
+ *  "Start again" recovery hangs off it. */
+export function isAuthFailure(cliOutput: string): boolean {
+  return AUTH_FAILED.test(cliOutput);
+}
+
 /** Strip ANSI so the URL and the CLI's own words survive the TUI's redraws. */
 export function stripAnsi(s: string): string {
   return s
@@ -247,6 +258,17 @@ export async function startGeminiLogin(): Promise<AgentLoginSession> {
     }
     if (/successfully authenticated|welcome to antigravity/i.test(clean) && session.status !== "error") {
       session.status = "success";
+    }
+    // The CLI reports a refused or expired code by printing this and RETURNING
+    // TO ITS PROMPT — it doesn't exit — so without watching for it the card
+    // would sit on a dead paste box until the 30-minute reaper. The failure is
+    // routine rather than exceptional: the authorize URL is only good for the
+    // provider's own 60-second window, which is not configurable, and the code
+    // is bound to this child's PKCE verifier, so the only recovery is the
+    // fresh child "Start again" spawns.
+    if (session.status !== "success" && isAuthFailure(clean)) {
+      session.status = "error";
+      session.error = session.error || "The sign-in failed or timed out. Start again for a fresh link.";
     }
   });
 
@@ -358,7 +380,7 @@ function hasApiKey(): boolean {
 }
 
 export const geminiApiKey: AgentApiKeyAuth = {
-  hint: "AIza…",
+  hint: GEMINI_API_KEY_HINT,
   looksValid: (key: string) => key.trim().length >= 20 && !/\s/.test(key.trim()),
   has: hasApiKey,
   set(key: string) {

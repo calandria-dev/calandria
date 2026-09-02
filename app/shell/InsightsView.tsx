@@ -107,7 +107,7 @@ function relDay(key: string): string {
 // than "which agent produced this bar". --calandria (below) stays the one
 // exception: it's the dedicated hue for Calandria's own maintenance sessions.
 const HUE_POOL = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
-const HUE_PINS: Record<string, string> = { claude: "var(--s1)", codex: "var(--s2)" };
+const HUE_PINS: Record<string, string> = { claude: "var(--s1)", codex: "var(--s2)", gemini: "var(--s3)" };
 function agentHues(ids: string[]): Record<string, string> {
   const used = new Set(ids.map((id) => HUE_PINS[id]).filter(Boolean));
   const pool = HUE_POOL.filter((h) => !used.has(h));

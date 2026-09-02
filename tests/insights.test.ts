@@ -106,10 +106,15 @@ describe("getInsightsData", () => {
     const { project, task } = makeProjectTask();
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage() });
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage({ cost_usd: 0.5 }) });
+    // A third agent id is a third bucket and nothing else: the ledger stores
+    // whatever the driver is called, and the view reads the ids back off the
+    // rows rather than from a fixed pair (app/shell/InsightsView.tsx).
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "gemini", usage: usage({ cost_usd: 0.25 }) });
 
     const data = getInsightsData(Date.now() - DAY);
     const mine = data.usage.filter((u) => u.p === project.id);
-    expect(mine).toHaveLength(2); // grouped by (day, project, agent)
+    expect(mine).toHaveLength(3); // grouped by (day, project, agent)
+    expect(mine.find((u) => u.a === "gemini")!.cost).toBeCloseTo(0.25);
     const claude = mine.find((u) => u.a === "claude")!;
     expect(claude.cost).toBeCloseTo(1.5);
     expect(claude.inp).toBe(100);
