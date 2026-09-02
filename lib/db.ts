@@ -660,13 +660,38 @@ function recoverFromCrash(db: Database.Database) {
     // Drop any queued follow-ups: the turns they were lined up behind died with
     // the previous process, so there's nothing left to dequeue them.
     db.prepare("DELETE FROM pending_messages").run();
-    // Settle any tool-permission card still open. The turn parked on it died with
-    // the previous process and the pending-ask registry it was waiting on is
-    // in-memory, so the card can never be answered — left alone it would render
-    // as live buttons that resolve nothing. Same reasoning as the running reset
-    // above. (json_valid guards the handful of tool rows that predate JSON
-    // content; json_extract would raise on those.)
-    db.prepare(
+    settleOpenCards(db);
+
+    reapInFlightScheduleRuns(db);
+  })();
+}
+
+/**
+ * Settle every interactive card the previous process left parked on the user.
+ *
+ * A permission card with no `outcome` and a question card with neither
+ * `answers` nor `dismissed` are the same fact: the turn that opened them died
+ * with that process, and the registry it would have been answered through
+ * (lib/asks.ts) lives in memory, so no answer can ever reach them. Left alone
+ * they render live buttons — indistinguishable from a card somebody is actually
+ * waiting on — and pressing one resolves nothing: POST /answer returns
+ * `resolved: false` and the pick lands as an ordinary message into a fresh
+ * turn, which is not what the card offered.
+ *
+ * The question card is marked DISMISSED rather than given answers, because a
+ * transcript must never claim the user said something they did not. That is the
+ * same distinction `PermissionOutcome.auto` draws on the other card.
+ *
+ * (`json_valid` guards the handful of tool rows that predate JSON content;
+ * `json_extract` would raise on those. The `dismissed IS NULL` clause is also
+ * what backfills rows written before that field existed, on first boot.)
+ *
+ * Exported so tests can drive it directly; recoverFromCrash above is the only
+ * production caller.
+ */
+export function settleOpenCards(db: Database.Database): { permissions: number; asks: number } {
+  const permissions = db
+    .prepare(
       `UPDATE messages
           SET content = json_set(content, '$.permission.outcome',
                 json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
@@ -675,10 +700,22 @@ function recoverFromCrash(db: Database.Database) {
           AND json_valid(content)
           AND json_extract(content, '$.permission.request.id') IS NOT NULL
           AND json_extract(content, '$.permission.outcome') IS NULL`
-    ).run();
-
-    reapInFlightScheduleRuns(db);
-  })();
+    )
+    .run().changes;
+  const asks = db
+    .prepare(
+      `UPDATE messages
+          SET content = json_set(content, '$.ask.dismissed',
+                json('{"reason":"restarted","note":"Not answered \u2014 the app restarted before an answer arrived."}'))
+        WHERE role = 'tool'
+          AND content LIKE '%"ask"%'
+          AND json_valid(content)
+          AND json_extract(content, '$.ask.id') IS NOT NULL
+          AND json_extract(content, '$.ask.answers') IS NULL
+          AND json_extract(content, '$.ask.dismissed') IS NULL`
+    )
+    .run().changes;
+  return { permissions, asks };
 }
 
 /**

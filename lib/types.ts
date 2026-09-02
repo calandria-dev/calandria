@@ -352,6 +352,16 @@ export interface AskQuestion {
 // free-text typed into "Other". One entry per question, in question order.
 export type AskAnswers = string[][];
 
+// Why a question card stopped being answerable without ever being answered:
+// the turn was stopped/errored ("interrupted") or the process died under it
+// ("restarted"). The counterpart of PermissionOutcome on the other interactive
+// card, and kept apart from AskAnswers on purpose — a dismissal is not a
+// choice, and the transcript must never read as though the user made one.
+export interface AskDismissal {
+  reason: "interrupted" | "restarted";
+  note: string;
+}
+
 // ---------- tool permission prompts (lib/permissions.ts) ----------
 
 // What the user picked on a permission card. "allow_always" additionally
@@ -583,6 +593,7 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
+  | { type: "ask_dismissed"; id: string; dismissal: AskDismissal }
   | { type: "permission"; request: PermissionRequest }
   | { type: "permission_decided"; id: string; outcome: PermissionOutcome }
   // A tool call the CLI refused BY ITSELF, without ever consulting canUseTool —
@@ -750,8 +761,12 @@ export interface ToolData {
   file?: string;
   // Present when this "tool" message is an AskUserQuestion prompt. `id` is the
   // tool_use id (stored here so it survives a reload — there's no DB column for
-  // it). `answers` is absent while awaiting the user, set once answered.
-  ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers };
+  // it). `answers` is absent while awaiting the user, set once answered;
+  // `dismissed` is set instead when the question died unanswered (Stop, driver
+  // error, restart), which is what keeps a dead card from rendering live
+  // buttons. Exactly the role `outcome` plays on `permission` below — the two
+  // cards park the user the same way and must un-park the same way.
+  ask?: { id: string; questions: AskQuestion[]; answers?: AskAnswers; dismissed?: AskDismissal };
   // Present when this "tool" message is a permission prompt (the canUseTool
   // gate under acceptEdits / plan). Same shape of deal as `ask`: the
   // request is persisted so a reload re-renders an answerable card, and

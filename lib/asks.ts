@@ -147,3 +147,17 @@ export function takeAskOutcome(taskId: string, id: string): string | null {
   outcomes().delete(key);
   return text;
 }
+
+// A question that will never be answered, and the wording each of the three
+// settle paths writes. An ask row is the twin of a permission row: `answers` is
+// its `outcome`, and until something writes one of them the card renders live
+// option buttons. So the ask needs the same three backstops the permission card
+// has — the waiter's own catch, the runner's turn-end finally, and the crash
+// recovery pass — or a question torn down mid-turn stays answerable forever.
+//
+// The marker is deliberately NOT an answer: the transcript must not claim the
+// user picked something they never picked.
+export const ASK_INTERRUPTED_NOTE = "Not answered — the turn was stopped before an answer arrived.";
+export const ASK_RESTARTED_NOTE = "Not answered — the app restarted before an answer arrived.";
+/** What the MODEL is told when its question was torn down (a tool result, not a card). */
+export const ASK_DISMISSED_REPLY = "The user dismissed the question without answering.";

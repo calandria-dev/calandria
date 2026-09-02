@@ -38,6 +38,7 @@ import {
 import { worktreeRelative } from "@/lib/collab";
 import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContext";
 import { sendTurnInput } from "@/lib/turnInput";
+import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage } from "@/lib/types";
@@ -806,6 +807,17 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
         }
+      } else if (ev.type === "ask_dismissed") {
+        // The driver gave up waiting on this question (Stop, disconnect). Same
+        // shape as ask_answered, minus the pretence that an answer arrived.
+        const t = toolMsgs[ev.id];
+        if (t?.data.ask && !t.data.ask.answers && !t.data.ask.dismissed) {
+          t.data.ask = { ...t.data.ask, dismissed: ev.dismissal };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          openAsks.delete(ev.id);
+          if (openAsks.size === 0) updateTask(id, { awaiting_input: 0 });
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        }
       } else if (ev.type === "permission") {
         // A tool call parked on the user's approval (the canUseTool gate under
         // acceptEdits / plan). Same deal as an ask: persist the
@@ -1023,20 +1035,30 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // the pending queue, and turn_end — settling any of them here would clobber
     // a live turn's state (running flipped off, its queued follow-ups eaten).
     const superseded = hasTurn(id) && !ownsTurn(id, abortController);
-    // Any permission card still open never got a decision — the turn died
-    // (Stop, a crash, a driver error) with the gate parked. Settle it here or
-    // it renders as answerable forever, and answering it would resolve nothing.
+    // Any card still open never got a decision — the turn died (Stop, a crash,
+    // a driver error) with the user parked on it. Settle it here or it renders as
+    // answerable forever, and answering it would resolve nothing. Both kinds
+    // ride openAsks and both need the backstop: an unanswered QUESTION is the
+    // same lie as an undecided permission card, so `ask` gets a dismissal
+    // marker rather than being left blank — never a fabricated answer.
     // Best-effort: this is the finally, and the task row may already be gone.
     for (const openId of openAsks) {
       const t = toolMsgs[openId];
-      if (!t?.data.permission || t.data.permission.outcome) continue;
-      const outcome = { decision: "deny" as const, auto: true, reason: "interrupted" as const, note: DENIED_INTERRUPTED };
-      t.data.permission = { request: t.data.permission.request, outcome };
+      if (!t) continue;
       try {
-        updateMessage(t.dbId, JSON.stringify(t.data));
-        publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
+        if (t.data.permission && !t.data.permission.outcome) {
+          const outcome = { decision: "deny" as const, auto: true, reason: "interrupted" as const, note: DENIED_INTERRUPTED };
+          t.data.permission = { request: t.data.permission.request, outcome };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { type: "permission_decided", id: openId, outcome, msgId: t.dbId, generation: gen });
+        } else if (t.data.ask && !t.data.ask.answers && !t.data.ask.dismissed) {
+          const dismissal = { reason: "interrupted" as const, note: ASK_INTERRUPTED_NOTE };
+          t.data.ask = { ...t.data.ask, dismissed: dismissal };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { type: "ask_dismissed", id: openId, dismissal, msgId: t.dbId, generation: gen });
+        }
       } catch (err) {
-        log.error("could not settle open permission card", { task: id, err });
+        log.error("could not settle open card", { task: id, err });
       }
     }
     // A Stop isn't a failure (Claude swallows the abort), so it reports as a
