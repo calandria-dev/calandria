@@ -57,6 +57,12 @@ export interface Project {
   // minted key's /key/generate call is told to cap it at.
   gateway_max_budget: number | null; // dollars; null = no max_budget sent (unlimited)
   gateway_key_duration: string; // a LiteLLM duration string ("30d"); "" = no duration sent (never auto-expires on LiteLLM's clock)
+  // Hosted MCP servers this project mounts on every task's turns
+  // (docs/design/litellm.md, "Hosted MCP servers") — a JSON array of gateway
+  // aliases (lib/gatewayMcp.ts), independent of agent_env's model-provider
+  // kind: a Cloud-login task can still reach the gateway's hosted tools. "[]"
+  // = none selected, the default for every project.
+  gateway_mcp: string;
   created_at: number;
 }
 
@@ -149,6 +155,11 @@ export interface Task {
   // call, the same way it self-heals worktree_path in place — so a route
   // spreading a task into JSON can never carry a live key even by accident.
   gateway_key: string;
+  // Per-task override of the project's hosted-MCP selection (lib/gatewayMcp.ts)
+  // — null = inherit the project's `gateway_mcp`; a JSON array (including
+  // "[]") replaces it outright, so a task can mount none of the project's
+  // servers without touching the project row.
+  gateway_mcp: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -388,11 +399,15 @@ export type PermissionDecision = "allow_once" | "allow_always" | "deny";
 // How a remembered rule matches a later call:
 //   bash_prefix — Bash commands whose leading tokens match (`npm test …`)
 //   bash_exact  — one literal command line, for anything not safely generalizable
-// Bash-only on purpose: a command is the one tool input a user can read in full
-// and generalize honestly. "Always allow WebFetch here" would grant every URL,
-// so non-Bash tools get allow-once plus a session-scoped don't-ask-again
-// instead — see the note in lib/permissions.ts.
-export type PermissionMatchKind = "bash_prefix" | "bash_exact";
+//   mcp_server  — every tool call from one hosted MCP server (`mcp__<alias>__*`)
+// Bash-only was the rule until hosted gateway MCP servers (docs/design/litellm.md,
+// "Hosted MCP servers"): "always allow WebFetch here" would grant every URL, but
+// "always allow <alias>'s tools" names a whole SERVER the user picked in project
+// settings, which is exactly as readable and generalizable as a command line —
+// the alias, not a wildcard the user never saw. Every other non-Bash tool still
+// gets allow-once plus a session-scoped don't-ask-again instead — see the note
+// in lib/permissions.ts.
+export type PermissionMatchKind = "bash_prefix" | "bash_exact" | "mcp_server";
 
 // One watched setting file as this task last ran under it
 // (task_settings_snapshots — see lib/settingsDrift.ts). `file` is

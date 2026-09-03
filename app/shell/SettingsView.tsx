@@ -390,7 +390,8 @@ function PermissionRules() {
         <div className="perm-rules">
           {rules.map((r) => (
             <div className="perm-rule" key={r.id}>
-              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.value}</code>
+              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.match_kind === "mcp_server" ? `mcp__${r.value}__*` : r.value}</code>
+              {r.match_kind === "mcp_server" && <span className="opt">hosted MCP server, trusted from project settings</span>}
               <span className="opt">{r.project_name}</span>
               <button className="btn btn-sm" onClick={() => void revoke(r.id)} title="Stop allowing this">Revoke</button>
             </div>

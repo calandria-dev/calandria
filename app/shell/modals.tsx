@@ -1066,7 +1066,109 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+// One row of GET /api/projects/[id]/mcp-servers' catalog — the gateway's
+// hosted MCP servers, with a tool-name preview and whether this project has
+// already minted a "trust this server" rule for it.
+interface GatewayMcpServerT {
+  alias: string;
+  server_name: string;
+  description: string;
+  transport: string;
+  auth_type: string;
+  needs_browser_signin: boolean;
+  tools: string[];
+  trusted: boolean;
+}
+
+// The project settings picker for hosted LiteLLM gateway MCP servers
+// (docs/design/litellm.md, "Hosted MCP servers"): fetched once when the
+// dialog opens (mirroring useEndpointModels' one-probe-per-open shape, but
+// with no per-keystroke re-probe — there's no URL field driving this one),
+// a checkbox per alias for `value` (the project's projects.gateway_mcp
+// selection), and a "Trust" button that mints a remembered permission rule
+// through POST rather than waiting on a live card — there is no per-call MCP
+// prompt to approve one from. Trust is one-way here: revoking a rule already
+// minted is Settings → Run defaults' job, not this dialog's, matching the
+// permission card's own "Always allow" being un-doable only from there.
+function GatewayMcpField({ projectId, value, onChange }: { projectId: string; value: string[]; onChange: (aliases: string[]) => void }) {
+  const [servers, setServers] = useState<GatewayMcpServerT[] | null>(null);
+  const [reachable, setReachable] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [trusting, setTrusting] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    jget<{ enabled: boolean; reachable: boolean; servers: GatewayMcpServerT[]; error: string | null }>(`/api/projects/${projectId}/mcp-servers`)
+      .then((d) => {
+        if (cancelled) return;
+        setServers(d.servers);
+        setReachable(d.reachable);
+        setError(d.error);
+      })
+      .catch((e) => { if (!cancelled) { setServers([]); setReachable(false); setError(e instanceof Error ? e.message : String(e)); } });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const toggle = (alias: string) => {
+    onChange(value.includes(alias) ? value.filter((a) => a !== alias) : [...value, alias]);
+  };
+  const trust = async (alias: string) => {
+    setTrusting(alias);
+    try {
+      await jsend(`/api/projects/${projectId}/mcp-servers`, "POST", { alias });
+      setServers((prev) => (prev ?? []).map((s) => (s.alias === alias ? { ...s, trusted: true } : s)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrusting(null);
+    }
+  };
+
+  return (
+    <div className="field" style={{ marginTop: 14 }}>
+      <div className="lab">{Icon.sliders()} Hosted MCP servers</div>
+      <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
+        Tools the gateway hosts on the key&apos;s behalf, mounted alongside Calandria&apos;s own on every task&apos;s
+        turns — <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary
+        permission prompt unless you trust the server below. Docs: docs/design/litellm.md.
+      </div>
+      {servers === null ? (
+        <div className="hlp">Loading…</div>
+      ) : !reachable ? (
+        <ErrNote>{error || "The gateway didn't answer."}</ErrNote>
+      ) : servers.length === 0 ? (
+        <div className="hlp">The gateway&apos;s key has no MCP servers to offer.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {servers.map((s) => (
+            <label key={s.alias} className="svc-cfg-row" style={{ alignItems: "flex-start" }}>
+              <input type="checkbox" checked={value.includes(s.alias)} onChange={() => toggle(s.alias)} style={{ marginTop: 3 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <code className="ctx-mono">{s.alias}</code>
+                  <span className="opt">{s.transport}{s.tools.length ? ` · ${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}` : ""}</span>
+                  {s.needs_browser_signin && <span className="opt">sign in at the gateway first</span>}
+                  {value.includes(s.alias) && (
+                    <button
+                      type="button" className="btn btn-line btn-sm" disabled={s.trusted || trusting === s.alias}
+                      onClick={() => void trust(s.alias)}
+                      title={s.trusted ? "Revoke in Settings → Run defaults" : `Always allow mcp__${s.alias}__* without a prompt`}
+                    >
+                      {Icon.check()} {s.trusted ? "Trusted" : trusting === s.alias ? "Trusting…" : "Trust this server"}
+                    </button>
+                  )}
+                </div>
+                {s.description && <div className="opt">{s.description}</div>}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1097,6 +1199,18 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // and only meaningful when the instance has an admin key configured.
   const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
   const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
+  // Hosted MCP servers (docs/design/litellm.md, "Hosted MCP servers") —
+  // independent of providerKind above: a Cloud-login task can still reach the
+  // gateway's hosted tools, so this is its own field rather than nested under
+  // the Gateway provider option.
+  const [gatewayMcp, setGatewayMcp] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(project.gateway_mcp || "[]");
+      return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
   // The instance's LiteLLM address, or "" — which is what hides the option.
   // The gateway's URL is not typed: it is the one the instance is configured
@@ -1237,7 +1351,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut(), gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null, gateway_key_duration: gatewayKeyDuration.trim() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut(), gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null, gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1444,6 +1558,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </>
         )}
       </div>
+      {agents.gateway_mcp_enabled && <GatewayMcpField projectId={project.id} value={gatewayMcp} onChange={setGatewayMcp} />}
       {showServices && (
         <div className="field" style={{ marginTop: 14 }}>
           <div className="lab ctx-lab">

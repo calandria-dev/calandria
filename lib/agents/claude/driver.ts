@@ -101,6 +101,7 @@ import {
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
+import { gatewayMcpServersFor } from "../../gatewayMcp";
 
 const log = createLogger("claude");
 
@@ -1059,6 +1060,11 @@ async function* runTurn(
       permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       mcpServers: {
+        // Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Hosted
+        // MCP servers"), the project's selection (or this task's override) —
+        // spread FIRST so `calandria:` below always wins the key even if a
+        // badly-named alias collided with it.
+        ...gatewayMcpServersFor(project, task),
         calandria: calandriaServer(
           project,
           task,

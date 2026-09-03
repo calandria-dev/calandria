@@ -8,6 +8,7 @@ import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
 import { isAgentId } from "@/lib/agents/capabilities";
 import { serializeAgentEnv } from "@/lib/agentEnv";
+import { serializeGatewayMcp } from "@/lib/gatewayMcp";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // running/awaiting_input/status. A change to any of them has to be announced as
 // `task_edited` ("refetch the row") rather than `task_updated` ("here's the new
 // status") — see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "agent_env", "withdrawn_reason", "snoozed_until", "start_at"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "agent_env", "gateway_mcp", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
 // uses. A dependent waiting on a CANCELLED blocker would wait forever, so
@@ -98,6 +99,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (v !== null && typeof v !== "string" && (typeof v !== "object" || Array.isArray(v)))
       return NextResponse.json({ error: "agent_env must be an object, JSON text or null" }, { status: 400 });
     allowed.agent_env = serializeAgentEnv(v);
+  }
+  // Per-task override of the project's hosted-MCP selection
+  // (docs/design/litellm.md, "Hosted MCP servers"). null = inherit the
+  // project's gateway_mcp; an array or JSON text (including "[]") replaces it
+  // outright.
+  if ("gateway_mcp" in body) {
+    const v = (body as { gateway_mcp?: unknown }).gateway_mcp;
+    if (v !== null && !Array.isArray(v) && typeof v !== "string")
+      return NextResponse.json({ error: "gateway_mcp must be an array of aliases, JSON text, or null" }, { status: 400 });
+    allowed.gateway_mcp = v === null ? null : serializeGatewayMcp(v);
   }
   // Snoozing. Two spellings, because they answer to two different clocks:
   //   - `snoozed_until` is a deadline the USER picked, so it's theirs to state;

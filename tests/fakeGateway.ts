@@ -3,8 +3,9 @@ import type { AddressInfo } from "node:net";
 
 /**
  * A stand-in LiteLLM proxy for the suite, answering the routes the gateway
- * health card, the model picker, and lib/gatewayKeys.ts's per-task virtual
- * keys read. The bodies and status codes are the ones recorded against
+ * health card, the model picker, lib/gatewayKeys.ts's per-task virtual keys,
+ * and lib/gatewayMcp.ts's hosted-MCP catalog + mount read. The bodies and
+ * status codes are the ones recorded against
  * `ghcr.io/berriai/litellm:main-latest` reporting `x-litellm-version:
  * 1.101.0` — see the appendix of docs/design/litellm.md. A few are
  * load-bearing and easy to get wrong from memory:
@@ -44,6 +45,25 @@ export interface FakeGatewayKey {
   metadata: unknown;
   tags: string[];
   budget_reset_at: string;
+  /** `/key/generate`'s `object_permission` body field, e.g.
+   *  `{ mcp_servers: [...] }` for a task scoped to hosted MCP servers
+   *  (docs/design/litellm.md, "Hosted MCP servers"). Undefined when the
+   *  request carried none. */
+  object_permission?: unknown;
+}
+
+/** One hosted MCP server for `/v1/mcp/server` + `/mcp-rest/tools/list`
+ *  (docs/design/litellm.md, "Hosted MCP servers"). `tools` defaults to one
+ *  tool named `<alias>-lookup`, matching the measured `<alias>-<tool>`
+ *  prefix LiteLLM returns. */
+export interface FakeGatewayMcpSpec {
+  alias: string;
+  server_name?: string;
+  description?: string;
+  transport?: string;
+  auth_type?: string;
+  mcp_access_groups?: string[];
+  tools?: string[];
 }
 
 export interface FakeGatewayOptions {
@@ -60,6 +80,9 @@ export interface FakeGatewayOptions {
    *  presented as `Authorization: Bearer <adminKey>` — LiteLLM's key-management
    *  surface takes the master/admin key, never a virtual key. */
   adminKey?: string;
+  /** Hosted MCP servers this key may see (docs/design/litellm.md, "Hosted MCP
+   *  servers"). Also serves JSON-RPC on `/<alias>/mcp`. */
+  mcpServers?: FakeGatewayMcpSpec[];
 }
 
 export interface FakeGateway {
@@ -121,6 +144,15 @@ function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown
 
 export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<FakeGateway> {
   const models = (opts.models ?? ["claude-sonnet-4-5", "gpt-5-codex"]).map((m): FakeGatewayModelSpec => (typeof m === "string" ? { name: m } : m));
+  const mcpServers = (opts.mcpServers ?? []).map((s) => ({
+    alias: s.alias,
+    server_name: s.server_name ?? s.alias,
+    description: s.description ?? "",
+    transport: s.transport ?? "http",
+    auth_type: s.auth_type ?? "none",
+    mcp_access_groups: s.mcp_access_groups ?? [],
+    tools: s.tools ?? [`${s.alias}-lookup`],
+  }));
   const version = opts.version ?? "1.101.0";
   const calls: { path: string; key: string | null; method: string }[] = [];
   const mintedKeys = new Map<string, FakeGatewayKey>();
@@ -163,6 +195,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
             metadata: body.metadata ?? {},
             tags: Array.isArray(body.tags) ? (body.tags as string[]) : [],
             budget_reset_at: "2026-10-01T00:00:00Z",
+            object_permission: body.object_permission,
           };
           mintedKeys.set(mintedKey, entry);
           return send(200, {
@@ -172,6 +205,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
             models: entry.models,
             metadata: entry.metadata,
             tags: entry.tags,
+            object_permission: entry.object_permission,
           });
         }
         // /key/delete — idempotent, like LiteLLM's own: a key never minted (or
@@ -179,6 +213,51 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         const toDelete = Array.isArray(body.keys) ? (body.keys as string[]) : [];
         for (const k of toDelete) mintedKeys.delete(k);
         return send(200, { deleted_keys: toDelete });
+      }
+
+      // The hosted MCP mount itself: JSON-RPC on /<alias>/mcp. A wrong key
+      // answers 400 here, NOT 401 like every other route (measured,
+      // docs/design/litellm.md) — the mount health probe's whole reason to
+      // read the response body instead of trusting the status.
+      const mcpMatch = /^\/([^/]+)\/mcp$/.exec(path);
+      if (mcpMatch) {
+        const alias = mcpMatch[1];
+        const server = mcpServers.find((s) => s.alias === alias);
+        const mcpAuthorized = !opts.requireKey || key === `Bearer ${opts.requireKey}`;
+        if (!mcpAuthorized) return send(400, { error: { message: "Invalid proxy server token passed", type: "auth_error" } });
+        if (!server) return send(404, { error: { message: `no such server ${alias}` } });
+        const body = await readJsonBody(req);
+        const rpcId = (body.id as string | number | null) ?? null;
+        const method = body.method as string | undefined;
+        const params = (body.params ?? {}) as Record<string, unknown>;
+        if (method === "initialize") {
+          return send(200, {
+            jsonrpc: "2.0", id: rpcId,
+            result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: server.server_name, version: "1.0" } },
+          });
+        }
+        if (method === "notifications/initialized") {
+          res.writeHead(202);
+          return res.end();
+        }
+        if (method === "tools/list") {
+          return send(200, {
+            jsonrpc: "2.0", id: rpcId,
+            result: { tools: server.tools.map((name) => ({ name, description: "", inputSchema: { type: "object", properties: {} } })) },
+          });
+        }
+        if (method === "tools/call") {
+          const toolName = params.name as string | undefined;
+          if (!toolName || !server.tools.includes(toolName)) {
+            return send(200, { jsonrpc: "2.0", id: rpcId, error: { code: -32602, message: `unknown tool ${toolName}` } });
+          }
+          return send(200, {
+            jsonrpc: "2.0", id: rpcId,
+            result: { content: [{ type: "text", text: `${toolName} ok` }] },
+            _meta: { "litellm.ai/server_outcomes": { [alias]: "ok" } },
+          });
+        }
+        return send(200, { jsonrpc: "2.0", id: rpcId, error: { code: -32601, message: `unknown method ${method}` } });
       }
 
       const authorized = !opts.requireKey || key === `Bearer ${opts.requireKey}`;
@@ -207,6 +286,26 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         return send(200, {
           key: "sk-test",
           info: { spend: 1.25, max_budget: 10, budget_reset_at: "2026-10-01T00:00:00Z", models: models.map((m) => m.name) },
+        });
+      }
+      // Hosted MCP catalog (docs/design/litellm.md, "Hosted MCP servers"),
+      // measured without a database — filtered to the calling key's allowed
+      // servers is a database feature this fake doesn't model.
+      if (path === "/v1/mcp/server") {
+        return send(200, {
+          data: mcpServers.map((s) => ({
+            server_name: s.server_name,
+            alias: s.alias,
+            description: s.description,
+            transport: s.transport,
+            auth_type: s.auth_type,
+            mcp_access_groups: s.mcp_access_groups,
+          })),
+        });
+      }
+      if (path === "/mcp-rest/tools/list") {
+        return send(200, {
+          data: mcpServers.flatMap((s) => s.tools.map((name) => ({ name, mcp_info: { server_name: s.server_name } }))),
         });
       }
       return send(404, { error: { message: `no route ${path}` } });

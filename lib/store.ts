@@ -1,5 +1,6 @@
 import { serializeAgentEnv, taskProvider, type ProviderKind } from "./agentEnv";
 import { gatewayContextWindow } from "./gatewayModels";
+import { serializeGatewayMcp } from "./gatewayMcp";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -302,7 +303,7 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
         auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ?,
-        gateway_max_budget = ?, gateway_key_duration = ? WHERE id = ?`
+        gateway_max_budget = ?, gateway_key_duration = ?, gateway_mcp = ? WHERE id = ?`
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
@@ -313,7 +314,10 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
       serializeAgentEnv(n.agent_env),
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
       // clear it — matching gateway_max_budget's own null-is-unlimited contract.
-      n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "", id);
+      n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",
+      // Same normalize-don't-trust treatment as agent_env, for the same reason
+      // (docs/design/litellm.md, "Hosted MCP servers").
+      serializeGatewayMcp(n.gateway_mcp), id);
   return getProject(id);
 }
 
@@ -1150,9 +1154,13 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, gateway_mcp=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env), n.updated_at, id);
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env),
+      // null = inherit the project's selection; anything else is normalized,
+      // not trusted, the same reason agent_env is (docs/design/litellm.md).
+      n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
+      n.updated_at, id);
   return getTask(id);
 }
 

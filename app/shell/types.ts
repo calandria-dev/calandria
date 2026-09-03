@@ -29,6 +29,7 @@ export interface ProjectRow {
   agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
   gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
   gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
+  gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -353,7 +354,7 @@ export type AgentInfoT = {
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway?: GatewayHealthT | null };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
 // `id: null` = nothing connected; `fallback` = the configured agent isn't
@@ -416,7 +417,7 @@ export interface AgentInfo { id: string; label: string; capabilities: AgentCapab
 // `gateway_keys_enabled` is whether CALANDRIA_LITELLM_ADMIN_KEY is set — again
 // not the key, just whether per-task keys (docs/design/litellm.md) are possible
 // at all, which is what shows the max_budget/duration fields in that preset.
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway?: GatewayHealthT | null }
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null }
 
 // ---------- local model endpoints ----------
 

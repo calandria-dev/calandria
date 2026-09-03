@@ -216,9 +216,46 @@ export function ruleFromTypedCommand(rawCommand: string, matchKind: PermissionMa
   return { ok: true, tool: "Bash", match_kind: "bash_prefix", value: verdict.prefix };
 }
 
+// ---------- step 2c: a whole hosted MCP server, trusted from project settings ----------
+//
+// Hosted gateway MCP servers (docs/design/litellm.md, "Hosted MCP servers")
+// break the "Bash-only" reasoning above without breaking its REASON: LiteLLM
+// returns tools as `<alias>-<tool>`, so Claude sees `mcp__<alias>__<alias>-<tool>`,
+// and the alias is a server the user picked by name in the project's MCP
+// picker — not a wildcard invented at approval time the way "always allow
+// WebFetch" would be. So "trust this server" mints a rule that matches every
+// tool call under one alias's namespace, through the same permission_rules
+// table and canUseTool gate a Bash prefix uses, minted from project settings
+// rather than a live card (there is no per-call MCP prompt to approve one
+// from — LiteLLM tools land wholesale when the alias is mounted).
+
+/** How long an alias may be before it's refused as a rule — generous, since a
+ *  LiteLLM alias is normally a short slug and this only guards against abuse. */
+const MCP_ALIAS_CAP = 200;
+
+export type McpServerRule = { ok: true; tool: string; match_kind: "mcp_server"; value: string } | { ok: false; error: string };
+
+/**
+ * The rule a "trust this server" toggle mints: matches every
+ * `mcp__<alias>__*` tool call, never just one. `tool` is stored as the
+ * wildcard spelling for the Settings list to render; matching itself keys off
+ * `value` (see ruleMatches below), not `tool`.
+ */
+export function ruleForGatewayMcpServer(alias: string): McpServerRule {
+  const a = String(alias ?? "").trim();
+  if (!a) return { ok: false, error: "alias is required" };
+  if (a.length > MCP_ALIAS_CAP || /[\0-\x1f\x7f]/.test(a)) return { ok: false, error: "invalid alias" };
+  return { ok: true, tool: `mcp__${a}__*`, match_kind: "mcp_server", value: a };
+}
+
 /** Does a remembered rule cover this call? */
 export function ruleMatches(rule: { tool: string; match_kind: PermissionMatchKind; value: string }, tool: string, input: Record<string, unknown>): boolean {
-  if (rule.tool !== tool || NEVER_REMEMBER.has(tool)) return false;
+  if (NEVER_REMEMBER.has(tool)) return false;
+  // mcp_server matches by NAMESPACE, not by the exact tool the card would have
+  // shown: LiteLLM names every tool under an alias `mcp__<alias>__<alias>-<tool>`,
+  // and trusting the server is trusting all of them, present and future.
+  if (rule.match_kind === "mcp_server") return tool.startsWith(`mcp__${rule.value}__`);
+  if (rule.tool !== tool) return false;
   const command = bashCommandOf(tool, input);
   if (!command) return false;
   if (rule.match_kind === "bash_exact") return command === rule.value;

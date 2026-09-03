@@ -40,6 +40,7 @@
 
 import { LITELLM_ADMIN_KEY, LITELLM_KEY_TIMEOUT_MS } from "./config";
 import { gatewayBaseUrl, taskProvider } from "./agentEnv";
+import { resolveGatewayMcp } from "./gatewayMcp";
 import { taskGatewayKeyState, setTaskGatewayKey, setTaskGatewayKeySpend, addUsage } from "./store";
 import { prunableTaskIds } from "./retention";
 import type { Project, Task } from "./types";
@@ -158,9 +159,12 @@ export async function ensureTaskGatewayKey(task: Task, project: Project): Promis
   if (provider.model) body.models = [provider.model];
   if (project.gateway_max_budget != null) body.max_budget = project.gateway_max_budget;
   if (project.gateway_key_duration) body.duration = project.gateway_key_duration;
-  // Hosted MCP servers (docs/design/litellm.md step 7) land here as
-  // object_permission.mcp_servers once the project's selection exists; there
-  // is nothing to send yet.
+  // Hosted MCP servers (docs/design/litellm.md, "Hosted MCP servers"): the
+  // task's resolved selection scopes the minted key itself, so a per-task key
+  // can only reach the servers this task was actually given — omitted rather
+  // than sent empty for the same reason `models` is above.
+  const mcp = resolveGatewayMcp(project, task);
+  if (mcp.length) body.object_permission = { mcp_servers: mcp };
 
   const res = await adminCall("/key/generate", body);
   if (!res.ok) {

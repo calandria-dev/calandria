@@ -519,6 +519,52 @@ spends, so a gateway Antigravity task offers no "resume when your window resets"
 meter still reports the Google account for whatever cloud Antigravity tasks the instance runs. The
 gateway key's own spend is what to watch instead for a gateway one.
 
+### Hosted MCP servers
+
+**Claude Code only for now.** A project's settings picker lists the gateway's own hosted MCP
+servers (`GET <gateway>/v1/mcp/server`, with a tool-name preview from `GET
+<gateway>/mcp-rest/tools/list`) and lets you check off which ones every task mounts. The picker
+needs no database: LiteLLM answers both routes off the calling key's own `object_permission`.
+Turn the feature off entirely with `CALANDRIA_LITELLM_MCP=0`.
+
+Mounting is independent of the *Model provider* choice above — a project on the *Cloud* preset can
+still mount hosted MCP servers, since the mount is a separate HTTP call to `<gateway>/<alias>/mcp`
+and never touches `ANTHROPIC_BASE_URL`. A selected alias becomes `mcpServers[alias]` in the
+session, next to Calandria's own tools:
+
+```json
+{ "type": "http", "url": "<gateway>/<alias>/mcp", "headers": { "x-litellm-api-key": "Bearer <key>" } }
+```
+
+The credential goes on `x-litellm-api-key`, never `Authorization` — LiteLLM reserves that header
+for the upstream server's own OAuth, and sending the gateway key there is the single most common
+mistake on LiteLLM's own troubleshooting page. A task with a per-task virtual key
+(`docs/design/litellm.md`, "Per-task virtual keys") uses that key here too, so its
+`object_permission.mcp_servers` scopes exactly which of the project's selected servers the task can
+actually reach; without one, every mount shares the instance key.
+
+**Tool names and permissions.** LiteLLM returns tools prefixed `<alias>-<tool>`, so Claude sees
+`mcp__<alias>__<alias>-<tool>` — an ordinary MCP tool as far as `canUseTool` is concerned: a card
+under the default permission mode, classifier-screened under `auto`, auto-approved under
+`bypassPermissions`. Nothing about the read-only allowlist changes. The picker's **Trust this
+server** button mints a remembered rule covering the whole alias (`mcp__<alias>__*`) through the
+same `permission_rules` table a Bash "Always allow" uses, so it shows up — and can be revoked — in
+Settings → Run defaults next to your remembered commands. It only ever mints: revoking a trust is
+Settings' job, the same way undoing a card's "Always allow" is.
+
+**Auth types.** A server whose `auth_type` needs no browser (no auth, an API key, a bearer token,
+basic auth, OAuth2 client-credentials or token-exchange, or AWS SigV4) mounts silently. One using
+OAuth2 authorization-code needs a human to sign in at the gateway's own UI first — a detached task
+has no browser to do it in — so the picker marks it **sign in at the gateway first** and mounts it
+anyway, since LiteLLM holds the token for every later call once that's done. A wrong key against
+the mount endpoint itself answers **HTTP 400, not 401** (measured), so the picker's connection
+check reads the response body for the real reason rather than trusting the status code.
+
+Codex and Antigravity mounting hosted MCP servers is future work — `docs/design/litellm.md` has the
+per-driver plan (Codex needs `default_tools_approval_mode: "approve"` since `codex exec` has no
+approver at all, and Antigravity needs alias names slugified for its policy engine, which splits on
+underscores).
+
 ### Two caveats from the spike
 
 **One upstream error cools the deployment for everyone.** A single 401 from upstream put the
