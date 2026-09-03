@@ -430,7 +430,24 @@ export const blockerCandidates = (candidates: TaskRow[], selected: string[]): Ta
 // A SUGGESTED blocker does block, agreeing with the server. It is drawn as one
 // (`blockerCandidates` above lists it, `blockerTitles` names it as suggested)
 // rather than silently ignored.
-export const isBlocking = (b: TaskRow | undefined): b is TaskRow => !!b && !isTerminal(b);
+//
+// Generic over the row shape because not every screen holds a `TaskRow`: the
+// transcript's suggestion card gets its blockers from
+// `GET /api/tasks/[id]/suggestion` as `{ id, title, status }`, and a second
+// copy of this rule for that shape is the drift the predicate exists to stop.
+export const isBlocking = <T extends { status: TaskRow["status"] }>(b: T | undefined): b is T => !!b && !isTerminal(b);
+
+// The tooltip a Start button carries while it is refusing to start. One string
+// for every such button (the session header's, and the three suggestion Starts
+// in the tray, the board and the transcript), so the reason a click is
+// unavailable reads the same wherever the click was going to happen — and
+// close to the 409 `POST /api/tasks/[id]/messages` answers a stale tab with,
+// which is the authority all four are agreeing with.
+//
+// Returning undefined for "not blocked" makes it the disabled test too:
+// `disabled={!!note}` can't disagree with the tooltip it renders beside.
+export const blockedNote = (titles: string[] | undefined): string | undefined =>
+  titles?.length ? `Blocked until done: ${titles.join(", ")}` : undefined;
 
 // The titles of a task's unfinished blockers. A task with any of these is
 // "blocked" and can't be started until they clear. A blocker still sitting in
