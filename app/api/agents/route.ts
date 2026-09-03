@@ -3,7 +3,7 @@ import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
-import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LOCAL_MODEL_BASE_URL } from "@/lib/config";
+import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LITELLM_MCP, LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
 import { gatewayHealth } from "@/lib/gatewayHealth";
 import { gatewayKey } from "@/lib/litellm-key";
@@ -77,6 +77,11 @@ export async function GET() {
     // "Per-task virtual keys"), so the project settings form can show the
     // max_budget/duration fields only when they'd do something.
     gateway_keys_enabled: LITELLM_ADMIN_KEY_SET,
+    // Whether the project settings picker should offer hosted MCP servers at
+    // all (docs/design/litellm.md, "Hosted MCP servers") — CALANDRIA_LITELLM_MCP
+    // on AND a gateway actually configured, mirroring gateway_keys_enabled's
+    // "would this do anything" gate.
+    gateway_mcp_enabled: LITELLM_MCP && !!LITELLM_BASE_URL,
     gateway: gateway
       ? { ...gateway, gemini_missing_models: LITELLM_BASE_URL ? (lastGeminiGatewayModelCheck(LITELLM_BASE_URL)?.missing ?? null) : null }
       : gateway,

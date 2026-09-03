@@ -865,6 +865,11 @@ export function migrate(db: Database.Database) {
   // Calandria deletes it itself on terminal status / prune instead).
   add("gateway_max_budget", "REAL");
   add("gateway_key_duration", "TEXT NOT NULL DEFAULT ''");
+  // Hosted MCP servers this project mounts on every task's turns
+  // (docs/design/litellm.md, "Hosted MCP servers") — a JSON array of gateway
+  // aliases. '[]' for every pre-existing project: nothing was mounted before
+  // this column existed.
+  add("gateway_mcp", "TEXT NOT NULL DEFAULT '[]'");
   // Manual sidebar ordering. Backfill in creation order so existing projects
   // keep the order they had when this column was the implicit sort.
   if (!cols.includes("position")) {
@@ -994,6 +999,11 @@ export function migrate(db: Database.Database) {
   // (lib/gatewayKeys.ts) — the baseline the next reconciliation diffs against
   // to record only the DELTA. Reset to 0 whenever a key is (re)minted.
   if (!taskCols.includes("gateway_key_spend")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key_spend REAL NOT NULL DEFAULT 0");
+  // Per-task override of the project's hosted-MCP selection
+  // (docs/design/litellm.md, "Hosted MCP servers"). NULL (the column's
+  // default with no DEFAULT clause) = inherit the project's gateway_mcp; a
+  // JSON array, including '[]', replaces it outright — see lib/gatewayMcp.ts.
+  if (!taskCols.includes("gateway_mcp")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_mcp TEXT");
   // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for the
   // same reason — and it is also what "last run" is read from, since runbooks
   // deliberately keep no ledger of their own.

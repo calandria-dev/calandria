@@ -131,6 +131,33 @@ describe("ensureTaskGatewayKey", () => {
     expect(gw.calls.filter((c) => c.path === "/key/generate").length).toBe(1);
   });
 
+  it("scopes a minted key to the project's hosted-MCP selection via object_permission.mcp_servers", async () => {
+    gw = await startFakeGateway({ database: true, adminKey: ADMIN_KEY });
+    const gk = await loadGatewayKeys({ adminKey: ADMIN_KEY, baseUrl: gw.url });
+    let project = await gatewayProject();
+    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo", "search"]) })!;
+    const task = makeTask(project);
+
+    const live = getTask(task.id)!;
+    await gk.ensureTaskGatewayKey(live, project);
+
+    const minted = gw.mintedKeys.get(live.gateway_key);
+    expect(minted?.object_permission).toEqual({ mcp_servers: ["demo", "search"] });
+  });
+
+  it("omits object_permission entirely when the project selected no hosted MCP servers", async () => {
+    gw = await startFakeGateway({ database: true, adminKey: ADMIN_KEY });
+    const gk = await loadGatewayKeys({ adminKey: ADMIN_KEY, baseUrl: gw.url });
+    const project = await gatewayProject();
+    const task = makeTask(project);
+
+    const live = getTask(task.id)!;
+    await gk.ensureTaskGatewayKey(live, project);
+
+    const minted = gw.mintedKeys.get(live.gateway_key);
+    expect(minted?.object_permission).toBeUndefined();
+  });
+
   it("never calls /key/generate for a non-gateway (plain cloud) task", async () => {
     gw = await startFakeGateway({ database: true, adminKey: ADMIN_KEY });
     const gk = await loadGatewayKeys({ adminKey: ADMIN_KEY, baseUrl: gw.url });

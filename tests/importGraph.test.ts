@@ -62,6 +62,8 @@ const PINNED = [
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
   "lib/gatewayKeys.ts", //       per-task LiteLLM virtual key mint/delete/reconcile; store + fetch + config + retention, no driving — lib/runner.ts imports THIS, never the reverse
+  "lib/gatewayMcp.ts", //        hosted LiteLLM gateway MCP servers: catalog probe + selection + the mcpServers a turn mounts; fetch + agentEnv + config only, no driving
+  "app/api/projects/[id]/mcp-servers/route.ts", // the picker's catalog + trust-mint route, behind lib/gatewayMcp.ts and lib/permissions.ts only
   "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
   "lib/uploads.ts", //           where chat attachments are staged + swept; node:fs + config only, and the worktree sweep sits on it
   "lib/uploadTypes.ts", //       what an attachment may be and is served as; zero imports, and the client bundles it alongside the routes that enforce it
