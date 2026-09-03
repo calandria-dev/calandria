@@ -626,7 +626,14 @@ export type StreamEvent =
   // flag is what stops the client reading that 0 as "this turn was free": it
   // bumps the row's `unpriced_turns` instead, so the chip marks the total as a
   // floor mid-turn rather than only after the next refetch. See LedgerUsage.
-  | { type: "usage"; usage: TurnUsage; unpriced?: boolean }
+  // `partial` marks a report the NEXT full one supersedes: one API request's
+  // own tokens, emitted as the turn goes, where a full report is the whole
+  // segment's totals arriving at the end. The runner accumulates partials
+  // separately and drops them when a full report lands, then writes whatever
+  // is left over in its finally — which is the only record a turn Stopped
+  // before its result message ever produces. A partial carries no price (its
+  // source has none), so it is never written as a priced turn.
+  | { type: "usage"; usage: TurnUsage; unpriced?: boolean; partial?: boolean }
   // How full the context window is RIGHT NOW: the input-side token count
   // (input + cache_read + cache_creation) of the latest model request in the
   // main session, as reported by the agent's own stream. Emitted whenever the

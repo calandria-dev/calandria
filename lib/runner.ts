@@ -41,7 +41,7 @@ import { sendTurnInput } from "@/lib/turnInput";
 import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
-import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage } from "@/lib/types";
+import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 
@@ -49,6 +49,18 @@ import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 // becomes the logger's component, so `CALANDRIA_LOG_FORMAT=json` turns the
 // whole file into parseable output without touching a call site (lib/log.mjs).
 const log = createLogger("runner");
+
+/** True when a usage report claims neither a token nor a cent. */
+function isEmptyUsage(u: TurnUsage): boolean {
+  return (
+    !u.cost_usd &&
+    !u.input_tokens &&
+    !u.output_tokens &&
+    !u.cache_read_tokens &&
+    !u.cache_creation_tokens &&
+    !u.subagent_tokens
+  );
+}
 
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something. Named, because the docs promise the user that a
@@ -534,6 +546,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // (each SDK result message carries its own), hence a running sum rather than
   // a last-wins snapshot.
   const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // Spend reported per API request rather than per segment (`partial` usage
+  // events — see StreamEvent), held here instead of written: a full report
+  // covers the same requests, so these are dropped when one arrives and only
+  // flushed by the finally when none did. That is the whole fix for a Stopped
+  // turn recording zero: the segment it died inside had no result message, so
+  // its half-hour of tool calls left no ledger row at all.
+  const provisional = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
   // Of the usage reports folded into `spent`, how many carried no price at all
   // (a custom base URL — see the usage branch below). `spent.cost_usd` is the
   // sum over the others, so this is what stops the lifecycle line logging a
@@ -955,7 +974,24 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         } else {
           publish(id, ev);
         }
+      } else if (ev.type === "usage" && ev.partial) {
+        // Held, not written: see `provisional` above. Nothing is published
+        // either — the client ADDS a usage event to the task's running total,
+        // and the full report that supersedes this one would then be counted
+        // twice on screen.
+        for (const k of Object.keys(provisional) as (keyof typeof provisional)[]) provisional[k] += ev.usage[k] ?? 0;
+      } else if (ev.type === "usage" && isEmptyUsage(ev.usage)) {
+        // A report with nothing in it is not a report. Every resumed session's
+        // first result message carries all zeros, which used to write a
+        // cost-0/tokens-0 row seconds into every resume — noise in a per-turn
+        // ledger, and a "turn" the unpriced count and the turn tally both saw.
+        // It must not supersede the provisional accumulator either: an empty
+        // report says nothing about the requests already made.
       } else if (ev.type === "usage") {
+        // The segment's own totals, which cover every request this turn made
+        // since the last full report — so whatever was accumulated per request
+        // is now double, and goes.
+        for (const k of Object.keys(provisional) as (keyof typeof provisional)[]) provisional[k] = 0;
         // A turn against an overridden endpoint (lib/agentEnv.ts) is not
         // Anthropic or OpenAI spend, whatever the driver's own figure says:
         // Claude Code prices whatever model id it was TOLD, and the Codex
@@ -1097,15 +1133,42 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // exists to make impossible, so it raises its hand like any other failure.
     const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
 
+    // Whatever the turn spent inside a segment that never produced a full
+    // report — a Stop, a driver error, a crash of the agent process — is here
+    // and nowhere else, so it is written before the line below reads the
+    // accumulator. Measured on a live instance: a Stop 33.7 minutes into one
+    // segment (two ~10-minute Bash calls and a subagent) recorded 0 tokens and
+    // $0 against neighbouring turns costing $2-4, because the ledger only ever
+    // read result messages. No price is recorded with it: the per-request
+    // source carries tokens alone, so the row is UNPRICED (null) rather than a
+    // confident $0 — except against an endpoint that genuinely bills nothing,
+    // where 0 is a measurement, exactly as the live branch above decides it.
+    // Best-effort like the ask settle: this is the finally, and the task row
+    // may already be deleted underneath us.
+    if (!isEmptyUsage(provisional)) {
+      try {
+        const provider = taskProvider(project, task);
+        const cost = provider.pricing === "free" ? 0 : null;
+        const usage: LedgerUsage = { ...provisional, cost_usd: cost };
+        addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
+        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
+        if (cost === null) unpricedTurns++;
+        publish(id, { type: "usage", usage: { ...provisional, cost_usd: cost ?? 0 }, unpriced: cost === null });
+      } catch (err) {
+        log.warn("usage flush failed", { task: id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     // Turn lifecycle, line 2 of 2 (issue #16): what happened, how long it took,
     // what it cost. The outcome ladder is deliberately the SAME one the
     // schedule-run settle below uses — a run recorded `failed` in the ledger
     // and logged `ok` would be worse than no line at all — with `interrupted`
     // meaning the agent session never opened, so the turn produced nothing.
-    // Tokens come from the accumulator, not a task_usage read: an agent that
-    // reported no usage (a driver that doesn't, a turn that died before its
-    // result message) logs zeros, which is the truth about THIS turn rather
-    // than the task's running total.
+    // Tokens come from the accumulator, not a task_usage read: a driver that
+    // reports no usage at all logs zeros, which is the truth about THIS turn
+    // rather than the task's running total. A turn that died before its result
+    // message no longer logs zeros — the flush above put its per-request
+    // tokens in the accumulator first, with no cost, so the line reports them
+    // under `unpriced_turns` and omits the dollar figure.
     const outcome = stopped ? "stopped" : turnError || unattendedDeny ? "failed" : opened ? "ok" : "interrupted";
     // The counter takes the SAME word: TurnOutcome is that ladder as a type, so
     // a fifth outcome added here has to be given a series too rather than
