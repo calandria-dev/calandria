@@ -1,9 +1,15 @@
 /* The desktop app's instance list — which server the window is attached to.
  *
- * Phase 1 of docs/superpowers/specs/2026-09-02-remote-instances-design.md. The
- * shell used to have exactly one server: the pair of sidecars supervisor.js
+ * Phases 1 and 2 of docs/superpowers/specs/2026-09-02-remote-instances-design.md.
+ * The shell used to have exactly one server: the pair of sidecars supervisor.js
  * spawns on loopback. This file turns that into ONE ENTRY IN A LIST, so the
  * same window can be pointed at a Calandria running somewhere else.
+ *
+ * THREE KINDS. `local` is the supervisor's pair. `url` is an origin reached
+ * over the network as any browser would. `ssh` is a `url` whose origin does not
+ * exist until an `ssh -L` forward is running — see ssh-tunnel.js, which owns
+ * everything about that; this file only holds `{ host, remotePort, localPort? }`
+ * and the rules for reading one out of what a person typed.
  *
  * Everything here is plain data and file IO, with no `electron` require, for
  * the reason supervisor.js and env-file.js are the same shape: the risky half
@@ -31,6 +37,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+const { DEFAULT_REMOTE_PORT } = require("./ssh-tunnel");
 
 const LOCAL_ID = "local";
 const LOCAL_NAME = "This computer";
@@ -95,7 +103,23 @@ function normalizeState(raw) {
       localName = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : null;
       continue;
     }
-    if (entry.kind !== "url") continue; // "ssh" arrives in phase 2
+    if (entry.kind === "ssh") {
+      let ssh;
+      try {
+        ssh = normalizeSshTarget(entry.ssh);
+      } catch {
+        continue;
+      }
+      seen.add(id);
+      out.push({
+        id,
+        kind: "ssh",
+        name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : ssh.host,
+        ssh,
+      });
+      continue;
+    }
+    if (entry.kind !== "url") continue;
     let url;
     try {
       url = normalizeInstanceUrl(entry.url);
@@ -143,6 +167,91 @@ function normalizeInstanceUrl(input) {
   return u.origin;
 }
 
+/*
+ * An ssh destination is `[user@]host`, where `host` is as likely to be an alias
+ * out of the user's ~/.ssh/config as a hostname — which is most of why this
+ * kind exists at all, since an alias carries the jump host, the identity file
+ * and the ControlMaster socket with it.
+ *
+ * The pattern is a whitelist rather than a blacklist, and the ONE rule that is
+ * about safety rather than typos is that it cannot start with `-`: the value
+ * ends up in an argv this app builds, and a "host" named `-oProxyCommand=…`
+ * would be read by ssh as an option. There is no shell in the path (spawn takes
+ * an array), so quoting is not the exposure; argument position is.
+ */
+const SSH_HOST_RE = /^[A-Za-z0-9_](?:[A-Za-z0-9_.-]*)(?:@[A-Za-z0-9_](?:[A-Za-z0-9_.-]*))?$/;
+
+function normalizePort(value, { field, fallback = null }) {
+  if (value === undefined || value === null || value === "") {
+    if (fallback !== null) return fallback;
+    throw new Error(`Enter a ${field}.`);
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`"${value}" is not a valid ${field}.`);
+  return n;
+}
+
+/**
+ * Coerce an `ssh` instance's target into `{ host, remotePort, localPort? }`, or
+ * throw with a sentence the dialog can show.
+ *
+ * `remotePort` is the port CALANDRIA listens on over there, not sshd's — the
+ * ssh port belongs in the user's ~/.ssh/config with everything else about how
+ * to reach the host. `localPort` is optional and is the escape hatch for
+ * someone who wants a fixed origin; leaving it out lets the app pick a free one
+ * (ssh-tunnel.js's `pickLocalPort`).
+ */
+function normalizeSshTarget(input) {
+  const raw = input && typeof input === "object" ? input : {};
+  const host = String(raw.host ?? "").trim();
+  if (!host) throw new Error("Enter the SSH host to forward through.");
+  if (!SSH_HOST_RE.test(host)) {
+    throw new Error(`"${host}" is not a host ssh can be pointed at. Use [user@]host, or a Host alias from ~/.ssh/config.`);
+  }
+  const target = { host, remotePort: normalizePort(raw.remotePort, { field: "remote port", fallback: DEFAULT_REMOTE_PORT }) };
+  if (raw.localPort !== undefined && raw.localPort !== null && raw.localPort !== "") {
+    target.localPort = normalizePort(raw.localPort, { field: "local port" });
+  }
+  return target;
+}
+
+/**
+ * Read one typed address into the instance it describes.
+ *
+ * One field rather than a kind picker, because the two kinds ARE one question —
+ * where is the server — and the scheme is how every other tool spells the
+ * answer. `ssh://` is the whole of the syntax: `ssh://build`, `ssh://me@build`,
+ * `ssh://build:3000` when the remote Calandria is not on the default port.
+ */
+function parseInstanceAddress(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) throw new Error("Enter the address of the Calandria server.");
+  if (/^ssh:\/\//i.test(raw)) {
+    let u;
+    try {
+      u = new URL(raw);
+    } catch {
+      throw new Error(`"${raw}" is not a valid ssh:// address.`);
+    }
+    const host = `${u.username ? `${decodeURIComponent(u.username)}@` : ""}${u.hostname}`;
+    const ssh = normalizeSshTarget({ host, remotePort: u.port || DEFAULT_REMOTE_PORT });
+    return { kind: "ssh", ssh };
+  }
+  return { kind: "url", url: normalizeInstanceUrl(raw) };
+}
+
+/**
+ * How an instance is written down: the second line of a manage-dialog row, the
+ * tail of a menu label, the subheading on the boot screen. One function so the
+ * three never disagree about what an `ssh` instance is called.
+ */
+function instanceAddress(instance) {
+  if (!instance) return "";
+  if (instance.kind === "local") return "Managed by this app";
+  if (instance.kind === "ssh") return `ssh://${instance.ssh.host}:${instance.ssh.remotePort}`;
+  return instance.url;
+}
+
 /** A short id that is not already taken. Four hex chars, like the spec's file. */
 function newInstanceId(state, random = Math.random) {
   const taken = new Set(state.instances.map((i) => i.id));
@@ -164,6 +273,22 @@ function addUrlInstance(state, { name, url }, random = Math.random) {
   const label = String(name ?? "").trim() || new URL(origin).host;
   const instance = { id, kind: "url", name: label, url: origin };
   return { state: { active: state.active, instances: [...state.instances, instance] }, instance };
+}
+
+/** Add an `ssh` instance. Returns `{ state, instance }`; throws on a bad target. */
+function addSshInstance(state, { name, host, remotePort, localPort }, random = Math.random) {
+  const ssh = normalizeSshTarget({ host, remotePort, localPort });
+  const id = newInstanceId(state, random);
+  const label = String(name ?? "").trim() || ssh.host;
+  const instance = { id, kind: "ssh", name: label, ssh };
+  return { state: { active: state.active, instances: [...state.instances, instance] }, instance };
+}
+
+/** Add whichever kind the typed address describes. The dialog's one entry point. */
+function addInstance(state, { name, address }, random = Math.random) {
+  const parsed = parseInstanceAddress(address);
+  if (parsed.kind === "ssh") return addSshInstance(state, { name, ...parsed.ssh }, random);
+  return addUrlInstance(state, { name, url: parsed.url }, random);
 }
 
 /**
@@ -219,7 +344,7 @@ function windowTitle(instance) {
 function instanceMenuItems(state) {
   return state.instances.map((i) => ({
     id: i.id,
-    label: i.kind === "local" ? i.name : `${i.name} — ${new URL(i.url).host}`,
+    label: i.kind === "local" ? i.name : `${i.name} — ${i.kind === "ssh" ? i.ssh.host : new URL(i.url).host}`,
     checked: i.id === state.active,
   }));
 }
@@ -313,17 +438,23 @@ module.exports = {
   LOCAL_ID,
   LOCAL_NAME,
   MIN_SERVER_VERSION,
+  DEFAULT_REMOTE_PORT,
   activeInstance,
+  addInstance,
+  addSshInstance,
   addUrlInstance,
   compareVersions,
   defaultState,
   findInstance,
+  instanceAddress,
   instanceMenuItems,
   instancesFilePath,
   loadInstances,
   newInstanceId,
   normalizeInstanceUrl,
+  normalizeSshTarget,
   normalizeState,
+  parseInstanceAddress,
   partitionFor,
   removeInstance,
   saveInstances,

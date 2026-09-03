@@ -14,20 +14,25 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const http = require("node:http");
+const { spawn } = require("node:child_process");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
 const {
+  DEFAULT_REMOTE_PORT,
   LOCAL_ID,
   MIN_SERVER_VERSION,
   activeInstance,
+  addInstance,
   addUrlInstance,
   compareVersions,
   findInstance,
+  instanceAddress,
   instanceMenuItems,
   instancesFilePath,
   loadInstances,
   normalizeInstanceUrl,
   normalizeState,
+  parseInstanceAddress,
   partitionFor,
   removeInstance,
   saveInstances,
@@ -36,6 +41,7 @@ const {
   versionBannerText,
   windowTitle,
 } = require("./instances");
+const { SshTunnel, pickLocalPort, portAccepts, sshArgs, sshFailureMessage, waitForPort } = require("./ssh-tunnel");
 const {
   AppEvents,
   NeedsYou,
@@ -78,6 +84,39 @@ async function test(name, fn) {
     failures++;
     console.log(`FAIL ${name} (${Date.now() - started}ms)\n     ${err?.stack || err}`);
   }
+}
+
+/**
+ * Point a tunnel at desktop/stub-ssh.js instead of the real ssh.
+ *
+ * Through the injected `spawnFn` rather than a launcher script on PATH. The
+ * argv is fixed by the spec and has nowhere in it to put a script path, so the
+ * stub has to be reached some other way, and a shell script was the first
+ * answer: it died on Windows with `spawn EINVAL`, because Node refuses to
+ * `spawn()` a `.cmd` without `shell: true` (CVE-2024-27980) and the app must
+ * never pass that — a real `ssh.exe` spawns fine, so hardening the product for
+ * the fixture would have been the wrong repair. One code path on every
+ * platform now: no shebang, no exec bit, no `.cmd`. What it gives up is proof
+ * that `sshPath` resolves to a real binary, which is desktop/e2e's job anyway
+ * since only there is the binary a real OpenSSH.
+ */
+function fakeSshOptions(dir, env = {}) {
+  const stub = path.join(HERE, "stub-ssh.js");
+  return {
+    sshPath: "ssh",
+    spawnFn: (_bin, args, opts) => spawn(process.execPath, [stub, ...args], opts),
+    env: { ...process.env, STUB_SSH_COUNT_FILE: path.join(dir, "attempts"), ...env },
+  };
+}
+
+/** Poll a predicate rather than sleeping a guessed interval. */
+async function waitUntil(fn, timeoutMs, what) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fn()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for: ${what}`);
 }
 
 function hold(port) {
@@ -1192,17 +1231,20 @@ function hold(port) {
 
   await test("main.js attaches by URL, warns on an old server, and keeps the local one running", async () => {
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
-    const attach = src.indexOf("async function attachUrl(");
-    assert.notEqual(attach, -1, "main.js should have a url attach path");
+    assert.ok(/async function attachUrl\(/.test(src), "main.js should have a url attach path");
+    // Everything past "we have an origin" is shared with the `ssh` kind, which
+    // is why these assertions live on attachOrigin rather than attachUrl.
+    const attach = src.indexOf("async function attachOrigin(");
+    assert.notEqual(attach, -1, "main.js should converge both remote kinds on attachOrigin");
     const body = src.slice(attach, attach + 2000);
-    assert.ok(/probeVersion\(inst\)/.test(body), "the handshake runs before the window is pointed anywhere");
+    assert.ok(/probeVersion\(inst, origin\)/.test(body), "the handshake runs before the window is pointed anywhere");
     assert.ok(/showAttachFailure\(/.test(body), "an unreachable instance gets the loading page, not a modal");
     // A login in front of the server is not a failure: the window IS a browser,
     // so the way through it is to load the page. Getting this wrong strands
     // every Cloudflare Access instance on an error screen it can never leave.
     assert.ok(/probe\.signIn/.test(body), "a sign-in must not be treated as unreachable");
     assert.ok(/serverTooOld\(/.test(body) && /showVersionBanner\(/.test(body), "an older server loads with a banner");
-    assert.ok(/loadURL\(inst\.url\)/.test(body), "and then it is loaded");
+    assert.ok(/loadURL\(origin\)/.test(body), "and then it is loaded");
     assert.ok(/api\/version/.test(src.slice(src.indexOf("async function probeVersion("), src.indexOf("async function probeVersion(") + 900)));
 
     // Switching away from local must not stop its server: turns are detached
@@ -1298,6 +1340,323 @@ function hold(port) {
       /!trayHosted/.test(src.slice(announce, announce + 500)),
       "the tray-residency toast must be gated on a confirmed tray, not on `tray`",
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // The ssh transport (ssh-tunnel.js). Phase 2 of the remote-instances design.
+  //
+  // Everything here runs against desktop/stub-ssh.js rather than a real sshd,
+  // which is the only way to ask for the cases that matter: a host that refuses
+  // the key under BatchMode, a forward that comes up and then drops, an ssh
+  // that stays alive and never listens. desktop/e2e/13-ssh-instance.spec.ts is
+  // the other half — it drives a REAL `ssh localhost` when the box has one, and
+  // skips when it does not, because a stub cannot show that the argv this file
+  // pins is one OpenSSH actually accepts.
+  // ---------------------------------------------------------------------------
+
+  await test("the forward is spawned exactly as the spec writes it", async () => {
+    assert.deepEqual(sshArgs({ host: "build", localPort: 3100, remotePort: 3000 }), [
+      "-N",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      "-o",
+      "BatchMode=yes",
+      "-L",
+      "127.0.0.1:3100:127.0.0.1:3000",
+      "build",
+    ]);
+    const args = sshArgs({ host: "me@build", localPort: 3100, remotePort: 8080 });
+    // Both ends of -L are pinned to loopback: the local one so the forward is
+    // not offered to the LAN, the remote one because the server over there is
+    // bound to loopback and that is what makes SSH the credential.
+    assert.equal(args[args.indexOf("-L") + 1], "127.0.0.1:3100:127.0.0.1:8080");
+    // BatchMode is not optional — a window has no terminal for a password.
+    assert.ok(args.includes("BatchMode=yes"));
+    // Without this an ssh whose local port is taken stays up with no forward,
+    // and "connected" would mean nothing.
+    assert.ok(args.includes("ExitOnForwardFailure=yes"));
+    assert.equal(args[args.length - 1], "me@build", "the host goes last, after every option");
+  });
+
+  await test("a host that wants a password is told what to do instead", async () => {
+    const msg = sshFailureMessage({
+      host: "build",
+      code: 255,
+      stderr: ["build: Permission denied (publickey,keyboard-interactive)."],
+    });
+    assert.ok(msg.includes("Permission denied"), "ssh's own words come first");
+    assert.ok(msg.includes("BatchMode=yes"), "and why it could not ask");
+    assert.ok(msg.includes("ssh-copy-id build") && msg.includes("ssh -fN build"), "and the two ways out");
+    // A forward that WAS up is a different sentence: authentication worked, so
+    // repeating the key advice would be a wrong answer to a network drop.
+    const drop = sshFailureMessage({ host: "build", code: 255, dropped: true, stderr: ["Broken pipe"] });
+    assert.ok(drop.includes("closed") && drop.includes("Broken pipe"));
+    assert.ok(!drop.includes("ssh-copy-id"), "a drop must not be reported as an auth problem");
+    // No ssh at all is neither of those.
+    const missing = sshFailureMessage({ host: "build", spawnError: "spawn ssh ENOENT" });
+    assert.ok(missing.includes("ENOENT") && missing.includes("CALANDRIA_SSH"));
+  });
+
+  await test("a configured local port is honoured or refused, never quietly moved", async () => {
+    const free = await pickLocalPort(0, { base: 45300, probes: 5 });
+    assert.ok(free >= 45300 && free < 45305);
+    const held = await hold(45320);
+    try {
+      // Scanning steps past a busy port...
+      assert.equal(await pickLocalPort(0, { base: 45320, probes: 5 }), 45321);
+      // ...but a port the user WROTE DOWN is not silently swapped for another,
+      // because the whole reason to configure one is that something else on
+      // this machine expects the forward to be there.
+      await assert.rejects(() => pickLocalPort(45320), /already in use/);
+    } finally {
+      held.close();
+    }
+  });
+
+  await test("waitForPort waits for an accept, and gives up rather than hanging", async () => {
+    let srv = null;
+    const opening = new Promise((resolve) => {
+      setTimeout(() => {
+        hold(45330).then((s) => {
+          srv = s;
+          resolve(s);
+        });
+      }, 150);
+    });
+    try {
+      // Nothing is listening yet — this has to keep probing rather than answer
+      // the first refusal, which is the whole difference between a forward that
+      // is up and an ssh that has only just been spawned.
+      await waitForPort(45330, { timeoutMs: 5_000, intervalMs: 25 });
+      await opening;
+    } finally {
+      srv?.close();
+    }
+    await assert.rejects(() => waitForPort(45331, { timeoutMs: 300, intervalMs: 50 }), /nothing accepted/);
+  });
+
+  await test("the tunnel forwards a real connection, and stopping it kills the ssh child", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const argsLog = path.join(dir, "args.log");
+    const behind = http.createServer((_req, res) => res.end("behind the forward"));
+    await new Promise((r) => behind.listen(45340, "127.0.0.1", r));
+    const tunnel = new SshTunnel({
+      host: "stub",
+      remotePort: 45340,
+      portBase: 45341,
+      ...fakeSshOptions(dir, { STUB_SSH_ARGS_LOG: argsLog }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.ok(started.ok, `the forward should come up: ${started.error}`);
+      assert.equal(tunnel.url, `http://127.0.0.1:${tunnel.localPort}`);
+      const body = await fetch(`${tunnel.url}/`).then((r) => r.text());
+      assert.equal(body, "behind the forward", "the tunnel's URL should reach the server behind it");
+      // The argv the child really got, not the one sshArgs() returns in the
+      // abstract: this is the only place the two are checked against each other.
+      const argv = JSON.parse(fs.readFileSync(argsLog, "utf8").trim().split("\n")[0]);
+      assert.deepEqual(argv, sshArgs({ host: "stub", localPort: tunnel.localPort, remotePort: 45340 }));
+
+      const child = tunnel.child;
+      await tunnel.stop();
+      assert.ok(child.exitCode !== null || child.signalCode, "stop() must reap the ssh child");
+      // And with it the forward: an orphaned `ssh -N` holds the local port for
+      // the rest of the session.
+      assert.equal(await portAccepts(tunnel.localPort, { timeoutMs: 500 }), false);
+    } finally {
+      behind.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a forward that never authenticates fails the attach with ssh's own words", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45350,
+      portBase: 45351,
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "fail" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.equal(started.ok, false);
+      assert.ok(started.error.includes("Permission denied"), started.error);
+      assert.ok(started.error.includes("ssh-copy-id build"), "the message has to be actionable");
+      assert.equal(tunnel.child, null, "a failed attempt leaves no child behind");
+    } finally {
+      await tunnel.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("an ssh that connects and never forwards is killed rather than waited out", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45360,
+      portBase: 45361,
+      connectTimeoutMs: 600,
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "hang" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.equal(started.ok, false);
+      assert.ok(started.error.includes("did not open the forward"), started.error);
+      // Killed, not left running: an ssh that is connected and forwarding
+      // nothing looks exactly like a working one from the outside, and a retry
+      // would then fail to bind the port the corpse is not holding.
+      assert.equal(tunnel.child, null, "the wedged child should be gone by the time start() returns");
+    } finally {
+      await tunnel.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a forward that drops comes back on the same port, with backoff", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const behind = http.createServer((_req, res) => res.end("still here"));
+    await new Promise((r) => behind.listen(45370, "127.0.0.1", r));
+    const downs = [];
+    let ups = 0;
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45370,
+      portBase: 45371,
+      minBackoffMs: 50,
+      maxBackoffMs: 100,
+      onDown: (info) => downs.push(info),
+      onUp: () => (ups += 1),
+      // First attempt forwards for 250ms and dies; the second refuses; the
+      // third (and every later one) works. So the backoff is exercised twice,
+      // which is the only way to see it grow.
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "up:250,fail,up" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.ok(started.ok, started.error);
+      const port = tunnel.localPort;
+      await waitUntil(() => ups > 0, 10_000, "the tunnel should reconnect on its own");
+      assert.equal(tunnel.localPort, port, "a reconnect must return to the SAME origin");
+      assert.equal(await fetch(`${tunnel.url}/`).then((r) => r.text()), "still here");
+      assert.equal(downs.length, 2, "both failures should have been reported to the window");
+      // The first report is the drop, not an auth failure — the host had
+      // already let us in.
+      assert.ok(!downs[0].error.includes("ssh-copy-id"), downs[0].error);
+      assert.ok(downs[1].error.includes("Permission denied"), downs[1].error);
+      assert.ok(downs.every((d) => d.delayMs > 0), "every report carries how long the next wait is");
+      assert.ok(downs[1].delayMs > downs[0].delayMs, "the wait should grow between attempts");
+      assert.ok(downs[0].stderr.length > 0, "and the last lines ssh printed");
+    } finally {
+      await tunnel.stop();
+      behind.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("stopping during a backoff does not wait it out, and does not reconnect", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    let ups = 0;
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45380,
+      portBase: 45381,
+      minBackoffMs: 30_000, // long enough that only the cancel can end it
+      onUp: () => (ups += 1),
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "up:150,up" }),
+    });
+    const started = await tunnel.start();
+    assert.ok(started.ok, started.error);
+    await waitUntil(() => !tunnel.up, 5_000, "the stub should have dropped the forward");
+    const began = Date.now();
+    await tunnel.stop();
+    assert.ok(Date.now() - began < 5_000, "stop() must cut the backoff short");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(ups, 0, "a stopped tunnel must never reconnect");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test("an ssh instance survives the instance file, and cannot smuggle an ssh option", async () => {
+    const state = normalizeState({
+      active: "9c2e",
+      instances: [
+        { id: "local", kind: "local" },
+        { id: "9c2e", kind: "ssh", name: "Build box", ssh: { host: "build", remotePort: 3000 } },
+        // The one input rule that is about safety rather than typos: this value
+        // becomes an argv entry, and ssh reads a leading `-` as an option.
+        { id: "bad1", kind: "ssh", name: "Sneaky", ssh: { host: "-oProxyCommand=touch /tmp/pwned" } },
+        { id: "bad2", kind: "ssh", name: "No host", ssh: {} },
+        { id: "bad3", kind: "ssh", name: "Bad port", ssh: { host: "build", remotePort: 99999 } },
+      ],
+    });
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      [LOCAL_ID, "9c2e"],
+      "only the well-formed ssh entry should survive",
+    );
+    assert.equal(state.active, "9c2e");
+    assert.deepEqual(state.instances[1].ssh, { host: "build", remotePort: 3000 });
+    // A saved localPort is kept — it is how someone pins the origin.
+    const pinned = normalizeState({
+      instances: [{ id: "aa11", kind: "ssh", ssh: { host: "me@build", remotePort: 8080, localPort: 3199 } }],
+    });
+    assert.deepEqual(pinned.instances[1].ssh, { host: "me@build", remotePort: 8080, localPort: 3199 });
+    // An unnamed one is named after its host, as a url one is after its origin.
+    assert.equal(pinned.instances[1].name, "me@build");
+    assert.equal(instanceMenuItems(pinned)[1].label, "me@build — me@build");
+    assert.equal(instanceAddress(pinned.instances[1]), "ssh://me@build:8080");
+    assert.equal(partitionFor(pinned.instances[1]), "persist:instance-aa11", "ssh gets its own cookie jar too");
+  });
+
+  await test("one address field reads both kinds", async () => {
+    assert.deepEqual(parseInstanceAddress("ssh://build"), {
+      kind: "ssh",
+      ssh: { host: "build", remotePort: DEFAULT_REMOTE_PORT },
+    });
+    assert.deepEqual(parseInstanceAddress("ssh://me@build:8080"), {
+      kind: "ssh",
+      ssh: { host: "me@build", remotePort: 8080 },
+    });
+    // Everything else still means what it meant in phase 1, bare host included.
+    assert.deepEqual(parseInstanceAddress("lab.example.com"), { kind: "url", url: "https://lab.example.com" });
+    assert.throws(() => parseInstanceAddress("ssh://-oProxyCommand=x"), /is not a host/);
+    assert.throws(() => parseInstanceAddress(""), /Enter the address/);
+
+    let state = normalizeState({});
+    let added;
+    ({ state, instance: added } = addInstance(state, { name: "", address: "ssh://build:3000" }));
+    assert.equal(added.kind, "ssh");
+    assert.equal(added.name, "build");
+    assert.deepEqual(added.ssh, { host: "build", remotePort: 3000 });
+    ({ state, instance: added } = addInstance(state, { name: "Lab", address: "https://lab.example.com" }));
+    assert.equal(added.kind, "url");
+  });
+
+  await test("main.js wires the ssh transport to the one attach path", async () => {
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const attach = src.indexOf("async function attach(inst)");
+    assert.notEqual(attach, -1);
+    const body = src.slice(attach, attach + 900);
+    assert.ok(/inst\.kind === "ssh"/.test(body) && /attachSsh\(/.test(body), "attach() should dispatch the ssh kind");
+    // Every attach, including a retry of the same instance: a forward whose
+    // window has moved on is a port nobody reads and a child nobody reaps.
+    assert.ok(/await stopTunnel\(\)/.test(body), "an attach must close the forward it is replacing");
+
+    const ssh = src.indexOf("async function attachSsh(");
+    assert.notEqual(ssh, -1, "main.js should have an ssh attach path");
+    const sshBody = src.slice(ssh, ssh + 2200);
+    assert.ok(/new SshTunnel\(/.test(sshBody));
+    // The point of the shape: once there is an origin, an ssh instance is a url
+    // instance. A second copy of the handshake here would be a second thing to
+    // get wrong.
+    assert.ok(/attachOrigin\(inst, t\.url, seq\)/.test(sshBody), "a live forward proceeds as a url instance");
+    assert.ok(/showAttachFailure\(/.test(sshBody), "a forward that never came up asks the user");
+    assert.ok(/onDown:/.test(sshBody) && /showLoading\(/.test(sshBody), "a dropped forward shows the loading page");
+    assert.ok(/onUp:/.test(sshBody), "and a recovered one reloads the app");
+
+    // Quit reaps the child. An `ssh -N` that outlives the app holds the local
+    // port until the user finds it with lsof.
+    const quit = src.indexOf('app.on("before-quit"');
+    assert.ok(/await stopTunnel\(\)/.test(src.slice(quit, quit + 1800)), "quitting must kill the ssh child");
   });
 
   // ---- updater.js ---------------------------------------------------------

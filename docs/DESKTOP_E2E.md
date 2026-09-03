@@ -35,8 +35,8 @@ today.
 
 1. ~~**A `desktop` lane in `.github/workflows/test.yml`, on the ubuntu runner we
    already use.**~~ **Landed.** `xvfb-run` + the Playwright `_electron` suite in
-   `desktop/e2e/` (43 specs across twelve files, sixteen of them platform- or
-   bench-gated),
+   `desktop/e2e/` (46 specs across thirteen files, sixteen of them platform- or
+   bench-gated, three more skipped where the box has no key-based ssh),
    plus the two supervisor scripts that already
    existed and ran nowhere (21 + 8 assertions). Zero infra, ~1.2 minutes of
    window suite on top of a build the lane needs anyway, and it covers the
@@ -132,6 +132,7 @@ for what only the shell can break:
 | One smoke path through the app inside the window (onboarding → project → turn) | Proves SSE/WebSocket/xterm survive Electron's renderer, once |
 | The packaged artifact does all of the above, plus: it booted from `resources/app-payload` with no `CALANDRIA_REPO_ROOT`, spawned the Node it shipped, and (installed) is really sandboxed | It is what a user would download — and `desktop/e2e/06-packaged.spec.ts` is the only spec that cannot also run against the dev shell |
 | Attaching to a server the shell did not start: the window lands on a **second** production server's origin, no local server is started, the title names the instance, the window sits in that instance's own session partition, and switching to `This computer` from the app menu boots the local one and leaves the remote up | `desktop/e2e/12-remote-instance.spec.ts`. Only the shell has an instance list, a session partition per instance, or a native menu to switch from; a browser tab reaches a remote Calandria by typing its URL |
+| Attaching through a real `ssh -L` forward: the window lands on a loopback origin that is really the other server, the argv is the one the design names, and quitting takes the ssh child with it | `desktop/e2e/13-ssh-instance.spec.ts`. Skipped where `ssh -o BatchMode=yes <host> true` does not already work, which is the same refusal the app itself would make; `desktop/test-supervisor.js` covers the transport's own logic against `stub-ssh.js` on every box |
 
 Not covered, deliberately: everything the browser suite already asserts, and
 anything requiring a signed installer until installers exist.
@@ -140,7 +141,7 @@ anything requiring a signed installer until installers exist.
 
 | Lane | Runner | Scope | Trigger |
 |-|-|-|-|
-| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite — including `12-remote-instance.spec.ts`, which boots a **second** production server on its own port and attaches the shell to it by URL; then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
+| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite — including `12-remote-instance.spec.ts`, which boots a **second** production server on its own port and attaches the shell to it by URL, and `13-ssh-instance.spec.ts`, which attaches to one through a real `ssh localhost` forward — the lane mints a runner key first (best-effort; the spec skips rather than fails where BatchMode ssh to localhost does not work, which is every non-Linux lane); then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
 | **desktop-bench** (landed, runner not registered) | Proxmox VM, real session | The whole suite twice — dev shell, then an installed `.deb` at `/opt/Calandria` with the sandbox intact — plus three spec files gated on `CALANDRIA_DESKTOP_BENCH=1`: `09-bench-notifications`, `10-bench-tray`, `11-bench-window`. VNC for a human or an agent session to watch | `workflow_dispatch` + nightly, in its own workflow file (`.github/workflows/desktop-bench.yml`) with **no `pull_request` trigger at all** |
 | **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Then, further than Ubuntu goes, `electron-builder --win nsis`, a **silent install** (`/S`) of the installer it produced, and the window suite against the installed `Calandria.exe` under `%LOCALAPPDATA%\Programs\Calandria` with no `CALANDRIA_REPO_ROOT` — plus the install's own location, payload, shortcuts and uninstaller. No `$RUNNER_TEMP` move: an installed app is outside the checkout by construction. Only SmartScreen stays untested, since a locally built installer carries no Mark of the Web | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
 | **desktop-macos** (landed) | GitHub-hosted `macos-latest` | The whole suite twice (dev shell, then a packaged `.app`), plus the three things only macOS has: the launchd PATH repair under a real `open` launch, the `hiddenInset` title bar, and the menu roles under a real menubar | **Weekly cron**, dispatch, or a PR carrying the `macos` label — not the shared `e2e` one |

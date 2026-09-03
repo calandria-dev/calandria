@@ -43,6 +43,8 @@
       button.primary:hover { background: #2a6ddb; }
       button.danger:hover { background: #3a1f22; border-color: #5a2b30; }
       .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+      #hint { color: #6b737c; font-size: 12px; margin: -4px 0 8px; }
+      #hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b939c; }
       #error { color: #ff8a8a; font-size: 12.5px; min-height: 17px; margin-top: 2px; }
       [hidden] { display: none !important; }
     </style>
@@ -58,6 +60,11 @@
     <div id="form">
       <label>Name<input id="name" type="text" placeholder="Lab" autocomplete="off" spellcheck="false" /></label>
       <label>Address<input id="url" type="text" placeholder="https://calandria.example.com" autocomplete="off" spellcheck="false" /></label>
+      <div id="hint">
+        An <code>https://</code> address, or <code>ssh://host:3000</code> to forward the port that server
+        listens on through your own <code>ssh</code>. The host may be any name your
+        <code>~/.ssh/config</code> knows.
+      </div>
       <div id="error"></div>
       <div class="actions">
         <button id="cancel" type="button">Cancel</button>
