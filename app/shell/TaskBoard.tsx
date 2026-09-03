@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
-import { isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
+import { blockedNote, isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
@@ -388,6 +388,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                 const day = def.mini && key === "done" ? dayBucket(t.updated_at) : null;
                 const divider = day !== null && day !== lastDay ? <div className="b-day" key={`day-${day}`}>{day}<i /></div> : null;
                 lastDay = day;
+                const blockNote = blockedNote(blockedBy.get(t.id));
                 return (
                   <div className="b-slot" key={t.id}>
                     {divider}
@@ -414,7 +415,10 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       projectBranch={projectBranch}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
-                          <button className="go" onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
+                          {/* Add accepts, Start accepts AND runs — and a
+                              blocked first turn is what the server 409s
+                              (PR #139), so only the second one is withheld. */}
+                          <button className="go" disabled={!!blockNote} title={blockNote} onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
                           {/* Same button either way — accepting a withdrawn
                               suggestion IS reviving it (the server clears the
                               cancel and the reason together) — but the label has

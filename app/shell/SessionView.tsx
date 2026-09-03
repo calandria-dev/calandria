@@ -5,7 +5,7 @@ import type { Status, Priority, AskQuestion, AskAnswers, PermissionDecision } fr
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown } from "../Markdown";
-import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote } from "./format";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
@@ -300,7 +300,8 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
 
 function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
-  const blocked = !!blockedBy?.length && !task.started;
+  const blockNote = task.started ? undefined : blockedNote(blockedBy);
+  const blocked = !!blockNote;
   // Queued for the usage-window reset (./queuedStart.ts): the server launches
   // it on its own when the deadline passes; "Start now" is still offered.
   const queued = isQueuedStart(task);
@@ -377,7 +378,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         </div>
       )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blocked ? `Blocked until done: ${blockedBy!.join(", ")}` : undefined}>
+        <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blockNote}>
           {Icon.play()} {running ? "Starting…" : blocked ? (task.auto_start ? "Queued" : "Blocked") : queued ? "Start now" : "Start session"}
         </button>
         {/* "Start at reset": only when this task's agent reports a usage window

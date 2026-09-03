@@ -780,6 +780,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bsug-acts button:hover{color:var(--ink);border-color:var(--line-strong);}
 .bsug-acts button.go{background:var(--blue-soft);border-color:var(--blue);color:var(--blue);}
 .bsug-acts button.no{flex:0 0 30px;color:var(--ink-4);}
+/* Start, withheld while the suggestion's blockers are open. Not
+   pointer-events:none — the button's title is the only place the reason is
+   written, and a tooltip that never appears is the same as no reason. */
+.bsug-acts button:disabled{opacity:.45;cursor:not-allowed;}
+.bsug-acts button.go:disabled:hover{color:var(--blue);border-color:var(--blue);}
 .bsug-acts button svg{width:10px;height:10px;}
 /* terminal columns: compact rows, day dividers, veil past the cap */
 .bcard.mini{padding:8px 10px;}
@@ -889,6 +894,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sug.open .sg-why{-webkit-line-clamp:unset;line-clamp:unset;display:block;}
 .sug-btn{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--on-accent);background:var(--accent);padding:5px 9px;border-radius:var(--r-sm);}
 .sug-btn:hover{filter:brightness(1.06);}
+.sug-btn:disabled{opacity:.45;cursor:not-allowed;}
+.sug-btn:disabled:hover{filter:none;}
 .sug-add{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent-ink);background:transparent;border:1px solid rgba(194,96,60,.4);padding:4px 8px;border-radius:var(--r-sm);}
 .sug-add:hover{background:rgba(194,96,60,.1);}
 .sug-add svg{width:13px;height:13px;}

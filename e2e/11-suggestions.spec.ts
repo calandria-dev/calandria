@@ -119,3 +119,39 @@ test("an added but unstarted task can be started from the edit dialog", async ({
   const settled = await waitForIdle(request, task.id);
   expect(settled.started).toBe(1);
 });
+
+// A BLOCKED suggestion. `POST /api/tasks/[id]/messages` 409s a first turn whose
+// blockers are still open, and the tray/board Start accepts the task before it
+// asks for the turn — so an offered Start would put the row on the board and
+// then be refused the run. The button is withheld instead. Add is not: accepting
+// a suggestion isn't starting it, and it's how the user gets the row onto the
+// board to wait its turn.
+test("a blocked suggestion offers Add but not Start", async ({ page, request }) => {
+  const blockerTitle = `Land the rename ${uid()}`;
+  const blocker = await createTask(request, { projectId, title: blockerTitle, description: "must finish first" });
+  const title = `Blocked suggestion ${uid()}`;
+  const task = await createTask(request, { projectId, title, description: "waits on the rename", suggested: true });
+  const dep = await request.patch(`/api/tasks/${task.id}`, { data: { depends_on: [blocker.id] } });
+  expect(dep.ok()).toBe(true);
+
+  await openProject(page);
+  const row = trayRow(page, title);
+  const start = row.getByRole("button", { name: "Start", exact: true });
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveAttribute("title", `Blocked until done: ${blockerTitle}`);
+  await expect(row.getByRole("button", { name: "Add", exact: true })).toBeEnabled();
+
+  // The board's own Start is the same gate, on the same row.
+  await page.getByTitle("Board view").click();
+  const card = page.locator(".bcard").filter({ hasText: title });
+  await expect(card.getByRole("button", { name: "Start", exact: true })).toBeDisabled();
+  // Board layout replaces the task column, so the way back is the board
+  // workspace's own segmented control, not the column's icon toggle (03-views).
+  await page.getByRole("tab", { name: "List", exact: true }).click();
+
+  // Finishing the blocker clears it, and the row the server would now accept is
+  // the row the tray now offers.
+  const done = await request.patch(`/api/tasks/${blocker.id}`, { data: { status: "done" } });
+  expect(done.ok()).toBe(true);
+  await expect(row.getByRole("button", { name: "Start", exact: true })).toBeEnabled();
+});
