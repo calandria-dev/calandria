@@ -1081,7 +1081,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* Live PR chip: a link to the GitHub PR opened from this task's branch, plus
    the state the server keeps fresh (lib/prState.ts) — state word, check rollup
    and review decision — and a Refresh button, which sits OUTSIDE the anchor
-   because a button inside a link is neither valid nor clickable. */
+   because a button inside a link is neither valid nor clickable.
+
+   It renders in the diff toolbar (`.tc-bar`), not in the session header, so the
+   size overrides scoped to that bar further down are the ones that apply. */
 .pr-chip-wrap{display:inline-flex;align-items:center;gap:0;flex:0 0 auto;}
 .pr-chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface-2);font-size:12px;font-weight:600;color:var(--ink-2);text-decoration:none;white-space:nowrap;flex:0 0 auto;}
 .pr-chip:hover{border-color:var(--line-strong);color:var(--ink);}
@@ -1149,12 +1152,19 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-stat .del,.tc-cnt .del{color:var(--red);}
 .tc-dirty{font-size:11px;color:var(--amber);}
 .tc-ahead{font-size:11px;color:var(--ink-3);}
+/* The PR chip (app/shell/PrChip.tsx) rides in this bar's status group. It was
+   sized for the session header's 30px controls; here it lines up with the
+   toolbar's smaller buttons instead. */
+.tc-bar .pr-chip,.tc-bar .pr-refresh{height:26px;}
+.tc-bar .pr-chip{font-size:11.5px;padding:0 10px;}
+.tc-bar .pr-chip-wrap .pr-chip{padding-right:8px;}
+.tc-bar .pr-refresh{width:26px;}
 .tc-spacer{flex:1;}
 .tc-btn{font-size:12px;font-weight:600;padding:5px 12px;border-radius:var(--r-sm);border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);cursor:pointer;}
 .tc-btn:hover:not(:disabled){background:var(--surface-2);}
 .tc-btn:disabled{opacity:.5;cursor:default;}
 .tc-btn.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent);}
-/* the PR link rendered as an <a> in the same toolbar row */
+/* the same button rendered as an <a> — the CI banner's "Open PR" link */
 a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height:1.4;}
 /* Squash & merge PR. Deliberately not .primary: the local "Merge to <base>"
    button next to it already owns that slot, and two accent-filled buttons side

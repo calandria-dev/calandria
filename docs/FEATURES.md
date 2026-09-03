@@ -51,15 +51,17 @@ Calandria puts the task conversation and git diff side by side. From there you c
 
 ![Diff review beside the agent session](images/changes.png)
 
-Once a task has a PR, its session header carries a live chip: the PR number, whether it is
-open, merged or closed, how its checks are doing, and the review decision. Calandria keeps
-that current by re-reading the PR from GitHub (`gh pr view`) in the background — when the PR
-is created, when you open the task, when you press the chip's Refresh button, and on a timer
-while the PR is still open. Nothing polls from the browser: a change reaches every open tab
-over the same event stream every other lifecycle fact uses. A merged or closed PR is never
-re-read, and a sweep is skipped entirely when no tab is open, so the cost is bounded by open
-work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
-turns the timer off and leaves the other three triggers.
+Once a task has a PR, the diff view's toolbar carries a live chip: the PR number, whether it
+is open, merged or closed, how its checks are doing, and the review decision. It sits with the
+diff rather than in the session header so the PR's state and the buttons that act on it are in
+one place, which matters most on a phone, where the diff and the chat are separate views.
+Calandria keeps that current by re-reading the PR from GitHub (`gh pr view`) in the background
+— when the PR is created, when you open the task, when you press the chip's Refresh button,
+and on a timer while the PR is still open. Nothing polls from the browser: a change reaches
+every open tab over the same event stream every other lifecycle fact uses. A merged or closed
+PR is never re-read, and a sweep is skipped entirely when no tab is open, so the cost is
+bounded by open work rather than by how many PRs the instance has ever opened.
+`CALANDRIA_PR_POLL_MS=0` turns the timer off and leaves the other three triggers.
 
 **A red PR is treated as work that needs you.** When the check rollup on a task's open PR
 goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
