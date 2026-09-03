@@ -6,7 +6,7 @@ import { Icon } from "../icons";
 import { Markdown } from "../Markdown";
 import { jget } from "./api";
 import { PriPill } from "./shared";
-import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
+import { blockedNote, clockTime, diffCls, isBlocking, splitAttachments, type MsgAttachment } from "./format";
 import { displayFileName } from "@/lib/uploadTypes";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
@@ -397,6 +397,12 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
   // three so the two surfaces can't disagree about what is still actionable.
   const actionable = card.suggested === 1;
   const elsewhere = card.project_id !== actions?.projectId;
+  // Blockers that have since finished aren't blockers, and the card used to
+  // name them anyway — so the same `isBlocking()` the tray and both dialogs
+  // use decides what the notice lists AND whether Start is on offer. Only a
+  // FIRST turn is gated, matching the server's own `!fresh.started` screen.
+  const openBlockers = card.blocked_by.filter(isBlocking);
+  const blockNote = card.started === 1 ? undefined : blockedNote(openBlockers.map((b) => b.title));
   const what = card.started === 1
     ? "Session started"
     : card.suggested === 0
@@ -419,9 +425,9 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
         </span>
       </div>
       {card.description && <div className="sugcard-why">{card.description}</div>}
-      {!!card.blocked_by.length && (
+      {!!openBlockers.length && (
         <div className="sugcard-blocked">
-          {Icon.lock()} Blocked by {card.blocked_by.map((b) => b.title).join(", ")}
+          {Icon.lock()} Blocked by {openBlockers.map((b) => b.title).join(", ")}
         </div>
       )}
       {actionable && actions && (
@@ -429,7 +435,7 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
           {elsewhere ? (
             <span className="sugcard-note">Open {card.project_name} to start it — starting it here would leave this session.</span>
           ) : (
-            <button className="btn btn-accent btn-sm" disabled={busy} onClick={() => act(actions.onStart)} title="Cut a worktree and start the session now">
+            <button className="btn btn-accent btn-sm" disabled={busy || !!blockNote} onClick={() => act(actions.onStart)} title={blockNote ?? "Cut a worktree and start the session now"}>
               {Icon.play()} Start
             </button>
           )}

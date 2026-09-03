@@ -948,6 +948,13 @@ export function useShell() {
     setSelTask((cur) => (cur === id ? null : cur));
   };
 
+  // Accept, then run — two calls, and the first is not undone if the second is
+  // refused. `POST /api/tasks/[id]/messages` 409s a blocked first turn
+  // (PR #139), so the callers gate on `blockedNote()` and never offer Start for
+  // a suggestion whose blockers are open. A stale tab that gets through anyway
+  // lands the 409's "Blocked until …" on the transcript it just navigated to,
+  // with the task accepted onto the board: the wrong half of a Start, but a
+  // visible one, and Add is where it would have ended up regardless.
   const startSuggestion = async (id: string) => {
     await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { suggested: 0 });
     if (selProj) await loadTasks(selProj, false);
