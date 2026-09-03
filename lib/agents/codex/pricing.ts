@@ -16,6 +16,15 @@ import type { TurnUsage } from "../../types";
 // Retired models keep their rows: historical turns still price against the
 // model they actually ran on, even once the picker stops offering it.
 const PRICES: { prefix: string; input: number; cachedInput: number; output: number }[] = [
+  // GPT-6 Astra (released 2026-09-03). Priced here ahead of the picker, which
+  // still doesn't offer it — see the note in ./capabilities.ts. A row costs
+  // nothing while nothing runs on it, and without one a turn that reaches the
+  // id out of band (a project-level override, an update_task setting
+  // tasks.model) falls through to the Sol fallback below and under-reports by
+  // 2x on input. These are the STANDARD rates; Fast mode doubles all three, and
+  // nothing in the turn's usage tells us which one served it, so a Fast turn
+  // reads half its true cost.
+  { prefix: "gpt-6-astra", input: 10.0, cachedInput: 1.0, output: 50.0 },
   { prefix: "gpt-5.6-sol", input: 5.0, cachedInput: 0.5, output: 30.0 },
   { prefix: "gpt-5.6-terra", input: 2.0, cachedInput: 0.2, output: 12.0 },
   { prefix: "gpt-5.6-luna", input: 0.2, cachedInput: 0.02, output: 1.2 },
@@ -43,6 +52,16 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // lowest-`priority` entry in the catalog embedded in the CLI binary, and can be
 // confirmed end-to-end by running `codex exec` under a scratch CODEX_HOME (no
 // config.toml to override it) and reading the model off the session rollout.
+//
+// SUSPECTED STALE, deliberately not changed here. A 0.153.0 account catalog
+// ranks gpt-6-astra `priority: 1` against Sol's 6, and by the rule above that
+// makes Astra the CLI default. If it is, every task that never picked a model
+// runs Astra and is costed as Sol — half price — and the "(default)" note on
+// Sol's picker entry reads wrong too. It isn't flipped on that evidence alone
+// because `priority` is the catalog's ORDERING field and this constant claims
+// something stronger, the check above is the one that settles it, and guessing
+// wrong mis-prices the same turns in the other direction. Settle it with a
+// no-`--model` run under a scratch CODEX_HOME, then change both places.
 export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 
 /** The model a codex turn effectively runs: the task's choice, else the CLI default. */
