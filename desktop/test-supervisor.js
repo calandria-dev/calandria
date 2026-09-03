@@ -14,6 +14,7 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const http = require("node:http");
+const { spawn } = require("node:child_process");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
 const {
@@ -88,18 +89,22 @@ async function test(name, fn) {
 /**
  * Point a tunnel at desktop/stub-ssh.js instead of the real ssh.
  *
- * A launcher script rather than `sshPath: process.execPath`, because the whole
- * argv is fixed by the spec and there is nowhere in it to put a script path —
- * which is also true of the real binary, and the reason this indirection is the
- * honest shape. Two spellings, because a `#!` line means nothing on win32.
+ * Through the injected `spawnFn` rather than a launcher script on PATH. The
+ * argv is fixed by the spec and has nowhere in it to put a script path, so the
+ * stub has to be reached some other way, and a shell script was the first
+ * answer: it died on Windows with `spawn EINVAL`, because Node refuses to
+ * `spawn()` a `.cmd` without `shell: true` (CVE-2024-27980) and the app must
+ * never pass that — a real `ssh.exe` spawns fine, so hardening the product for
+ * the fixture would have been the wrong repair. One code path on every
+ * platform now: no shebang, no exec bit, no `.cmd`. What it gives up is proof
+ * that `sshPath` resolves to a real binary, which is desktop/e2e's job anyway
+ * since only there is the binary a real OpenSSH.
  */
 function fakeSshOptions(dir, env = {}) {
   const stub = path.join(HERE, "stub-ssh.js");
-  const bin = path.join(dir, IS_WIN ? "ssh.cmd" : "ssh");
-  if (IS_WIN) fs.writeFileSync(bin, `@echo off\r\n"${process.execPath}" "${stub}" %*\r\n`);
-  else fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${stub}" "$@"\n`, { mode: 0o755 });
   return {
-    sshPath: bin,
+    sshPath: "ssh",
+    spawnFn: (_bin, args, opts) => spawn(process.execPath, [stub, ...args], opts),
     env: { ...process.env, STUB_SSH_COUNT_FILE: path.join(dir, "attempts"), ...env },
   };
 }
