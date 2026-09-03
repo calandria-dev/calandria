@@ -285,6 +285,66 @@ test("copy and paste reach the system clipboard", async () => {
   await shell.win.evaluate(() => document.getElementById("clipboard-probe")?.remove());
 });
 
+test("a right-click opens a context menu built from what is under the cursor", async () => {
+  // Electron shows NO context menu unless main builds one, so the keyboard
+  // test above passing says nothing about the mouse: right-click did nothing
+  // at all until `wireContextMenu` in main.js. `Menu.prototype.popup` is a JS
+  // method on the same `Menu` main.js destructured, so swapping it here
+  // captures each template the real right-click produces instead of showing
+  // it — a menu on screen has nothing Playwright could read anyway.
+  await shell.app.evaluate(({ Menu }) => {
+    const g = globalThis as unknown as { __popups: unknown[]; __origPopup: unknown };
+    g.__popups = [];
+    g.__origPopup = Menu.prototype.popup;
+    Menu.prototype.popup = function (this: { items: Array<{ label: string; role?: string; enabled: boolean }> }) {
+      g.__popups.push(this.items.map((i) => ({ label: i.label, role: i.role, enabled: i.enabled })));
+    };
+  });
+  type Item = { label: string; role?: string; enabled: boolean };
+  const popups = () => shell.app.evaluate(() => (globalThis as unknown as { __popups: Item[][] }).__popups);
+
+  await shell.win.evaluate(() => {
+    const t = document.createElement("textarea");
+    t.id = "context-probe";
+    t.style.cssText = "position:fixed;top:0;left:0;width:200px;height:60px;z-index:2147483647";
+    document.body.appendChild(t);
+  });
+  const probe = shell.win.locator("#context-probe");
+  await probe.fill("context-probe-42");
+  await probe.press("ControlOrMeta+a");
+  await probe.click({ button: "right" });
+  await expect.poll(async () => (await popups()).length).toBe(1);
+
+  // An editable field with a selection: the full edit set, Copy and Cut live.
+  // Electron lower-cases a role on the way in, so `selectAll` reads back as
+  // "selectall".
+  const editable = (await popups())[0];
+  const byRole = (role: string) => editable.find((i) => i.role === role);
+  expect(editable.map((i) => i.role).filter(Boolean)).toEqual(
+    expect.arrayContaining(["cut", "copy", "paste", "selectall", "undo", "redo"])
+  );
+  expect(byRole("copy")?.enabled).toBe(true);
+  expect(byRole("cut")?.enabled).toBe(true);
+  expect(byRole("paste")?.enabled).toBe(true);
+
+  // Somewhere with nothing to copy: still a menu, with Copy visibly disabled
+  // rather than the silence this test exists to prevent.
+  await shell.win.evaluate(() => {
+    document.getElementById("context-probe")?.remove();
+    window.getSelection()?.removeAllRanges();
+  });
+  await shell.win.locator("body").click({ button: "right", position: { x: 5, y: 5 } });
+  await expect.poll(async () => (await popups()).length).toBe(2);
+  const plain = (await popups())[1];
+  expect(plain.find((i) => i.role === "copy")?.enabled).toBe(false);
+  expect(plain.find((i) => i.role === "paste")).toBeUndefined();
+
+  await shell.app.evaluate(({ Menu }) => {
+    const g = globalThis as unknown as { __origPopup: typeof Menu.prototype.popup };
+    Menu.prototype.popup = g.__origPopup;
+  });
+});
+
 test("external links leave for the real browser instead of navigating the app", async () => {
   // `shell` in main.js is the same object this patches — it destructures the
   // electron module at load, so the method swap is visible to it.
