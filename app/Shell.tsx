@@ -139,7 +139,8 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
   );
 }
 
-export default function Shell() {
+/** @param instanceName CALANDRIA_INSTANCE_NAME, or "" on an unnamed instance. */
+export default function Shell({ instanceName = "" }: { instanceName?: string }) {
   const o = useShell();
   const { project, task, selProj, selTask, layout } = o;
   // Tags by id, for the session header's badges (a task can carry several).
@@ -629,7 +630,10 @@ export default function Shell() {
             <>
               <span className="tb-div" />
               <div className="tb-crumb">
-                <span className="cz">fleet</span><span className="cs">/</span>
+                {/* The breadcrumb root names the INSTANCE when it has a name
+                    (CALANDRIA_INSTANCE_NAME), so two tabs open on two servers
+                    are told apart on sight. Unnamed instances keep "fleet". */}
+                <span className="cz" title={instanceName || undefined}>{instanceName || "fleet"}</span><span className="cs">/</span>
                 <span className="cn">{o.view === "insights" ? "insights" : project ? project.name : "—"}</span>
               </div>
             </>

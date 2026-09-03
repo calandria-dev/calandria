@@ -31,6 +31,8 @@ const { Supervisor, preferredPorts } = require("./supervisor");
 const {
   AppEvents,
   NeedsYou,
+  gotoUrl,
+  notificationText,
   overlayIconName,
   selectedTaskFromUrl,
   shouldNotify,
@@ -41,6 +43,7 @@ const {
   MIN_SERVER_VERSION,
   activeInstance,
   addInstance,
+  adoptServerName,
   findInstance,
   instanceAddress,
   instanceMenuItems,
@@ -162,14 +165,31 @@ let trayResidencyKnown = false;
 // One close decision at a time: the handler now answers asynchronously, and a
 // second X while the first is still asking would ask again rather than wait.
 let closePending = false;
-let events = null;
-let needsYou = null;
+// One live `/api/events` subscription per instance this shell can currently
+// reach, keyed by instance id — NOT only the one on screen. That is the whole
+// of phase 3's cross-instance surface: the dock badge is the sum of their
+// counts, so a task waiting on the build box is visible from the laptop's
+// window, and a toast names the instance that raised it.
+//
+// It stays a CLIENT-side sum. No server learns about another server, which is
+// the line the design draws (docs/superpowers/specs/2026-09-02-remote-instances-design.md,
+// "Fleet"): the shell holds a list of origins and adds up what each one told it.
+//
+// Entries are `{ id, name, origin, needsYou, events }`, reconciled by
+// `syncSubscribers()` — see `subscriberOrigin` for which instances are
+// reachable without building a transport nobody asked for.
+const subscribers = new Map();
 let needsYouCount = 0;
-// Live toasts by payload id, so a second notification about the same task
-// replaces the first instead of stacking. The browser channel gets this from
-// `Notification.tag`; Electron's main-process Notification has no tag, so the
-// collapse is done by hand against the same id the server minted.
+// Live toasts by instance id and payload id, so a second notification about the
+// same task replaces the first instead of stacking. The browser channel gets
+// this from `Notification.tag`; Electron's main-process Notification has no
+// tag, so the collapse is done by hand against the same id the server minted —
+// scoped by instance, because two servers mint ids from their own databases and
+// a collision would have one instance's toast close another's.
 const liveToasts = new Map();
+// A notification click that has to change instances first, consumed by the
+// attach it triggered. See `openFromNotification`.
+let pendingGoto = null;
 // The `electron-updater` singleton, or null when this install cannot update
 // itself. Deliberately not required at the top of the file: on Linux that
 // module's `autoUpdater` export picks its implementation on first property
@@ -245,8 +265,8 @@ function main() {
     event.preventDefault();
     // Nothing that arrives from here on has anywhere to go: the badge is about
     // to disappear with the process, and a toast raised during a shutdown is
-    // one the user cannot act on.
-    events?.stop();
+    // one the user cannot act on. Every instance's, not just the active one's.
+    stopSubscribers();
     // Same reasoning for the update clock: a check that lands mid-drain has
     // nowhere to put its answer, and a download starting now would be thrown
     // away with the process.
@@ -564,6 +584,11 @@ async function attach(inst) {
   // instance: a forward whose window has moved on is a port nobody is reading
   // and an ssh child nobody will ever kill.
   await stopTunnel();
+  // The forward above was the only way to an `ssh` instance, so the subscriber
+  // reading through it is now pointed at a closed local port. Reconciling here
+  // rather than at the end of the attach stops it reconnect-looping for however
+  // long the next server takes to answer.
+  syncSubscribers();
   if (inst.kind === "local") await bootLocal(seq);
   else if (inst.kind === "ssh") await attachSsh(inst, seq);
   else await attachUrl(inst, seq);
@@ -588,7 +613,11 @@ async function stopTunnel() {
  */
 async function afterAttach(seq) {
   createTray();
-  startEvents();
+  // Not "start the active instance's stream" — reconcile ALL of them. This
+  // attach may be the moment an origin became readable (the local server bound
+  // its port, an ssh forward came up), and the instances it is not for have
+  // been streaming the whole time.
+  syncSubscribers();
   // Once per process, not once per attach: see above.
   if (updateDisposition) return;
   // Its own try: everything from here down is a running app. A bad require or
@@ -713,9 +742,12 @@ async function attachOrigin(inst, origin, seq) {
   // the redirect lands.
   const serverVersion = probe.signIn ? null : probe.version?.version || "unknown";
   if (probe.signIn) console.log(`[shell] ${inst.name} needs a sign-in (${probe.error}) — loading it`);
+  // Before the title and the menus are drawn from it: the handshake is where an
+  // instance added by URL with no name learns the one its server calls itself.
+  inst = adoptInstanceName(inst, probe.signIn ? null : probe.version?.instanceName);
   console.log(`[shell] attached to ${inst.name} at ${origin} (server ${serverVersion || "not yet known"})`);
   appUrl = origin;
-  await win?.loadURL(origin);
+  await win?.loadURL(takePendingGoto(inst, origin));
   if (seq !== attachSeq) return;
   win?.setTitle(windowTitle(inst));
   // The one compatibility point, and it only ever warns: the server still
@@ -771,13 +803,40 @@ async function probeVersion(inst, origin) {
   return { ok: true, version };
 }
 
+/**
+ * Let a server name the instance it is, when nobody else has.
+ *
+ * `CALANDRIA_INSTANCE_NAME` comes back on the same `/api/version` handshake the
+ * version check reads, so the default name for an instance added by URL is the
+ * server's own rather than its hostname — without a second request, and without
+ * asking the user to type a name they would have to invent.
+ *
+ * The policy is `adoptServerName` in instances.js: a typed name is never
+ * overwritten. Returns the instance to keep describing this attach with, which
+ * is a NEW object when the rename landed.
+ */
+function adoptInstanceName(inst, serverName) {
+  const next = adoptServerName(instancesState, inst.id, serverName);
+  if (next === instancesState) return inst;
+  instancesState = next;
+  const renamed = findInstance(instancesState, inst.id) || inst;
+  console.log(`[shell] ${instanceAddress(renamed)} calls itself "${renamed.name}"`);
+  saveInstanceList();
+  if (instance?.id === renamed.id) instance = renamed;
+  refreshInstanceMenus();
+  // The toasts quote the name; the subscriber holds its own copy.
+  const sub = subscribers.get(renamed.id);
+  if (sub) sub.name = renamed.name;
+  return renamed;
+}
+
 async function bootLocal(seq) {
   if (localUrl) {
     // The local server is already running — this is a switch BACK to it. Its
     // sidecars were left alone when we switched away (the same thing
     // hide-to-tray does), so there is nothing to start.
     appUrl = localUrl;
-    await win?.loadURL(appUrl);
+    await win?.loadURL(takePendingGoto(instance, appUrl));
     if (seq !== attachSeq) return;
     win?.setTitle(windowTitle(instance));
     await afterAttach(seq);
@@ -835,7 +894,7 @@ async function bootLocal(seq) {
     const { url } = await supervisor.start();
     localUrl = url;
     appUrl = url;
-    await win?.loadURL(url);
+    await win?.loadURL(takePendingGoto(instance, url));
     if (seq !== attachSeq) return;
     win?.setTitle(windowTitle(instance));
     // After the app is up, not before: the tray's "Open in browser" needs a
@@ -894,11 +953,10 @@ async function switchTo(id) {
  */
 async function applyActiveInstance() {
   const next = activeInstance(instancesState);
-  // Stopped before the window goes, not after: a subscriber whose window has
-  // been destroyed would keep counting into a badge for a server nobody is
-  // looking at.
-  events?.stop();
-  events = null;
+  // Nothing is stopped here. A subscriber is bound to an instance's SESSION,
+  // not to the window, so destroying the window below leaves it reading — and
+  // that is the point: the instance being left behind keeps contributing to the
+  // badge. `attach` below reconciles the set once the new transport is up.
   if (partitionFor(next) !== winPartition || !win || win.isDestroyed()) {
     instance = next;
     // Before `createWindow()`, which opens on `appUrl` when there is one: the
@@ -1079,7 +1137,12 @@ async function instanceDialogLoop(opts) {
       saveInstanceList();
       console.log(`[shell] removed instance ${target.name}`);
       if (wasActive) await applyActiveInstance();
-      else refreshInstanceMenus();
+      else {
+        refreshInstanceMenus();
+        // A removed instance must stop badging. `applyActiveInstance` reaches
+        // the same reconcile through the attach it performs; this path does not.
+        syncSubscribers();
+      }
       return;
     }
     return;
@@ -1101,7 +1164,12 @@ async function signOutOfInstance(id) {
   if (!target || target.kind === "local") return;
   await clearInstanceSession(target);
   console.log(`[shell] signed out of ${target.name}`);
+  // Its stream is about to start failing auth, and the counts it already read
+  // are from a session that no longer exists. Dropped rather than left to
+  // decay, so the badge stops including it now instead of never.
+  dropSubscriber(target.id);
   if (instancesState.active === target.id) await applyActiveInstance();
+  else syncSubscribers();
 }
 
 async function clearInstanceSession(inst) {
@@ -1521,8 +1589,22 @@ function rebuildTrayMenu() {
 }
 
 /**
- * The dock/taskbar badge — the instance-wide "N need you" count, the same
- * number the app's own titlebar pill shows.
+ * "N need you" ACROSS every subscribed instance.
+ *
+ * The one number in this app that no single server can produce. Each instance's
+ * own titlebar pill shows its own total; the dock badge shows the sum, because
+ * the dock icon is not per instance and a badge that only counted the window on
+ * screen would go quiet the moment you switched away from the machine that
+ * wanted you.
+ */
+function totalNeedsYou() {
+  let n = 0;
+  for (const sub of subscribers.values()) n += sub.needsYou.total;
+  return n;
+}
+
+/**
+ * The dock/taskbar badge — `totalNeedsYou()`, painted.
  *
  * Three platforms, two APIs. macOS and Linux take a number
  * (`app.setBadgeCount`, which is `dock.setBadge` underneath on macOS and a
@@ -1531,8 +1613,8 @@ function rebuildTrayMenu() {
  * badge at all: its taskbar overlay is a 16x16 image, so the digits are
  * pre-rendered PNGs and this picks one (see notifier.js's overlayIconName).
  */
-function applyBadge(count) {
-  needsYouCount = Number.isFinite(count) ? Math.max(0, count) : 0;
+function applyBadge() {
+  needsYouCount = totalNeedsYou();
   if (process.platform === "win32") {
     const name = overlayIconName(needsYouCount);
     // The description is not decoration on Windows — it is what a screen reader
@@ -1549,24 +1631,76 @@ function applyBadge(count) {
 }
 
 /**
- * Subscribe the main process to the app's own global event stream, over
- * loopback, and turn it into the two things a window cannot provide: an OS
- * notification and a badge.
+ * Where this shell can read `/api/events` for `inst` right now, or null.
+ *
+ * A `url` instance is always reachable: its origin is in the saved list, so it
+ * can be watched from the moment the app launches whether or not the window is
+ * on it. `local` is reachable once its server is up, and stays reachable after
+ * the window moves away, because switching does not stop it.
+ *
+ * An `ssh` instance is reachable ONLY while it is the active one. Its transport
+ * is a spawned `ssh -N` child holding a local port, and a background subscriber
+ * would need one of its own — so watching every saved ssh host would mean this
+ * app opening an SSH connection, per host, to machines the user is not looking
+ * at, on every launch. That is a bigger decision than a badge, and BatchMode
+ * makes its failures silent besides. So an ssh instance contributes to the
+ * badge while attached and drops out when you leave it, which is documented in
+ * docs/DESKTOP_APP.md §8 rather than hidden.
+ */
+function subscriberOrigin(inst) {
+  if (!inst) return null;
+  if (inst.kind === "url") return inst.url;
+  if (inst.kind === "local") return localUrl;
+  return inst.id === instance?.id && tunnel?.url ? tunnel.url : null;
+}
+
+/**
+ * Reconcile the live subscribers against the saved list. Idempotent, and the
+ * only place one is started or stopped.
+ *
+ * Called after every attach (an origin can appear: the local server bound its
+ * port, an ssh forward came up) and after every edit to the list. A subscriber
+ * survives a switch untouched as long as its origin has not moved — that is
+ * what makes the badge keep counting for the instance you just left, and it
+ * also means switching back to an instance does not re-seed a stream that was
+ * never interrupted.
+ */
+function syncSubscribers() {
+  const wanted = new Map();
+  for (const inst of instancesState?.instances || []) {
+    const origin = subscriberOrigin(inst);
+    if (origin) wanted.set(inst.id, { inst, origin });
+  }
+  for (const [id, sub] of [...subscribers]) {
+    const next = wanted.get(id);
+    if (next && next.origin === sub.origin) {
+      // A rename has to reach the toasts, which quote it.
+      sub.name = next.inst.name;
+      continue;
+    }
+    sub.events.stop();
+    subscribers.delete(id);
+    console.log(`[shell] stopped watching ${sub.name} (${sub.origin})`);
+  }
+  for (const [id, { inst, origin }] of wanted) {
+    if (!subscribers.has(id)) subscribers.set(id, startSubscriber(inst, origin));
+  }
+  applyBadge();
+}
+
+/**
+ * Subscribe the main process to ONE instance's global event stream, and turn it
+ * into the two things a window cannot provide: an OS notification and a badge.
  *
  * Same stream every browser tab reads (GET /api/events), and deliberately the
  * same division of labour — the server composed the notification, this renders
  * it. See notifier.js's header for why none of that policy is repeated here.
  */
-function startEvents() {
-  // A switch leaves the previous instance's subscriber running otherwise, and
-  // two streams into one badge is a count that never settles.
-  events?.stop();
-  applyBadge(0);
-  needsYou = new NeedsYou();
-  const inst = instance;
+function startSubscriber(inst, origin) {
   const sess = sessionFor(inst);
-  events = new AppEvents({
-    origin: appUrl,
+  const sub = { id: inst.id, name: inst.name, origin, needsYou: new NeedsYou(), events: null };
+  sub.events = new AppEvents({
+    origin,
     // The local server's token, and only for the local instance — see
     // `serviceTokenFor`. On a `url` instance the credential is whatever is in
     // that instance's cookie jar, which is why the fetch below goes through its
@@ -1580,41 +1714,113 @@ function startEvents() {
     // `credentials: "include"` is what actually attaches CF_Authorization.
     fetchImpl: (url, init) => sess.fetch(url, { credentials: "include", ...init }),
     onLog: (line) => console.log(line),
-    onProjects: (projects) => applyBadge(needsYou.seed(projects)),
+    onProjects: (projects) => {
+      sub.needsYou.seed(projects);
+      applyBadge();
+    },
     onEvent: (ev) => {
       if (ev.type === "notification") {
-        notify(ev.payload);
+        notify(ev.payload, sub);
         return;
       }
-      const outcome = needsYou.apply(ev);
-      if (outcome === "reseed") void events.refreshProjects();
-      else if (outcome === "ok") applyBadge(needsYou.total);
+      const outcome = sub.needsYou.apply(ev);
+      if (outcome === "reseed") void sub.events.refreshProjects();
+      else if (outcome === "ok") applyBadge();
     },
   });
   // Seed before subscribing: the badge should be right on the first frame,
   // not on the first event, and a fresh launch usually has tasks already
   // waiting from the last session.
-  void events.refreshProjects();
-  events.start();
+  void sub.events.refreshProjects();
+  sub.events.start();
+  console.log(`[shell] watching ${inst.name} at ${origin}`);
+  return sub;
 }
 
-/** Raise one server-composed notification. */
-function notify(payload) {
+/** Stop every subscriber. Quit only: a switch keeps them running. */
+function stopSubscribers() {
+  for (const sub of subscribers.values()) sub.events.stop();
+  subscribers.clear();
+}
+
+/** Forget one instance's subscriber, so the next sync starts it clean. */
+function dropSubscriber(id) {
+  const sub = subscribers.get(id);
+  if (!sub) return;
+  sub.events.stop();
+  subscribers.delete(id);
+}
+
+/** Does this shell hold more than one instance? The toasts read differently if so. */
+function multiInstance() {
+  return (instancesState?.instances.length || 0) > 1;
+}
+
+/**
+ * Raise one server-composed notification, from a named instance.
+ *
+ * Two things change once a background instance can raise one. The suppression
+ * rule ("don't interrupt someone about the task they are looking at") is about
+ * the WINDOW, so it only applies to the instance the window is showing — a
+ * toast from the build box is never about the task on screen, whatever its id
+ * says. And the title carries the instance name (notifier.js
+ * `notificationText`), because otherwise the toast says a task needs you and
+ * not which machine's.
+ */
+function notify(payload, sub) {
   if (!payload || !Notification.isSupported()) return;
-  const focused = !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused();
-  const url = win && !win.isDestroyed() ? win.webContents.getURL() : "";
+  const onScreen = sub.id === instance?.id && !!win && !win.isDestroyed();
+  const focused = onScreen && win.isVisible() && !win.isMinimized() && win.isFocused();
+  const url = onScreen ? win.webContents.getURL() : "";
   if (!shouldNotify(payload, { focused, selectedTaskId: selectedTaskFromUrl(url) })) return;
-  liveToasts.get(payload.id)?.close();
-  const toast = new Notification({ title: payload.title, body: payload.body });
-  liveToasts.set(payload.id, toast);
+  const key = `${sub.id}:${payload.id}`;
+  liveToasts.get(key)?.close();
+  const { title, body } = notificationText(payload, { instanceName: multiInstance() ? sub.name : null });
+  const toast = new Notification({ title, body });
+  liveToasts.set(key, toast);
   toast.on("close", () => {
-    if (liveToasts.get(payload.id) === toast) liveToasts.delete(payload.id);
+    if (liveToasts.get(key) === toast) liveToasts.delete(key);
   });
   toast.on("click", () => {
     showWindow();
-    gotoTask(payload);
+    void openFromNotification(sub.id, payload);
   });
   toast.show();
+}
+
+/**
+ * Answer a notification click: show the task it was about, switching instances
+ * first if it came from one the window is not on.
+ *
+ * Same-instance is the live SPA (`gotoTask`). Cross-instance cannot be: the
+ * switch loads a page in another session partition, so there is no app running
+ * to dispatch an event into and no reliable moment to wait for one. The
+ * selection travels in the URL that switch was going to load anyway — see
+ * `takePendingGoto` and notifier.js's `gotoUrl`.
+ */
+async function openFromNotification(instanceId, payload) {
+  if (instanceId === instancesState?.active) {
+    gotoTask(payload);
+    return;
+  }
+  if (!findInstance(instancesState, instanceId)) return; // removed while the toast was up
+  pendingGoto = { instanceId, projectId: payload.projectId || "", taskId: payload.taskId || "" };
+  await switchTo(instanceId);
+}
+
+/**
+ * The URL an attach should load: the instance's origin, plus the task a
+ * notification click asked for.
+ *
+ * Consumed by whichever attach runs next and cleared unconditionally, so a
+ * pending selection can never outlive the switch that created it and reopen a
+ * task on some later, unrelated attach.
+ */
+function takePendingGoto(inst, origin) {
+  const pending = pendingGoto;
+  pendingGoto = null;
+  if (!pending || pending.instanceId !== inst.id) return origin;
+  return gotoUrl(origin, pending);
 }
 
 /**

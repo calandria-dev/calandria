@@ -1,5 +1,13 @@
 import Shell from "./Shell";
+import { INSTANCE_NAME } from "@/lib/config";
 
+/**
+ * The instance name is handed down as a prop rather than injected onto
+ * `window` like PUBLIC_BASE_URL and the feature flags. It is rendered in the
+ * titlebar, so the server's own HTML has to carry it: a client-side read off
+ * `window` would render the breadcrumb one way on the server and another on
+ * hydration, which React reports as a mismatch and repaints.
+ */
 export default function Page() {
-  return <Shell />;
+  return <Shell instanceName={INSTANCE_NAME} />;
 }

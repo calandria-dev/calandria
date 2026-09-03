@@ -24,7 +24,9 @@ const {
   activeInstance,
   addInstance,
   addUrlInstance,
+  adoptServerName,
   compareVersions,
+  derivedNameFor,
   findInstance,
   instanceAddress,
   instanceMenuItems,
@@ -46,6 +48,8 @@ const {
   AppEvents,
   NeedsYou,
   createSseParser,
+  gotoUrl,
+  notificationText,
   overlayIconName,
   selectedTaskFromUrl,
   shouldNotify,
@@ -883,6 +887,72 @@ function hold(port) {
     assert.equal(trayTooltip(3), "Calandria — 3 tasks need you");
   });
 
+  await test("a toast names the instance it came from, and only when there is more than one", async () => {
+    const payload = { id: "n1", title: "Needs you: rename the config loader", body: "Lab · calandria" };
+    // The single-instance app is unchanged, byte for byte: naming the only
+    // instance there is would be noise on every toast it ever raises.
+    assert.deepEqual(notificationText(payload, { instanceName: null }), {
+      title: "Needs you: rename the config loader",
+      body: "Lab · calandria",
+    });
+    assert.equal(notificationText(payload, {}).title, "Needs you: rename the config loader");
+    // Blank and whitespace names are the same "unnamed" the server means by a
+    // null instanceName on /api/version.
+    assert.equal(notificationText(payload, { instanceName: "   " }).title, "Needs you: rename the config loader");
+    // The name goes on the TITLE: the body is what a collapsed notification
+    // centre drops first, and "which machine" is not a detail.
+    const named = notificationText(payload, { instanceName: "Build box" });
+    assert.equal(named.title, "Needs you: rename the config loader · Build box");
+    assert.equal(named.body, "Lab · calandria");
+  });
+
+  await test("a cross-instance notification click carries its task in the URL", async () => {
+    // The switch is a page load in another session partition, so there is no
+    // running SPA to dispatch into — the selection rides in the query the app
+    // restores from (app/shell/persist.ts).
+    assert.equal(
+      gotoUrl("https://lab.example.com", { projectId: "p1", taskId: "t9" }),
+      "https://lab.example.com/?project=p1&task=t9",
+    );
+    // A project id is optional; the task is what selects.
+    assert.equal(gotoUrl("http://127.0.0.1:3000", { taskId: "t9" }), "http://127.0.0.1:3000/?task=t9");
+    // Nothing to select, or nothing parseable: the bare origin, so the caller
+    // can use this unconditionally.
+    assert.equal(gotoUrl("https://lab.example.com", {}), "https://lab.example.com");
+    assert.equal(gotoUrl("https://lab.example.com"), "https://lab.example.com");
+    assert.equal(gotoUrl("not a url", { taskId: "t9" }), "not a url");
+  });
+
+  await test("an instance adopts the name its server reports, but never over a typed one", async () => {
+    let state = normalizeState({ instances: [{ id: "local", kind: "local", name: "This computer" }] });
+    const added = addUrlInstance(state, { name: "", url: "https://lab.example.com" }, () => 0.5);
+    state = added.state;
+    // Blank name in the dialog means the host, which is the address again.
+    assert.equal(added.instance.name, "lab.example.com");
+    assert.equal(derivedNameFor(added.instance), "lab.example.com");
+
+    // The handshake knows better.
+    state = adoptServerName(state, added.instance.id, "Lab");
+    assert.equal(findInstance(state, added.instance.id).name, "Lab");
+
+    // Idempotent, and no longer derived — so a server that renames itself does
+    // not keep rewriting a name the user is now reading in their menus.
+    const again = adoptServerName(state, added.instance.id, "Lab annexe");
+    assert.equal(again, state, "a name already adopted is not re-adopted");
+    assert.equal(findInstance(again, added.instance.id).name, "Lab");
+
+    // A typed name is the user's.
+    const typed = addUrlInstance(state, { name: "My box", url: "https://box.example.com" }, () => 0.25);
+    assert.equal(adoptServerName(typed.state, typed.instance.id, "Prod"), typed.state);
+
+    // Nothing to adopt, and nothing to adopt onto.
+    assert.equal(adoptServerName(state, added.instance.id, "  "), state);
+    assert.equal(adoptServerName(state, "nope", "Lab"), state);
+    // `local` has a fixed name and no address to derive one from.
+    assert.equal(adoptServerName(state, LOCAL_ID, "Lab"), state);
+    assert.equal(derivedNameFor(findInstance(state, LOCAL_ID)), null);
+  });
+
   await test("the event subscription seeds the badge, delivers notifications, and reconnects", async () => {
     // A stand-in for /api/events and /api/projects, so the whole loop —
     // seed, subscribe, parse, drop, reconnect, reseed — runs with no display
@@ -1210,6 +1280,52 @@ function hold(port) {
     assert.ok(/clearStorageData\(\)/.test(src), "sign out must delete the partition's storage");
   });
 
+  await test("main.js watches every reachable instance, not only the one on screen", async () => {
+    // Source-pinned for the same reason: main.js requires electron at line 1.
+    // What is being pinned is the shape of the badge — a sum over live
+    // subscribers — because the failure mode is silent. A shell that kept one
+    // subscriber would look completely normal and simply never mention the
+    // other machine.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+
+    assert.ok(/const subscribers = new Map\(\)/.test(src), "one subscriber per instance, keyed by id");
+    const total = src.indexOf("function totalNeedsYou(");
+    assert.notEqual(total, -1, "the badge should be a sum across subscribers");
+    assert.ok(/for \(const sub of subscribers\.values\(\)\) n \+= sub\.needsYou\.total/.test(src.slice(total, total + 300)));
+    assert.ok(/function applyBadge\(\)/.test(src), "applyBadge takes no count now — it reads the sum");
+
+    // WHICH instances. An `ssh` one needs a spawned forward, so it is watched
+    // only while attached; the other two kinds have an origin already.
+    const origin = src.indexOf("function subscriberOrigin(");
+    assert.notEqual(origin, -1);
+    const originBody = src.slice(origin, origin + 400);
+    assert.ok(/kind === "url"/.test(originBody) && /inst\.url/.test(originBody), "a url instance is always reachable");
+    assert.ok(/kind === "local"/.test(originBody) && /localUrl/.test(originBody), "local is reachable while its server is up");
+    assert.ok(/tunnel\?\.url/.test(originBody), "an ssh instance is reachable only through this window's forward");
+
+    // A SWITCH MUST NOT STOP THEM. That is the whole feature: the instance you
+    // just left keeps counting into the badge.
+    const apply = src.indexOf("async function applyActiveInstance()");
+    const applyBody = src.slice(apply, apply + 1800);
+    assert.ok(!/stopSubscribers\(\)/.test(applyBody), "switching must not stop the other instances' streams");
+    assert.ok(/stopSubscribers\(\)/.test(src.slice(0, src.indexOf("app.whenReady"))), "quitting stops all of them");
+
+    // THE TOAST. It names its instance and, when clicked, goes to the instance
+    // it came from rather than the one on screen.
+    const notify = src.indexOf("function notify(payload, sub)");
+    assert.notEqual(notify, -1, "notify must know which instance raised the payload");
+    const notifyBody = src.slice(notify, notify + 1200);
+    assert.ok(/notificationText\(payload, \{ instanceName:/.test(notifyBody), "the title carries the instance name");
+    assert.ok(/`\$\{sub\.id\}:\$\{payload\.id\}`/.test(notifyBody), "toasts collapse per instance, not per bare id");
+    assert.ok(/openFromNotification\(sub\.id, payload\)/.test(notifyBody), "a click resolves against the raising instance");
+    const open = src.indexOf("async function openFromNotification(");
+    assert.notEqual(open, -1);
+    const openBody = src.slice(open, open + 700);
+    assert.ok(/gotoTask\(payload\)/.test(openBody), "same instance: the live SPA");
+    assert.ok(/switchTo\(instanceId\)/.test(openBody), "another instance: switch to it first");
+    assert.ok(/pendingGoto = \{/.test(openBody), "and the selection rides in the URL that switch loads");
+  });
+
   await test("the instance dialog is closed before its answer is acted on", async () => {
     // The dialog is a MODAL CHILD of the main window, and answering it usually
     // ends with that window being rebuilt. `BrowserWindow.close()` is
@@ -1244,7 +1360,9 @@ function hold(port) {
     // every Cloudflare Access instance on an error screen it can never leave.
     assert.ok(/probe\.signIn/.test(body), "a sign-in must not be treated as unreachable");
     assert.ok(/serverTooOld\(/.test(body) && /showVersionBanner\(/.test(body), "an older server loads with a banner");
-    assert.ok(/loadURL\(origin\)/.test(body), "and then it is loaded");
+    // The origin, plus a task a notification click asked for — `takePendingGoto`
+    // returns the bare origin when there is none, so this is still the one load.
+    assert.ok(/loadURL\(takePendingGoto\(inst, origin\)\)/.test(body), "and then it is loaded");
     assert.ok(/api\/version/.test(src.slice(src.indexOf("async function probeVersion("), src.indexOf("async function probeVersion(") + 900)));
 
     // Switching away from local must not stop its server: turns are detached

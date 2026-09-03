@@ -574,6 +574,25 @@ export const CI_LOG_TAIL_LINES = num("CALANDRIA_CI_LOG_TAIL_LINES", readEnv("CAL
 export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 
 /**
+ * A human name for this instance ("Lab", "Build box"), or empty.
+ *
+ * Cosmetic and optional, and the only thing on the server that knows an
+ * instance is one of several. It is reported by `GET /api/version`, put in the
+ * document title and shown as the root of the app's breadcrumb, so two browser
+ * tabs on two instances are told apart before either is clicked. The desktop
+ * shell reads it off the same handshake and uses it as the default name when
+ * an instance is added by URL (desktop/instances.js), which is why the server
+ * carries it at all rather than leaving naming to each client.
+ *
+ * Trimmed and capped: it lands in a window title, a menu row and a tray label,
+ * none of which can show a paragraph, and a blank string means "unnamed" the
+ * same way an unset variable does.
+ */
+export const INSTANCE_NAME = String(readEnv("CALANDRIA_INSTANCE_NAME") || "")
+  .trim()
+  .slice(0, 60);
+
+/**
  * Web Push (lib/push/). VAPID is how this instance identifies itself to the
  * browsers' push services (RFC 8292); the subject is the contact they may use
  * about the traffic — a `mailto:` or `https:` URL. Defaults to PUBLIC_BASE_URL

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { LITELLM_BASE_URL, MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
+import { INSTANCE_NAME, LITELLM_BASE_URL, MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
 import { fontVariables } from "./fonts";
 
@@ -9,7 +9,11 @@ export const metadata: Metadata = {
   // URL; leave metadataBase unset rather than hardcoding a domain this instance
   // may not own. Only set for instances that configured a public origin.
   metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
-  title: "Calandria",
+  // Named instances put their name first, because the document title is what a
+  // browser puts in the tab — and a row of tabs all reading "Calandria" is the
+  // one thing someone running two instances cannot work around client-side.
+  // Unnamed (the default, and every single-instance deployment) is unchanged.
+  title: INSTANCE_NAME ? `${INSTANCE_NAME} · Calandria` : "Calandria",
   description: "Run Claude Code and Codex in parallel across every project, from any browser. Self-hosted, one git worktree per task, no API key.",
   applicationName: "Calandria",
   // iOS has no manifest-driven install; these metas are what make "Add to Home

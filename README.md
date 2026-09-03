@@ -202,6 +202,13 @@ already queued. The transcript records that it was sent.
 - **Installable app:** a PWA with its own icon and standalone window. Install
   from Chrome/Edge or iOS Add to Home Screen, and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS; works behind Cloudflare Access).
+- **Desktop app:** a native shell for macOS, Windows and Linux with a tray
+  icon, OS notifications and a dock badge. It runs a server of its own, and it
+  can also attach to servers you host elsewhere: a URL behind Cloudflare
+  Access, a LAN origin, or an SSH port-forward. Each instance keeps its own
+  login, the badge counts what needs you across all of them, and a
+  notification says which instance it came from.
+  ([Connecting the desktop app](docs/SELF_HOSTING.md#connecting-the-desktop-app))
 - **Built for a phone:** one pane at a time with a Board / Diffs / Terminals /
   Insights tab bar, a full-screen terminal sheet, and a project screen
   (recap, tags, runbooks, schedules) one tap from the task list.
