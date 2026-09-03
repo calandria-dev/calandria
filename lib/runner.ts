@@ -25,6 +25,7 @@ import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { isBudgetExceeded, BUDGET_EXCEEDED_NOTICE, BUDGET_EXCEEDED_BANNER_REASON } from "@/lib/budgetFailure";
 import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
 import { DENIED_INTERRUPTED, DENIED_TIMED_OUT, parseDecision, waitForPermission } from "@/lib/permissions";
@@ -449,6 +450,10 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
  *     context" (/clear) button;
  *   - a dead agent login (expired OAuth session, revoked/invalid key) →
  *     AUTH_EXPIRED_NOTICE, which becomes a "Reconnect <agent>" button;
+ *   - a spent LiteLLM gateway budget (lib/budgetFailure.ts) →
+ *     BUDGET_EXCEEDED_NOTICE, which becomes a "Retry" button — there is
+ *     nothing to reconnect, only the budget's own reset (or a raise) to wait
+ *     for, which the gateway card in Settings → Agents shows;
  *   - a spent usage limit (Claude's 5-hour/weekly subscription cap, an API 429)
  *     → USAGE_LIMIT_NOTICE, informational — the recovery is waiting for the
  *     reset, so there is no button;
@@ -472,11 +477,13 @@ export function publishTurnError(id: string, gen: number, errText: string): void
     ? CONTEXT_OVERFLOW_NOTICE
     : isAuthFailure(errText)
       ? AUTH_EXPIRED_NOTICE
-      : isUsageLimit(errText)
-        ? USAGE_LIMIT_NOTICE
-        : isApprovalBlocked(errText)
-          ? APPROVAL_BLOCKED_NOTICE
-          : worktreePrepNotice(errText);
+      : isBudgetExceeded(errText)
+        ? BUDGET_EXCEEDED_NOTICE
+        : isUsageLimit(errText)
+          ? USAGE_LIMIT_NOTICE
+          : isApprovalBlocked(errText)
+            ? APPROVAL_BLOCKED_NOTICE
+            : worktreePrepNotice(errText);
   const content = notice ? `⚠ ${errText}\n\n${notice}` : `⚠ ${errText}`;
   // The persist can itself throw — most importantly when the task row is gone
   // (project/task deleted mid-turn): addMessage then hits a FOREIGN KEY error.
@@ -522,11 +529,19 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // agent's login is dead instance-wide, so the queue must be parked (every
   // follow-up would fail identically) and the whole app told, not just this task.
   let authFailure: string | null = null;
+  // Set when this turn died on a spent LiteLLM gateway budget
+  // (lib/budgetFailure.ts): the key is dead until the budget resets (or is
+  // raised) on LiteLLM's own clock, so the queue must be parked for the same
+  // reason a dead login parks it — every follow-up would drain straight into
+  // the same rejection. Also raises the instance-wide agent_auth flag, like a
+  // dead login, but with a budget-specific reason so the banner and the
+  // agent's Settings card don't offer to "reconnect" a login that never broke.
+  let budgetFailure: string | null = null;
   // Set when this turn died on a spent usage limit (Claude's 5-hour/weekly
   // subscription cap, an API 429): the quota is dead until it resets, so the
   // queue must be parked for the same reason — every follow-up would drain
-  // straight into the same limit. Classified after authFailure (a dead login
-  // never doubles as a spent quota).
+  // straight into the same limit. Classified after authFailure and
+  // budgetFailure (neither doubles as a spent quota).
   let usageLimitFailure: string | null = null;
   // Set when a tool-permission prompt auto-denied because NOBODY was watching
   // (lib/permissions.ts). Like a dead login, the problem isn't the work — it's
@@ -594,17 +609,28 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   });
 
   // Persist + publish a failed turn's transcript line (with a recovery hint when
-  // we know the fix), and — for a dead login — raise the instance-wide flag every
-  // tab reads, published once per outage so a fleet of failing tasks can't spam
-  // the banner. Returns true when the failure was an authentication failure, so
-  // the caller records it for the queue decision below.
-  const failTurn = (text: string): boolean => {
+  // we know the fix), and — for a dead login or a spent gateway budget — raise
+  // the instance-wide flag every tab reads, published once per outage so a
+  // fleet of failing tasks can't spam the banner. Returns which kind of
+  // instance-wide failure this was, so the caller records it for the queue
+  // decision below; a budget rejection reuses the same flag and relay a dead
+  // login does (lib/agents/connections.ts), but with its own reason text, so
+  // the banner doesn't tell someone to reconnect a login that never broke.
+  const failTurn = (text: string): "auth" | "budget" | false => {
     publishTurnError(id, gen, text);
-    if (!isAuthFailure(text)) return false;
-    if (markAgentAuthBroken(task.agent, text, Date.now())) {
-      publish(id, { type: "agent_auth", agent: task.agent, broken: true, reason: text });
+    if (isAuthFailure(text)) {
+      if (markAgentAuthBroken(task.agent, text, Date.now())) {
+        publish(id, { type: "agent_auth", agent: task.agent, broken: true, reason: text });
+      }
+      return "auth";
     }
-    return true;
+    if (isBudgetExceeded(text)) {
+      if (markAgentAuthBroken(task.agent, BUDGET_EXCEEDED_BANNER_REASON, Date.now())) {
+        publish(id, { type: "agent_auth", agent: task.agent, broken: true, reason: BUDGET_EXCEEDED_BANNER_REASON });
+      }
+      return "budget";
+    }
+    return false;
   };
   try {
     // The setup below runs INSIDE the try on purpose: a throw here (SQLite I/O
@@ -1057,7 +1083,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // and snapshot replays render the identical line (with a recovery hint
         // on context overflow / a dead login).
         turnError = ev.content;
-        if (failTurn(ev.content)) authFailure = ev.content;
+        const fail = failTurn(ev.content);
+        if (fail === "auth") authFailure = ev.content;
+        else if (fail === "budget") budgetFailure = ev.content;
         else if (isUsageLimit(ev.content)) usageLimitFailure = ev.content;
       } else if (ev.type === "notice") {
         // A quiet system note emitted mid-turn (e.g. expose_service confirming a
@@ -1075,7 +1103,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // Persisted (not just streamed): with no request attached, nobody may be
     // listening when this fires — the transcript must carry it.
     turnError = err instanceof Error ? err.message : String(err);
-    if (failTurn(turnError)) authFailure = turnError;
+    const fail = failTurn(turnError);
+    if (fail === "auth") authFailure = turnError;
+    else if (fail === "budget") budgetFailure = turnError;
     else if (isUsageLimit(turnError)) usageLimitFailure = turnError;
   } finally {
     // NOTE: this whole block is synchronous (better-sqlite3, in-memory pub/sub),
@@ -1274,11 +1304,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     if (opened) endSession(id, gen);
 
     // A turn that actually ran is the strongest possible proof the agent's login
-    // works — stronger than `claude auth status`, since it exercised the same
-    // path a real turn takes. So clear any broken-connection flag left by an
-    // earlier failure and tell every tab, which is how the banner comes down
-    // after the user reconnects in a different window (or the credential
-    // refreshed itself). Publishes only when the flag was actually set.
+    // (and, for a gateway task, its budget) works — stronger than
+    // `claude auth status`, since it exercised the same path a real turn takes.
+    // So clear any broken-connection flag left by an earlier failure and tell
+    // every tab, which is how the banner comes down after the user reconnects
+    // in a different window (or the credential refreshed, or the budget reset).
+    // Publishes only when the flag was actually set.
     if (!turnError && opened && clearAgentAuthBroken(task.agent)) {
       publish(id, { type: "agent_auth", agent: task.agent, broken: false, reason: null });
     }
@@ -1297,25 +1328,28 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
-    } else if (authFailure || usageLimitFailure || unattendedDeny || settingsBlocked) {
-      // The login (or the quota, or the absent human, or an unapproved settings
-      // change) is what failed — not the work: draining now would run each
-      // follow-up straight into the same authentication error / spent limit /
-      // unanswerable permission prompt / identical settings card, emptying the
-      // queue and stacking identical walls of red for messages that never
-      // actually ran. Leave them parked (they're rows in pending_messages, so
-      // they survive a reload and still render as queued bubbles) and say so
-      // once. They drain normally at the end of the next turn, after a
-      // reconnect / once the limit resets / once you're back.
+    } else if (authFailure || budgetFailure || usageLimitFailure || unattendedDeny || settingsBlocked) {
+      // The login (or the gateway budget, or the quota, or the absent human, or
+      // an unapproved settings change) is what failed — not the work: draining
+      // now would run each follow-up straight into the same authentication
+      // error / spent budget / spent limit / unanswerable permission prompt /
+      // identical settings card, emptying the queue and stacking identical
+      // walls of red for messages that never actually ran. Leave them parked
+      // (they're rows in pending_messages, so they survive a reload and still
+      // render as queued bubbles) and say so once. They drain normally at the
+      // end of the next turn, after a reconnect / once the budget resets / once
+      // the limit resets / once you're back.
       const parked = listPendingMessages(id).length;
       if (parked) {
         const when = authFailure
           ? "once you reconnect"
-          : usageLimitFailure
-            ? "once the limit resets"
-            : settingsBlocked
-              ? "once you've approved the settings change"
-              : "when you send the next message";
+          : budgetFailure
+            ? "once the budget resets"
+            : usageLimitFailure
+              ? "once the limit resets"
+              : settingsBlocked
+                ? "once you've approved the settings change"
+                : "when you send the next message";
         const note = `ℹ ${parked} queued message${parked === 1 ? "" : "s"} kept in the queue: ${parked === 1 ? "it runs" : "they run"} ${when}.`;
         // Best-effort: the task row can be gone by now (deleted mid-turn), and a
         // FOREIGN KEY throw here would escape the detached run()'s finally.

@@ -244,6 +244,47 @@ describe("getInsightsData", () => {
     // So the tag cube's total (6) does NOT equal the task cube's total (3).
     expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(6);
   });
+
+  // gatewayCache is a SEPARATE cube keyed on task_usage.provider, read only
+  // when a gateway host is passed — the same field ordinary cloud-billed rows
+  // leave "" on, so an unguarded query would double-count cloud spend as
+  // gateway cache reads.
+  describe("gatewayCache", () => {
+    it("sums input/cache-read tokens for the given gateway host, excluding ordinary cloud-billed rows", () => {
+      const { project, task } = makeProjectTask();
+      const host = "litellm.example.com";
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
+      });
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        usage: usage({ input_tokens: 500, cache_read_tokens: 100 }),
+      });
+      // An ordinary cloud-billed turn — provider "" — must not be counted.
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
+        usage: usage({ input_tokens: 9999, cache_read_tokens: 9999 }),
+      });
+
+      const data = getInsightsData(Date.now() - DAY, host);
+      const mine = data.gatewayCache.filter((r) => r.a === "claude");
+      expect(mine).toHaveLength(1);
+      expect(mine[0].inp).toBe(1500);
+      expect(mine[0].cr).toBe(500);
+    });
+
+    it("returns nothing when no gateway host is given, rather than matching the cloud-billed rows", () => {
+      const { project, task } = makeProjectTask();
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: "litellm.example.com",
+        usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
+      });
+
+      expect(getInsightsData(Date.now() - DAY).gatewayCache).toEqual([]);
+      expect(getInsightsData(Date.now() - DAY, "").gatewayCache).toEqual([]);
+    });
+  });
 });
 // SUM() over zero rows is NULL, not 0, and `unpriced_turns` is typed a number.
 // A task nobody has run yet is the commonest row in the table.

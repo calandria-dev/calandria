@@ -205,6 +205,15 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
       {gateway.database === false && (
         <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
       )}
+      {gateway.database === true && (
+        <div className="hlp">
+          {gateway.max_budget == null
+            ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
+            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? " — exhausted" : ""}.`}
+          {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
+          {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
+        </div>
+      )}
       {!!gateway.gemini_missing_models?.length && (
         <div className="hlp wiz-warn">
           {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, not in this gateway&apos;s catalog.

@@ -5,6 +5,7 @@ import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { Modal } from "./Modal";
 import { AUTH_BANNER_HINT } from "@/lib/authFailure";
+import { BUDGET_EXCEEDED_BANNER_REASON } from "@/lib/budgetFailure";
 import type { AgentInfo, AgentInfoT, AgentsResponseT, AgentLoginT, ClaudeVerifyT } from "./types";
 
 const NUDGE_DISMISSED = "calandria_agent_nudge_dismissed";
@@ -25,6 +26,12 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
   // One agent: show what the provider actually said, so "expired session" isn't
   // confused with "revoked key" or a network blip. Several: keep it to the names.
   const detail = broken.length === 1 ? broken[0].authBroken?.reason : null;
+  // A spent LiteLLM gateway budget rides this same flag and relay
+  // (lib/budgetFailure.ts, lib/runner.ts) so every tab hears about it too, but
+  // reconnecting the agent's login fixes nothing here — the fix is the budget's
+  // own reset (or a raise). Matched verbatim, same convention as the
+  // per-message notices in Transcript.tsx.
+  const budget = broken.every((a) => a.authBroken?.reason === BUDGET_EXCEEDED_BANNER_REASON);
   // Flagged while still connected on record means the login died in flight.
   // Flagged with NO record means the record was dropped on purpose — the CLI's
   // provider changed under a verified login (lib/agents/connections.ts) — and
@@ -34,12 +41,16 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
     <div className="auth-banner" role="alert">
       <span className="ab-ic">{Icon.bolt()}</span>
       <span className="ab-msg">
-        <b>{names} {broken.length === 1 ? "has" : "have"} stopped working. {expired ? "The sign-in expired." : "The connection no longer applies."}</b> {AUTH_BANNER_HINT}
+        <b>
+          {names} {broken.length === 1 ? "has" : "have"}{" "}
+          {budget ? "exceeded its LiteLLM gateway budget." : `stopped working. ${expired ? "The sign-in expired." : "The connection no longer applies."}`}
+        </b>{" "}
+        {!budget && AUTH_BANNER_HINT}
         {detail && <span className="ab-why" title={detail}>{detail}</span>}
       </span>
       <span className="ab-spacer" />
       <button className="btn btn-sm btn-accent" onClick={onReconnect}>
-        Reconnect {broken.length === 1 ? broken[0].label : "agents"}
+        {budget ? "View gateway budget" : `Reconnect ${broken.length === 1 ? broken[0].label : "agents"}`}
       </button>
     </div>
   );
@@ -117,22 +128,30 @@ export function AgentConnect({
   const [mode, setMode] = useState<"subscription" | "api_key">(agent.account?.method === "api_key" ? "api_key" : "subscription");
   const [reconnect, setReconnect] = useState(false);
 
-  // Connected on record, but its credentials died in flight (lib/authFailure.ts).
-  // Never show the green "is connected" state here: the banner sends people to
-  // this card to FIX it, so lead with what broke and put the login one click away.
+  // Connected on record, but its credentials died in flight (lib/authFailure.ts)
+  // — or, for a gateway task, its LiteLLM key ran out of budget
+  // (lib/budgetFailure.ts), which rides the same flag but isn't fixed by
+  // signing in again. Never show the green "is connected" state here: the
+  // banner sends people to this card to FIX it, so lead with what broke.
   if (agent.connected && agent.authBroken && !reconnect) {
+    const budget = agent.authBroken.reason === BUDGET_EXCEEDED_BANNER_REASON;
     return (
       <div className="wiz-connected broken">
         <span className="wiz-warn">{Icon.bolt()}</span>
         <div>
           <div className="wiz-ok-t">
-            {agent.label}&apos;s sign-in stopped working
-            {agent.account?.email ? <> for <strong>{agent.account.email}</strong></> : ""}
+            {budget ? (
+              <>{agent.label}&apos;s gateway key is over budget</>
+            ) : (
+              <>{agent.label}&apos;s sign-in stopped working{agent.account?.email ? <> for <strong>{agent.account.email}</strong></> : ""}</>
+            )}
           </div>
           <div className="hlp" style={{ margin: "3px 0 0" }}>{agent.authBroken.reason}</div>
-          <button className="btn btn-accent btn-sm" style={{ marginTop: 9 }} onClick={() => setReconnect(true)}>
-            {Icon.bolt()} Sign in again
-          </button>
+          {!budget && (
+            <button className="btn btn-accent btn-sm" style={{ marginTop: 9 }} onClick={() => setReconnect(true)}>
+              {Icon.bolt()} Sign in again
+            </button>
+          )}
         </div>
       </div>
     );

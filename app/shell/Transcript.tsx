@@ -15,6 +15,7 @@ import { deferredStartFor } from "@/lib/usageReset";
 import { wakeLabel } from "./snooze";
 import { resetClock } from "./queuedStart";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
+import { BUDGET_EXCEEDED_NOTICE } from "@/lib/budgetFailure";
 import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
@@ -622,6 +623,26 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
                 <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
                   title="Resume this session on its own once the usage window resets: the queued follow-up if there is one, otherwise a continue prompt">
                   {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    // The gateway key's LiteLLM budget is spent: same shape as the cases above,
+    // with a Retry button — there is nothing to reconnect, only the budget's
+    // own reset (or a raise) to wait for, which the gateway card in Settings →
+    // Agents shows (see lib/budgetFailure.ts).
+    if (m.content.includes(BUDGET_EXCEEDED_NOTICE)) {
+      return (
+        <div className="msg system overflow">
+          <div className="msg-body">
+            {m.content}
+            {onRetry && (
+              <div className="overflow-actions">
+                <button className="btn btn-sm" onClick={() => onRetry(m.id)} disabled={running} title="Send the failed message again">
+                  {Icon.bolt()} Retry
                 </button>
               </div>
             )}
