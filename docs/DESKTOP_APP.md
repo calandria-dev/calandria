@@ -1797,7 +1797,7 @@ instances and attaches its window to one of them; `local` — the pair of sideca
 `supervisor.js` spawns — is the first entry and the default, and any number of `url` and
 `ssh` entries point at a Calandria running somewhere else. The design and its phasing are in
 [`superpowers/specs/2026-09-02-remote-instances-design.md`](superpowers/specs/2026-09-02-remote-instances-design.md);
-what follows is what phases 1 and 2 shipped.
+what follows is what all three phases shipped.
 
 Nothing about the server changed. Every URL the web client builds is relative
 (`app/shell/api.ts`), turns run detached and server-owned, and transcripts live in the
@@ -1961,9 +1961,47 @@ is rebuilt only when the session partition changes, which is the one `BrowserWin
 property Electron fixes at construction.
 
 The window title is `<instance name> · Calandria`, so which server is on screen is legible
-without opening a menu.
+without opening a menu. The web UI carries the same fact independently, for the case where
+the client is a browser tab rather than this shell: an instance that sets
+`CALANDRIA_INSTANCE_NAME` puts it in the document title and at the root of the app's
+breadcrumb, and reports it on `GET /api/version` as `instanceName`. The shell reads it off
+the handshake it already makes, so an instance added by URL with the name field left blank
+is labelled with the name its server calls itself rather than its hostname. A name the user
+typed is never overwritten — `adoptServerName()` in `desktop/instances.js` adopts only over
+a name that is still exactly what the address would have derived.
 
-### 8.5 The two local pages
+### 8.5 The badge counts every instance
+
+There is one `/api/events` subscriber per reachable instance, not one for the active one,
+and the dock badge is the sum of their "needs you" counts. That is the only cross-instance
+surface in the design and it is entirely client-side: the shell holds a list of origins and
+adds up what each one told it. No server learns about another server.
+
+The reason it is a sum rather than the active instance's count is that the dock icon is not
+per instance. A badge that only counted the window on screen would go quiet the moment you
+switched away from the machine that wanted you, which is the case a badge exists for.
+Switching therefore stops nothing: `applyActiveInstance()` leaves every subscriber running,
+because a subscriber is bound to an instance's *session*, not to the window.
+
+An OS notification from a background instance carries its name in the title
+(`notificationText()` in `desktop/notifier.js`), and clicking it switches to that instance.
+The switch is a page load in another session partition, so unlike a same-instance click
+there is no running app to dispatch `calandria:goto-task` into — the selection rides in the
+`?project=&task=` query the app restores from, on the URL the switch was going to load
+anyway. Single-instance shells are unchanged: with one instance saved, a toast reads exactly
+as it did before.
+
+**Which instances are watched.** A `url` instance always, whether or not the window is on
+it: its origin is in the saved list and costs nothing to read. `local` while its server is
+up, which includes after the window has moved away. An `ssh` instance **only while it is
+attached** — its transport is a spawned `ssh -N` child holding a local port, so a background
+subscriber would need one of its own, and watching every saved ssh host would mean opening
+an SSH connection per host, on every launch, to machines nobody is looking at. That is a
+bigger decision than a badge is worth, and `BatchMode` makes its failures silent besides.
+So an ssh instance contributes to the badge while you are on it and drops out when you
+leave.
+
+### 8.6 The two local pages
 
 `loading.html` and `instances.html` are static documents whose CSP is `default-src 'none'`,
 including their own scripts; `main.js` injects their behaviour with `executeJavaScript`,
@@ -1971,10 +2009,9 @@ which is not subject to a page's CSP. That is the same no-preload, no-IPC rule t
 has always had, stated from the other side: the dialog needs a form and a list, and it gets
 them without shipping a bridge into every page the window later loads.
 
-### 8.6 What this does not do
+### 8.7 What this does not do
 
-- **A badge that sums across instances** (phase 3), with `CALANDRIA_INSTANCE_NAME` on
-  `/api/version` and a "Connecting the desktop app" section in `SELF_HOSTING.md`.
+- **A background subscriber for an unattached `ssh` instance** — see §8.5 for why.
 - **Installing or launching a server on a remote host from the client.** That is the
   self-hosting story, and doing it from a desktop app duplicates `SELF_HOSTING.md` in
   JavaScript.

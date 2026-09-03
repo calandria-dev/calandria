@@ -292,6 +292,51 @@ function addInstance(state, { name, address }, random = Math.random) {
 }
 
 /**
+ * The name `addInstance` would derive for this instance from its address alone
+ * — the URL's host, or the ssh target's host. `null` for `local`, which has a
+ * fixed name and no address.
+ */
+function derivedNameFor(instance) {
+  if (!instance || instance.kind === "local") return null;
+  if (instance.kind === "ssh") return instance.ssh?.host || null;
+  try {
+    return new URL(instance.url).host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Take the name the SERVER reports for itself (CALANDRIA_INSTANCE_NAME, off the
+ * `/api/version` handshake), but only over a name nobody chose.
+ *
+ * An instance added by URL with the name field left blank is labelled with its
+ * host — `calandria.example.com`, which is the address again rather than a
+ * name. The server usually knows better, and the handshake that decides whether
+ * to warn about an old version already has the answer in its hand, so the first
+ * attach adopts it.
+ *
+ * The rule is deliberately narrow. A name the user TYPED is theirs, and a
+ * server that renames itself must not overwrite it; the check is that the
+ * current name is still exactly what the address would have derived. That also
+ * makes this idempotent: once adopted, the name no longer matches the derived
+ * one, so a later attach leaves it alone even if the server's name changes.
+ * Returns the state unchanged when there is nothing to do, so the caller can
+ * compare by identity to decide whether to save.
+ */
+function adoptServerName(state, id, serverName) {
+  const name = String(serverName ?? "").trim();
+  if (!name) return state;
+  const target = findInstance(state, id);
+  if (!target || target.name === name) return state;
+  if (target.name !== derivedNameFor(target)) return state;
+  return {
+    active: state.active,
+    instances: state.instances.map((i) => (i.id === id ? { ...i, name } : i)),
+  };
+}
+
+/**
  * Drop an instance. `local` is never removable — it is the way back from every
  * other one, and the app has to have somewhere to go.
  */
@@ -443,8 +488,10 @@ module.exports = {
   addInstance,
   addSshInstance,
   addUrlInstance,
+  adoptServerName,
   compareVersions,
   defaultState,
+  derivedNameFor,
   findInstance,
   instanceAddress,
   instanceMenuItems,

@@ -654,11 +654,11 @@ export type RemoteServer = {
   stop(): Promise<void>;
 };
 
-export async function bootRemoteServer(name: string): Promise<RemoteServer> {
+export async function bootRemoteServer(name: string, extraEnv: Record<string, string> = {}): Promise<RemoteServer> {
   const root = instanceRoot(name);
   const port = PORT_BASE + instances * 10;
   const log: string[] = [];
-  const env = { ...process.env, ...instanceEnv(root, port) };
+  const env = { ...process.env, ...instanceEnv(root, port), ...extraEnv };
   const sup = new Supervisor({
     repoRoot: REPO_ROOT,
     port,

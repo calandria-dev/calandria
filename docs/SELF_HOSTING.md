@@ -322,6 +322,82 @@ learning each one's private `SERVICE_TOKEN`. It is not accepted on the
 mutating internal agent-tool endpoints. Unset (the default), it grants
 nothing.
 
+## Connecting the desktop app
+
+The desktop app ([`docs/DESKTOP_APP.md`](DESKTOP_APP.md)) keeps a list of
+instances and points its window at one of them. `This computer` is the server
+it runs itself. Every other entry is a server you are already hosting, reached
+over one of three transports. Adding one is "Instance → Add instance…" in the
+app menu or the tray; the address field decides the transport.
+
+Nothing on the server has to be installed, enabled or configured for the
+desktop app specifically. The requirements below are the ones a browser on the
+same machine would already have.
+
+| Transport | Address you type | What the instance needs |
+|-|-|-|
+| Direct URL behind Cloudflare Access | `https://calandria.example.com` | `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` set, and the hostname reachable |
+| LAN origin in local mode | `http://192.168.1.50:3000` | that exact origin in `CALANDRIA_ALLOWED_ORIGINS` (or as `PUBLIC_BASE_URL`), and `CALANDRIA_HOSTNAME` widened past loopback |
+| SSH port-forward | `ssh://build-box:3000` | an SSH login that works non-interactively, and the server on the remote's loopback |
+
+**Direct URL behind Cloudflare Access.** The app window is a browser, so the
+Access login page opens in it and completes there. Each instance gets its own
+persistent cookie jar, so two instances behind the same Access team do not
+share an assertion, and "Sign out" on an instance deletes that jar. This is the
+only transport where the server is reachable from outside your network, and it
+is the one to use for that: Access is doing the authentication.
+
+If your identity provider refuses logins from an embedded browser, that is the
+one thing to check before choosing this transport. Electron's default user
+agent is usually accepted.
+
+**LAN origin in local mode.** Local mode has no login, so the origin gate is
+the whole boundary and it defaults to loopback only. To reach an instance from
+another machine on your network you have to widen two things, and they are
+different: `CALANDRIA_HOSTNAME` (which interface the server binds) and
+`CALANDRIA_ALLOWED_ORIGINS` (which browser origins it accepts). The desktop app
+loads its page from the remote origin, so `Origin` equals `Host` and the
+request passes exactly when a browser tab on that URL would. Attaching to a
+plain LAN instance has the same trust level as opening it in a browser: anyone
+who can reach the port gets a shell. Do not do this on a network you do not
+control, and never on the internet.
+
+**SSH port-forward.** The app spawns your own `ssh` binary with a local
+forward and attaches to `http://127.0.0.1:<local port>`. The server needs no
+configuration at all for this — it stays bound to loopback on the remote, and
+loopback is what local mode already trusts. SSH is the credential, so your
+config, agent, jump hosts, `ControlMaster` sockets and hardware keys all apply.
+
+The forward runs with `BatchMode=yes`, because a GUI has no terminal to answer
+a prompt in. A host that would ask for a password or a 2FA code fails the
+attach with `ssh`'s own error rather than hanging. Set up a key or a
+`ControlMaster` socket first, and confirm `ssh -o BatchMode=yes <host> true`
+succeeds before adding the instance.
+
+Two limits of this transport. A [managed service](SERVICES.md) exposed on a
+`<slug>--<host>` hostname is not reachable through a single-port forward, so
+those links need a forward of their own or a browser that can reach the remote
+directly. And an instance you are not currently attached to contributes nothing
+to the app's badge count, because reaching it means holding an SSH connection
+open to a machine you are not looking at. `url` instances have no such cost and
+are watched whether or not the window is on them.
+
+### Naming an instance
+
+`CALANDRIA_INSTANCE_NAME` is a human name for an instance ("Lab", "Build box").
+It is optional and cosmetic, and it is the only thing on the server that
+acknowledges being one of several:
+
+- The web app puts it in the document title and at the root of its breadcrumb,
+  so two browser tabs on two instances are told apart without clicking either.
+- `GET /api/version` reports it as `instanceName` (null when unset).
+- The desktop app reads it off that handshake and offers it as the name for an
+  instance you add by URL without typing one. A name you type is yours and is
+  never overwritten.
+- With more than one instance saved, the desktop app appends it to every OS
+  notification that instance raises, and clicking that notification switches to
+  it.
+
 ## Configuration
 
 Every per-instance value is an env var with a documented default. One env set
@@ -406,6 +482,7 @@ Verify the copy (the database and `projects/` are there) before
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar and the proxy's upstream. Keep it on loopback; the browser never connects directly, since `server.js` proxies `/pty` to it |
 | `CALANDRIA_PTY_SHELL` | *(empty)* | The shell every terminal tab spawns. Empty falls back to `$SHELL`, then a platform default (POSIX: first of `/bin/zsh`, `/bin/bash`, `/bin/sh` that exists; Windows: `pwsh.exe`/`powershell.exe` on PATH, else `%COMSPEC%`). Set this if the terminal drawer can't spawn a shell, or to get a different one than your login shell |
+| `CALANDRIA_INSTANCE_NAME` | *(empty)* | A human name for this instance ("Lab", "Build box"). Shown in the document title and the app's breadcrumb, reported on `GET /api/version`, and used by the desktop app as the default name for an instance added by URL. Trimmed, capped at 60 characters |
 | `PUBLIC_BASE_URL` | *(empty)* | The origin you reach the app on (e.g. `https://calandria.example.com` behind a tunnel); the client builds its `ws(s)://` terminal URL from it. Empty means the browser's own origin, which works for any single-hostname deployment. Set it if your proxy rewrites `Host`, which would otherwise make the origin gate's `Origin` vs `Host` check disagree |
 | `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins allowed in no-login local mode, for intentional LAN or reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. Not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that's https, else `mailto:admin@localhost`. iOS rejects `localhost` with `403 BadJwtToken`, so set a real https origin or `mailto:` for iOS push |
