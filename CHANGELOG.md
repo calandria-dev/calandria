@@ -8,6 +8,15 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.7.1](https://github.com/calandria-dev/calandria/compare/v0.7.0...v0.7.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **agents:** name the CLI's own interrupted tool result and log it ([#169](https://github.com/calandria-dev/calandria/issues/169)) ([cdfd554](https://github.com/calandria-dev/calandria/commit/cdfd554da443d7f7db279c3d558a82a139a8859c))
+* **projects:** keep the base branch when a project edit sends a blank one ([#168](https://github.com/calandria-dev/calandria/issues/168)) ([5e21c9b](https://github.com/calandria-dev/calandria/commit/5e21c9b63fe4e1a26a5f0d3ea279e4c0e044207d))
+* **usage:** record what a Stopped turn spent ([#171](https://github.com/calandria-dev/calandria/issues/171)) ([84ec089](https://github.com/calandria-dev/calandria/commit/84ec08956401b051b562d444f1389ad01bf7f0e9))
+
 ## [0.7.0](https://github.com/calandria-dev/calandria/compare/v0.6.2...v0.7.0) (2026-09-02)
 
 Calandria 0.7.0 adds a third agent: Google's Antigravity (Gemini) CLI joins Claude Code and
