@@ -1479,6 +1479,48 @@ async function untrackedFileDiff(worktreePath: string, p: string): Promise<DiffF
   return f;
 }
 
+/**
+ * Every commit the base branch is known to sit at, as seen from this worktree,
+ * reduced to its merge-base with HEAD: the LOCAL branch and its REMOTE-TRACKING
+ * ref, deduplicated, in that order.
+ *
+ * The remote ref is not a refinement. A base that is a feature branch is
+ * routinely known only by its remote copy: the local branch is deleted once the
+ * integration PR lands, or it was never checked out and only ever existed as
+ * `refs/remotes/origin/<branch>`, or it exists but is days behind because the
+ * user only ever pulls `main`. A worktree that merged `origin/<branch>` in the
+ * terminal (or was rebased onto it) shares history with the remote ref that the
+ * local branch knows nothing about, and a resolver that asks only the local
+ * branch then finds nothing (deleted) or a stale point (behind) and keeps
+ * diffing from the cut-point snapshot, reporting every commit the branch picked
+ * up from the base as the task's own work. Measured on this instance: five
+ * tasks based on a landed `core-fixes` showed 43-64 changed files where the
+ * merge-base with `origin/core-fixes` gives 2-14.
+ */
+async function liveMergeBases(worktreePath: string, baseBranch: string): Promise<string[]> {
+  const refs = [baseBranch];
+  const remote = await baseRemote(worktreePath, baseBranch).catch(() => null);
+  if (remote) refs.push(remote.trackingRef);
+  const out: string[] = [];
+  for (const ref of refs) {
+    const mb = await git(worktreePath, ["merge-base", ref, "HEAD"]).catch(() => "");
+    if (mb && !out.includes(mb)) out.push(mb);
+  }
+  return out;
+}
+
+/** Of several commits, the one every other is an ancestor of; the first when none dominates. */
+async function newestCommit(worktreePath: string, shas: string[]): Promise<string> {
+  for (const candidate of shas) {
+    const others = shas.filter((s) => s !== candidate);
+    const dominated = await Promise.all(
+      others.map((s) => git(worktreePath, ["merge-base", "--is-ancestor", s, candidate]).then(() => true).catch(() => false))
+    );
+    if (dominated.every(Boolean)) return candidate;
+  }
+  return shas[0];
+}
+
 // Resolve a usable diff base inside the worktree: prefer the stored base sha,
 // fall back to the merge-base with the project's base branch, then the root commit.
 async function resolveBase(worktreePath: string, baseSha: string, baseBranch: string): Promise<string> {
@@ -1488,26 +1530,29 @@ async function resolveBase(worktreePath: string, baseSha: string, baseBranch: st
       // The stored snapshot goes stale when the worktree is caught up to the
       // base branch outside the app (e.g. `git merge origin/main` in the
       // terminal): diffing from it re-reports every already-merged commit as
-      // task changes. If the live merge-base has moved strictly forward from
-      // the snapshot, diff from it instead. When the snapshot is NOT an
-      // ancestor of the live merge-base (base branch rebased/rewritten), keep
-      // the snapshot — a rewritten base must not silently move the goalposts.
+      // task changes. If a live merge-base (local branch or its remote-tracking
+      // ref, see liveMergeBases) has moved strictly forward from the snapshot,
+      // diff from the newest such point instead. A candidate the snapshot is
+      // NOT an ancestor of (base branch rebased/rewritten) is ignored, and with
+      // none left the snapshot stands — a rewritten base must not silently
+      // move the goalposts.
       if (baseBranch) {
-        try {
-          const liveBase = await git(worktreePath, ["merge-base", baseBranch, "HEAD"]);
-          if (liveBase && liveBase !== baseSha) {
-            await git(worktreePath, ["merge-base", "--is-ancestor", baseSha, liveBase]);
-            return liveBase;
-          }
-        } catch {}
+        const forward: string[] = [];
+        for (const liveBase of await liveMergeBases(worktreePath, baseBranch)) {
+          if (liveBase === baseSha) continue;
+          const descends = await git(worktreePath, ["merge-base", "--is-ancestor", baseSha, liveBase])
+            .then(() => true)
+            .catch(() => false);
+          if (descends) forward.push(liveBase);
+        }
+        if (forward.length) return newestCommit(worktreePath, forward);
       }
       return baseSha;
     } catch {}
   }
   if (baseBranch) {
-    try {
-      return await git(worktreePath, ["merge-base", baseBranch, "HEAD"]);
-    } catch {}
+    const live = await liveMergeBases(worktreePath, baseBranch);
+    if (live.length) return newestCommit(worktreePath, live);
   }
   try {
     const roots = await git(worktreePath, ["rev-list", "--max-parents=0", "HEAD"]);
@@ -1521,14 +1566,15 @@ async function resolveBase(worktreePath: string, baseSha: string, baseBranch: st
  * Just the totals — for the board card footer, polled every few seconds
  * alongside the task list. One subprocess (plus resolveBase's own cat-file
  * check), versus taskDiff's whole-tree patch + untracked reads + ahead-count.
- * No baseBranch: the polling caller doesn't have it handy, and the
- * live-rebase-drift correction resolveBase does with one is a refinement this
- * cheap path doesn't need.
+ * `baseBranch` lets resolveBase advance past a snapshot the worktree has since
+ * caught up from (a few more read-only subprocesses per cache miss); without
+ * it the card would show the same inflated numbers the Changes tab used to.
  */
 export async function taskDiffStat(
   repoPath: string,
   worktreePath: string,
-  baseSha: string
+  baseSha: string,
+  baseBranch = ""
 ): Promise<{ additions: number; deletions: number; files: number }> {
   // resolveBase's unresolvable-baseSha fallback walks all the way back to the
   // repo's first commit (rev-list --max-parents=0) — exactly wrong for this
@@ -1537,7 +1583,7 @@ export async function taskDiffStat(
   // doesn't (pruned after a squash-merge or gc), fail closed — the caller
   // already catches and just omits diff_add/diff_del for that task.
   await git(worktreePath, ["cat-file", "-e", `${baseSha}^{commit}`]);
-  const base = await resolveBase(worktreePath, baseSha, "");
+  const base = await resolveBase(worktreePath, baseSha, baseBranch);
   const numstat = await git(worktreePath, ["diff", "--numstat", base, "--"]).catch(() => "");
   let additions = 0, deletions = 0, files = 0;
   for (const line of numstat.split("\n")) {
