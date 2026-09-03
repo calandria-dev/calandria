@@ -6,7 +6,7 @@ import { jget } from "./api";
 import { AgentMark } from "../icons";
 import { agentLabel } from "./agents";
 import type { AgentsBundle } from "./types";
-import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
+import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@/lib/types";
 
 // The titlebar subscription-usage meter — "how much of my plan have my
 // parallel sessions burned" at a glance, which matters here more than in a
@@ -148,7 +148,7 @@ export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
   return (
     <>
       {metered.map(([id, snap]) => (
-        <AgentPlanPill key={id} agentId={id} label={agentLabel(agents, id)} snap={snap} multi={metered.length > 1} />
+        <AgentPlanPill key={id} agentId={id} label={id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id)} snap={snap} multi={metered.length > 1} />
       ))}
     </>
   );

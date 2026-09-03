@@ -2212,9 +2212,23 @@ export interface InsightsData {
   merges: { d: string; p: string; a: string; add: number; del: number }[];
   /** Distinct resolved models seen per agent (for the provider panel). */
   models: { a: string; m: string }[];
+  /**
+   * Cache-read vs. input tokens per agent, for turns run against the LiteLLM
+   * gateway specifically (`u.provider` matching the gateway's own host) — the
+   * only signal Calandria has that prompt caching survived translation
+   * through the gateway (docs/design/litellm.md, "What Calandria cannot
+   * fix"): `cache_read_tokens` stuck at zero across a task's turns despite
+   * real `inp` is the failure. A separate query rather than a finer GROUP BY
+   * on `usage` above, same reason `models` is: it isn't a per-day series, and
+   * folding a provider dimension into the one every other chart draws from
+   * would change what every other chart on the page means. Empty when no
+   * gateway is configured (the route passes an empty host and this matches
+   * nothing, `task_usage.provider` never being "").
+   */
+  gatewayCache: { a: string; inp: number; cr: number }[];
 }
 
-export function getInsightsData(sinceMs: number): InsightsData {
+export function getInsightsData(sinceMs: number, gatewayHost = ""): InsightsData {
   const db = getDb();
   const projects = db
     .prepare("SELECT id, name, color, deprecated FROM projects ORDER BY position ASC, created_at ASC")
@@ -2289,7 +2303,20 @@ export function getInsightsData(sinceMs: number): InsightsData {
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  return { projects, tags, usage, tagUsage, internal, shipped, merges, models };
+  // `gatewayHost` is "" when no gateway is configured. `provider` is ALSO ""
+  // for a row billed to the agent's own cloud (see addUsage), so an empty host
+  // has to short-circuit here rather than reach the query — `provider = ''`
+  // would otherwise match every ordinary cloud turn on the instance.
+  const gatewayCache = gatewayHost
+    ? (db
+        .prepare(
+          `SELECT CASE WHEN agent = '' THEN 'claude' ELSE agent END AS a,
+                  SUM(input_tokens) AS inp, SUM(cache_read_tokens) AS cr
+           FROM task_usage WHERE created_at >= ? AND provider = ? GROUP BY a`
+        )
+        .all(sinceMs, gatewayHost) as InsightsData["gatewayCache"])
+    : [];
+  return { projects, tags, usage, tagUsage, internal, shipped, merges, models, gatewayCache };
 }
 
 // ---------- recaps ----------

@@ -39,8 +39,12 @@ export function usageResetAt(snap: PlanUsageSnapshot | null | undefined, now: nu
   if (spent.length) return Math.min(...spent);
   // By kind, not by id: "the 5-hour one" is spelled differently per provider
   // (Claude "five_hour", Antigravity "gemini-5h"). The id stays as the fallback
-  // for a snapshot written before drivers declared a kind.
-  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => w.id === "five_hour");
+  // for a snapshot written before drivers declared a kind. A gateway budget
+  // snapshot has exactly one window and no session/week split at all, so its
+  // `gateway_budget` kind is read the same way: the one boundary this task's
+  // queue-at-reset offer can pace against.
+  const session =
+    snap.windows.find((w) => w.kind === "session" || w.kind === "gateway_budget") ?? snap.windows.find((w) => w.id === "five_hour");
   return session && ahead(session.resetsAt) ? session.resetsAt : null;
 }
 

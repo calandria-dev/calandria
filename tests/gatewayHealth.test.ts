@@ -32,11 +32,21 @@ describe("probeGateway", () => {
     expect(h.reachable).toBe(true);
     expect(h.database).toBe(false);
     expect(h.error).toBe(null);
+    // No database, no budget readout — all four together, never a mix.
+    expect(h.spend).toBe(null);
+    expect(h.max_budget).toBe(null);
+    expect(h.budget_reset_at).toBe(null);
+    expect(h.key_models).toBe(null);
   });
 
-  it("reports a database when the proxy has one", async () => {
-    gw = await startFakeGateway({ database: true });
-    expect((await probeGateway(gw.url, "sk-test")).database).toBe(true);
+  it("reports a database when the proxy has one, plus the key's budget readout", async () => {
+    gw = await startFakeGateway({ database: true, models: ["claude-sonnet-4-5", "gpt-5-codex"] });
+    const h = await probeGateway(gw.url, "sk-test");
+    expect(h.database).toBe(true);
+    expect(h.spend).toBe(1.25);
+    expect(h.max_budget).toBe(10);
+    expect(h.budget_reset_at).toBe("2026-10-01T00:00:00Z");
+    expect(h.key_models).toEqual(["claude-sonnet-4-5", "gpt-5-codex"]);
   });
 
   // /health/readiness takes no key, which is what lets an instance that has the

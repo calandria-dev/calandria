@@ -432,8 +432,14 @@ export interface EndpointModelsT { base_url: string; reachable: boolean; api: En
 // Mirrors lib/gatewayHealth.ts. `model_count` and `database` are null when the
 // gateway didn't say — a proxy with no Postgres reports `database: false` and
 // has no keys, budgets or spend to show, which the card states rather than
-// leaving those rows blank.
-export interface GatewayHealthT { base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null; has_key: boolean; error: string | null; gemini_missing_models?: string[] | null }
+// leaving those rows blank. `spend`/`max_budget`/`budget_reset_at`/`key_models`
+// are the budget readout, all null together whenever `database` isn't `true`.
+export interface GatewayHealthT {
+  base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null;
+  has_key: boolean; error: string | null;
+  spend: number | null; max_budget: number | null; budget_reset_at: string | null; key_models: string[] | null;
+  gemini_missing_models?: string[] | null;
+}
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

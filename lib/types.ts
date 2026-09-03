@@ -532,9 +532,24 @@ export interface PlanUsageWindow {
    * can say. The ids are the PROVIDER's ("five_hour", "gemini-5h"), so this is
    * what the pill and lib/usageReset.ts pick the session/week rows by; absent
    * on a window that is neither (Claude's per-model weeks) and on older rows.
+   *
+   * `gateway_budget` is not a subscription window at all — it's the LiteLLM
+   * instance key's own budget (GET /key/info), synthesized by
+   * GET /api/plan-usage under the `"gateway"` map key rather than reported by
+   * an agent driver. A gateway task's turns don't draw on any agent's
+   * session/week window (lib/agentEnv.ts planWindowApplies), so the session
+   * header reads this one instead where a vendor window would be shown but
+   * doesn't apply.
    */
-  kind?: "session" | "week" | null;
+  kind?: "session" | "week" | "gateway_budget" | null;
 }
+
+/** Not a real agent id — the key the LiteLLM gateway's own budget snapshot
+ *  rides under in GET /api/plan-usage's map (app/api/plan-usage/route.ts),
+ *  since the budget is one instance key's, not any agent's. Shared between
+ *  that route, app/shell/PlanUsage.tsx and app/shell/SessionView.tsx so the
+ *  writer and both readers can't drift onto different strings. */
+export const GATEWAY_PLAN_ID = "gateway";
 
 // Instance-wide snapshot of one agent's subscription-plan usage — what the
 // titlebar meter renders. Two sources merged server-side (see
