@@ -631,6 +631,64 @@ export async function serverIsUp(origin: string): Promise<boolean> {
     .catch(() => false);
 }
 
+/* ---- A SECOND server, for the remote-instance specs --------------------- *
+ *
+ * `desktop/supervisor.js`, driven straight from the test process rather than
+ * from a shell — the same class main.js uses for `local`, so the "remote"
+ * server in 12-remote-instance.spec.ts is a real production `node server.js`
+ * with a real pty sidecar, on its own port, over its own hermetic instance.
+ * Anything less (a stub answering /api/version) would prove the handshake and
+ * nothing about the page load that follows it.
+ *
+ * `require` rather than `import`: supervisor.js is plain CommonJS with no
+ * types, and Playwright compiles this file to CommonJS anyway.
+ */
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Supervisor } = require("../supervisor");
+
+export type RemoteServer = {
+  /** `http://127.0.0.1:<port>` — the origin the shell will be told to attach to. */
+  origin: string;
+  root: string;
+  log: string[];
+  stop(): Promise<void>;
+};
+
+export async function bootRemoteServer(name: string, extraEnv: Record<string, string> = {}): Promise<RemoteServer> {
+  const root = instanceRoot(name);
+  const port = PORT_BASE + instances * 10;
+  const log: string[] = [];
+  const env = { ...process.env, ...instanceEnv(root, port), ...extraEnv };
+  const sup = new Supervisor({
+    repoRoot: REPO_ROOT,
+    port,
+    ptyPort: port + 1,
+    env,
+    onLog: (line: string) => log.push(line),
+  });
+  const { url } = await sup.start();
+  return {
+    origin: url,
+    root,
+    log,
+    stop: () => sup.stop().catch(() => {}),
+  };
+}
+
+/**
+ * Write an instance list for a shell to launch against, and return the path to
+ * point `CALANDRIA_INSTANCES_FILE` at.
+ *
+ * Inside the run root rather than the real `~/.config/calandria`, which is the
+ * whole reason main.js reads that variable: a suite that edited a developer's
+ * own instance list would be unrunnable on the machine that most needs it.
+ */
+export function writeInstancesFile(root: string, state: unknown): string {
+  const file = path.join(root, "instances.json");
+  fs.writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`);
+  return file;
+}
+
 /* ---- Driving the instance over its own REST API ------------------------- *
  * Plain `fetch` rather than Playwright's `request` fixture: this suite has no
  * browser context to hang one off, and every call is a bare loopback JSON POST.

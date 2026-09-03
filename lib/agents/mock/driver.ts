@@ -20,13 +20,18 @@
 //   e2e:permission=<command>        raise a Bash permission card and park on it
 //   e2e:blocked=<command>           a Bash call the CLI refused on its own — an
 //                                   already-decided card, no buttons, nothing parked
+//   e2e:ask=[header|]<question>|<a>,<b>[|multi]
+//                                   raise an AskUserQuestion card and park on it,
+//                                   through the same startAskUser() the stdio
+//                                   bridge's ask_user tool calls. Repeat the
+//                                   directive to put several questions on one card
 // With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
 // plain turn still produces a diff to view and merge.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { Project, Task } from "@/lib/types";
+import type { AskQuestion, Project, Task } from "@/lib/types";
 import type {
   AgentAuthStatus,
   AgentDriver,
@@ -34,7 +39,8 @@ import type {
   AgentVerifyResult,
   StreamEvent,
 } from "../types";
-import { createSuggestedTask, resolveTargetProject, updateTaskForAgent } from "@/lib/agentTools";
+import { createSuggestedTask, resolveTargetProject, startAskUser, updateTaskForAgent } from "@/lib/agentTools";
+import { takeAskOutcome } from "@/lib/asks";
 import { listPermissionRules, addPermissionRule } from "@/lib/store";
 import {
   allowedByRules,
@@ -73,6 +79,39 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }
     signal?.addEventListener("abort", done, { once: true });
   });
+}
+
+// How long an `e2e:ask=` turn will sit parked before giving up, and how often it
+// looks. The stdio bridge waits a day at 1.5s intervals; a mock turn nobody
+// answers has to end on its own rather than hold the turn slot for the life of
+// the test server, and a spec that clicks the card wants the resume to be
+// prompt rather than realistic.
+const ASK_WAIT_MS = 120_000;
+const ASK_POLL_MS = 100;
+
+/**
+ * Parse one `e2e:ask=` directive into an AskQuestion.
+ *
+ * `[<header>|]<question>|<optA>,<optB>[|multi]` — the header is optional
+ * because a one-question card reads fine without one. Defaults match the
+ * bridge's own sanitizeQuestions() (header "Question", single-select), so a
+ * card raised from here is indistinguishable from one ask_user raised.
+ * Returns null for a directive with no question or no options, which is what
+ * that sanitizer does with the same input.
+ */
+function parseAsk(spec: string): AskQuestion | null {
+  const parts = spec.split("|").map((p) => p.trim());
+  const multiSelect = parts.length > 2 && parts[parts.length - 1].toLowerCase() === "multi";
+  if (multiSelect) parts.pop();
+  const [header, question, optionSpec] =
+    parts.length > 2 ? parts : ["Question", parts[0] ?? "", parts[1] ?? ""];
+  const options = optionSpec
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((label) => ({ label }));
+  if (!question || !options.length) return null;
+  return { header: header.slice(0, 24), question, options, multiSelect };
 }
 
 /** Resolve a directive's relative path inside the cwd, refusing escapes. */
@@ -185,6 +224,36 @@ export const mockDriver: AgentDriver = {
           return;
         }
       }
+    }
+
+    // An AskUserQuestion, raised through lib/agentTools.startAskUser — the call
+    // the stdio bridge's ask_user tool makes, rather than the Claude driver's
+    // in-SDK PreToolUse hook, because the bridge is the path with no browser
+    // coverage at all. startAskUser owns the card completely: it persists the
+    // tool row, publishes it, raises awaiting_input and parks a DETACHED waiter
+    // on lib/asks.ts. So there is nothing to yield here and the turn's only job
+    // is to wait for the outcome the way the bridge does — polling
+    // takeAskOutcome() rather than holding anything open.
+    const asks = [...instructionText.matchAll(/e2e:ask=([^\n]+)/g)]
+      .map((m) => parseAsk(m[1].trim()))
+      .filter((q): q is AskQuestion => q !== null);
+    if (asks.length) {
+      const { askId } = startAskUser(task, asks);
+      let outcome: string | null = null;
+      const deadline = Date.now() + ASK_WAIT_MS;
+      while (outcome === null && !signal?.aborted && Date.now() < deadline) {
+        await sleep(ASK_POLL_MS, signal);
+        outcome = takeAskOutcome(task.id, askId);
+      }
+      if (signal?.aborted) return; // a Stop ends the stream without an error event
+      if (outcome === null) {
+        yield { type: "error", content: `Mock ask ${askId} was never answered.` };
+        return;
+      }
+      // The formatted answers are what a real agent reads back as the tool
+      // result, so echoing them is how a spec proves the answer reached the
+      // model and not just the database.
+      yield { type: "assistant", content: outcome };
     }
 
     // A call the CLI refused BY ITSELF, with no card — the "auto" classifier or

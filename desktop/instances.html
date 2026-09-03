@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Same policy as loading.html, and for the same reason: this page has no
+         script of its own. main.js injects the behaviour with
+         executeJavaScript, which is not subject to the page's CSP, so the
+         dialog stays a static document that cannot be turned into one by
+         anything it loads. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+    <title>Calandria instances</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 20px 22px; box-sizing: border-box; min-height: 100vh;
+        background: #0b0d10; color: #e6e8eb;
+        font: 13.5px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      h1 { font-size: 15px; font-weight: 600; margin: 0 0 14px; letter-spacing: .2px; }
+      h2 { font-size: 12px; font-weight: 600; margin: 18px 0 8px; color: #8b939c; text-transform: uppercase; letter-spacing: .6px; }
+      #rows { display: flex; flex-direction: column; gap: 6px; }
+      .row {
+        display: flex; align-items: center; gap: 10px;
+        border: 1px solid #1e232b; border-radius: 7px; padding: 9px 11px; background: #10141a;
+      }
+      .row .meta { flex: 1; min-width: 0; }
+      .row .name { font-weight: 600; }
+      .row .name .badge { font-weight: 400; color: #4c9aff; font-size: 11.5px; margin-left: 7px; }
+      .row .addr { color: #8b939c; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      label { display: block; margin-bottom: 10px; color: #8b939c; font-size: 12px; }
+      input {
+        display: block; width: 100%; box-sizing: border-box; margin-top: 4px;
+        background: #10141a; color: #e6e8eb; border: 1px solid #1e232b; border-radius: 6px;
+        padding: 7px 9px; font: inherit;
+      }
+      input:focus { outline: none; border-color: #4c9aff; }
+      button {
+        background: #1a2029; color: #e6e8eb; border: 1px solid #262d38; border-radius: 6px;
+        padding: 6px 11px; font: inherit; cursor: pointer;
+      }
+      button:hover { background: #222a35; }
+      button.primary { background: #2563c9; border-color: #2f6fd6; }
+      button.primary:hover { background: #2a6ddb; }
+      button.danger:hover { background: #3a1f22; border-color: #5a2b30; }
+      .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+      #hint { color: #6b737c; font-size: 12px; margin: -4px 0 8px; }
+      #hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b939c; }
+      #error { color: #ff8a8a; font-size: 12.5px; min-height: 17px; margin-top: 2px; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Instances</h1>
+
+    <div id="manage" hidden>
+      <div id="rows"></div>
+      <h2>Add an instance</h2>
+    </div>
+
+    <div id="form">
+      <label>Name<input id="name" type="text" placeholder="Lab" autocomplete="off" spellcheck="false" /></label>
+      <label>Address<input id="url" type="text" placeholder="https://calandria.example.com" autocomplete="off" spellcheck="false" /></label>
+      <div id="hint">
+        An <code>https://</code> address, or <code>ssh://host:3000</code> to forward the port that server
+        listens on through your own <code>ssh</code>. The host may be any name your
+        <code>~/.ssh/config</code> knows.
+      </div>
+      <div id="error"></div>
+      <div class="actions">
+        <button id="cancel" type="button">Cancel</button>
+        <button id="save" type="button" class="primary">Add instance</button>
+      </div>
+    </div>
+  </body>
+</html>

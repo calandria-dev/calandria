@@ -780,6 +780,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bsug-acts button:hover{color:var(--ink);border-color:var(--line-strong);}
 .bsug-acts button.go{background:var(--blue-soft);border-color:var(--blue);color:var(--blue);}
 .bsug-acts button.no{flex:0 0 30px;color:var(--ink-4);}
+/* Start, withheld while the suggestion's blockers are open. Not
+   pointer-events:none — the button's title is the only place the reason is
+   written, and a tooltip that never appears is the same as no reason. */
+.bsug-acts button:disabled{opacity:.45;cursor:not-allowed;}
+.bsug-acts button.go:disabled:hover{color:var(--blue);border-color:var(--blue);}
 .bsug-acts button svg{width:10px;height:10px;}
 /* terminal columns: compact rows, day dividers, veil past the cap */
 .bcard.mini{padding:8px 10px;}
@@ -889,6 +894,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sug.open .sg-why{-webkit-line-clamp:unset;line-clamp:unset;display:block;}
 .sug-btn{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--on-accent);background:var(--accent);padding:5px 9px;border-radius:var(--r-sm);}
 .sug-btn:hover{filter:brightness(1.06);}
+.sug-btn:disabled{opacity:.45;cursor:not-allowed;}
+.sug-btn:disabled:hover{filter:none;}
 .sug-add{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent-ink);background:transparent;border:1px solid rgba(194,96,60,.4);padding:4px 8px;border-radius:var(--r-sm);}
 .sug-add:hover{background:rgba(194,96,60,.1);}
 .sug-add svg{width:13px;height:13px;}
@@ -940,6 +947,22 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .msg-nav-btn{width:34px;height:34px;border-radius:999px;display:grid;place-items:center;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer;transition:transform .12s ease,background .12s ease;}
 .msg-nav-btn:hover{background:var(--surface-2);transform:translateY(-1px);}
 .msg-nav-btn svg{width:16px;height:16px;}
+
+/* ---------------- pending-question dock ---------------- */
+/* The one card the turn is parked on lives here rather than in the transcript.
+   Inline, it is just another row: a subagent returning a screenful after the
+   question was asked scrolls it off the top, and the user is left with no sign
+   that anything is waiting on them. Docked, it cannot be pushed anywhere by
+   later output and stays put whatever the scroll position. Sized like the
+   transcript's own column (--text-width, the same 28px gutters as .tw) so the
+   card doesn't jump sideways when it settles back inline on being answered. */
+.prompt-dock{flex:none;border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -6px 18px rgba(0,0,0,.10);}
+/* Capped, not free: a multi-question ask is tall, and a dock that grows without
+   limit would push the transcript it is meant to annotate off the screen. */
+.prompt-dock-in{max-width:var(--text-width);margin:0 auto;padding:14px 28px;max-height:min(46vh,460px);overflow-y:auto;overflow-x:hidden;}
+/* .msg's inter-message gap is dead space here — the dock's padding is the gap. */
+.prompt-dock-in .msg{margin-bottom:0;}
+.prompt-dock-in .msg + .msg{margin-top:12px;}
 
 /* ===== workspace split: transcript beside the DIFF/PREVIEW/CONTEXT rail ===== */
 /* Track order: transcript · 0px drag seam · DIFF/CONTEXT rail. The rail width is
@@ -1277,6 +1300,9 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 /* The endpoint chip beside the agent mark (ProviderBadge): fixed and non-shrinking for the same reason as .agent-badge. */
 .provider-badge{display:inline-flex;align-items:center;flex:0 0 auto;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;line-height:1.3;color:var(--ink-2);border:1px solid var(--line);vertical-align:2px;margin-right:8px;}
 .provider-badge.local{color:var(--green);border-color:var(--green);background:var(--green-soft);}
+/* The gateway is metered rather than free, so it gets the accent rather than
+   the green a local server earns; `custom` stays the neutral base style. */
+.provider-badge.gateway{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);}
 
 .btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;transition:background .12s,filter .12s;}
 .btn svg{width:15px;height:15px;}
@@ -2525,6 +2551,14 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-base-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .gs-base-note{font-size:11.5px;color:var(--ink-3);display:flex;flex-direction:column;gap:2px;margin-top:-2px;}
 .gs-base-badge{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:1px 6px;border-radius:999px;}
+/* Drift of the tag's base branch from the project default, above both strip
+   modes. Warn is the ordinary state of a branch that has fallen behind, not an
+   error — the whole point is that it is surfaced early and fixed in one click. */
+.gs-drift{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);}
+.gs-drift.warn .gs-drift-msg{color:var(--amber);}
+.gs-drift.bad .gs-drift-msg{color:var(--red);}
+.gs-drift-note{color:var(--ink-3);}
+.gs-drift-err{color:var(--red);}
 .gs-colors{display:flex;align-items:center;gap:6px;}
 .gs-colors .spacer{flex:1;}
 .gs-sw{width:18px;height:18px;border-radius:50%;border:1px solid var(--line-strong);cursor:pointer;padding:0;}

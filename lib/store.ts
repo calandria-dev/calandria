@@ -1,4 +1,5 @@
-import { serializeAgentEnv, taskProvider } from "./agentEnv";
+import { serializeAgentEnv, taskProvider, type ProviderKind } from "./agentEnv";
+import { gatewayContextWindow } from "./gatewayModels";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -251,12 +252,18 @@ export function createProject(input: {
   // New projects inherit the app-level default agent (Settings → Run defaults);
   // per-project it can then be changed in the Context editor.
   const defaultAgent = getSetting("default_agent") || "claude";
+  // The branch default is `|| "main"` rather than `?? "main"` for updateProject's
+  // reason: a blank projects.branch is where resolveBaseBranch's last leg lands,
+  // and branchExists answers false for it before running any git, so every task
+  // in the project shows the sync banner naming no branch at all. `??` defaults
+  // null and undefined and nothing else, so a create body that spells the field
+  // out as "" wrote exactly the blank the update path now refuses.
   getDb()
     .prepare(
       `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch?.trim() || "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
@@ -285,6 +292,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const cur = getProject(id);
   if (!cur) return undefined;
   const n = { ...cur, ...patch };
+  // branch is normalized like landing_mode below: a blank patch (missing base
+  // branch field, or one cleared to "" / whitespace in Settings) keeps the
+  // CURRENT branch rather than saving emptiness. An empty projects.branch
+  // makes resolveBaseBranch fall through to "", and every task then shows
+  // "isn't a branch in this repository" with a blank name.
+  const branch = n.branch.trim() || cur.branch;
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
@@ -292,7 +305,7 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, n.branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
       // agent_env is normalized, not trusted, for the same reason: the allowlist
       // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
       // whatever a PATCH body (object or JSON text) carried.
@@ -440,8 +453,8 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     else tagsByTask.set(m.task_id, [m.tag_id]);
   }
   return rows.map((r) => {
-    const override = (anyOverride || !!r.agent_env) && taskProvider(project, r).kind !== "cloud";
-    const window = taskContextWindow(r.agent, r.model, override);
+    const kind = (anyOverride || !!r.agent_env) ? taskProvider(project, r).kind : "cloud";
+    const window = taskContextWindow(r.agent, r.model, kind);
     return {
       ...r,
       context_window: window,
@@ -2019,8 +2032,19 @@ export function getTaskUsage(taskId: string): UsageTotals {
 // unrecognised CLOUD id (see lib/contextWindow.ts) and the wrong one here: it
 // would report a 32K local model as 200K and draw a 4% gauge on a window about
 // to overflow. So an override reports nothing and the gauge says so.
-function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, override: boolean): number {
-  return override ? 0 : modelContextWindow(agent, model);
+//
+// The gateway is the one override kind that gets an answer anyway: unlike a
+// local server or a custom URL, it STATES its models' windows (GET
+// <gateway>/model/info, lib/gatewayModels.ts), so a task pointed there is
+// sized from that catalog instead of reported unknown. A model missing from
+// the catalog (a stale pick, or nothing probed yet) still falls back to 0.
+function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, kind: ProviderKind): number {
+  if (kind === "cloud") return modelContextWindow(agent, model);
+  if (kind === "gateway") {
+    const window = gatewayContextWindow(model);
+    if (window > 0) return window;
+  }
+  return 0;
 }
 
 // Percent (0–100, one decimal) of that window `tokens` occupies. 0 when the
@@ -2068,8 +2092,8 @@ export function getTaskContext(taskId: string): TaskContext {
     )
     .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
-  const override = taskProvider(task ? getProject(task.project_id) : null, task).kind !== "cloud";
-  const context_window = taskContextWindow(task?.agent, task?.model, override);
+  const kind = taskProvider(task ? getProject(task.project_id) : null, task).kind;
+  const context_window = taskContextWindow(task?.agent, task?.model, kind);
   return {
     context_tokens,
     context_window,
@@ -2181,7 +2205,7 @@ export interface InsightsData {
   /** The tags those `g` keys name, for the leaderboard's labels. */
   tags: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
-  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  internal: { d: string; p: string; a: string; job: string; m: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
   shipped: { d: string; p: string; a: string; n: number }[];
   /** Lines landed on the base branch that day (from task_merges). */
@@ -2239,10 +2263,11 @@ export function getInsightsData(sinceMs: number): InsightsData {
   const internal = db
     .prepare(
       `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
-              COALESCE(project_id, '') AS p, agent AS a, job, COUNT(*) AS n,
+              COALESCE(project_id, '') AS p, agent AS a, job,
+              COALESCE(model, '') AS m, COUNT(*) AS n,
               SUM(cost_usd) AS cost, SUM(input_tokens) AS inp, SUM(output_tokens) AS out,
               SUM(cache_read_tokens) AS cr, SUM(cache_creation_tokens) AS cw
-       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job`
+       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job, m`
     )
     .all(sinceMs) as InsightsData["internal"];
   const shipped = db

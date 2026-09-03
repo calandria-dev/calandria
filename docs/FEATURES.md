@@ -183,6 +183,27 @@ strip names it. Resolution order: the task's own base, then the first of its tag
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
 
+**And the strip says when that branch has fallen behind** — "3 behind main", with a **Sync**
+beside it. A long-lived integration branch drifts as work lands on the default, and every new
+task the tag cuts is then minted stale: the session builds on superseded commits and its pull
+request proposes reverting whatever landed in between. The reading is taken against the
+commit a new task would actually be cut from (the fetched remote tip when your local default
+is merely behind it), so a stale checkout of your own can't hide it.
+
+Sync **merges the default into the tag's branch**. It never resets it: proving a branch has
+been fully superseded is unreliable under squash merges — `git cherry` called 30 and 10
+commits "not upstream" on two branches `main` had in fact entirely absorbed — and a reset also
+force-moves a ref a live session may have checked out. A merge needs no such proof and can't
+drop a commit. If a worktree is holding the branch, the merge happens inside it so its files
+move too, and is refused outright when that worktree has uncommitted work, naming it. A
+conflict is reported and changes nothing. A tag pinned to a branch that has since been
+**deleted** says so here too, rather than silently cutting new tasks from whatever `HEAD` is.
+
+The strip is the half of this you can act on; the other half reaches the session. A task whose
+worktree was cut from a base branch already behind the default is told so in its opening
+context, before it writes a pull request — same measurement, said in the two places it
+matters.
+
 ### How work lands: merge or pull request
 
 A project also records **how** its work is meant to reach that branch, in the project
@@ -443,6 +464,17 @@ each row with a worktree gets its own checkbox (off by default) showing what tha
 holds: clean and merged, or the uncommitted edits and unmerged commits it would destroy, in
 red. Leaving all of them unticked is a plain move. Three worktrees with unsaved work in a
 selection of eleven don't block the other eight; those three are reported and left in place.
+
+Agents can move tasks between projects too, with `move_task(tasks, project)`. It runs the
+same operation the board does, so a moved task keeps its id, brief, transcript, cost history
+and comments rather than being retyped into a new one, and a blocked-by link survives when
+both of its ends are in the same call — pass a whole chain together. What an agent is *not*
+given is the discard confirmation. A task you have already started can only move by having
+its worktree destroyed, and that answer is yours to give per checkout from the board, so the
+tool refuses those (and anything mid-turn) and names them instead. Every edge it had to drop
+is reported back, since a task that looks ready and isn't is worse than a refusal. Moving a
+task you had already accepted shows on the board as an agent change with a one-click revert,
+which moves it back the same way rather than rewriting a column.
 
 Agents can suggest follow-up tasks into their own project or any other one. When a session
 spots work that belongs to a different repo, it looks up the project and files the suggestion

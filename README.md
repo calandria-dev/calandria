@@ -45,7 +45,10 @@ covers it. No API key needed.
 - **Point a task at any branch.** A task can use its own base branch instead
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
-  rest keep shipping to `main`.
+  rest keep shipping to `main`. A tag can set that branch for a whole plan —
+  and says when it has fallen behind the project default ("3 behind main"),
+  with a Sync that merges the default into it. Left alone, an integration
+  branch drifts and every task cut from it is minted stale.
 - **Say how work lands.** A project lands by merge or by pull request, and
   every session in it is told which. On a repo whose base branch requires a
   PR, agents stop reaching for a Merge that GitHub will reject — and so does
@@ -199,6 +202,13 @@ already queued. The transcript records that it was sent.
 - **Installable app:** a PWA with its own icon and standalone window. Install
   from Chrome/Edge or iOS Add to Home Screen, and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS; works behind Cloudflare Access).
+- **Desktop app:** a native shell for macOS, Windows and Linux with a tray
+  icon, OS notifications and a dock badge. It runs a server of its own, and it
+  can also attach to servers you host elsewhere: a URL behind Cloudflare
+  Access, a LAN origin, or an SSH port-forward. Each instance keeps its own
+  login, the badge counts what needs you across all of them, and a
+  notification says which instance it came from.
+  ([Connecting the desktop app](docs/SELF_HOSTING.md#connecting-the-desktop-app))
 - **Built for a phone:** one pane at a time with a Board / Diffs / Terminals /
   Insights tab bar, a full-screen terminal sheet, and a project screen
   (recap, tags, runbooks, schedules) one tap from the task list.
@@ -245,6 +255,12 @@ delegate a single task to the local model with
 for a Docker instance.
 
 [Recipes and the allowlist](docs/AGENTS.md#local-models)
+
+### LiteLLM gateway
+
+A [LiteLLM](https://docs.litellm.ai) proxy is a fourth **Model provider**, on the same seam and with no new driver. Set `CALANDRIA_LITELLM_BASE_URL` and a project can route its turns through the gateway, either billed to the gateway's virtual key or to your own plan with the CLI's login forwarded. Every turn carries tags naming the project, task and agent, so LiteLLM's spend views break down by task on their own. Settings → Agents shows whether the gateway answers, which LiteLLM version it is, how many models it serves, and says so plainly when the proxy has no database and therefore no keys, budgets or spend. Codex tasks route through it too, on a provider entry of their own and always billed to the gateway key. Gateway turns are recorded unpriced for now, and Antigravity tasks cannot use the gateway yet.
+
+[Setup, billing modes and the two caveats](docs/AGENTS.md#litellm-gateway)
 
 ### Preparing a project for parallel tasks
 

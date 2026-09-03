@@ -5,6 +5,7 @@ import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 import { DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "./agentToolGuard.mjs";
+import { gatewayBaseUrl } from "./agentEnv";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
@@ -365,6 +366,29 @@ export const LOCAL_MODEL_BASE_URL =
   String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
 
 /**
+ * The LiteLLM gateway this instance runs the "Gateway" model provider against
+ * (docs/design/litellm.md, docs/AGENTS.md "LiteLLM gateway"). UNSET IS THE OFF
+ * SWITCH: with no address there is no gateway to route to, so the preset is
+ * absent from the project settings form and the health card is not rendered or
+ * probed.
+ *
+ * The value is resolved by `gatewayBaseUrl()` rather than read here, because
+ * the client has to classify a stored override the same way the server does
+ * and cannot import this file. Re-exported so server code has one name for it.
+ */
+export const LITELLM_BASE_URL = gatewayBaseUrl();
+
+/**
+ * Whether hosted MCP servers on that gateway may be mounted at all. On by
+ * default and unused until the hosted-MCP step: it exists now so an operator
+ * who wants the routing without the tool surface can say so once, rather than
+ * discovering the knob only after servers appear.
+ */
+export const LITELLM_MCP = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_LITELLM_MCP") || "").toLowerCase(),
+);
+
+/**
  * How long Calandria will wait for a local model server to say which models it
  * has (lib/modelEndpoint.ts) before calling it unreachable. Short on purpose:
  * this probe runs inside GET /api/agents, which every tab loads, and the answer
@@ -373,6 +397,28 @@ export const LOCAL_MODEL_BASE_URL =
  * for a host that black-holes the connection instead of refusing it.
  */
 export const MODEL_PROBE_MS = ms(readEnv("CALANDRIA_MODEL_PROBE_MS"), 2500);
+
+/**
+ * Whether Calandria asks the installed Claude CLI what its family aliases
+ * ("opus", "fable") actually resolve to, so the model picker can show the id
+ * beside "(latest)" — lib/agents/claude/modelProbe.ts. On by default. It spends
+ * no tokens (the resolution is printed before any request, and the probe runs
+ * `--bare`, which never reads the user's login) but it does spawn the CLI five
+ * times at ~3.4s each, once per CLI version, detached. Turn it off on a box
+ * where that CPU is precious, or where `claude` is deliberately absent; the
+ * picker then shows the static catalog, which is what it showed before.
+ */
+export const CLAUDE_MODEL_PROBE = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_CLAUDE_MODEL_PROBE") || "").toLowerCase(),
+);
+
+/**
+ * How long that probe waits for one alias's `init` line before giving up on it.
+ * Generous against the ~3.4s a warm spawn takes, because the cost of waiting is
+ * a background job running a few seconds longer and the cost of being too tight
+ * is a picker that never fills in on a slow or cold machine.
+ */
+export const CLAUDE_MODEL_PROBE_MS = ms(readEnv("CALANDRIA_CLAUDE_MODEL_PROBE_MS"), 20_000);
 
 /**
  * Whether a Codex turn against a local endpoint must PROVE the provider mapping
@@ -526,6 +572,25 @@ export const CI_LOG_TAIL_LINES = num("CALANDRIA_CI_LOG_TAIL_LINES", readEnv("CAL
  * any single-hostname deployment.
  */
 export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+
+/**
+ * A human name for this instance ("Lab", "Build box"), or empty.
+ *
+ * Cosmetic and optional, and the only thing on the server that knows an
+ * instance is one of several. It is reported by `GET /api/version`, put in the
+ * document title and shown as the root of the app's breadcrumb, so two browser
+ * tabs on two instances are told apart before either is clicked. The desktop
+ * shell reads it off the same handshake and uses it as the default name when
+ * an instance is added by URL (desktop/instances.js), which is why the server
+ * carries it at all rather than leaving naming to each client.
+ *
+ * Trimmed and capped: it lands in a window title, a menu row and a tray label,
+ * none of which can show a paragraph, and a blank string means "unnamed" the
+ * same way an unset variable does.
+ */
+export const INSTANCE_NAME = String(readEnv("CALANDRIA_INSTANCE_NAME") || "")
+  .trim()
+  .slice(0, 60);
 
 /**
  * Web Push (lib/push/). VAPID is how this instance identifies itself to the

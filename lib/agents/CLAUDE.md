@@ -75,6 +75,35 @@ other tools…"), so that tail is cut. `decision_reason_type` is persisted raw a
 `Transcript.tsx`, because the CLI mints values the SDK's docs don't list (`subcommandResults`).
 Both real messages are captured verbatim in `tests/claudePermissionMode.test.ts`.
 
+### Tool results the CLI answers on its own behalf
+
+`lib/agentToolGuard.mjs` wraps every Calandria tool handler so a throw, an over-long call or a
+blank result comes back as a sentence naming the tool. One failure sits above that seam and the
+guard cannot reach it: the CLI answers the call itself and no handler runs.
+
+Measured 2026-09-02 (task `CrDHcuyuDt1PmLu0PDd1K`, Claude Code 2.1.257, server pid unchanged across
+the window). Five in-process `mcp__calandria__*` calls came back to the model as "The tool call was
+interrupted before a result was received." Each returned in the same second as the call, only
+Calandria tools were hit, and `Bash` calls in the same assistant turns were fine. The sentence is
+the CLI's own. `callMCPTool` returns it when the MCP client rejects with an `AbortError`, so the
+tool-call signal was already aborted when the request went out. Calandria never saw the call.
+`linkSignals` is not involved: only `canUseTool` uses it, and every turn gets a fresh controller
+from `claimTurn`/`handoffTurn`.
+
+Nothing landed in that session. `tasks.pr_url` stayed empty and no branch was pushed for three
+`create_pr` calls, and the task the model reported filing was created 23 seconds later by its own
+`POST /api/tasks` fallback, with `suggested=0`. The abort can still fire after the request is sent,
+so `toolInterruptedMessage()` says the call may or may not have taken effect rather than promising
+it did nothing.
+
+It does not reproduce from `resume` alone. Four spikes (fresh, two resumes, and a mid-turn
+injection, with and without the real `settingSources`) all returned their results. So the driver
+does the only thing available to it. The stream pump classifies the CLI's sentence for calls it
+recorded as Calandria's, replaces it with one that names the tool and says whose answer it is, and
+logs `agent tool call cut off before Calandria answered`. Without that line a turn whose Calandria
+calls all failed still logs `turn ok`, with nothing in the journal to find it by. The stdio bridge
+cannot do the same, being a separate process that never learns its answer was discarded.
+
 ### Model catalog and Vertex corrections
 
 The model half of the capability descriptor is computed per read rather than held constant,
@@ -112,12 +141,40 @@ stated only where it's known, by `modelLabel()` parsing the id a turn actually b
 says "Fable (latest)", badge says "Fable 5.1"; that split is what `tests/modelLabel.test.ts` and
 `tests/claudeVertexModels.test.ts` pin from both ends.
 
-The resolution IS readable without an API call — `claude --model <alias> --output-format
-stream-json` prints it on the `init` line, which still appears with `ANTHROPIC_BASE_URL` pointed
-at a dead port — but it costs a ~4s CLI spawn per value, and this descriptor is read
-synchronously per request (`modelContextWindow()` runs inside `getTaskContext()`). Putting the
-resolved id in an alias's subtitle the way Vertex does wants a cached, CLI-version-keyed
-background probe, which is not built.
+**The resolution is readable without an API call, and the subtitle now reports it.**
+`claude -p --bare --model <alias> --output-format stream-json --verbose --no-session-persistence`
+prints the resolved id and the `claude_code_version` that resolved it on the `init` line, before
+any request goes out — it still appears with `ANTHROPIC_BASE_URL` pointed at a dead port.
+`lib/agents/claude/modelProbe.ts` reads it there and `subscriptionModels()` puts it in the alias
+row's subtitle, the same place `vertexModels()` puts the mapped id, so the two paths render
+identically. The label is untouched: "(latest)" stays true however the alias resolves.
+
+Three constraints shape that probe, and the file states each:
+
+- **It cannot spend anything.** `--bare` reads Anthropic auth strictly from `ANTHROPIC_API_KEY`
+  or an `apiKeyHelper` passed via `--settings`, so the user's OAuth login is not in the process;
+  the base URL points at a dead loopback port; and the child is killed the moment the line is
+  read. `--bare` also skips hooks, which the probe must not fire — measured before the flag went
+  in, a `SessionStart` hook blocked past two minutes and the init line never arrived.
+- **It cannot be on a request path.** `claudeCapabilities()` is synchronous and read per request
+  (`GET /api/agents`, and `modelContextWindow()` from inside `getTaskContext()`), while the sweep
+  is five CLI spawns run one at a time — ~17s cold against the developer's real config dir. So it
+  runs detached, kicked off by `GET /api/agents` and awaited by nobody, and leaves its answer in
+  `lib/agents/claude/modelIds.ts` for the descriptor to read. That file imports nothing on
+  purpose: the prober reaches `lib/store.ts` to persist, and `lib/store.ts` imports
+  `lib/agents/capabilities.ts` back, so a descriptor that read the prober directly would close a
+  cycle through an async external.
+- **Absent is a supported state.** No cache yet, no `claude` on PATH, a probe that timed out,
+  `CALANDRIA_CLAUDE_MODEL_PROBE=off`, a Codex-only instance — every one of them returns the
+  static catalog untouched, which `tests/claudeModelProbe.test.ts` asserts row by row.
+
+Keyed by CLI version because that is what moves the answer (`claude --version` is ~15ms warm),
+and persisted in `settings` under `claude_model_ids` so a restart costs that one spawn rather than
+the sweep. The `[1m]` rows are derived rather than probed: `opus[1m]` resolves to the `[1m]`
+spelling of whatever `opus` resolves to (measured `claude-opus-5[1m]`), the same derivation
+`vertexModels()` makes. `contextWindow` follows the resolved id too — inert on today's
+subscription resolutions, and the fix for the day a bare alias starts resolving to a `[1m]`
+spelling, which is exactly what had happened on Vertex.
 
 The Vertex list is a set of measured corrections, not a second catalog. Every entry the catalog
 held at the time was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran;
@@ -203,6 +260,20 @@ login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the tas
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
 
+A LiteLLM gateway gets a SECOND entry, `calandria-gateway`, rather than a conditional inside
+the local one: the id is what `codex doctor` reports back, and one id for both would let a
+gateway turn pass a verdict earned against a local endpoint. It adds `env_key`, which names the
+variable `CALANDRIA_GATEWAY_KEY` rather than carrying the key — `applyGatewayEnv` in
+`lib/agentEnv.ts` puts the instance key there — and `http_headers` carrying the same
+`x-litellm-tags` list Claude Code sends, composed by that one function so the two CLIs can't
+attribute a task differently. Codex bills the key in BOTH billing modes: the ChatGPT-forwarding
+knob (`requires_openai_auth`) sent no `Authorization` header when it was measured, so it stays
+out until someone with a ChatGPT login measures it through LiteLLM. `planWindowApplies()` is
+where that fact reaches the UI — a gateway Codex task offers no queue-at-reset, since its
+rate-limit snapshot behind a gateway is empty and no plan window is being spent anyway.
+`docs/AGENTS.md` carries the three operational hazards (the deployment cooldown, LiteLLM's
+`reasoning.summary` injection, and `gpt-5-codex` with MCP servers attached).
+
 ### …and `codex/providerCheck.ts` proves the mapping took
 
 That mapping is three assumptions about another tool's config schema — `model_providers.<name>`,
@@ -216,7 +287,8 @@ above, same answer: refuse.
 
 `codex doctor --json` accepts the same `-c` overrides the SDK passes and reports what it resolved
 under `checks["config.load"].details["model provider"]`. The driver asks before building the Codex
-client and yields an `error` instead of running when the answer isn't `calandria-local`.
+client and yields an `error` instead of running when the answer isn't the id the config it was
+handed selected (`calandria-local`, or `calandria-gateway`).
 Load-bearing details:
 
 - **Only that one field is read.** `overallStatus` is `fail` whenever the local server happens to
@@ -438,6 +510,26 @@ handing Claude a `gpt-*` id would be a model the catalog can't run. That case is
 `OneShotOptions` is trailing-optional on every helper signature, so a driver that ignores it
 still satisfies `AgentDriver` — the same tolerance the interface already extends to a driver that
 implements none of them.
+
+### …and which model it DID run
+
+The setting only says what was ASKED for, and it is null exactly when the answer is interesting:
+tier unset means the job inherited the CLI's own default, which no setting can name. So
+`OneShotResult` carries `model` beside `usage`, and `internal_usage.model` stores what the DRIVER
+reported, falling back to the requested id and then to NULL rather than to a guess.
+
+Each driver answers from what it can see. Claude reads the `init` message's resolved model — the
+same field a turn badges as `resolved_model` — with the result message's `modelUsage` keys as the
+fallback for a stream that never announced one, since `SDKResultSuccess` has no scalar model
+field and that per-model rollup is the only place the id appears (`claudeMessageModel()` in
+`claude/usage.ts`; one-shots mount no Task tool, so it holds a single key). Codex and Antigravity
+have nothing in their event streams to read, so each reports the `resolve*Model()` value it
+already computes for pricing. `verifyTurn()` records one too, and is the purest case: it passes no
+`--model` at all, so the row is the only record of what the CLI picked.
+
+Insights names the models under "Calandria's own usage" and Settings names them beside the
+utility-job run count. A run with no recorded model still counts in the run total and the cost —
+it happened, we just can't say on what.
 
 ## Slash-command discovery
 

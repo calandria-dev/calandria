@@ -16,9 +16,9 @@ import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
-import { relTime } from "./format";
+import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
-import type { AgentInfoT, AgentsResponseT, EndpointStatusT } from "./types";
+import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 // Account / session panel. Shows who's signed in to this instance and a Logout
@@ -106,10 +106,12 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
   // server probes it (lib/modelEndpoint.ts); this is the only place the
   // instance-wide default endpoint is reported.
   const [endpoint, setEndpoint] = useState<EndpointStatusT | null>(null);
+  // Same fact for the LiteLLM gateway, and null unless one is configured.
+  const [gateway, setGateway] = useState<GatewayHealthT | null>(null);
 
   const load = () =>
     jget<AgentsResponseT>("/api/agents")
-      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); })
+      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); setGateway(r.gateway ?? null); })
       .catch(() => setAgents([]));
   useEffect(() => { load(); }, []);
 
@@ -150,6 +152,72 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
           </div>
         </div>
       )}
+      {gateway?.base_url && <GatewayCard gateway={gateway} onChanged={load} />}
+    </div>
+  );
+}
+
+// The LiteLLM gateway's own card, beside the local-endpoint one above and for
+// the same reason: an agent's `connected` is its CLI login and says nothing
+// about whether the gateway is up. Rendered only when CALANDRIA_LITELLM_BASE_URL
+// is set, which is also what puts the Gateway preset in a project's settings.
+//
+// The three facts come from lib/gatewayHealth.ts. `database: false` is the
+// no-Postgres 500 from /key/info, and it is stated rather than shown as blank
+// rows: every key, budget and spend feature on a LiteLLM proxy needs that
+// database, so a card that just omitted them would read like a bug.
+function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChanged: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const where = gateway.base_url.replace(/^https?:\/\//, "");
+
+  const save = async (clear: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (clear) await jsend("/api/settings/gateway-key", "DELETE");
+      else await jsend("/api/settings/gateway-key", "POST", { key: key.trim() });
+      setKey("");
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {Icon.spark()} LiteLLM gateway
+        {gateway.reachable
+          ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
+          : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
+      </div>
+      <div className="hlp">
+        {gateway.reachable
+          ? `${where}: reachable${gateway.version ? `, LiteLLM ${gateway.version}` : ""}${gateway.model_count === null ? "" : `, ${gateway.model_count} ${gateway.model_count === 1 ? "model" : "models"}`}.`
+          : `${where}: ${gateway.error || "not reachable"}.`}
+        {" "}A project runs here by setting its <strong>Model provider</strong> to <em>Gateway</em>; the address is
+        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
+      </div>
+      {gateway.database === false && (
+        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
+          placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}
+          title="The instance's LiteLLM virtual key. Stored 0600 beside the database, never in a project row and never returned to the browser."
+          onChange={(e) => setKey(e.target.value)} />
+        <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
+        {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
+      </div>
+      {err && <div className="hlp wiz-warn">{Icon.bolt()} {err}</div>}
+      <div className="hlp">
+        Sent as <code className="ctx-mono">x-litellm-api-key</code> on every gateway turn, alongside tags naming the project, task and agent.
+        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_KEY</code> sets the same thing from the environment.
+      </div>
     </div>
   );
 }
@@ -702,19 +770,34 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
-  const [jobUsage, setJobUsage] = useState<Record<string, { runs: number; cost_usd: number }> | null>(null);
+  type JobUsage = { runs: number; cost_usd: number; models: string[] };
+  const [jobUsage, setJobUsage] = useState<Record<string, JobUsage> | null>(null);
   useEffect(() => {
     if (section !== "background" || jobUsage !== null) return;
-    jget<{ jobs: { job: string; runs: number; cost_usd: number }[] }>("/api/settings/background-jobs")
-      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd }]))))
+    jget<{ jobs: { job: string; runs: number; cost_usd: number; models: string[] }[] }>("/api/settings/background-jobs")
+      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd, models: j.models }]))))
       .catch(() => setJobUsage({}));
   }, [jobUsage, section]);
-  const recapUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0 };
+  const recapUsage: JobUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0, models: [] };
   const utilityUsage = [jobUsage?.summarizeProjectRecap, jobUsage?.draftProjectContext]
-    .filter((u): u is { runs: number; cost_usd: number } => !!u)
-    .reduce((sum, u) => ({ runs: sum.runs + u.runs, cost_usd: sum.cost_usd + u.cost_usd }), { runs: 0, cost_usd: 0 });
+    .filter((u): u is JobUsage => !!u)
+    .reduce<JobUsage>(
+      (sum, u) => ({
+        runs: sum.runs + u.runs,
+        cost_usd: sum.cost_usd + u.cost_usd,
+        models: [...sum.models, ...u.models.filter((m) => !sum.models.includes(m))],
+      }),
+      { runs: 0, cost_usd: 0, models: [] },
+    );
+  // A recorded model id belongs to one agent's catalog, and the row doesn't say
+  // which, so try every connected agent and fall back to the raw id.
+  // modelLabel() falls back to the raw id, so "it returned something" is not a
+  // hit — take the first agent whose catalog actually names the model.
+  const labelModel = (m: string) =>
+    agents.agents.map((a) => modelLabel(m, capsFor(agents, a.id))).find((l) => l && l !== m) || m;
   const usageLine = (label: string, usage = recapUsage) =>
-    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`;
+    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`
+    + (usage.models.length ? ` · on ${usage.models.map(labelModel).join(", ")}` : "");
   // Any server-backed run default set (agent-scoped, legacy, or default_agent)
   // means we're off the built-in defaults.
   const hasRunDefault = Object.keys(appDefaults).some((k) => k.startsWith("default_") || k === "utility_agent");

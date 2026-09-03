@@ -35,10 +35,13 @@ function mockCli(run: (nextInput: () => Promise<IteratorResult<unknown>>) => Asy
 const init = { type: "system", subtype: "init", session_id: "sess-ctx" };
 // One API response as the SDK forwards it. `usage` is THIS request's — its
 // input side is how full the window was when it went out.
-const assistant = (text: string, usage: Record<string, number>, parent: string | null = null) => ({
+const assistant = (text: string, usage: Record<string, number>, parent: string | null = null, id?: string) => ({
   type: "assistant",
   parent_tool_use_id: parent,
-  message: { id: `msg-${text}`, content: [{ type: "text", text }], usage },
+  // `id` is the API RESPONSE's id, which every message split out of that one
+  // response shares. Spend is deduped on it (the gauge is deduped on the value
+  // instead), so a fixture modelling a second content block must repeat it.
+  message: { id: id ?? `msg-${text}`, content: [{ type: "text", text }], usage },
 });
 const result = (usage: Record<string, number>, modelUsage?: Record<string, Record<string, number>>) =>
   ({ type: "result", subtype: "success", result: "ok", total_cost_usd: 0.4, usage, ...(modelUsage ? { modelUsage } : {}) });
@@ -75,7 +78,7 @@ function scriptTurn() {
     await nextInput();
     yield init;
     yield assistant("first", MAIN_1);
-    yield assistant("first-again", MAIN_1); // same response, second content block: same usage, no new event
+    yield assistant("first-again", MAIN_1, null, "msg-first"); // same response, second content block: same usage, no new event
     yield assistant("sub", SUB, "toolu_agent_1"); // subagent sidechain — its own window
     yield assistant("second", MAIN_2);
     yield assistant("errored", { input_tokens: 0, output_tokens: 0 }); // synthesized error message: no usage
@@ -86,6 +89,12 @@ function scriptTurn() {
 
 const fakeProject = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const fakeTask = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: "", generation: 1 } as unknown as Task;
+
+/** The turn's own totals: the report the result message produced, never one of
+ *  the per-request PARTIAL reports the driver emits as the turn goes (those are
+ *  provisional, and this one supersedes them — see tests/usageFlush.test.ts). */
+const fullUsage = (events: StreamEvent[]): TurnUsage =>
+  (events.find((e) => e.type === "usage" && !e.partial) as { usage: TurnUsage }).usage;
 
 beforeEach(() => { queryMock.mockReset(); });
 
@@ -102,15 +111,41 @@ describe("claude driver: context events", () => {
 
     // Spend accounting is untouched: the usage event still carries the result's
     // own token counts verbatim — that IS what the main session cost.
-    const usage = events.find((e) => e.type === "usage") as { usage: { input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; subagent_tokens?: number } };
-    expect(usage.usage).toMatchObject({ input_tokens: 3_000, cache_read_tokens: 159_000, cache_creation_tokens: 8_000 });
+    expect(fullUsage(events)).toMatchObject({ input_tokens: 3_000, cache_read_tokens: 159_000, cache_creation_tokens: 8_000 });
+  });
+
+  it("also reports each main-session request's tokens as they happen, so a Stopped turn has a record", async () => {
+    scriptTurn();
+    const events: StreamEvent[] = [];
+    for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
+
+    const partials = events.filter((e) => e.type === "usage" && e.partial) as { usage: TurnUsage }[];
+    // ONE per main-session API response, not one per message: the CLI splits a
+    // response into a message per content block, all carrying that response's
+    // usage, so the "first-again" copy must contribute nothing. Summing
+    // per message would bill a two-block answer twice.
+    expect(partials.map((p) => p.usage)).toEqual([
+      { cost_usd: 0, input_tokens: 1_000, output_tokens: 20, cache_read_tokens: 49_000, cache_creation_tokens: 0 },
+      { cost_usd: 0, input_tokens: 2_000, output_tokens: 30, cache_read_tokens: 110_000, cache_creation_tokens: 8_000 },
+    ]);
+
+    // The 400k sidechain is NOT among them: the result's usage covers the main
+    // session alone, so a partial from a subagent would have nothing to be
+    // superseded by and would double-count against modelUsage. The synthesized
+    // error message, carrying no usage at all, is skipped as well.
+    const summed = partials.reduce((n, p) => n + p.usage.input_tokens + p.usage.cache_read_tokens + p.usage.cache_creation_tokens, 0);
+    expect(summed).toBeLessThan(SUB.input_tokens);
+
+    // And no partial ever carries a price: the assistant message has none, and
+    // the runner writes the flushed row unpriced rather than as a free turn.
+    expect(partials.every((p) => p.usage.cost_usd === 0)).toBe(true);
   });
 
   it("reports sidechain spend separately, as the gap between modelUsage and the result's own usage", async () => {
     scriptTurn();
     const events: StreamEvent[] = [];
     for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
-    const usage = (events.find((e) => e.type === "usage") as { usage: TurnUsage }).usage;
+    const usage = fullUsage(events);
 
     // The pin the whole feature rests on: the two halves add up to the rollup.
     // Main is what the result reported, subagent is what it left out, and
@@ -132,7 +167,7 @@ describe("claude driver: context events", () => {
     });
     const events: StreamEvent[] = [];
     for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
-    const usage = (events.find((e) => e.type === "usage") as { usage: TurnUsage }).usage;
+    const usage = fullUsage(events);
     // Undefined, not 0: the column stores NULL so a turn with no fan-out is
     // never confused with a driver that doesn't report the split at all.
     expect(usage.subagent_tokens).toBeUndefined();
@@ -148,7 +183,7 @@ describe("claude driver: context events", () => {
     });
     const events: StreamEvent[] = [];
     for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
-    const usage = (events.find((e) => e.type === "usage") as { usage: TurnUsage }).usage;
+    const usage = fullUsage(events);
     expect(usage.subagent_tokens).toBeUndefined();
     // The main-session figures are unaffected by the rollup being absent.
     expect(usage).toMatchObject({ input_tokens: 3_000, cache_read_tokens: 159_000 });

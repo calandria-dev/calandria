@@ -63,9 +63,15 @@ function createSseParser(onData) {
 }
 
 /**
- * The instance-wide "N need you" count — the number the dock/taskbar badge
- * shows, and the same one the app's own titlebar pill shows
- * (app/shell/useShell.ts: sum of every non-deprecated project's awaiting_count).
+ * One instance's "N need you" count — the same number that instance's own
+ * titlebar pill shows (app/shell/useShell.ts: sum of every non-deprecated
+ * project's awaiting_count).
+ *
+ * There is one of these per SUBSCRIBED INSTANCE, and the dock badge is the sum
+ * across them (main.js `totalNeedsYou`). Kept per instance rather than as one
+ * shared map because project ids are only unique within a database: two servers
+ * that both seeded the tutorial project would otherwise overwrite each other's
+ * count, and a reseed of one would have to know which keys belonged to it.
  *
  * It is a SUM because the wire has no instance-wide total on it: every task
  * event carries `awaiting_count` for the one project it belongs to, so the
@@ -144,6 +150,54 @@ function selectedTaskFromUrl(url) {
 }
 
 /**
+ * What the OS toast actually says, once more than one instance can raise one.
+ *
+ * The server composed the title and body for a reader who is looking at ONE
+ * Calandria (lib/notifications/notify.ts), and with a subscriber per saved
+ * instance that assumption is gone: "Needs you: rename the config loader" says
+ * nothing about which machine is asking. So the instance name is appended to
+ * the TITLE — the line every platform shows, at the size that survives a
+ * notification centre collapsing the body — with the same `·` separator the
+ * window title uses (instances.js `windowTitle`).
+ *
+ * `instanceName` is null on a shell that has only ever had one instance, and
+ * then the text is byte-for-byte what it was before phase 3: naming the only
+ * instance there is would be noise on every toast the single-instance app
+ * raises, which is nearly all of them.
+ */
+function notificationText(payload, { instanceName = null } = {}) {
+  const name = String(instanceName ?? "").trim();
+  const title = String(payload?.title ?? "");
+  return { title: name ? `${title} · ${name}` : title, body: String(payload?.body ?? "") };
+}
+
+/**
+ * The URL that opens a notification's task on a DIFFERENT instance.
+ *
+ * Clicking a toast from a background instance has to switch instances first,
+ * which is a page load in another session partition — so unlike the
+ * same-instance click (main.js `gotoTask`, a custom event into a live SPA)
+ * there is no running app to dispatch into. The app mirrors its selection into
+ * `?project=&task=` and restores from it on load (app/shell/persist.ts), so the
+ * selection rides in the URL the switch was going to load anyway. No timing
+ * race, no waiting for hydration.
+ *
+ * Returns the bare origin when there is nothing to select, so a caller can use
+ * it unconditionally.
+ */
+function gotoUrl(origin, { projectId = "", taskId = "" } = {}) {
+  if (!taskId) return origin;
+  try {
+    const url = new URL(origin);
+    if (projectId) url.searchParams.set("project", projectId);
+    url.searchParams.set("task", taskId);
+    return url.toString();
+  } catch {
+    return origin;
+  }
+}
+
+/**
  * Which committed PNG to hand `win.setOverlayIcon`.
  *
  * Windows' taskbar badge is an image, not a number — there is no
@@ -173,9 +227,18 @@ function trayTooltip(count) {
  * on every REconnect the project list is refetched, because anything published
  * while we were dark is simply gone.
  *
- * `fetchImpl` and `sleep` are injectable for the same reason the Supervisor's
- * env is: so the whole loop can be driven against a stub server, with no
- * display and no waiting, from test-supervisor.js.
+ * `fetchImpl` is injectable for two reasons now. The first is the Supervisor's:
+ * so the whole loop can be driven against a stub server, with no display and no
+ * waiting, from test-supervisor.js. The second is the load-bearing one — main.js
+ * passes `session.fromPartition("persist:instance-<id>").fetch` bound to the
+ * instance THIS subscriber is for (there is one per saved instance now, not one
+ * for the active one), so these requests carry that instance's cookies. Under
+ * Cloudflare Access the login lands `CF_Authorization` in the window's cookie
+ * jar, and `globalThis.fetch` in the main process is not in that jar: it would
+ * get a redirect to the identity provider on every reconnect, leaving the badge
+ * at zero and no notifications at all while the page beside it worked fine.
+ * `globalThis.fetch` remains the DEFAULT because a bare `new AppEvents(...)`
+ * against a loopback server (the tests) needs no session at all.
  */
 class AppEvents {
   constructor({
@@ -207,6 +270,11 @@ class AppEvents {
     // of the routes that accept a service token — under the default no-login
     // mode the loopback Host is what authorizes us — but sending it costs
     // nothing and is the difference on an instance that has one.
+    //
+    // The caller decides whether there IS one, and for a remote instance the
+    // answer is always no: SERVICE_TOKEN belongs to the server this machine
+    // spawned, so sending it anywhere else would hand a stranger a credential
+    // for the local database. main.js's `serviceTokenFor` is that rule.
     return this.serviceToken ? { "x-service-token": this.serviceToken } : {};
   }
 
@@ -290,6 +358,8 @@ module.exports = {
   AppEvents,
   NeedsYou,
   createSseParser,
+  gotoUrl,
+  notificationText,
   overlayIconName,
   selectedTaskFromUrl,
   shouldNotify,

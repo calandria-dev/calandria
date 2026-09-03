@@ -41,6 +41,17 @@ With an API key, the amount is billed API usage. Claude reports its SDK dollar f
 directly. Codex reports tokens only, so its amount is estimated from token counts and
 published prices and carries a `~`.
 
+## Stopped turns
+
+A turn you Stop is billed for whatever it already ran, so it is recorded. Its tokens come from
+the model requests the turn made rather than from the end-of-turn total it never produced, and
+no dollar figure comes with them, so a stopped turn is recorded *unpriced* the way a custom base
+URL's turns are. The tokens count toward the task and the project; the amount beside them is a
+floor, and the figures that omit a price say so.
+
+Before this, a turn Stopped mid-work recorded nothing at all. A model can run for half an hour
+of tool calls inside one turn, so half-hour stops were reported as zero tokens and $0.
+
 ## Plan usage meter
 
 On a Claude Pro/Max or ChatGPT subscription login, the titlebar shows a compact meter with
@@ -72,8 +83,11 @@ Insights separates task activity from Calandria's own convenience jobs, includin
 - agent connection verification.
 
 This lets you see quota spent on automation separately from the work requested in task
-sessions. Settings shows the last 30 days of utility-job activity and lets you disable
-unattended background work.
+sessions. Each row names the models those runs used, read back from the run rather than from
+the picker, so a job left on **Inherit** still says what it ran on. A run recorded before this
+shipped, or by a driver that could not report a model, reads "model not recorded" and still
+counts towards the row's runs and cost. Settings shows the last 30 days of utility-job
+activity, the models behind it, and lets you disable unattended background work.
 
 ## Data handling
 

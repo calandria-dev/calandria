@@ -8,15 +8,33 @@ export interface InternalJobUsage30d {
   job: InternalJob;
   runs: number;
   cost_usd: number;
+  /** Models these runs actually used, busiest first. Empty when none recorded. */
+  models: string[];
 }
 
 export function internalUsageLast30Days(): InternalJobUsage30d[] {
-  return getDb().prepare(
-    `SELECT job, COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost_usd
+  // Grouped one dimension finer than it's reported: the caller wants a job's
+  // total plus the models behind it, and folding the models in here keeps that
+  // a single read rather than a second query per row.
+  const rows = getDb().prepare(
+    `SELECT job, model, COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost_usd
        FROM internal_usage
       WHERE created_at >= ?
-      GROUP BY job`
-  ).all(Date.now() - 30 * 24 * 60 * 60 * 1000) as InternalJobUsage30d[];
+      GROUP BY job, model
+      ORDER BY runs DESC`
+  ).all(Date.now() - 30 * 24 * 60 * 60 * 1000) as { job: InternalJob; model: string | null; runs: number; cost_usd: number }[];
+
+  const byJob = new Map<InternalJob, InternalJobUsage30d>();
+  for (const row of rows) {
+    const entry = byJob.get(row.job) ?? { job: row.job, runs: 0, cost_usd: 0, models: [] };
+    entry.runs += row.runs;
+    entry.cost_usd += row.cost_usd;
+    // A run whose driver reported no model is counted, not named: it happened,
+    // we just don't know on what.
+    if (row.model && !entry.models.includes(row.model)) entry.models.push(row.model);
+    byJob.set(row.job, entry);
+  }
+  return [...byJob.values()];
 }
 
 export type InternalUsageEstimate = {
@@ -97,6 +115,8 @@ export function addInternalUsage(input: {
   agent: string;
   requested_agent: string;
   fallback?: boolean;
+  /** What actually ran, not what was asked for. Null when the driver can't say. */
+  model?: string | null;
   project_id?: string | null;
   task_id?: string | null;
   ok?: boolean;
@@ -107,12 +127,13 @@ export function addInternalUsage(input: {
   getDb()
     .prepare(
       `INSERT INTO internal_usage
-         (id, job, agent, requested_agent, fallback, project_id, task_id, ok, ms,
+         (id, job, agent, requested_agent, fallback, model, project_id, task_id, ok, ms,
           cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       nanoid(), input.job, input.agent, input.requested_agent, input.fallback ? 1 : 0,
+      input.model || null,
       input.project_id ?? null, input.task_id ?? null, input.ok === false ? 0 : 1, input.ms ?? 0,
       u?.cost_usd ?? 0, u?.input_tokens ?? 0, u?.output_tokens ?? 0,
       u?.cache_read_tokens ?? 0, u?.cache_creation_tokens ?? 0, Date.now()

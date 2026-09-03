@@ -112,8 +112,9 @@ export interface TaskRow {
 // Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
 
 /** The task field an agent tool changed — `update_task`'s, plus the base branch
- *  `set_base_branch` retargets (whose Revert re-runs the retarget, not a write). */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
+ *  `set_base_branch` retargets and the project `move_task` re-parents into
+ *  (whose Reverts re-run the operation, not a column write). */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
 
 /** One field's before/after within an edit — `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`
@@ -350,7 +351,7 @@ export type AgentInfoT = {
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
 // `id: null` = nothing connected; `fallback` = the configured agent isn't
@@ -406,7 +407,11 @@ export interface AgentInfo { id: string; label: string; capabilities: AgentCapab
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default — the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer rather than a guess.
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT }
+// `gateway_base_url` is the LiteLLM address (CALANDRIA_LITELLM_BASE_URL), null
+// when none is configured — which is what hides the Gateway preset from the
+// project settings form. `gateway` is what that address answered just now. The
+// KEY is never on this wire; `gateway.has_key` says only whether one is set.
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway?: GatewayHealthT | null }
 
 // ---------- local model endpoints ----------
 
@@ -414,12 +419,21 @@ export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: 
 // LOGIN and says nothing about a local server: a project on Ollama runs on a
 // login it never uses, and fails with a perfectly good one when Ollama is down.
 // So reachability is its own fact, reported separately.
-export type EndpointApiT = "ollama" | "openai";
+export type EndpointApiT = "ollama" | "openai" | "gateway";
 /** The instance-wide default endpoint on GET /api/agents — a count, since
  *  nothing there needs the ids. */
 export interface EndpointStatusT { base_url: string; reachable: boolean; api: EndpointApiT | null; model_count: number; error: string | null }
-/** One project's endpoint, with the ids — GET /api/projects/[id]/models. */
-export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; error: string | null }
+/** One project's endpoint, with the ids — GET /api/projects/[id]/models.
+ *  `model_options` is only present for the gateway branch: the richer
+ *  AgentModelOption[] the picker can grow into (group, price, contextWindow)
+ *  instead of the plain suggestion strings `models` already carries. */
+export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; model_options?: AgentModelOption[]; error: string | null }
+
+// Mirrors lib/gatewayHealth.ts. `model_count` and `database` are null when the
+// gateway didn't say — a proxy with no Postgres reports `database: false` and
+// has no keys, budgets or spend to show, which the card states rather than
+// leaving those rows blank.
+export interface GatewayHealthT { base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null; has_key: boolean; error: string | null }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

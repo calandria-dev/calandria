@@ -15,6 +15,10 @@ import {
   isBlankToolResult,
   toolErrorResult,
   DEFAULT_AGENT_TOOL_TIMEOUT_MS,
+  CLI_INTERRUPTED_TOOL_RESULT,
+  isCliInterruptedToolResult,
+  isCalandriaToolName,
+  toolInterruptedMessage,
 } from "@/lib/agentToolGuard.mjs";
 
 /** The shape every guarded answer has to have, whatever went wrong. */
@@ -176,5 +180,42 @@ describe("isBlankToolResult", () => {
     expect(isBlankToolResult({ content: [{ type: "text", text: " " }] })).toBe(true);
     expect(isBlankToolResult({ content: [{ type: "text", text: "x" }] })).toBe(false);
     expect(isBlankToolResult(toolErrorResult("something went wrong"))).toBe(false);
+  });
+});
+
+/* The failure ABOVE the seam: the CLI answers a Calandria tool call itself and
+ * no handler ever runs, so nothing the guard wraps can see it. Measured
+ * 2026-09-02 on task CrDHcuyuDt1PmLu0PDd1K; the Claude driver's stream pump
+ * classifies the CLI's sentence with these helpers. */
+describe("the CLI's own interrupted tool result", () => {
+  const CLI_TEXT =
+    "The tool call was interrupted before a result was received. It may or may not have " +
+    "completed on the server \u2014 verify before assuming it succeeded, and retry if needed.";
+
+  it("recognizes the CLI's sentence and nothing else", () => {
+    expect(isCliInterruptedToolResult(CLI_TEXT)).toBe(true);
+    expect(CLI_TEXT.includes(CLI_INTERRUPTED_TOOL_RESULT)).toBe(true);
+    expect(isCliInterruptedToolResult(undefined)).toBe(false);
+    expect(isCliInterruptedToolResult("")).toBe(false);
+    // The guard's own wordings must never be mistaken for the CLI's, or a real
+    // handler failure would be relabelled as one that never ran.
+    expect(isCliInterruptedToolResult(toolInterruptedMessage("create_pr"))).toBe(false);
+  });
+
+  it("only claims a call for Calandria when the name says so", () => {
+    expect(isCalandriaToolName("mcp__calandria__create_pr")).toBe(true);
+    expect(isCalandriaToolName("calandria__suggest_task")).toBe(true);
+    expect(isCalandriaToolName("Bash")).toBe(false);
+    expect(isCalandriaToolName("mcp__context7__query-docs")).toBe(false);
+    expect(isCalandriaToolName(undefined)).toBe(false);
+  });
+
+  it("names the tool and refuses to promise the call did nothing", () => {
+    const msg = toolInterruptedMessage("mcp__calandria__create_pr");
+    expect(msg).toContain("mcp__calandria__create_pr");
+    // The abort can land after the request went out, so "nothing happened" is
+    // not ours to say — the instruction is to go and look.
+    expect(msg).toMatch(/may or may not/);
+    expect(msg).not.toMatch(/nothing was done/);
   });
 });

@@ -141,13 +141,15 @@ export interface Task {
 /**
  * A field an agent tool can rewrite on a task the user already accepted.
  *
- * `base_branch` is the one that isn't `update_task`'s — it belongs to
- * `set_base_branch`, which moves a real worktree — but it lands in the same
- * audit trail so the "Changed by agent" chip covers a retarget too. Its Revert
- * goes back through `retargetTaskBase`, never a raw column write (see
- * app/api/tasks/[id]/agent-edits/route.ts).
+ * Two of them aren't `update_task`'s, and both belong to tools that move
+ * something real rather than writing a column: `base_branch` to
+ * `set_base_branch`, which retargets a worktree, and `project` to `move_task`,
+ * which re-parents the row and everything keyed to it. They land in the same
+ * audit trail so the "Changed by agent" chip covers those too, and their Revert
+ * re-runs the operation — `retargetTaskBase` and `moveTasksToProject` — never a
+ * raw column write (see app/api/tasks/[id]/agent-edits/route.ts).
  */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
 
 /** One field's before/after inside a recorded agent edit. */
 export interface AgentEditChange {
@@ -624,7 +626,14 @@ export type StreamEvent =
   // flag is what stops the client reading that 0 as "this turn was free": it
   // bumps the row's `unpriced_turns` instead, so the chip marks the total as a
   // floor mid-turn rather than only after the next refetch. See LedgerUsage.
-  | { type: "usage"; usage: TurnUsage; unpriced?: boolean }
+  // `partial` marks a report the NEXT full one supersedes: one API request's
+  // own tokens, emitted as the turn goes, where a full report is the whole
+  // segment's totals arriving at the end. The runner accumulates partials
+  // separately and drops them when a full report lands, then writes whatever
+  // is left over in its finally — which is the only record a turn Stopped
+  // before its result message ever produces. A partial carries no price (its
+  // source has none), so it is never written as a priced turn.
+  | { type: "usage"; usage: TurnUsage; unpriced?: boolean; partial?: boolean }
   // How full the context window is RIGHT NOW: the input-side token count
   // (input + cache_read + cache_creation) of the latest model request in the
   // main session, as reported by the agent's own stream. Emitted whenever the

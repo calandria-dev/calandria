@@ -87,7 +87,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.98.0 \
+  && apt-get install -y --no-install-recommends gh=2.99.0 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
@@ -112,7 +112,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 #   docker build --build-arg CODEX_VERSION=0.147.0 .
 ARG CLAUDE_CODE_VERSION=2.1.228
 ARG CODEX_VERSION=0.146.0
-ARG AGY_VERSION=1.1.24
+ARG AGY_VERSION=1.1.25
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
 # volume). Pinned location via CLAUDE_CLI_PATH; updates ship as image rebuilds,
@@ -143,8 +143,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would silently
 # replace this pin mid-turn — AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second belt.
-ARG AGY_SHA512_AMD64=ed4df91ea7ced986aa14507a0ab8225d92985190f7d551010eba0c46c569587e602cb36af81c9cde7af0d6b380e8dd3a82131361806cd96012d44a3e47fb369a
-ARG AGY_SHA512_ARM64=316ca00d50389a08b162c66066b4e2db201e4ffb85acea05029e3c4532c69d5b8f7c741cf027325889f898ea8f747af8cd15c802e15fcf5d73b7137b6e2420a1
+ARG AGY_SHA512_AMD64=c5af6d1cfc2faf3d183b3497c56cb4951067bb56e8a1d1e5a4f081875aac2b073bd97d0eb9458b772f2ddb934222372935f48ae2c7893d7013d975afd7516e6c
+ARG AGY_SHA512_ARM64=450d549aa315bcc363b95bfc59419826274e900d14cc701ebf20922c061efe04c569c136645ddffef1b411e05a4c2e45a6e8409300bd8b0c07abcb0f6925483c
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \

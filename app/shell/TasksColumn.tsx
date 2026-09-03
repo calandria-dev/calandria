@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { Logo } from "../Logo";
-import { isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
+import { blockedNote, isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
@@ -555,6 +555,12 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
               // Add/Start revive it (clearing the cancel server-side), the ✕
               // still dismisses it for good.
               const gone = isWithdrawn(s);
+              // Blockers gate a START, and accepting a suggestion is not one —
+              // Add stays live, Start does not. Since PR #139 the server 409s a
+              // blocked first turn, and `startSuggestion` accepts the task
+              // BEFORE it asks for the turn, so an offered Start here would put
+              // the task on the board and then be refused the run.
+              const blockNote = blockedNote(blockedBy.get(s.id));
               // The brief is clamped to one line, so anything with text behind
               // that clamp gets a disclosure triangle. A withdrawn row has two
               // things to reveal — the retraction reason AND the proposal it
@@ -601,7 +607,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
                 <div className="sug-acts">
                   <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
                   <button className="sug-add" title={gone ? "Disagree: restore it to the task list" : "Add to task list to start later"} onClick={() => onAcceptSuggestion(s.id)}>{Icon.plus()} {gone ? "Restore" : "Add"}</button>
-                  <button className="sug-btn" onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
+                  <button className="sug-btn" disabled={!!blockNote} title={blockNote} onClick={() => onStartSuggestion(s.id)}>{Icon.play()} Start</button>
                   <button className="sug-dismiss" title="Dismiss" onClick={() => onDismissSuggestion(s.id)}>{Icon.x()}</button>
                 </div>
               </div>

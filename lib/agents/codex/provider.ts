@@ -26,10 +26,34 @@
 // #8240), and the whole point of the override is a URL the user chose — a
 // Docker instance reaches its host as host.docker.internal.
 
+//
+// A LiteLLM gateway is the same mapping with three additions, so it gets an
+// entry of its own rather than a conditional inside the local one — the id is
+// what `codex doctor` reports back, and a shared id would let a gateway turn
+// pass a verdict earned by a local endpoint (docs/design/litellm.md, "Codex
+// driver"):
+//
+//   model_provider = "calandria-gateway"
+//   model_providers.calandria-gateway = {
+//     name, base_url, env_key = "CALANDRIA_GATEWAY_KEY", wire_api = "responses",
+//     http_headers = { "x-litellm-tags" = "calandria,project:…,task:…,agent:codex" }
+//   }
+//
+// `env_key` names the VARIABLE, not the value — the documented Codex footgun,
+// and the reason `agentTurnEnv()` puts the instance's gateway key in the turn's
+// environment under that name. The tags are the same list Claude Code sends as
+// `x-litellm-tags`, composed once in `applyGatewayEnv` and read back off the
+// merged env here, so LiteLLM's spend views break down a Codex task exactly as
+// they do a Claude one.
+
 import type { AgentEnv } from "../../agentEnv";
-import { normalizeBaseUrl } from "../../agentEnv";
+import { normalizeBaseUrl, isGatewayEndpoint, gatewayBaseUrl } from "../../agentEnv";
 
 export const CODEX_LOCAL_PROVIDER_ID = "calandria-local";
+export const CODEX_GATEWAY_PROVIDER_ID = "calandria-gateway";
+
+/** The variable `env_key` names on the gateway entry, set by `agentTurnEnv()`. */
+export const CODEX_GATEWAY_KEY_VAR = "CALANDRIA_GATEWAY_KEY";
 
 // The SDK's CodexConfigValue, restated so this module stays free of the SDK
 // (tests/importGraph.test.ts pins it): what `--config` can carry.
@@ -48,24 +72,45 @@ export interface CodexProviderConfig {
  * project's OPENAI_BASE_URL is seen as "cloud" here too. OPENAI_BASE_URL is
  * the endpoint the settings form and the presets write; CODEX_OSS_BASE_URL is
  * honoured as a fallback for a user who set it by hand for the CLI's `--oss`.
+ *
+ * The kind is decided from the URL Codex will actually call rather than from
+ * `describeProvider`'s first-non-null base URL: those agree for every override
+ * the presets write, and this way the entry can never claim a gateway the
+ * requests don't go to.
  */
-export function codexProviderConfig(env: Readonly<Record<string, string | undefined>> & AgentEnv): CodexProviderConfig {
+export function codexProviderConfig(
+  env: Readonly<Record<string, string | undefined>> & AgentEnv,
+  gateway: string | null = gatewayBaseUrl(),
+): CodexProviderConfig {
   const raw = env.OPENAI_BASE_URL || env.CODEX_OSS_BASE_URL || "";
   const model = env.CODEX_MODEL?.trim() || null;
   if (!raw.trim()) return { config: {}, model };
   // The OpenAI surface lives under /v1 on Ollama and LM Studio; the presets
-  // already write it that way, and a hand-typed bare host gets it added.
+  // already write it that way, and a hand-typed bare host gets it added. It is
+  // also where LiteLLM serves `/v1/responses`.
   const base = `${normalizeBaseUrl(raw)}/v1`;
-  return {
-    config: {
-      model_provider: CODEX_LOCAL_PROVIDER_ID,
-      model_providers: {
-        [CODEX_LOCAL_PROVIDER_ID]: {
+  const id = isGatewayEndpoint(raw, gateway) ? CODEX_GATEWAY_PROVIDER_ID : CODEX_LOCAL_PROVIDER_ID;
+  const entry: Record<string, CodexConfigValue> =
+    id === CODEX_GATEWAY_PROVIDER_ID
+      ? {
+          name: "Calandria gateway",
+          base_url: base,
+          env_key: CODEX_GATEWAY_KEY_VAR,
+          wire_api: "responses",
+          // Falls back to the bare marker when the caller built the env by hand:
+          // a turn always arrives with the composed list, and an untagged
+          // gateway request is still better attributed than an unmarked one.
+          http_headers: { "x-litellm-tags": env.CALANDRIA_GATEWAY_TAGS?.trim() || "calandria" },
+        }
+      : {
           name: "Local model (Calandria)",
           base_url: base,
           wire_api: "responses",
-        },
-      },
+        };
+  return {
+    config: {
+      model_provider: id,
+      model_providers: { [id]: entry },
     },
     model,
   };

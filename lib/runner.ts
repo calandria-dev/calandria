@@ -10,7 +10,8 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
-import { taskProvider } from "@/lib/agentEnv";
+import { recordedCostUsd, taskProvider } from "@/lib/agentEnv";
+import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -41,7 +42,7 @@ import { sendTurnInput } from "@/lib/turnInput";
 import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks } from "@/lib/agents/types";
-import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage } from "@/lib/types";
+import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 
@@ -49,6 +50,18 @@ import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
 // becomes the logger's component, so `CALANDRIA_LOG_FORMAT=json` turns the
 // whole file into parseable output without touching a call site (lib/log.mjs).
 const log = createLogger("runner");
+
+/** True when a usage report claims neither a token nor a cent. */
+function isEmptyUsage(u: TurnUsage): boolean {
+  return (
+    !u.cost_usd &&
+    !u.input_tokens &&
+    !u.output_tokens &&
+    !u.cache_read_tokens &&
+    !u.cache_creation_tokens &&
+    !u.subagent_tokens
+  );
+}
 
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something. Named, because the docs promise the user that a
@@ -534,11 +547,25 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // (each SDK result message carries its own), hence a running sum rather than
   // a last-wins snapshot.
   const spent = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // Spend reported per API request rather than per segment (`partial` usage
+  // events — see StreamEvent), held here instead of written: a full report
+  // covers the same requests, so these are dropped when one arrives and only
+  // flushed by the finally when none did. That is the whole fix for a Stopped
+  // turn recording zero: the segment it died inside had no result message, so
+  // its half-hour of tool calls left no ledger row at all.
+  const provisional = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
   // Of the usage reports folded into `spent`, how many carried no price at all
   // (a custom base URL — see the usage branch below). `spent.cost_usd` is the
   // sum over the others, so this is what stops the lifecycle line logging a
   // confident "cost_usd: 0" for a turn that may well have cost real money.
   let unpricedTurns = 0;
+  // What the driver has actually reported running, for pricing a gateway turn
+  // (lib/gatewayPricing.ts prices by model id, and the gateway's own catalog
+  // is the only place that id's rate lives). Seeded from the task's pick and
+  // overwritten the moment a "model" event names the resolved id — the same
+  // fact resolved_model persists, held here too since a usage event can land
+  // before the finally reads it back out of the task row.
+  let resolvedModel: string | null = task.model ?? null;
   // Start the idle clock (lib/turnActivity.ts) at the launch rather than at the
   // first event: a turn that hangs before the session ever opens is exactly the
   // kind of silence worth reporting, and with no baseline it would never be.
@@ -742,6 +769,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       } else if (ev.type === "model") {
         // Persist the model the SDK actually ran so the badge survives reloads.
         updateTask(id, { resolved_model: ev.model });
+        resolvedModel = ev.model;
         publish(id, ev);
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
@@ -955,12 +983,29 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         } else {
           publish(id, ev);
         }
+      } else if (ev.type === "usage" && ev.partial) {
+        // Held, not written: see `provisional` above. Nothing is published
+        // either — the client ADDS a usage event to the task's running total,
+        // and the full report that supersedes this one would then be counted
+        // twice on screen.
+        for (const k of Object.keys(provisional) as (keyof typeof provisional)[]) provisional[k] += ev.usage[k] ?? 0;
+      } else if (ev.type === "usage" && isEmptyUsage(ev.usage)) {
+        // A report with nothing in it is not a report. Every resumed session's
+        // first result message carries all zeros, which used to write a
+        // cost-0/tokens-0 row seconds into every resume — noise in a per-turn
+        // ledger, and a "turn" the unpriced count and the turn tally both saw.
+        // It must not supersede the provisional accumulator either: an empty
+        // report says nothing about the requests already made.
       } else if (ev.type === "usage") {
+        // The segment's own totals, which cover every request this turn made
+        // since the last full report — so whatever was accumulated per request
+        // is now double, and goes.
+        for (const k of Object.keys(provisional) as (keyof typeof provisional)[]) provisional[k] = 0;
         // A turn against an overridden endpoint (lib/agentEnv.ts) is not
         // Anthropic or OpenAI spend, whatever the driver's own figure says:
         // Claude Code prices whatever model id it was TOLD, and the Codex
         // estimate prices an unknown id at the CLI-default family. But "not
-        // vendor spend" splits in two, and folding the halves together is what
+        // vendor spend" splits further, and folding the cases together is what
         // this decides once, HERE, before the ledger, the running total and the
         // live chip all read it:
         //
@@ -972,13 +1017,21 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         //    driver's figure over-reports a catalog that isn't the one being
         //    charged. So it is recorded as UNKNOWN (null) and left out of every
         //    total, rather than either lie.
+        //  - the GATEWAY states its own prices, so it gets a real computed
+        //    figure instead: lib/gatewayPricing.ts prices this turn's token
+        //    counts against the resolved model's rate from the last catalog
+        //    probe, falling back to the provider's pinned model when the SDK
+        //    hasn't announced one yet. Still NULL when that model never
+        //    appeared in a probe, same as `custom`.
         //
         // The kind comes from `taskProvider`, the same call the session header's
         // provider badge renders from, so the ledger and the badge cannot
         // disagree about which endpoint a turn ran against. Tokens are kept
         // whichever way it lands: an unpriced turn still filled a context window.
         const provider = taskProvider(project, task);
-        const cost = provider.pricing === "vendor" ? ev.usage.cost_usd : provider.pricing === "free" ? 0 : null;
+        const gatewayEstimate =
+          provider.pricing === "gateway" ? estimateGatewayCostUsd(resolvedModel ?? provider.model, ev.usage) : undefined;
+        const cost = recordedCostUsd(provider.pricing, ev.usage.cost_usd, gatewayEstimate);
         const usage: LedgerUsage = { ...ev.usage, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
@@ -1097,15 +1150,49 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // exists to make impossible, so it raises its hand like any other failure.
     const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
 
+    // Whatever the turn spent inside a segment that never produced a full
+    // report — a Stop, a driver error, a crash of the agent process — is here
+    // and nowhere else, so it is written before the line below reads the
+    // accumulator. Measured on a live instance: a Stop 33.7 minutes into one
+    // segment (two ~10-minute Bash calls and a subagent) recorded 0 tokens and
+    // $0 against neighbouring turns costing $2-4, because the ledger only ever
+    // read result messages. No price is recorded with it: the per-request
+    // source carries tokens alone, so the row is UNPRICED (null) rather than a
+    // confident $0 — except against an endpoint that genuinely bills nothing,
+    // where 0 is a measurement, exactly as the live branch above decides it.
+    // Best-effort like the ask settle: this is the finally, and the task row
+    // may already be deleted underneath us.
+    if (!isEmptyUsage(provisional)) {
+      try {
+        const provider = taskProvider(project, task);
+        // No vendor figure to offer: this path exists precisely because the
+        // turn ended without one. Asked through the same helper anyway, so the
+        // free-endpoint zero and the unpriced NULL are decided in one place.
+        // A gateway turn still gets a real estimate here — the accumulator
+        // holds exactly the tokens a full report would have priced.
+        const gatewayEstimate =
+          provider.pricing === "gateway" ? estimateGatewayCostUsd(resolvedModel ?? provider.model, provisional) : undefined;
+        const cost = recordedCostUsd(provider.pricing, null, gatewayEstimate);
+        const usage: LedgerUsage = { ...provisional, cost_usd: cost };
+        addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
+        for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
+        if (cost === null) unpricedTurns++;
+        publish(id, { type: "usage", usage: { ...provisional, cost_usd: cost ?? 0 }, unpriced: cost === null });
+      } catch (err) {
+        log.warn("usage flush failed", { task: id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     // Turn lifecycle, line 2 of 2 (issue #16): what happened, how long it took,
     // what it cost. The outcome ladder is deliberately the SAME one the
     // schedule-run settle below uses — a run recorded `failed` in the ledger
     // and logged `ok` would be worse than no line at all — with `interrupted`
     // meaning the agent session never opened, so the turn produced nothing.
-    // Tokens come from the accumulator, not a task_usage read: an agent that
-    // reported no usage (a driver that doesn't, a turn that died before its
-    // result message) logs zeros, which is the truth about THIS turn rather
-    // than the task's running total.
+    // Tokens come from the accumulator, not a task_usage read: a driver that
+    // reports no usage at all logs zeros, which is the truth about THIS turn
+    // rather than the task's running total. A turn that died before its result
+    // message no longer logs zeros — the flush above put its per-request
+    // tokens in the accumulator first, with no cost, so the line reports them
+    // under `unpriced_turns` and omits the dollar figure.
     const outcome = stopped ? "stopped" : turnError || unattendedDeny ? "failed" : opened ? "ok" : "interrupted";
     // The counter takes the SAME word: TurnOutcome is that ladder as a type, so
     // a fifth outcome added here has to be given a series too rather than

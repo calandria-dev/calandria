@@ -3,8 +3,12 @@ import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
-import { LOCAL_MODEL_BASE_URL } from "@/lib/config";
+import { LITELLM_BASE_URL, LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
+import { gatewayHealth } from "@/lib/gatewayHealth";
+import { gatewayKey } from "@/lib/litellm-key";
+import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
+import { gatewayModelCatalog } from "@/lib/gatewayModels";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +29,22 @@ export async function GET() {
   // separately. Cached (lib/modelEndpoint.ts) and time-boxed, because every tab
   // loads this route.
   const local = summarizeEndpoint(await endpointModels(LOCAL_MODEL_BASE_URL));
+  // The same question for the LiteLLM gateway, and only when one is configured:
+  // an instance with no CALANDRIA_LITELLM_BASE_URL has no gateway preset, no
+  // health card and nothing to probe, so it pays nothing for this route.
+  const gateway = LITELLM_BASE_URL ? await gatewayHealth(LITELLM_BASE_URL, gatewayKey()) : null;
+  // What Claude's family aliases resolve to, for the picker's subtitles. NOT
+  // awaited and deliberately not on the boot path: the sweep is five CLI spawns
+  // at ~3.4s each, so it runs detached and lands in the descriptor for a later
+  // read of this same route. Cheap after the first time — one `claude --version`
+  // per minute at most, and nothing at all once this CLI's answer is cached.
+  ensureClaudeModelIds();
+  // The gateway's own model catalog, same reason: not awaited, so a slow proxy
+  // never slows this route down, and it's what claudeCapabilities()'s gateway
+  // branch and lib/gatewayPricing.ts's rate table read on their next call.
+  // gatewayHealth() above already hits /model/info too, but only for a count —
+  // this is the full parse, cached separately (lib/gatewayModels.ts).
+  if (LITELLM_BASE_URL) void gatewayModelCatalog(LITELLM_BASE_URL, gatewayKey());
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -40,6 +60,12 @@ export async function GET() {
     local_base_url: LOCAL_MODEL_BASE_URL,
     // …and whether that endpoint answered just now.
     local_endpoint: local,
+    // The LiteLLM gateway's address, which the settings form needs to offer the
+    // Gateway preset at all (null hides it), and what it answered just now. The
+    // KEY is never on this wire: only whether one is configured, so the card can
+    // say "set a key" without ever being a way to read it.
+    gateway_base_url: LITELLM_BASE_URL,
+    gateway,
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
       // Effective-credential overlay (issue #4): the settings record says how

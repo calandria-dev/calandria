@@ -31,6 +31,16 @@ task's model for its next turn), and **Settings → Run defaults → Default mod
 comes from the agent, not Calandria: a Vertex-routed instance sees the corrected context
 windows its aliases actually resolve to, and a new driver's models appear with no UI change.
 
+A family alias such as **Opus (latest)** is resolved by the installed CLI at turn time, not by
+Calandria, so the row's label never claims a version. It does report the id the alias currently
+resolves to, in the subtitle under the name. Calandria reads that by asking the CLI once per CLI
+version: `claude -p --bare --model opus --output-format stream-json` prints the resolved id
+before any request goes out, so the reading spends nothing — `--bare` never touches your login,
+and the process is killed as soon as the line arrives. It does spawn the CLI five times at a few
+seconds each, so it runs in the background the first time you open a picker and the ids appear on
+a later load. Set `CALANDRIA_CLAUDE_MODEL_PROBE=off` to skip it; the picker then shows the
+built-in catalog, with the labels but not the ids.
+
 Every picker leads with an **Inherit** entry, following the same fallback chain as reasoning
 level and permission mode: the task's own pick wins; failing that, the agent's default from
 Settings; failing that, nothing is sent and the CLI's own configured model runs. That's why
@@ -58,7 +68,9 @@ knob per job is four settings almost everyone would set to two values.
 
 Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
 run on whatever `~/.claude/settings.json` or `~/.codex/config.toml` names, exactly as they did
-before the pickers existed.
+before the pickers existed. Which model that turned out to be is recorded per run, so
+**Inherit** is still answerable after the fact: Insights names the models behind each job under
+"Calandria's own usage", and Settings names them beside the utility-job run count.
 
 Each tier is read off the agent that actually runs the job, which is not always the one you
 were looking at. A `/clear` note follows its own task's agent so the cost lands on that login;
@@ -380,6 +392,131 @@ what lets a frontier model hand routine work to a local one. `suggest_task` take
 `provider: "local"` plus a `model`: the task it files runs against the instance's local
 endpoint whatever the project's setting, and `provider: "cloud"` does the reverse inside a
 local project. The same field is `agent_env` on `PATCH /api/tasks/[id]`.
+
+## LiteLLM gateway
+
+A [LiteLLM](https://docs.litellm.ai) proxy is the fourth **Model provider**, beside *Local model*
+and *Custom base URL* and on the same seam. It is not a driver: LiteLLM speaks the Anthropic
+Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as it reaches Ollama.
+What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
+attribute per key and tag, and budgets it enforces.
+
+**Scope today: Claude Code and Codex.** The preset writes the Gemini base URL too, because the
+Antigravity half builds on it, but that driver still ignores the address. Point Antigravity tasks
+at another agent until its gateway support lands.
+
+**Setup.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin. Unset is the off switch: with
+no address the preset is absent from the settings form and Settings → Agents shows no card. Then
+open a project's settings, set **Model provider** to *Gateway*, name a model your `model_list`
+serves, and choose who pays:
+
+- **Billed to the gateway's key** — the instance's virtual key goes out as the turn's Anthropic
+  auth token, so the turn draws on that key's account. Set the key with `CALANDRIA_LITELLM_KEY`
+  or in Settings → Agents.
+- **Billed to your own plan** — no credential variable is set, the CLI keeps its own `/login`, and
+  the gateway forwards it upstream. This needs `general_settings.forward_client_headers_to_llm_api:
+  true` on the proxy. Measured working on Claude Code 2.1.257 through LiteLLM 1.101.0.
+
+Every gateway turn also carries `x-litellm-api-key` and a tag list naming the project, task and
+agent, so LiteLLM's own spend views break down by task with nothing written on Calandria's side.
+Those headers are composed per turn rather than stored: `ANTHROPIC_CUSTOM_HEADERS` is Claude
+Code's only knob for arbitrary request headers, and a project field that could set it would be a
+way to make every turn in that project send anything at all. It is deliberately absent from the
+`agent_env` allowlist, and the key is absent from the project row entirely — it lives in a 0600
+file beside the database and is resolved at turn time.
+
+**The health card.** Settings → Agents reports the gateway separately from the agents above it,
+for the reason the local endpoint is reported separately: an agent's *connected* is its CLI login
+and says nothing about whether the gateway is up. It reads `/health/readiness` (which takes no
+key, so an instance with the address and no key still gets an answer), the `x-litellm-version`
+header that rides on every response, and a model count from `/model/info`. `/key/info` answers
+`500 Database not connected` on a proxy with no Postgres behind it, and the card says **keys,
+budgets and spend need LiteLLM's database** rather than showing blanks where those would go.
+
+**What a gateway turn costs.** Recorded as **unpriced** (`task_usage.cost_usd` is NULL) and left
+out of every total, the same row a custom base URL gets. The reason differs: the gateway states
+its prices in `/model/info` and computes the real figure itself, but no CLI exposes the
+`x-litellm-response-cost` header it answers with, so the number has to be recomputed from token
+counts. Until that lands, unpriced is the honest record. The session header shows a `gateway`
+chip.
+
+### Codex through the gateway
+
+Codex reads its provider from `~/.codex/config.toml` rather than from the environment, so the
+gateway reaches it as a provider entry the driver passes on the command line — the same mapping a
+local endpoint gets (**Local models** above), with a second entry named `calandria-gateway`:
+
+```toml
+[model_providers.calandria-gateway]
+name = "Calandria gateway"
+base_url = "<gateway>/v1"
+env_key = "CALANDRIA_GATEWAY_KEY"
+wire_api = "responses"
+http_headers = { "x-litellm-tags" = "calandria,project:<id>,task:<id>,agent:codex" }
+```
+
+`env_key` names a VARIABLE the CLI reads, not the key itself, which is the part people get wrong:
+the value goes in the turn's environment as `CALANDRIA_GATEWAY_KEY`, set from the same instance key
+Claude Code sends as `x-litellm-api-key`. The tag list is identical too, so LiteLLM's spend views
+break down a Codex task the same way. `codex doctor --json` proves the entry took before the turn
+spends anything, and remembers its verdict against this base URL rather than the local endpoint's.
+
+**Codex is billed to the gateway's key in both billing modes.** The ChatGPT-forwarding equivalent
+is `requires_openai_auth = true`, and on the spike host it sent no `Authorization` header at all,
+so it stays out until someone with a ChatGPT login measures it through LiteLLM. A gateway project
+set to *Billed to your own plan* still forwards the Claude Code login for its Claude tasks; its
+Codex tasks draw on the key.
+
+Three things to expect, none of them fixable here:
+
+- **The deployment cooldown below hits Codex hardest.** Codex retries a failed request several
+  times on its own, so one upstream error can turn every retry into `429 No deployments available`
+  until the CLI gives up with "exceeded retry limit". Tune `router_settings.allowed_fails` and
+  `cooldown_time` before running Codex tasks in parallel.
+- **LiteLLM adds `reasoning.summary` to reasoning-effort requests**, which OpenAI rejects for
+  organisations that have not completed verification (BerriAI/litellm#16032). Either verify the
+  organisation upstream or run Codex on a model that takes no reasoning effort.
+- **`gpt-5-codex` through LiteLLM has a history of silent empty completions when MCP servers are
+  attached** (BerriAI/litellm#14846, closed). Nothing mounts MCP servers on a gateway Codex task
+  today; the hosted-MCP work will test that combination on pinned versions before enabling it.
+
+**No plan meter.** Codex's rate-limit snapshot is empty behind a gateway, and the key's spend is
+not a plan window in any case, so a gateway Codex task offers no "resume when your window resets".
+The titlebar meter still reports the ChatGPT login for whatever cloud Codex tasks the instance runs.
+Codex also prints `Model metadata for gpt-5-codex not found. Defaulting to fallback metadata` for
+any custom provider; it is noise, not a failure.
+
+### Two caveats from the spike
+
+**One upstream error cools the deployment for everyone.** A single 401 from upstream put the
+deployment in cooldown and every later request got `429 No deployments available for selected
+model` until the window expired. With many parallel sessions on one deployment, a transient
+upstream failure takes them all down. Raise `router_settings.allowed_fails` and shorten
+`cooldown_time` if you run more than a handful of tasks at once:
+
+```yaml
+router_settings:
+  allowed_fails: 8
+  cooldown_time: 30
+```
+
+**LiteLLM rebuilds `anthropic-beta` and drops values it does not recognise.** On the unified
+route, three of the eight betas Claude Code sent did not reach upstream:
+`claude-code-20250219`, `thinking-token-count-2026-05-13` and `extended-cache-ttl-2025-04-11`.
+The last one is a billing regression — a 1-hour cache request silently becomes a 5-minute one —
+so **1-hour prompt caching is unavailable through the gateway**. LiteLLM assembles the header
+from a set of betas it knows plus its own additions
+(`litellm/llms/anthropic/common_utils.py`, `get_anthropic_headers`), while Claude Code's gateway
+protocol asks that it be forwarded as an open list.
+
+Two more worth knowing. Do not point `ANTHROPIC_BASE_URL` at `<gateway>/anthropic`: that
+pass-through is byte-faithful but ignores `model_list` and calls api.anthropic.com directly with
+your forwarded token. And `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` cannot help, because
+LiteLLM's `/v1/models` is OpenAI-shaped and Claude Code expects the Anthropic shape
+(BerriAI/litellm#27180); Calandria does its own discovery from `/model/info`.
+
+The full spike, including the reproduction recipe and the measured request shapes, is in
+`docs/design/litellm.md`.
 
 ## Adding another agent
 

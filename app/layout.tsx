@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
+import { INSTANCE_NAME, LITELLM_BASE_URL, MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
 import { fontVariables } from "./fonts";
 
@@ -9,7 +9,11 @@ export const metadata: Metadata = {
   // URL; leave metadataBase unset rather than hardcoding a domain this instance
   // may not own. Only set for instances that configured a public origin.
   metadataBase: PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL) : undefined,
-  title: "Calandria",
+  // Named instances put their name first, because the document title is what a
+  // browser puts in the tab — and a row of tabs all reading "Calandria" is the
+  // one thing someone running two instances cannot work around client-side.
+  // Unnamed (the default, and every single-instance deployment) is unchanged.
+  title: INSTANCE_NAME ? `${INSTANCE_NAME} · Calandria` : "Calandria",
   description: "Run Claude Code and Codex in parallel across every project, from any browser. Self-hosted, one git worktree per task, no API key.",
   applicationName: "Calandria",
   // iOS has no manifest-driven install; these metas are what make "Add to Home
@@ -60,9 +64,13 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         {/* Hand the instance's public origin to client code (Terminal builds its
             ws(s):// URL from it). Empty = same-origin via window.location.
             __MAX_UPLOAD_MB rides along so the composer can refuse an oversized
-            attachment before uploading it; the route is still the authority. */}
+            attachment before uploading it; the route is still the authority.
+            __GATEWAY_BASE_URL is the LiteLLM address `describeProvider` compares
+            a stored override against (lib/agentEnv.ts): the client has to
+            classify an override the same way the server does, and the address is
+            not a secret — the key that goes with it never leaves the server. */}
         <script
-          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};` }}
+          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};window.__GATEWAY_BASE_URL=${JSON.stringify(LITELLM_BASE_URL ?? "")};` }}
         />
         {/* Fonts are self-hosted via next/font (app/fonts.ts) — no Google Fonts
             CDN request at runtime. Their CSS variables land on <html> via the

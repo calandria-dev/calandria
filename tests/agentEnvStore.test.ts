@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { createProject, updateProject, createTask, updateTask, addUsage, getProject, getTask } from "@/lib/store";
 import { createSuggestedTask } from "@/lib/agentTools";
 import { LOCAL_MODEL_BASE_URL } from "@/lib/config";
-import { taskProvider } from "@/lib/agentEnv";
+import { gatewayPresetEnv, taskProvider } from "@/lib/agentEnv";
 
 // The persisted half of the provider override: the allowlist is enforced by
 // the store (serializeAgentEnv) on every write path, `task_usage.provider`
@@ -80,5 +80,54 @@ describe("suggest_task provider param", () => {
     const inherit = createSuggestedTask(getProject(p.id)!, { title: "w", description: "…" });
     expect(inherit.task!.agent_env).toBe("");
     expect(taskProvider(getProject(p.id)!, getTask(inherit.task!.id)!).kind).toBe("local");
+  });
+});
+
+// The gateway preset's persisted half. The one thing that must be true of every
+// row it writes: no credential is in it. `agent_env` is served to the browser by
+// GET /api/projects, so a key stored there would be readable by anyone with the
+// app open — lib/litellm-key.ts holds it instead and agentTurnEnv resolves it
+// per turn (docs/design/litellm.md, "Instance configuration").
+describe("the gateway preset in the store", () => {
+  const GW = "http://gw.example.com:4000";
+
+  it("stores base URLs and a billing marker, and no key", () => {
+    const p = createProject({ name: "gw-proj" });
+    const saved = updateProject(p.id, { agent_env: gatewayPresetEnv({ baseUrl: GW, billing: "key", model: "claude-sonnet-4-5" }) as unknown as string })!;
+    const env = JSON.parse(saved.agent_env) as Record<string, string>;
+    expect(env.ANTHROPIC_BASE_URL).toBe(GW);
+    expect(env.OPENAI_BASE_URL).toBe(`${GW}/v1`);
+    expect(env.GOOGLE_GEMINI_BASE_URL).toBe(GW);
+    expect(env.CALANDRIA_GATEWAY_BILLING).toBe("key");
+    expect(saved.agent_env).not.toContain("TOKEN");
+    expect(saved.agent_env).not.toContain("KEY");
+    // …and the row reads back as the gateway kind against that address.
+    expect(taskProvider(getProject(p.id)!, null, GW)).toMatchObject({ kind: "gateway", pricing: "gateway", gateway_billing: "key" });
+  });
+
+  it("keeps the new allowlist keys and still refuses everything else", () => {
+    const p = createProject({ name: "gw-allowlist" });
+    const saved = updateProject(p.id, {
+      agent_env: {
+        GOOGLE_GEMINI_BASE_URL: GW,
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        CALANDRIA_GATEWAY_BILLING: "subscription",
+        // The header knob is deliberately NOT on the allowlist: agentTurnEnv
+        // composes it, so a project row can never name a request header.
+        ANTHROPIC_CUSTOM_HEADERS: "x-evil: 1",
+        NODE_OPTIONS: "--require /evil.js",
+      } as unknown as string,
+    })!;
+    const env = JSON.parse(saved.agent_env) as Record<string, string>;
+    expect(Object.keys(env).sort()).toEqual(["CALANDRIA_GATEWAY_BILLING", "GEMINI_MODEL", "GOOGLE_GEMINI_BASE_URL"]);
+  });
+
+  it("carries a task-level gateway override over a local project", () => {
+    const p = createProject({ name: "gw-task" });
+    updateProject(p.id, { agent_env: '{"ANTHROPIC_BASE_URL":"http://localhost:11434","ANTHROPIC_MODEL":"gemma3"}' });
+    const t = createTask({ project_id: p.id, title: "t", agent_env: gatewayPresetEnv({ baseUrl: GW, billing: "subscription" }) });
+    const provider = taskProvider(getProject(p.id)!, getTask(t.id)!, GW);
+    expect(provider.kind).toBe("gateway");
+    expect(provider.gateway_billing).toBe("subscription");
   });
 });

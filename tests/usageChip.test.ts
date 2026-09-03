@@ -123,9 +123,9 @@ describe("costDisplay", () => {
   // providerPricing), but neither reads honestly on screen: "$0.00" reads as a
   // measured price rather than an inapplicable one, and the API-price
   // equivalent would be the list price of a model that didn't run.
-  it("shows no figure at all for a task on a local or custom endpoint", () => {
+  it("shows no figure at all for a task on a local, custom or gateway endpoint", () => {
     const cloudAgent = agent({ account: { email: "a@b.c", plan: "Max", method: "subscription" } });
-    const provider = { kind: "local" as const, pricing: providerPricing("local"), host: "localhost:11434", anthropic_base_url: "http://localhost:11434", openai_base_url: null, model: "qwen3-coder", auth_token: "ollama" };
+    const provider = { kind: "local" as const, pricing: providerPricing("local"), host: "localhost:11434", anthropic_base_url: "http://localhost:11434", openai_base_url: null, gemini_base_url: null, model: "qwen3-coder", auth_token: "ollama", gateway_billing: null };
     const c = costDisplay(cloudAgent, provider);
     expect(c.show).toBe(false);
     expect(c.approx).toBe(false);
@@ -136,6 +136,11 @@ describe("costDisplay", () => {
     const custom = { ...provider, kind: "custom" as const, pricing: providerPricing("custom"), host: "models.example.com" };
     expect(costDisplay(cloudAgent, custom).show).toBe(false);
     expect(costDisplay(cloudAgent, custom).note).toContain("models.example.com");
+    // A gateway prices its own turns, but no CLI hands Calandria the figure, so
+    // the chip has nothing to show here either — see ProviderPricing.
+    const gw = { ...provider, kind: "gateway" as const, pricing: providerPricing("gateway"), host: "litellm.example.com", gateway_billing: "key" as const };
+    expect(costDisplay(cloudAgent, gw).show).toBe(false);
+    expect(costDisplay(cloudAgent, gw).note).toContain("litellm.example.com");
     // An explicit cloud provider changes nothing.
     expect(costDisplay(cloudAgent, { ...provider, kind: "cloud", pricing: providerPricing("cloud"), host: "", anthropic_base_url: null, model: null, auth_token: null }))
       .toEqual(costDisplay(cloudAgent));

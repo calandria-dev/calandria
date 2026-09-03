@@ -1837,6 +1837,16 @@ async function mergeViaTree(input: {
 }): Promise<MergeResult | null> {
   const { repoPath, target, workBranch, message, committed, mergedSha } = input;
 
+  // Moving a ref out from under a checkout is exactly what the worktree path
+  // can't do and this one can. `update-ref` below would advance `target` while
+  // some worktree's index and files still describe the old tip, and `git status`
+  // there would report the whole merge as phantom local changes. The caller
+  // guarantees the MAIN checkout isn't on `target`, but a linked worktree
+  // legitimately can be — anyone who works in worktrees themselves. Bail to the
+  // slow path, where `worktree add` gets git's own refusal (naming the holder)
+  // instead of a silently corrupted checkout.
+  if (await worktreeForBranch(repoPath, target)) return null;
+
   let tree: string;
   try {
     tree = (await git(repoPath, ["merge-tree", "--write-tree", target, workBranch])).split("\n")[0].trim();
@@ -2106,6 +2116,128 @@ export async function mergeTask(input: {
       error: `merge failed: ${msgOf(e)}`,
     }));
     return stash ? { ...res, stashed: await restoreStash(repoPath, stash) } : res;
+  });
+}
+
+/** What a `syncBranchFrom` did, or why it wouldn't. */
+export interface BranchSyncResult {
+  ok: boolean;
+  branch: string;
+  from: string;
+  alreadyCurrent?: boolean; // nothing to bring over
+  fastForwarded?: boolean; // the branch had nothing of its own, so no merge commit
+  behind?: number; // how much was brought over (0 when already current)
+  ahead?: number; // what the branch had of its own going in
+  conflicts?: string[];
+  error?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+const syncRefusal = (branch: string, from: string, error: string): BranchSyncResult => ({ ok: false, branch, from, error });
+
+/**
+ * Bring `branch` up to date by merging `from` INTO it — the tag-branch half of
+ * the per-task Sync one level down.
+ *
+ * Merging, never resetting. A long-lived integration branch a tag pins its
+ * members to has to be caught up somehow, and the tempting move — reset it to
+ * the default once its work has landed — needs a proof that squash-merge history
+ * makes unavailable: measured on this repo, `git cherry` called 30 and 10 commits
+ * "not upstream" on two branches main had in fact fully absorbed. A merge needs
+ * no such proof, can't drop a commit, and is the same operation Sync already
+ * performs on a task's worktree. Reset stays a manual escape hatch.
+ *
+ * Three ways the branch can move, by who is holding it:
+ *
+ *   - nobody, and the branch has commits of its own → the object-level merge
+ *     `mergeTask` uses (`mergeIntoTargetWorktree`), which never materializes a
+ *     checkout;
+ *   - nobody, and it has nothing of its own → a compare-and-swap `update-ref`,
+ *     so a concurrent merge wins rather than being silently discarded;
+ *   - a worktree has it checked out → git's own merge INSIDE that worktree, so
+ *     its index and files move with the branch instead of being left describing
+ *     a commit the branch no longer points at.
+ *
+ * That last case is the one reset can't do at all, and it is refused outright
+ * when the holding worktree has uncommitted work — in `worktreePruneSafety`'s
+ * words, so a refused Sync and a refused move say the same thing. Only the dirty
+ * half of that check applies here (`workBranch: ""` asks for exactly it): an
+ * integration branch is ahead of the default by definition, and gating on that
+ * would refuse every sync there is.
+ *
+ * `branchDriftStatus` is read-only and never fetches, so the fetch is done here,
+ * before the lock: this is the one caller for which a stale answer means merging
+ * yesterday's default in and reporting the tag fixed.
+ */
+export async function syncBranchFrom(input: { repoPath: string; branch: string; from: string }): Promise<BranchSyncResult> {
+  const { repoPath, branch, from } = input;
+  if (!refNameSafe(branch)) return syncRefusal(branch, from, `${branch || "(empty)"} isn't a usable branch name`);
+  if (!refNameSafe(from)) return syncRefusal(branch, from, `${from || "(empty)"} isn't a usable branch name`);
+  if (branch === from) return { ok: true, branch, from, alreadyCurrent: true, behind: 0, ahead: 0 };
+
+  // Outside the lock, like every other fetch here: it's a network round trip and
+  // holding the repo lock across one parks every task launch behind it.
+  await fetchBase(repoPath, from).catch(() => {});
+
+  return withRepoLock(repoPath, async (): Promise<BranchSyncResult> => {
+    // Not `from` itself. `branchDriftStatus` takes any commit-ish, and the one
+    // that matters here is `baseStartPoint` — the remote tip when the local
+    // default is merely behind it, the local tip otherwise — because that is
+    // the exact commit `ensureWorktree` cuts a new task from. Syncing to a local
+    // ref that is itself stale would leave the tag still minting stale
+    // worktrees while reporting that it had been fixed.
+    const againstTip = await baseStartPoint(repoPath, from);
+    if (!againstTip) return syncRefusal(branch, from, `${from} doesn't exist in this repo`);
+    const drift = await branchDriftStatus(repoPath, branch, againstTip);
+    if (!drift.exists) return syncRefusal(branch, from, `${branch} doesn't exist in this repo — nothing to sync`);
+    if (drift.unknown) return syncRefusal(branch, from, `couldn't compare ${branch} with ${from} (shallow clone?)`);
+    const counts = { behind: drift.behind, ahead: drift.ahead };
+    if (drift.behind === 0) return { ok: true, branch, from, alreadyCurrent: true, ...counts };
+
+    const holder = await worktreeForBranch(repoPath, branch);
+    if (holder) {
+      const safety = await worktreePruneSafety({ repoPath, worktreePath: holder.path, workBranch: "", baseBranch: from });
+      if (safety.isDirty)
+        return syncRefusal(branch, from, `${branch} is checked out in ${holder.path} with ${safety.reason}. Commit or set them aside first`);
+      try {
+        await git(holder.path, ["merge", "-m", `Merge ${from} into ${branch}`, againstTip]);
+      } catch (e) {
+        const conflicts = (await git(holder.path, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
+          .split("\n")
+          .filter(Boolean);
+        await git(holder.path, ["merge", "--abort"]).catch(() => {});
+        return {
+          ok: false, branch, from, ...counts,
+          ...(conflicts.length ? { conflicts } : {}),
+          error: conflicts.length ? `merge conflicts in ${conflicts.length} file(s)` : `merge failed: ${msgOf(e)}`,
+        };
+      }
+      const stats = drift.ahead === 0 ? null : await mergeLineStats(holder.path);
+      return { ok: true, branch, from, ...counts, fastForwarded: drift.ahead === 0, ...(stats ?? {}) };
+    }
+
+    if (drift.ahead === 0) {
+      const moved = await advanceBaseBranchLocked(repoPath, branch, againstTip);
+      return moved.ok
+        ? { ok: true, branch, from, ...counts, fastForwarded: true }
+        : syncRefusal(branch, from, moved.error ?? `could not move ${branch}`);
+    }
+
+    // The SHA rather than the branch name, for `ensureWorktree`'s two reasons:
+    // the ref can move under us, and `againstTip` may be the REMOTE tip, which
+    // is the commit a new task would be cut from and therefore the one the tag
+    // branch has to absorb to stop minting stale worktrees.
+    const res = await mergeIntoTargetWorktree({
+      repoPath,
+      target: branch,
+      workBranch: againstTip,
+      message: `Merge ${from} into ${branch}`,
+      committed: false,
+    });
+    return res.ok
+      ? { ok: true, branch, from, ...counts, ...(res.additions !== undefined ? { additions: res.additions, deletions: res.deletions } : {}) }
+      : { ok: false, branch, from, ...counts, ...(res.conflicts ? { conflicts: res.conflicts } : {}), error: res.error ?? "merge failed" };
   });
 }
 

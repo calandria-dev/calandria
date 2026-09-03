@@ -13,7 +13,7 @@ import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPick
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
-import { describeProvider, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type ProviderKind } from "@/lib/agentEnv";
+import { describeProvider, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
 import { useEndpointModels } from "./modelEndpoint";
 
 // Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
@@ -1068,15 +1068,27 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [providerUrl, setProviderUrl] = useState(normalizeBaseUrl(savedProvider.anthropic_base_url ?? savedProvider.openai_base_url ?? ""));
   const [providerModel, setProviderModel] = useState(savedProvider.model ?? "");
   const [providerToken, setProviderToken] = useState(savedProvider.auth_token ?? "");
+  // Who a Gateway-preset project bills. Stored rather than derived because both
+  // modes are legitimate against the same address (lib/agentEnv.ts).
+  const [providerBilling, setProviderBilling] = useState<GatewayBilling>(savedProvider.gateway_billing ?? "key");
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
+  // The instance's LiteLLM address, or "" — which is what hides the option.
+  // The gateway's URL is not typed: it is the one the instance is configured
+  // for, and an override naming any other address is a Custom endpoint.
+  const gatewayUrl = agents.gateway_base_url || "";
   // What the URL in the box right now actually has. Probed through the server
   // (the endpoint is loopback THERE, not in this browser) and keyed on the
   // TYPED url rather than the saved one, so the suggestions and the "reachable,
   // 4 models" line follow the field being edited instead of appearing only
   // after a save.
-  const endpoint = useEndpointModels(project.id, providerUrl || localDefaultUrl, providerKind !== "cloud");
+  const probeUrl = providerKind === "gateway" ? gatewayUrl : providerUrl || localDefaultUrl;
+  const endpoint = useEndpointModels(project.id, probeUrl, providerKind !== "cloud");
   const agentEnvOut = () =>
-    providerKind === "cloud" ? "" : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
+    providerKind === "cloud"
+      ? ""
+      : providerKind === "gateway"
+        ? serializeAgentEnv(gatewayPresetEnv({ baseUrl: gatewayUrl, billing: providerBilling, model: providerModel }))
+        : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
@@ -1199,7 +1211,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1271,7 +1283,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </div>
         </div>
         <div className="field" style={{ flex: "0 0 170px", marginBottom: 0 }}>
-          <div className="lab">{Icon.git()} Branch</div>
+          <div className="lab">{Icon.git()} Branch <span className="opt">(required to run tasks)</span></div>
           <input type="text" className="ctx-mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
         </div>
       </div>
@@ -1335,19 +1347,46 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           }}>
             <option value="cloud">Cloud — the agent&apos;s own login</option>
             <option value="local">Local model — Ollama or LM Studio</option>
+            {/* Only when the instance has one. With no CALANDRIA_LITELLM_BASE_URL
+                there is no address to route to, so the option would be a dead
+                end rather than a setup step. */}
+            {gatewayUrl ? <option value="gateway">Gateway — the instance&apos;s LiteLLM proxy</option> : null}
             <option value="custom">Custom base URL</option>
           </select>
         </div>
         {providerKind !== "cloud" && (
           <>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
-                title="Base URL of the server. Ollama and LM Studio serve both APIs from one origin; /v1 is added where each CLI needs it."
-                onChange={(e) => setProviderUrl(e.target.value)} />
+              {/* The gateway's address is the instance's, not a field: an
+                  override naming any other address is a Custom endpoint by
+                  definition, so a box here would only be a way to leave the
+                  preset without saying so. */}
+              {providerKind === "gateway" ? (
+                <code className="ctx-mono" style={{ flex: 1, minWidth: 0, alignSelf: "center", overflow: "hidden", textOverflow: "ellipsis" }}>{gatewayUrl}</code>
+              ) : (
+                <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
+                  title="Base URL of the server. Ollama and LM Studio serve both APIs from one origin; /v1 is added where each CLI needs it."
+                  onChange={(e) => setProviderUrl(e.target.value)} />
+              )}
               <FreeFormModel value={providerModel} onChange={setProviderModel} suggestions={endpoint.models}
                 style={{ flex: "0 0 190px" }} label="Model" placeholder="model, e.g. qwen3-coder"
                 title="The model every task in this project runs unless the task picks its own. Claude Code's opus/sonnet/haiku aliases resolve to it too. The suggestions are what this server reports; anything it has can be typed." />
             </div>
+            {providerKind === "gateway" && (
+              <>
+                <div className="model-field" style={{ marginTop: 8 }}>
+                  <select value={providerBilling} aria-label="Gateway billing" onChange={(e) => setProviderBilling(e.target.value as GatewayBilling)}>
+                    <option value="key">Billed to the gateway&apos;s key</option>
+                    <option value="subscription">Billed to your own plan</option>
+                  </select>
+                </div>
+                <div className="hlp">
+                  {providerBilling === "subscription"
+                    ? "The CLI keeps its own login and the gateway forwards it, so these turns draw on your Claude plan. The gateway still routes, tags and meters them."
+                    : "The instance's LiteLLM key authenticates and pays, so these turns draw on that key's account rather than your plan. Set the key in Settings → Agents."}
+                </div>
+              </>
+            )}
             {providerKind === "custom" && (
               <input type="text" className="ctx-mono" style={{ marginTop: 8 }} value={providerToken} placeholder="auth token (ollama)"
                 title="Sent as the Anthropic auth token. Ollama and LM Studio require one and ignore its value. The instance's own Anthropic/OpenAI keys are never sent to a custom endpoint."
@@ -1358,9 +1397,11 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                 that advice is trying to pre-empt. */}
             <div className="hlp"><EndpointNote state={endpoint} /></div>
             <div className="hlp">
-              {providerModel.trim()
-                ? "Turns are not billed as cloud spend. Codex reaches the same server through a provider entry of its own, so ~/.codex/config.toml is left alone."
-                : "Name a model, or the CLIs will ask the server for their cloud defaults and fail. Codex needs an OpenAI Responses endpoint: Ollama 0.13+ and LM Studio."}
+              {providerKind === "gateway"
+                ? "Claude Code only for now: a Codex task here reaches the gateway with no credential, and Antigravity ignores the address entirely. Point those tasks at Claude until their gateway support lands. Turns are recorded unpriced."
+                : providerModel.trim()
+                  ? "Turns are not billed as cloud spend. Codex reaches the same server through a provider entry of its own, so ~/.codex/config.toml is left alone."
+                  : "Name a model, or the CLIs will ask the server for their cloud defaults and fail. Codex needs an OpenAI Responses endpoint: Ollama 0.13+ and LM Studio."}
             </div>
           </>
         )}

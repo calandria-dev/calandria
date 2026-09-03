@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Status, Priority, ToolData, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
+import type { Status, Priority, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown } from "../Markdown";
-import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip } from "./format";
+import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote } from "./format";
+import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
   modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
@@ -21,7 +22,7 @@ import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
 import { useEndpointModels } from "./modelEndpoint";
-import { taskProvider } from "@/lib/agentEnv";
+import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -85,13 +86,31 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // "base branch <name> not found". There is no action to offer here (the fix is
   // to point the task or project at a branch that exists), so this says the one
   // thing worth saying and stops.
-  if (st.baseMissing)
+  if (st.baseMissing) {
+    // An unset base_branch resolves to "" rather than a name that's missing —
+    // a different problem (a project whose branch field was left/cleared
+    // blank) with a different fix (Settings, not a push or a spelling
+    // correction), so it gets its own sentence instead of naming a blank.
+    const unset = !st.baseBranch;
     return (
-      <div className="sync-banner conflict" data-sync-state="base-missing" title={`Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`}>
-        <span className="sync-msg">{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</span>
+      <div
+        className="sync-banner conflict"
+        data-sync-state="base-missing"
+        title={
+          unset
+            ? "This project has no base branch set, so nothing here can be compared, synced or merged. Set one in Settings → Project."
+            : `Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`
+        }
+      >
+        <span className="sync-msg">
+          {unset
+            ? "This project has no base branch set — set one in Settings → Project"
+            : <>{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</>}
+        </span>
         <span className="sync-spacer" />
       </div>
     );
+  }
 
   const conflicts = st.conflicts?.length ?? 0;
   const paused = !!st.mergeInProgress;
@@ -281,7 +300,8 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
 
 function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
-  const blocked = !!blockedBy?.length && !task.started;
+  const blockNote = task.started ? undefined : blockedNote(blockedBy);
+  const blocked = !!blockNote;
   // Queued for the usage-window reset (./queuedStart.ts): the server launches
   // it on its own when the deadline passes; "Start now" is still offered.
   const queued = isQueuedStart(task);
@@ -358,7 +378,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         </div>
       )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blocked ? `Blocked until done: ${blockedBy!.join(", ")}` : undefined}>
+        <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blockNote}>
           {Icon.play()} {running ? "Starting…" : blocked ? (task.auto_start ? "Queued" : "Blocked") : queued ? "Start now" : "Start session"}
         </button>
         {/* "Start at reset": only when this task's agent reports a usage window
@@ -474,11 +494,16 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  const provider = useMemo(() => taskProvider(project, task), [project, task]);
   // When this task's agent says its usage window resets — the plan meter's
   // snapshot, keyed by agent, so only an agent that reports one gets the
   // queue-at-reset offers (the hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
-  const resetAt = usageResetAt(planUsage[task.agent] ?? null);
+  // …but only when this task's turns actually draw on that plan. Behind a
+  // LiteLLM gateway they usually don't (`planWindowApplies`), and offering to
+  // resume when a window rolls that the turn never touched would strand the
+  // task until a reset that changes nothing for it.
+  const resetAt = planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(
@@ -555,7 +580,6 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // what the endpoint itself reports instead — under the same inherit head, and
   // with a model typed in the Edit dialog kept as an entry of its own so the
   // chip shows what will actually run rather than reading as "Inherit".
-  const provider = useMemo(() => taskProvider(project, task), [project, task]);
   const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
   const models = useMemo<PickerOption[]>(() => {
     if (provider.kind === "cloud") return modelOptions(caps);
@@ -572,12 +596,20 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const usage = usageSplit(task);
   const cost = costDisplay(findAgent(agents, task.agent), provider);
   const multiAgent = agents.agents.length > 1;
-  // True while a question card is still unanswered — hides the "thinking" dots,
-  // since Claude is parked on the user, not working.
-  const awaitingAnswer = useMemo(() => messages.some((m) => {
-    if (m.role !== "tool") return false;
-    try { const d = JSON.parse(m.content) as ToolData; return !!d.ask && !d.ask.answers; } catch { return false; }
-  }), [messages]);
+  // The question(s) the turn is parked on, lifted out of the transcript flow and
+  // docked below it. A card left inline is at the mercy of whatever streams in
+  // after it — one subagent returning a screenful scrolls it away, and nothing
+  // then says an answer is owed. ./pendingPrompt.ts owns which rows qualify.
+  const pendingIds = useMemo(
+    () => pendingPromptIds(messages, promptsAreLive(task, running)),
+    [messages, task.status, task.awaiting_input, running],
+  );
+  const pendingSet = useMemo(() => new Set(pendingIds), [pendingIds]);
+  const pendingMsgs = useMemo(() => messages.filter((m) => pendingSet.has(m.id)), [messages, pendingSet]);
+  // A docked card is the same fact as "not typing": the model is parked on the
+  // user, not working, so the thinking dots would be promising output that
+  // cannot arrive until the card is answered.
+  const awaitingAnswer = pendingIds.length > 0;
 
   // Auto-scroll only while the user is parked at the bottom. If they scroll up to
   // read earlier output, we leave their position alone even as new messages stream
@@ -626,7 +658,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 
   useEffect(() => {
     if (pinned.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, running]);
+  }, [messages.length, running, pendingIds.length]);
 
   // Switching tasks (or in/out of chat view) always jumps to the latest.
   useEffect(() => {
@@ -669,6 +701,10 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // Only the newest message may offer to resume at the reset —
                 // an older usage-limit notice describes a limit that has healed.
                 const last = si === sessions.length - 1 && mi === s.messages.length - 1;
+                // Docked below the transcript instead (pendingMsgs). `prev` above
+                // still sees it, so the assistant run's header stays collapsed
+                // exactly as it would have with the card in place.
+                if (pendingSet.has(m.id)) return null;
                 return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
@@ -710,6 +746,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
       </div>
       </div>
+      {pendingMsgs.length > 0 && (
+        // Outside .transcript-wrap on purpose: the wrap's bottom edge is what
+        // .msg-nav anchors to, so a dock inside it would sit under the jump
+        // buttons. Here the nav stays on the transcript and the dock owns the
+        // strip above the composer.
+        <div className="prompt-dock" role="group" aria-label="Waiting for your answer">
+          <div className="prompt-dock-in">
+            {pendingMsgs.map((m) => (
+              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+            ))}
+          </div>
+        </div>
+      )}
       <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} />
     </>
   );
