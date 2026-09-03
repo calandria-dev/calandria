@@ -375,6 +375,28 @@ export const LOCAL_MODEL_BASE_URL =
 export const MODEL_PROBE_MS = ms(readEnv("CALANDRIA_MODEL_PROBE_MS"), 2500);
 
 /**
+ * Whether Calandria asks the installed Claude CLI what its family aliases
+ * ("opus", "fable") actually resolve to, so the model picker can show the id
+ * beside "(latest)" — lib/agents/claude/modelProbe.ts. On by default. It spends
+ * no tokens (the resolution is printed before any request, and the probe runs
+ * `--bare`, which never reads the user's login) but it does spawn the CLI five
+ * times at ~3.4s each, once per CLI version, detached. Turn it off on a box
+ * where that CPU is precious, or where `claude` is deliberately absent; the
+ * picker then shows the static catalog, which is what it showed before.
+ */
+export const CLAUDE_MODEL_PROBE = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_CLAUDE_MODEL_PROBE") || "").toLowerCase(),
+);
+
+/**
+ * How long that probe waits for one alias's `init` line before giving up on it.
+ * Generous against the ~3.4s a warm spawn takes, because the cost of waiting is
+ * a background job running a few seconds longer and the cost of being too tight
+ * is a picker that never fills in on a slow or cold machine.
+ */
+export const CLAUDE_MODEL_PROBE_MS = ms(readEnv("CALANDRIA_CLAUDE_MODEL_PROBE_MS"), 20_000);
+
+/**
  * Whether a Codex turn against a local endpoint must PROVE the provider mapping
  * took before it runs (lib/agents/codex/providerCheck.ts). On by default and
  * fail-closed, because the failure it catches is silent: an unknown `-c`

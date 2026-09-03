@@ -83,6 +83,13 @@ for (const v of [
   delete process.env[v];
 }
 
+// …and the other half of that descriptor's inputs: the alias probe
+// (lib/agents/claude/modelProbe.ts) would spawn the developer's real `claude`
+// five times to fill in what "Opus (latest)" resolves to, which is neither
+// hermetic nor free. Off for the whole suite; tests/claudeModelProbe.test.ts
+// exercises the probe against a fake CLI of its own instead.
+process.env.CALANDRIA_CLAUDE_MODEL_PROBE = "0";
+
 // Hermetic idle behavior: CALANDRIA_TURN_IDLE_NUDGE is read at import time by
 // lib/config.ts and decides whether an idle turn is TOLD it went quiet, which
 // injects a message and writes a transcript line. A developer who set it in

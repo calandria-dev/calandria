@@ -106,5 +106,10 @@ export const SERVER_ENV: Record<string, string> = {
   // and .credentials.json — which the plan-usage meter would otherwise use to
   // call Anthropic's real usage API mid-suite, once per titlebar render.
   CLAUDE_CONFIG_DIR: path.join(E2E_ROOT, "claude-config"),
+  // Same reasoning one step further: GET /api/agents kicks off the alias probe
+  // (lib/agents/claude/modelProbe.ts), which would spawn the developer's real
+  // `claude` five times on the first page load of the suite. The mock agent is
+  // what these specs drive; Claude's picker subtitles are not under test here.
+  CALANDRIA_CLAUDE_MODEL_PROBE: "0",
   ...GIT_ENV,
 };

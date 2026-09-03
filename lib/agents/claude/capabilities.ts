@@ -9,6 +9,7 @@
 import type { AgentCapabilities, AgentModelOption } from "../types";
 import { BACKGROUND_LINGER_ENABLED } from "../../config";
 import { configuredProvider, claudeDefaultModels } from "./provider";
+import { resolvedModelIds } from "./modelIds";
 
 // Every value below is a string `claude --model` accepts: a family alias
 // ("opus" → the current Opus), a `[1m]` variant (the 1M-context beta of that
@@ -26,17 +27,18 @@ import { configuredProvider, claudeDefaultModels } from "./provider";
 // guessed: `modelLabel()` parses it out of the id a turn actually billed, so
 // the picker offers "Fable (latest)" and the badge says "Fable 5.1".
 //
-// The resolution IS readable locally — `claude --model <alias> --output-format
-// stream-json` prints it on the `init` line before any API call, measured
-// against a dead ANTHROPIC_BASE_URL — but it costs a ~4s CLI spawn per value,
-// and this descriptor is read synchronously per request (modelContextWindow()
-// runs inside getTaskContext()). Showing the resolved id here wants a cached,
-// CLI-version-keyed background probe; that is a separate piece of work.
+// The resolution IS readable locally, and `subscriptionModels()` below now
+// reports it: ./modelProbe.ts asks the installed CLI once per CLI version, out
+// of band, and leaves the answer in ./modelIds.ts for this synchronous
+// descriptor to read. Until it does — no probe yet, no `claude` on PATH, the
+// probe turned off — the rows below stand exactly as written, which is why the
+// static subtitles are still worth having.
 //
 // contextWindow is the window Claude Code actually runs, not the model's API
 // maximum: a bare family alias runs the standard 200k window and the `[1m]`
 // variant opts into the 1M beta. It is the same kind of guess as the label was,
-// and the probe above is what would settle it. Fable is the exception — it's 1M
+// and the probe is what settles it — on a resolution, windowFor() reads the
+// window off the id rather than off this row. Fable is the exception — it's 1M
 // natively (measured: a `fable` turn reports contextWindow 1000000), so there's
 // no variant to list; `fable[1m]` is accepted and resolves to the `[1m]`
 // spelling of the same model, but buys nothing.
@@ -264,15 +266,77 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
   });
 }
 
+// ---------- Subscription ----------
+//
+// The same correction as the Vertex one above, from a different source. Vertex
+// resolves an alias through an env mapping this process can just read; the
+// subscription path resolves it inside the CLI's own catalog, so ./modelProbe.ts
+// has to ask — one `claude -p --bare --model <alias>` per family, killed at the
+// `init` line, out of band and cached against the CLI version that answered.
+//
+// What lands here is only ever an overlay. A row whose family was not probed, or
+// was probed and did not answer, is returned untouched, so a machine with no
+// CLI, a probe that timed out and a Codex-only instance all render today's
+// catalog. The LABEL is left alone in every case: "(latest)" stays correct
+// however the alias resolves, and it is the ID that is news.
+//
+// Which family mapping each row reads — the same table vertexModels() keeps,
+// for the same reasons. `opusplan` plans on Opus and runs on Sonnet, and the
+// probe reports the session model, so it is its own entry rather than an alias
+// of `opus` (measured: `opusplan` → claude-sonnet-5).
+const PROBED_FAMILY: Record<string, string> = {
+  fable: "fable",
+  opus: "opus",
+  sonnet: "sonnet",
+  haiku: "haiku",
+  opusplan: "opusplan",
+  "opus[1m]": "opus",
+  "sonnet[1m]": "sonnet",
+  "opusplan[1m]": "opusplan",
+};
+
+/** The catalog with each probed alias's resolved id in its subtitle — the same
+ *  place, and the same spelling, vertexModels() puts it, so the two paths render
+ *  identically. Exported for the suite, which supplies the map directly rather
+ *  than spawning five CLIs. */
+export function subscriptionModels(ids: Record<string, string>): AgentModelOption[] {
+  return CLAUDE_CAPABILITIES.models.map((m) => {
+    const family = PROBED_FAMILY[m.value];
+    const base = family ? ids[family] : undefined;
+    if (!base) return m; // a pinned id, or a family that didn't answer
+
+    // A `[1m]` picker value asks for the 1M variant OF the resolved id, exactly
+    // as on Vertex — measured through the probe too: `opus[1m]` resolves to
+    // `claude-opus-5[1m]`, which is why only the five bare aliases are spawned
+    // and the variants are derived from them.
+    const wants1m = /\[1m\]$/i.test(m.value);
+    const resolved = wants1m && !/\[1m\]/i.test(base) ? `${base}[1m]` : base;
+    // The window comes off the resolved id rather than staying the row's static
+    // guess. On today's subscription resolutions that changes nothing (every
+    // bare alias resolves to a bare id, and Fable is 1M either way) — it matters
+    // the day a family alias starts resolving to a `[1m]` spelling, which is
+    // precisely what already happened on Vertex and left plain `opus` measured
+    // against a fifth of its real window.
+    return { ...m, sub: resolved, contextWindow: wants1m ? M1 : windowFor(resolved) };
+  });
+}
+
 /** The live capability descriptor: the Anthropic-hosted catalog normally, and a
  *  corrected one when the instance routes Claude through Vertex. Computed per
  *  read because the provider and its model mappings are instance config, not
- *  code — the plain Anthropic-login path returns the constant untouched. */
+ *  code — and, on the subscription path, because the alias resolution is a
+ *  background probe's answer that may land at any point after boot. */
 export function claudeCapabilities(env: Record<string, string | undefined> = process.env): AgentCapabilities {
   // Bedrock deliberately gets no special-casing here: this fork runs Vertex and
   // has no Bedrock instance to measure against, and upstream's Bedrock list
   // (b5d995f) drops the `[1m]` variants — which demonstrably DO work on Vertex,
-  // so it is not a list to rename and reuse.
-  if (configuredProvider(env) !== "vertex") return CLAUDE_CAPABILITIES;
-  return { ...CLAUDE_CAPABILITIES, models: vertexModels(env) };
+  // so it is not a list to rename and reuse. It gets no probe overlay either:
+  // ensureClaudeModelIds() only asks on the subscription path, so the cache a
+  // Bedrock instance reads here is empty by construction.
+  const provider = configuredProvider(env);
+  if (provider === "vertex") return { ...CLAUDE_CAPABILITIES, models: vertexModels(env) };
+  if (provider !== "anthropic") return CLAUDE_CAPABILITIES;
+  const probed = resolvedModelIds();
+  if (!probed) return CLAUDE_CAPABILITIES;
+  return { ...CLAUDE_CAPABILITIES, models: subscriptionModels(probed.ids) };
 }

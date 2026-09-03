@@ -5,6 +5,7 @@ import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
 import { LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
+import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,12 @@ export async function GET() {
   // separately. Cached (lib/modelEndpoint.ts) and time-boxed, because every tab
   // loads this route.
   const local = summarizeEndpoint(await endpointModels(LOCAL_MODEL_BASE_URL));
+  // What Claude's family aliases resolve to, for the picker's subtitles. NOT
+  // awaited and deliberately not on the boot path: the sweep is five CLI spawns
+  // at ~3.4s each, so it runs detached and lands in the descriptor for a later
+  // read of this same route. Cheap after the first time — one `claude --version`
+  // per minute at most, and nothing at all once this CLI's answer is cached.
+  ensureClaudeModelIds();
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.

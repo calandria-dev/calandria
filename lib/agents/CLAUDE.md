@@ -141,12 +141,40 @@ stated only where it's known, by `modelLabel()` parsing the id a turn actually b
 says "Fable (latest)", badge says "Fable 5.1"; that split is what `tests/modelLabel.test.ts` and
 `tests/claudeVertexModels.test.ts` pin from both ends.
 
-The resolution IS readable without an API call — `claude --model <alias> --output-format
-stream-json` prints it on the `init` line, which still appears with `ANTHROPIC_BASE_URL` pointed
-at a dead port — but it costs a ~4s CLI spawn per value, and this descriptor is read
-synchronously per request (`modelContextWindow()` runs inside `getTaskContext()`). Putting the
-resolved id in an alias's subtitle the way Vertex does wants a cached, CLI-version-keyed
-background probe, which is not built.
+**The resolution is readable without an API call, and the subtitle now reports it.**
+`claude -p --bare --model <alias> --output-format stream-json --verbose --no-session-persistence`
+prints the resolved id and the `claude_code_version` that resolved it on the `init` line, before
+any request goes out — it still appears with `ANTHROPIC_BASE_URL` pointed at a dead port.
+`lib/agents/claude/modelProbe.ts` reads it there and `subscriptionModels()` puts it in the alias
+row's subtitle, the same place `vertexModels()` puts the mapped id, so the two paths render
+identically. The label is untouched: "(latest)" stays true however the alias resolves.
+
+Three constraints shape that probe, and the file states each:
+
+- **It cannot spend anything.** `--bare` reads Anthropic auth strictly from `ANTHROPIC_API_KEY`
+  or an `apiKeyHelper` passed via `--settings`, so the user's OAuth login is not in the process;
+  the base URL points at a dead loopback port; and the child is killed the moment the line is
+  read. `--bare` also skips hooks, which the probe must not fire — measured before the flag went
+  in, a `SessionStart` hook blocked past two minutes and the init line never arrived.
+- **It cannot be on a request path.** `claudeCapabilities()` is synchronous and read per request
+  (`GET /api/agents`, and `modelContextWindow()` from inside `getTaskContext()`), while the sweep
+  is five CLI spawns run one at a time — ~17s cold against the developer's real config dir. So it
+  runs detached, kicked off by `GET /api/agents` and awaited by nobody, and leaves its answer in
+  `lib/agents/claude/modelIds.ts` for the descriptor to read. That file imports nothing on
+  purpose: the prober reaches `lib/store.ts` to persist, and `lib/store.ts` imports
+  `lib/agents/capabilities.ts` back, so a descriptor that read the prober directly would close a
+  cycle through an async external.
+- **Absent is a supported state.** No cache yet, no `claude` on PATH, a probe that timed out,
+  `CALANDRIA_CLAUDE_MODEL_PROBE=off`, a Codex-only instance — every one of them returns the
+  static catalog untouched, which `tests/claudeModelProbe.test.ts` asserts row by row.
+
+Keyed by CLI version because that is what moves the answer (`claude --version` is ~15ms warm),
+and persisted in `settings` under `claude_model_ids` so a restart costs that one spawn rather than
+the sweep. The `[1m]` rows are derived rather than probed: `opus[1m]` resolves to the `[1m]`
+spelling of whatever `opus` resolves to (measured `claude-opus-5[1m]`), the same derivation
+`vertexModels()` makes. `contextWindow` follows the resolved id too — inert on today's
+subscription resolutions, and the fix for the day a bare alias starts resolving to a `[1m]`
+spelling, which is exactly what had happened on Vertex.
 
 The Vertex list is a set of measured corrections, not a second catalog. Every entry the catalog
 held at the time was probed with a one-shot `claude -p --model <value>` and 13 of 14 ran;
