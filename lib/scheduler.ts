@@ -20,6 +20,7 @@ import {
 } from "@/lib/config";
 import { maybeSweepRetention, retentionHealth } from "@/lib/retention";
 import { maybeSweepWorktrees, worktreeSweepHealth } from "@/lib/worktreeSweep";
+import { gatewayKeysEnabled, sweepPrunableGatewayKeys } from "@/lib/gatewayKeys";
 import { adjudicate } from "@/lib/schedule/due";
 import {
   activeRun, getSchedule, listEnabledSchedules, refreshNextFire, claimRun, settleRun, startRun, specOf,
@@ -174,6 +175,21 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
       await maybeSweepWorktrees(Date.now());
     } catch (err) {
       console.error("[worktrees] sweep failed:", err);
+    }
+    // The retention backstop for per-task LiteLLM keys (docs/design/litellm.md,
+    // "Per-task virtual keys"): lib/autoStart.ts's maybeAutoStartDependents()
+    // deletes a task's key the instant it goes terminal, but that call can
+    // miss (a crash, a bug, a row edited directly) — this sweeps every
+    // terminal+idle task for a key still left on it. Gated on the feature
+    // itself rather than RETENTION_ENABLED: a forgotten live key is a security
+    // question, not a disk one, so it isn't tied to whether the operator also
+    // wants their transcript tables pruned.
+    if (gatewayKeysEnabled()) {
+      try {
+        await sweepPrunableGatewayKeys(Date.now());
+      } catch (err) {
+        console.error("[gatewayKeys] sweep failed:", err);
+      }
     }
     s.lastTickAt = Date.now();
   } finally {

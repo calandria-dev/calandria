@@ -272,7 +272,7 @@ export function applyProviderEnv(out: Record<string, string>, override: AgentEnv
 
 export function agentTurnEnv(
   project: (Pick<Project, "port" | "agent_env"> & Partial<Pick<Project, "id">>) | null | undefined,
-  task?: (Pick<Task, "agent_env"> & Partial<Pick<Task, "id" | "agent">>) | null,
+  task?: (Pick<Task, "agent_env"> & Partial<Pick<Task, "id" | "agent" | "gateway_key">>) | null,
   base: Readonly<Record<string, string | undefined>> = process.env,
   gateway: string | null = gatewayBaseUrl(),
 ): Record<string, string> {
@@ -287,7 +287,14 @@ export function agentTurnEnv(
   // It is an instance credential that no agent process has any use for, and the
   // one place it belongs in a turn's environment — the gateway header below —
   // is composed here. Read before the delete so the block can still use it.
-  const gatewayKey = (out.CALANDRIA_LITELLM_KEY ?? "").trim();
+  //
+  // A task's own minted key (lib/gatewayKeys.ts, docs/design/litellm.md
+  // "Per-task virtual keys") takes priority over the instance key when
+  // present — `task.gateway_key` is populated by lib/runner.ts on its
+  // in-memory `task` object just before a turn's driver call (never a value
+  // getTask()/listTasks() themselves return), so this is the one place that
+  // decides which credential a gateway turn actually bills.
+  const gatewayKey = (task?.gateway_key || out.CALANDRIA_LITELLM_KEY || "").trim();
   delete out.CALANDRIA_LITELLM_KEY;
   // Composed below for a gateway turn and never inherited: a stale pair in the
   // server's own environment would otherwise hand a cloud turn a credential and

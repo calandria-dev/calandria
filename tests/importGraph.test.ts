@@ -61,6 +61,7 @@ const PINNED = [
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
+  "lib/gatewayKeys.ts", //       per-task LiteLLM virtual key mint/delete/reconcile; store + fetch + config + retention, no driving — lib/runner.ts imports THIS, never the reverse
   "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
   "lib/uploads.ts", //           where chat attachments are staged + swept; node:fs + config only, and the worktree sweep sits on it
   "lib/uploadTypes.ts", //       what an attachment may be and is served as; zero imports, and the client bundles it alongside the routes that enforce it
