@@ -16,7 +16,7 @@ import { ErrNote, LoadNote } from "./shared";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
-import { relTime } from "./format";
+import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
 import type { AgentInfoT, AgentsResponseT, EndpointStatusT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
@@ -702,19 +702,34 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
-  const [jobUsage, setJobUsage] = useState<Record<string, { runs: number; cost_usd: number }> | null>(null);
+  type JobUsage = { runs: number; cost_usd: number; models: string[] };
+  const [jobUsage, setJobUsage] = useState<Record<string, JobUsage> | null>(null);
   useEffect(() => {
     if (section !== "background" || jobUsage !== null) return;
-    jget<{ jobs: { job: string; runs: number; cost_usd: number }[] }>("/api/settings/background-jobs")
-      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd }]))))
+    jget<{ jobs: { job: string; runs: number; cost_usd: number; models: string[] }[] }>("/api/settings/background-jobs")
+      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd, models: j.models }]))))
       .catch(() => setJobUsage({}));
   }, [jobUsage, section]);
-  const recapUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0 };
+  const recapUsage: JobUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0, models: [] };
   const utilityUsage = [jobUsage?.summarizeProjectRecap, jobUsage?.draftProjectContext]
-    .filter((u): u is { runs: number; cost_usd: number } => !!u)
-    .reduce((sum, u) => ({ runs: sum.runs + u.runs, cost_usd: sum.cost_usd + u.cost_usd }), { runs: 0, cost_usd: 0 });
+    .filter((u): u is JobUsage => !!u)
+    .reduce<JobUsage>(
+      (sum, u) => ({
+        runs: sum.runs + u.runs,
+        cost_usd: sum.cost_usd + u.cost_usd,
+        models: [...sum.models, ...u.models.filter((m) => !sum.models.includes(m))],
+      }),
+      { runs: 0, cost_usd: 0, models: [] },
+    );
+  // A recorded model id belongs to one agent's catalog, and the row doesn't say
+  // which, so try every connected agent and fall back to the raw id.
+  // modelLabel() falls back to the raw id, so "it returned something" is not a
+  // hit — take the first agent whose catalog actually names the model.
+  const labelModel = (m: string) =>
+    agents.agents.map((a) => modelLabel(m, capsFor(agents, a.id))).find((l) => l && l !== m) || m;
   const usageLine = (label: string, usage = recapUsage) =>
-    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`;
+    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`
+    + (usage.models.length ? ` · on ${usage.models.map(labelModel).join(", ")}` : "");
   // Any server-backed run default set (agent-scoped, legacy, or default_agent)
   // means we're off the built-in defaults.
   const hasRunDefault = Object.keys(appDefaults).some((k) => k.startsWith("default_") || k === "utility_agent");

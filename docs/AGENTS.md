@@ -68,7 +68,9 @@ knob per job is four settings almost everyone would set to two values.
 
 Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
 run on whatever `~/.claude/settings.json` or `~/.codex/config.toml` names, exactly as they did
-before the pickers existed.
+before the pickers existed. Which model that turned out to be is recorded per run, so
+**Inherit** is still answerable after the fact: Insights names the models behind each job under
+"Calandria's own usage", and Settings names them beside the utility-job run count.
 
 Each tier is read off the agent that actually runs the job, which is not always the one you
 were looking at. A `/clear` note follows its own task's agent so the cost lands on that login;

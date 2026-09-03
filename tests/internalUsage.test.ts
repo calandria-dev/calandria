@@ -58,6 +58,48 @@ describe("internal agent usage", () => {
     });
   });
 
+  it("records the model the driver says it RAN, not the one the setting asked for", async () => {
+    // The whole point: a tier setting can only report what was requested, and
+    // the interesting case is it being unset — the job then inherits the
+    // driver's own default and only the driver can name it.
+    oneShot.mockResolvedValue({ text: "draft", usage: USAGE, model: "claude-opus-5" });
+    setSetting("job_model_heavy:claude", "sonnet");
+    const project = createProject({ name: "Reported" });
+
+    await draftProjectContext(project, "digest");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({ model: "claude-opus-5" });
+    setSetting("job_model_heavy:claude", null);
+  });
+
+  it("falls back to the requested model, then to null, when the driver can't report one", async () => {
+    oneShot.mockResolvedValue({ text: "draft" });
+    setSetting("job_model_heavy:claude", "sonnet");
+    const asked = createProject({ name: "Asked" });
+    await draftProjectContext(asked, "digest");
+    expect(getDb().prepare("SELECT model FROM internal_usage WHERE project_id = ?").get(asked.id))
+      .toMatchObject({ model: "sonnet" });
+
+    // Nothing set and nothing reported: the row says it doesn't know rather
+    // than naming a default it would only be guessing at.
+    setSetting("job_model_heavy:claude", null);
+    const inherited = createProject({ name: "Inherited" });
+    await draftProjectContext(inherited, "digest");
+    expect(getDb().prepare("SELECT model FROM internal_usage WHERE project_id = ?").get(inherited.id))
+      .toMatchObject({ model: null });
+  });
+
+  it("records the requested model on a failed job, which is all that is known", async () => {
+    oneShot.mockRejectedValue(new Error("boom"));
+    setSetting("job_model_heavy:claude", "sonnet");
+    const project = createProject({ name: "Failed model" });
+
+    await expect(draftProjectContext(project, "digest")).rejects.toThrow("boom");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({ ok: 0, model: "sonnet" });
+    setSetting("job_model_heavy:claude", null);
+  });
+
   it("records zero counters when a driver omits usage", async () => {
     oneShot.mockResolvedValue({ text: "draft" });
     const project = createProject({ name: "Unmetered" });
@@ -136,7 +178,24 @@ describe("internal agent usage", () => {
       job: "summarizeProjectRecap",
       runs: 2,
       cost_usd: 0.2,
+      models: [],
     });
+  });
+
+  it("names the models behind a job's runs, busiest first, without dropping unnamed ones", () => {
+    const insert = getDb().prepare(
+      `INSERT INTO internal_usage (id, job, agent, requested_agent, model, cost_usd, created_at)
+       VALUES (?, 'summarizeProjectRecap', 'claude', 'claude', ?, 0.01, ?)`
+    );
+    insert.run("haiku-1", "claude-haiku-4-5", Date.now());
+    insert.run("haiku-2", "claude-haiku-4-5", Date.now());
+    insert.run("opus-1", "claude-opus-5", Date.now());
+    // A run whose driver couldn't say still counts; it just isn't named.
+    insert.run("unknown-1", null, Date.now());
+
+    const [row] = internalUsageLast30Days();
+    expect(row.runs).toBe(4);
+    expect(row.models).toEqual(["claude-haiku-4-5", "claude-opus-5"]);
   });
 
   it("uses a project's latest context draft, then the instance median", () => {

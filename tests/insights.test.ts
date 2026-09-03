@@ -152,11 +152,11 @@ describe("getInsightsData", () => {
     const { project, task } = makeProjectTask("codex");
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage() });
     addInternalUsage({
-      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex", model: "gpt-5.1-codex-max",
       project_id: project.id, usage: usage({ cost_usd: 0.4, input_tokens: 20, output_tokens: 10 }),
     });
     addInternalUsage({
-      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex", model: "gpt-5.1-codex-max",
       project_id: project.id, usage: usage({ cost_usd: 0.6, input_tokens: 30, output_tokens: 15 }),
     });
     addInternalUsage({
@@ -177,9 +177,14 @@ describe("getInsightsData", () => {
     expect(drafts.inp).toBe(50);
     expect(drafts.out).toBe(25);
 
+    // Both drafts ran on one model, so they stay one row and it's named.
+    expect(drafts.m).toBe("gpt-5.1-codex-max");
+
     const verify = data.internal.find((r) => r.job === "verify" && r.a === "claude")!;
     expect(verify.p).toBe("");
     expect(verify.n).toBe(1);
+    // Nothing recorded a model for it, which is a different fact from a guess.
+    expect(verify.m).toBe("");
 
     // Calandria convenience work must never change the existing task-turn cube.
     const taskRows = data.usage.filter((r) => r.p === project.id);

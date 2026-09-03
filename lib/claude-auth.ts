@@ -4,7 +4,7 @@ import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { CLAUDE_CLI_PATH as CLAUDE } from "./config";
 import { addInternalUsage } from "./internalUsage";
-import { claudeUsage } from "./agents/claude/usage";
+import { claudeMessageModel, claudeUsage } from "./agents/claude/usage";
 import type { TurnUsage } from "./types";
 
 const run = promisify(execFile);
@@ -314,6 +314,10 @@ export async function verifyTurn(): Promise<{ ok: boolean; output: string; error
     const ok = out.length > 0;
     addInternalUsage({
       job: "verify", agent: "claude", requested_agent: "claude", ok,
+      // No --model is passed, so this is the CLI's own default resolving —
+      // exactly the case a setting could never report. `--output-format json`
+      // prints the result payload, which carries the per-model rollup.
+      model: claudeMessageModel({ ...parsed, type: "result" }),
       ms: Date.now() - started, usage: claudeUsage(parsed),
     });
     return { ok, output: out, error: ok ? null : "the test turn returned no output" };

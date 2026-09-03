@@ -275,6 +275,11 @@ export function init(db: Database.Database) {
       agent                 TEXT NOT NULL,
       requested_agent       TEXT NOT NULL,
       fallback              INTEGER NOT NULL DEFAULT 0,
+      -- The model the job ACTUALLY ran on, read back off the run rather than
+      -- copied from the tier setting: the interesting case is the tier being
+      -- unset, where the job inherits the driver's own default and the setting
+      -- can't say what that was. NULL means the driver reported nothing.
+      model                 TEXT,
       project_id            TEXT,
       task_id               TEXT,
       ok                    INTEGER NOT NULL DEFAULT 1,
@@ -1125,6 +1130,13 @@ export function migrate(db: Database.Database) {
   if (!usageCols.includes("provider")) {
     db.exec("ALTER TABLE task_usage ADD COLUMN provider TEXT NOT NULL DEFAULT ''");
   }
+
+  // The model each internal one-shot ran on (see the CREATE TABLE note).
+  // NULLable with no backfill: the job-tier setting only says what was asked
+  // for, and every row written before this shipped may well have inherited the
+  // driver's default, so there is nothing to reconstruct them from.
+  const internalCols = (db.prepare("PRAGMA table_info(internal_usage)").all() as { name: string }[]).map((c) => c.name);
+  if (!internalCols.includes("model")) db.exec("ALTER TABLE internal_usage ADD COLUMN model TEXT");
 
   // cost_usd shipped NOT NULL DEFAULT 0, which left no way to say "unknown".
   // Every turn against ANY provider override was written 0, so an instance

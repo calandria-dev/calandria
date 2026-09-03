@@ -249,7 +249,10 @@ async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 10
     }
   }, timeoutMs);
 
-  const state: GeminiMapState = newState(resolveGeminiModel(null));
+  // No tier override reaches these helpers, so what runs is the driver's own
+  // default — name it rather than recording nothing.
+  const model = resolveGeminiModel(null);
+  const state: GeminiMapState = newState(model);
   let text = "";
   let usage: TurnUsage | undefined;
   try {
@@ -258,15 +261,15 @@ async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 10
       for (const ev of mapAgyEvent(line, state)) {
         if (ev.type === "assistant") text = ev.content;
         if (ev.type === "usage") usage = ev.usage;
-        if (ev.type === "error") return { text: "", usage };
+        if (ev.type === "error") return { text: "", usage, model };
       }
     }
   } catch {
-    return { text: "", usage };
+    return { text: "", usage, model };
   } finally {
     clearTimeout(timer);
   }
-  return { text: text.trim(), usage };
+  return { text: text.trim(), usage, model };
 }
 
 async function summarizeTranscript(transcript: string, project: Project): Promise<OneShotResult> {
@@ -276,7 +279,7 @@ async function summarizeTranscript(transcript: string, project: Project): Promis
       `same task. Cover: what was done, the current state of the code, decisions made, and what remains. Be ` +
       `specific about files and follow-ups. Output only the note.\n\n=== TRANSCRIPT ===\n${transcript}`
   );
-  return { text: result.text || "(no summary produced)", usage: result.usage };
+  return { text: result.text || "(no summary produced)", usage: result.usage, model: result.model };
 }
 
 const CTX_OPEN = "<<<CONTEXT>>>";
@@ -304,7 +307,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
   const close = result.text.lastIndexOf(CTX_CLOSE);
   let doc = open !== -1 && close > open ? result.text.slice(open + CTX_OPEN.length, close) : result.text;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return { text: doc || "(no context produced)", usage: result.usage };
+  return { text: doc || "(no context produced)", usage: result.usage, model: result.model };
 }
 
 async function summarizeProjectRecap(project: Project, digest: string): Promise<OneShotResult> {
@@ -315,7 +318,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
       `Be concrete about features, files, and tasks. No headings, no intro/outro, no next steps — recap only what has ` +
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`
   );
-  return { text: result.text || "(no recap produced)", usage: result.usage };
+  return { text: result.text || "(no recap produced)", usage: result.usage, model: result.model };
 }
 
 export const geminiDriver: AgentDriver = {

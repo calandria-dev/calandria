@@ -83,8 +83,11 @@ Insights separates task activity from Calandria's own convenience jobs, includin
 - agent connection verification.
 
 This lets you see quota spent on automation separately from the work requested in task
-sessions. Settings shows the last 30 days of utility-job activity and lets you disable
-unattended background work.
+sessions. Each row names the models those runs used, read back from the run rather than from
+the picker, so a job left on **Inherit** still says what it ran on. A run recorded before this
+shipped, or by a driver that could not report a model, reads "model not recorded" and still
+counts towards the row's runs and cost. Settings shows the last 30 days of utility-job
+activity, the models behind it, and lets you disable unattended background work.
 
 ## Data handling
 
