@@ -5,8 +5,10 @@ import {
   applyProviderEnv,
   cloudOverrideEnv,
   describeProvider,
+  gatewayInsecureForGemini,
   gatewayPresetEnv,
   isGatewayEndpoint,
+  isLoopbackHost,
   providerPricing,
   parseAgentEnv,
   planWindowApplies,
@@ -388,6 +390,38 @@ describe("the gateway preset", () => {
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
   });
 
+  // Antigravity carries the credential under its own name rather than a
+  // header: the Go GenAI SDK inside `agy` reads GEMINI_API_KEY directly, and
+  // there is no ANTHROPIC_CUSTOM_HEADERS equivalent for it.
+  it("sets GEMINI_API_KEY for a gateway turn on the gemini agent, and no attribution header", () => {
+    const out = agentTurnEnv(
+      { id: "p1", port: 0, agent_env: gwEnv("key") },
+      { id: "t1", agent: "gemini", agent_env: "" },
+      { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
+      GW,
+    );
+    expect(out.GEMINI_API_KEY).toBe("sk-litellm");
+    expect("ANTHROPIC_CUSTOM_HEADERS" in out).toBe(false);
+    // The gateway base URL is the ordinary allowlisted key, already copied
+    // through applyProviderEnv from gatewayPresetEnv's own write.
+    expect(out.GOOGLE_GEMINI_BASE_URL).toBe(GW);
+  });
+
+  it("leaves GEMINI_API_KEY unset for a gateway turn with no instance key", () => {
+    const out = agentTurnEnv({ id: "p1", port: 0, agent_env: gwEnv("key") }, { id: "t1", agent: "gemini", agent_env: "" }, { PATH: "/usr/bin" }, GW);
+    expect("GEMINI_API_KEY" in out).toBe(false);
+  });
+
+  it("never sets GEMINI_API_KEY for a non-gateway turn", () => {
+    const out = agentTurnEnv(
+      project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }))),
+      { id: "t1", agent: "gemini", agent_env: "" },
+      { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
+      GW,
+    );
+    expect("GEMINI_API_KEY" in out).toBe(false);
+  });
+
   // The reason ANTHROPIC_CUSTOM_HEADERS is composed rather than stored: it is
   // Claude Code's only knob for arbitrary request headers, so a project row
   // that could set it would be a way to make every turn in that project send
@@ -452,19 +486,71 @@ describe("planWindowApplies", () => {
     }
   });
 
-  it("drops for a key-billed gateway task on either routed agent", () => {
+  it("drops for a key-billed gateway task on any routed agent", () => {
     expect(planWindowApplies(gw("key"), "claude")).toBe(false);
     expect(planWindowApplies(gw("key"), "codex")).toBe(false);
+    expect(planWindowApplies(gw("key"), "gemini")).toBe(false);
   });
 
-  it("holds for Claude on a subscription-billed gateway, and never for Codex", () => {
+  it("holds for Claude on a subscription-billed gateway, and never for Codex or Antigravity", () => {
     expect(planWindowApplies(gw("subscription"), "claude")).toBe(true);
     // `requires_openai_auth` is deliberately unimplemented, so Codex bills the
     // key here too and its ChatGPT window is untouched.
     expect(planWindowApplies(gw("subscription"), "codex")).toBe(false);
+    // `agy` has no equivalent of Claude Code's own-plan forwarding, so it
+    // always bills the gateway's key regardless of the billing marker.
+    expect(planWindowApplies(gw("subscription"), "gemini")).toBe(false);
+  });
+});
+
+// Gemini CLI source refuses a plain-http endpoint unless it's loopback, and
+// Antigravity's own docs state the same rule (docs/design/litellm.md,
+// "Antigravity CLI"). A gateway is reachable from anywhere the app runs, so
+// this is narrower than isLocalEndpoint's "on this machine or a private
+// network" — a LAN address is local but not loopback, and `agy` refuses it.
+describe("isLoopbackHost", () => {
+  it("accepts localhost, 127.x and ::1", () => {
+    expect(isLoopbackHost("http://localhost:4000")).toBe(true);
+    expect(isLoopbackHost("http://127.0.0.1:4000")).toBe(true);
+    expect(isLoopbackHost("http://127.5.5.5:4000")).toBe(true);
+    expect(isLoopbackHost("http://[::1]:4000")).toBe(true);
   });
 
-  it("leaves an agent whose driver ignores the gateway address alone", () => {
-    expect(planWindowApplies(gw("key"), "gemini")).toBe(true);
+  it("rejects a private-network or public address, unlike isLocalEndpoint", () => {
+    expect(isLoopbackHost("http://192.168.1.5:4000")).toBe(false);
+    expect(isLoopbackHost("http://10.0.0.5:4000")).toBe(false);
+    expect(isLoopbackHost("http://gw.example.com:4000")).toBe(false);
+  });
+
+  it("rejects garbage and empty input", () => {
+    expect(isLoopbackHost(null)).toBe(false);
+    expect(isLoopbackHost("not a url")).toBe(false);
+  });
+});
+
+describe("gatewayInsecureForGemini", () => {
+  it("refuses plain http on a non-loopback gateway", () => {
+    // GW itself ("http://gw.example.com:4000") is plain http and not loopback.
+    const provider = describeProvider({ GOOGLE_GEMINI_BASE_URL: GW }, GW);
+    expect(provider.kind).toBe("gateway");
+    expect(gatewayInsecureForGemini(provider)).toBe(true);
+  });
+
+  it("allows plain http on a loopback gateway", () => {
+    const loopback = "http://127.0.0.1:4000";
+    const provider = describeProvider({ GOOGLE_GEMINI_BASE_URL: loopback }, loopback);
+    expect(provider.kind).toBe("gateway");
+    expect(gatewayInsecureForGemini(provider)).toBe(false);
+  });
+
+  it("allows https on any host", () => {
+    const secure = "https://gw.example.com:4000";
+    const provider = describeProvider({ GOOGLE_GEMINI_BASE_URL: secure }, secure);
+    expect(gatewayInsecureForGemini(provider)).toBe(false);
+  });
+
+  it("is false for every non-gateway kind", () => {
+    expect(gatewayInsecureForGemini(describeProvider({ GOOGLE_GEMINI_BASE_URL: "http://localhost:11434" }, GW))).toBe(false);
+    expect(gatewayInsecureForGemini(describeProvider({}, GW))).toBe(false);
   });
 });

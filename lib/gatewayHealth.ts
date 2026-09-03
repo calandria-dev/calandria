@@ -37,6 +37,12 @@ export interface GatewayHealth {
   /** Whether this instance has a key to send at all. */
   has_key: boolean;
   error: string | null;
+  /** `agy models` diffed against this catalog (lib/agents/gemini/gatewayCheck.ts)
+   *  — the models the CLI needs that this gateway doesn't serve. Null when
+   *  nothing has been checked yet or agy isn't signed in; not set by
+   *  probeGateway itself, since that stays agy-unaware, but filled in by
+   *  GET /api/agents before this reaches the client. */
+  gemini_missing_models?: string[] | null;
 }
 
 function unreachable(base: string, error: string): GatewayHealth {

@@ -341,6 +341,17 @@ function applyGatewayEnv(
   // refuses it — but this is the line where it would matter, so it is checked
   // here rather than trusted from three callers away.
   const key = /[\0-\x1f\x7f]/.test(ctx.key) ? "" : ctx.key;
+  // Antigravity: the Go GenAI SDK inside `agy` reads GEMINI_API_KEY directly,
+  // so the credential travels under its own name rather than a header —
+  // there is no ANTHROPIC_CUSTOM_HEADERS equivalent for it, so a gateway
+  // turn on this agent carries no attribution tags at all
+  // (docs/design/litellm.md, "Antigravity driver"). Always key-billed: `agy`
+  // has no subscription-forwarding mode. None of the Claude/Codex-specific
+  // composition below applies, so this returns early.
+  if (ctx.agent === "gemini") {
+    if (key) out.GEMINI_API_KEY = key;
+    return;
+  }
   const headers: string[] = [];
   if (key) headers.push(`x-litellm-api-key: Bearer ${key}`);
   const tags = ["calandria"];
@@ -560,6 +571,38 @@ export function isLocalEndpoint(url: string | null | undefined): boolean {
   return !!host && LOCAL_HOST.test(host.replace(/:\d+$/, ""));
 }
 
+// Narrower than LOCAL_HOST above: strictly loopback, matching the Gemini CLI's
+// own source rule (docs/design/litellm.md, "Antigravity CLI") rather than
+// Calandria's broader "on this machine or a private network" definition. A
+// gateway on a LAN address is `isLocalEndpoint` but not loopback, and `agy`
+// refuses it over plain HTTP.
+const LOOPBACK_HOST = /^(localhost|127\.(\d+\.){2}\d+|\[?::1\]?)$/i;
+
+/** Whether a base URL's host is strictly loopback. */
+export function isLoopbackHost(url: string | null | undefined): boolean {
+  const host = url ? hostOf(url) : null;
+  return !!host && LOOPBACK_HOST.test(host.replace(/:\d+$/, ""));
+}
+
+/**
+ * Whether a gateway address would fail every Antigravity turn before `agy`
+ * even sends one. Gemini CLI source enforces HTTPS for any non-loopback host,
+ * and Antigravity's own docs state the same rule (docs/design/litellm.md,
+ * "Antigravity CLI") — plain HTTP is fine only on loopback. Used to refuse the
+ * combination in the task form rather than letting the turn fail inside the
+ * CLI with an opaque error.
+ */
+export function gatewayInsecureForGemini(provider: Pick<AgentProvider, "kind" | "gemini_base_url">): boolean {
+  if (provider.kind !== "gateway" || !provider.gemini_base_url) return false;
+  let protocol: string;
+  try {
+    protocol = new URL(provider.gemini_base_url).protocol;
+  } catch {
+    return false;
+  }
+  return protocol === "http:" && !isLoopbackHost(provider.gemini_base_url);
+}
+
 /**
  * What an override (already merged, see `providerEnvFor`) amounts to.
  *
@@ -619,7 +662,7 @@ export function planWindowApplies(provider: AgentProvider, agent?: string | null
   // Add an agent here in the change that makes its driver honour the gateway
   // address, not before: until then a gateway project's tasks on that agent run
   // on its own login and spend its own plan.
-  const routed = agent === "claude" || agent === "codex";
+  const routed = agent === "claude" || agent === "codex" || agent === "gemini";
   if (!routed) return true;
   return agent === "claude" && provider.gateway_billing === "subscription";
 }
