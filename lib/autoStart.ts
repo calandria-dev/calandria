@@ -70,6 +70,7 @@ import { INITIAL_TASK_PROMPT } from "@/lib/agents/shared";
 import { DEPENDENCY_RUN_CONTEXT } from "@/lib/runContext";
 import type { TurnHooks } from "@/lib/agents/types";
 import { schedulePrRefresh, startPrPolling } from "@/lib/prState";
+import { deleteTaskGatewayKey } from "@/lib/gatewayKeys";
 import type { Task } from "@/lib/types";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
@@ -105,6 +106,18 @@ export function readyAutoStartDependents(clearedTaskId: string): Task[] {
  */
 export function maybeAutoStartDependents(clearedTaskId: string): void {
   const cleared = getTask(clearedTaskId);
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md, "Per-task virtual
+  // keys"): every non-terminal → terminal transition converges here — the
+  // PATCH route, both agent tools, lib/reclaim.ts and lib/tagRefresh.ts all
+  // call this the moment they make one — so it's also the one place a live
+  // key can be deleted the instant it stops being needed, rather than
+  // repeating the call at each of those five sites. Fire-and-forget: an HTTP
+  // round trip must not delay the status write or the auto-start sweep below,
+  // and a failure here just leaves the key for the retention backstop
+  // (lib/gatewayKeys.ts's sweepPrunableGatewayKeys) to retry.
+  void deleteTaskGatewayKey(clearedTaskId).catch((err) => {
+    console.error(`[autoStart] could not delete gateway key for ${clearedTaskId}:`, err);
+  });
   // The note rides the runner's syncNote slot: persisted + published at the
   // top of the turn, so the transcript records WHY this session began — and
   // "cancelled" reads very differently from "done" to an agent about to work

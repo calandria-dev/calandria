@@ -3,7 +3,7 @@ import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
 import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
-import { LITELLM_BASE_URL, LOCAL_MODEL_BASE_URL } from "@/lib/config";
+import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
 import { gatewayHealth } from "@/lib/gatewayHealth";
 import { gatewayKey } from "@/lib/litellm-key";
@@ -72,6 +72,11 @@ export async function GET() {
     // KEY is never on this wire: only whether one is configured, so the card can
     // say "set a key" without ever being a way to read it.
     gateway_base_url: LITELLM_BASE_URL,
+    // Whether CALANDRIA_LITELLM_ADMIN_KEY is set — not the key itself, just
+    // whether minting a per-task key is possible at all (docs/design/litellm.md,
+    // "Per-task virtual keys"), so the project settings form can show the
+    // max_budget/duration fields only when they'd do something.
+    gateway_keys_enabled: LITELLM_ADMIN_KEY_SET,
     gateway: gateway
       ? { ...gateway, gemini_missing_models: LITELLM_BASE_URL ? (lastGeminiGatewayModelCheck(LITELLM_BASE_URL)?.missing ?? null) : null }
       : gateway,

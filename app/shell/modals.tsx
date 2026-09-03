@@ -1066,7 +1066,7 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1093,6 +1093,10 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // Who a Gateway-preset project bills. Stored rather than derived because both
   // modes are legitimate against the same address (lib/agentEnv.ts).
   const [providerBilling, setProviderBilling] = useState<GatewayBilling>(savedProvider.gateway_billing ?? "key");
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md) — advanced, opt-in,
+  // and only meaningful when the instance has an admin key configured.
+  const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
+  const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
   // The instance's LiteLLM address, or "" — which is what hides the option.
   // The gateway's URL is not typed: it is the one the instance is configured
@@ -1233,7 +1237,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut(), gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null, gateway_key_duration: gatewayKeyDuration.trim() })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1407,6 +1411,18 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                     ? "The CLI keeps its own login and the gateway forwards it, so these turns draw on your Claude plan. The gateway still routes, tags and meters them."
                     : "The instance's LiteLLM key authenticates and pays, so these turns draw on that key's account rather than your plan. Set the key in Settings → Agents."}
                 </div>
+                {agents.gateway_keys_enabled && (
+                  <>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
+                        onChange={(e) => setGatewayMaxBudget(e.target.value)} />
+                      <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
+                        title="A LiteLLM duration string, e.g. 30d. Blank means the key never auto-expires on LiteLLM's own clock."
+                        onChange={(e) => setGatewayKeyDuration(e.target.value)} />
+                    </div>
+                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys — leave blank for unlimited budget / a key that never auto-expires. Docs: docs/design/litellm.md.</div>
+                  </>
+                )}
               </>
             )}
             {providerKind === "custom" && (

@@ -858,6 +858,13 @@ export function migrate(db: Database.Database) {
   // Whether new sessions get the saved project context. Default 1 preserves the
   // always-included behavior for existing projects.
   add("send_context", "INTEGER NOT NULL DEFAULT 1");
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md, "Per-task virtual
+  // keys"): what /key/generate is told to cap a minted key at. NULL = no
+  // max_budget sent (LiteLLM leaves the key unlimited); '' duration = no
+  // `duration` sent either (the key never auto-expires on LiteLLM's own clock —
+  // Calandria deletes it itself on terminal status / prune instead).
+  add("gateway_max_budget", "REAL");
+  add("gateway_key_duration", "TEXT NOT NULL DEFAULT ''");
   // Manual sidebar ordering. Backfill in creation order so existing projects
   // keep the order they had when this column was the implicit sort.
   if (!cols.includes("position")) {
@@ -975,6 +982,18 @@ export function migrate(db: Database.Database) {
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");
+  // The task's own LiteLLM virtual key (docs/design/litellm.md, "Per-task
+  // virtual keys"), minted on its first gateway turn when
+  // CALANDRIA_LITELLM_ADMIN_KEY is set — '' means "use the instance key".
+  // NEVER surfaced by getTask()/listTasks(): lib/store.ts strips it before
+  // returning, and only the narrow accessors in this file (used by
+  // lib/runner.ts and lib/gatewayKeys.ts) read the real value. Never add this
+  // to a SELECT column list a route spreads into JSON.
+  if (!taskCols.includes("gateway_key")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key TEXT NOT NULL DEFAULT ''");
+  // The key's cumulative spend as of the last GET /key/info reconciliation
+  // (lib/gatewayKeys.ts) — the baseline the next reconciliation diffs against
+  // to record only the DELTA. Reset to 0 whenever a key is (re)minted.
+  if (!taskCols.includes("gateway_key_spend")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key_spend REAL NOT NULL DEFAULT 0");
   // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for the
   // same reason — and it is also what "last run" is read from, since runbooks
   // deliberately keep no ledger of their own.

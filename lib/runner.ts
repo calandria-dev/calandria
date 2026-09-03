@@ -12,6 +12,7 @@ import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSe
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
 import { recordedCostUsd, taskProvider } from "@/lib/agentEnv";
 import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
+import { ensureTaskGatewayKey, reconcileTaskGatewaySpend } from "@/lib/gatewayKeys";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -649,6 +650,19 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       publish(id, { type: "notice", content: syncNote, msgId: m.id, generation: gen, ts: m.created_at });
     }
 
+    // Per-task LiteLLM virtual keys (docs/design/litellm.md, "Per-task
+    // virtual keys"). The one place every turn — first or resumed, launched
+    // from POST /messages, lib/autoStart.ts, lib/dispatch.ts, or a queue
+    // drain — converges before its driver runs, so this is "the" launch-path
+    // hook rather than three copies of it. Mutates `task.gateway_key` in
+    // place, mirroring the worktree self-heal above; a no-op past the first
+    // successful mint, and silent (falls back to the instance key) when
+    // per-task keys are off, this isn't a gateway task, or the mint fails.
+    try {
+      await ensureTaskGatewayKey(task, project);
+    } catch (err) {
+      log.warn("gateway key mint failed; falling back to the instance key", { task: id, err });
+    }
     const driver = getDriver(task.agent);
     // The pre-turn settings gate (issue #43). The agent has not started yet,
     // and whatever `.claude/settings.json` says at this instant is what its
@@ -1275,6 +1289,28 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         awaiting_input: (opened && !scheduledOk) || settingsBlocked ? 1 : 0,
         // Only a run that actually opened a session produced anything to read.
         ...(scheduledOk && opened ? { unread_run_at: Date.now() } : {}),
+      });
+    }
+
+    // Exact spend reconciliation (docs/design/litellm.md, "Per-task virtual
+    // keys"): GET /key/info against the task's own minted key and record the
+    // delta as a task_usage correction, replacing the live per-turn estimate
+    // with LiteLLM's own ledger. Fire-and-forget, deliberately NOT awaited —
+    // this whole block is the synchronous settle the note at its top warns
+    // must not have anything interleave with it, and an HTTP round trip here
+    // would do exactly that. `opened` gates it: a turn that never opened a
+    // session spent nothing to reconcile.
+    if (opened && task.gateway_key) {
+      const provider = taskProvider(project, task);
+      void reconcileTaskGatewaySpend({
+        taskId: id,
+        projectId: project.id,
+        generation: gen,
+        key: task.gateway_key,
+        host: provider.host,
+        agent: task.agent,
+      }).catch((err) => {
+        log.warn("gateway spend reconciliation failed", { task: id, err });
       });
     }
 

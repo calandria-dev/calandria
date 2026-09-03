@@ -52,6 +52,11 @@ export interface Project {
   position: number; // manual sidebar order (ascending)
   deprecated: number; // 1 = hidden in the sidebar's "deprecated" area, not built on
   seeded: number; // 1 = the built-in "Welcome" tutorial project (see lib/db.ts seedIfEmpty)
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md, "Per-task virtual
+  // keys"), only meaningful once CALANDRIA_LITELLM_ADMIN_KEY is set. What a
+  // minted key's /key/generate call is told to cap it at.
+  gateway_max_budget: number | null; // dollars; null = no max_budget sent (unlimited)
+  gateway_key_duration: string; // a LiteLLM duration string ("30d"); "" = no duration sent (never auto-expires on LiteLLM's clock)
   created_at: number;
 }
 
@@ -134,6 +139,16 @@ export interface Task {
   // report it (Codex), or a task that predates the column — and the gauge
   // falls back to a per-turn usage heuristic and says so (see getTaskContext).
   context_measured: number | null;
+  // The task's minted LiteLLM virtual key (docs/design/litellm.md, "Per-task
+  // virtual keys"), or "" for "use the instance key" / not a gateway task /
+  // per-task keys off. getTask()/listTasks() ALWAYS return "" here — the real
+  // value never leaves lib/store.ts's narrow accessors (taskGatewayKeyState,
+  // setTaskGatewayKey), which only lib/runner.ts and lib/gatewayKeys.ts call.
+  // lib/runner.ts populates this field on its own in-memory `task` object
+  // (never a value returned by getTask/listTasks) just before the driver
+  // call, the same way it self-heals worktree_path in place — so a route
+  // spreading a task into JSON can never carry a live key even by accident.
+  gateway_key: string;
   created_at: number;
   updated_at: number;
 }

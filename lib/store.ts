@@ -301,7 +301,8 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ? WHERE id = ?`
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ?,
+        gateway_max_budget = ?, gateway_key_duration = ? WHERE id = ?`
     )
     // landing_mode is normalized rather than trusted: the column has no CHECK
     // behind it and this is reached straight from PATCH /api/projects/[id].
@@ -309,7 +310,10 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
       // agent_env is normalized, not trusted, for the same reason: the allowlist
       // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
       // whatever a PATCH body (object or JSON text) carried.
-      serializeAgentEnv(n.agent_env), id);
+      serializeAgentEnv(n.agent_env),
+      // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
+      // clear it — matching gateway_max_budget's own null-is-unlimited contract.
+      n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "", id);
   return getProject(id);
 }
 
@@ -453,6 +457,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     else tagsByTask.set(m.task_id, [m.tag_id]);
   }
   return rows.map((r) => {
+    redactGatewayKey(r);
     const kind = (anyOverride || !!r.agent_env) ? taskProvider(project, r).kind : "cloud";
     const window = taskContextWindow(r.agent, r.model, kind);
     return {
@@ -649,7 +654,49 @@ export function acknowledgeAgentEdits(taskId: string): void {
 }
 
 export function getTask(id: string): Task | undefined {
-  return getDb().prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
+  const row = getDb().prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
+    | (Task & { gateway_key_spend?: number })
+    | undefined;
+  return row && redactGatewayKey(row);
+}
+
+// Never let a task's minted LiteLLM key (or its spend baseline, an internal
+// bookkeeping field with no reader outside lib/gatewayKeys.ts) leave this
+// module through the general read path — every route that spreads a Task or
+// TaskWithUsage into JSON goes through getTask() or listTasks(). The real
+// value lives only where taskGatewayKeyState()/setTaskGatewayKey() read and
+// write it (lib/runner.ts, lib/gatewayKeys.ts).
+function redactGatewayKey<T extends { gateway_key: string; gateway_key_spend?: number }>(row: T): T {
+  row.gateway_key = "";
+  delete row.gateway_key_spend;
+  return row;
+}
+
+/** Internal-only: a task's minted LiteLLM virtual key and the cumulative spend
+ *  last reconciled against it (docs/design/litellm.md, "Per-task virtual
+ *  keys"). `key` is "" when no key has been minted (per-task keys off, not a
+ *  gateway task, or the mint failed and the turn fell back to the instance
+ *  key). Never call this from a route that returns its result to the client —
+ *  use getTask()/listTasks(), which always redact it. */
+export function taskGatewayKeyState(id: string): { key: string; spend: number } | undefined {
+  return getDb().prepare("SELECT gateway_key AS key, gateway_key_spend AS spend FROM tasks WHERE id = ?").get(id) as
+    | { key: string; spend: number }
+    | undefined;
+}
+
+/** Store a newly minted key (or "" to clear one on delete), resetting the
+ *  spend baseline — a fresh key has spent nothing yet. No `updated_at` stamp,
+ *  same reason as clearTaskWorktreePath: internal bookkeeping, not a
+ *  user-visible edit that should reorder the board. */
+export function setTaskGatewayKey(id: string, key: string): void {
+  getDb().prepare("UPDATE tasks SET gateway_key = ?, gateway_key_spend = 0 WHERE id = ?").run(key, id);
+}
+
+/** Advance the spend baseline after a reconciliation (lib/gatewayKeys.ts) —
+ *  the next one diffs against this. No `updated_at` stamp, same reason as
+ *  setTaskGatewayKey. */
+export function setTaskGatewayKeySpend(id: string, spend: number): void {
+  getDb().prepare("UPDATE tasks SET gateway_key_spend = ? WHERE id = ?").run(spend, id);
 }
 
 export function createTask(input: {
