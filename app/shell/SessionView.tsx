@@ -22,7 +22,7 @@ import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
 import { useEndpointModels } from "./modelEndpoint";
-import { taskProvider } from "@/lib/agentEnv";
+import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -494,11 +494,16 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const stableCancelQueued = useStableHandler(onCancelQueued);
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
+  const provider = useMemo(() => taskProvider(project, task), [project, task]);
   // When this task's agent says its usage window resets — the plan meter's
   // snapshot, keyed by agent, so only an agent that reports one gets the
   // queue-at-reset offers (the hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
-  const resetAt = usageResetAt(planUsage[task.agent] ?? null);
+  // …but only when this task's turns actually draw on that plan. Behind a
+  // LiteLLM gateway they usually don't (`planWindowApplies`), and offering to
+  // resume when a window rolls that the turn never touched would strand the
+  // task until a reset that changes nothing for it.
+  const resetAt = planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(
@@ -575,7 +580,6 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // what the endpoint itself reports instead — under the same inherit head, and
   // with a model typed in the Edit dialog kept as an entry of its own so the
   // chip shows what will actually run rather than reading as "Inherit".
-  const provider = useMemo(() => taskProvider(project, task), [project, task]);
   const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
   const models = useMemo<PickerOption[]>(() => {
     if (provider.kind === "cloud") return modelOptions(caps);

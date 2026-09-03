@@ -9,6 +9,7 @@ import {
   isGatewayEndpoint,
   providerPricing,
   parseAgentEnv,
+  planWindowApplies,
   providerEnvFor,
   providerPresetEnv,
   recordedCostUsd,
@@ -435,5 +436,35 @@ describe("the gateway header is not injectable", () => {
     );
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-litellm-tags: calandria,project:p1,task:t1,agent:claude");
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
+  });
+});
+
+// Which tasks the plan meter's reset time may be offered for (SessionView's
+// queue-at-reset). A window nobody is spending is not a window to wait on.
+describe("planWindowApplies", () => {
+  const gw = (billing: "key" | "subscription") =>
+    describeProvider(gatewayPresetEnv({ baseUrl: "http://gw.example:4000", billing }), "http://gw.example:4000");
+
+  it("holds for every non-gateway task", () => {
+    for (const agent of ["claude", "codex", "gemini"]) {
+      expect(planWindowApplies(describeProvider({}), agent)).toBe(true);
+      expect(planWindowApplies(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }), agent)).toBe(true);
+    }
+  });
+
+  it("drops for a key-billed gateway task on either routed agent", () => {
+    expect(planWindowApplies(gw("key"), "claude")).toBe(false);
+    expect(planWindowApplies(gw("key"), "codex")).toBe(false);
+  });
+
+  it("holds for Claude on a subscription-billed gateway, and never for Codex", () => {
+    expect(planWindowApplies(gw("subscription"), "claude")).toBe(true);
+    // `requires_openai_auth` is deliberately unimplemented, so Codex bills the
+    // key here too and its ChatGPT window is untouched.
+    expect(planWindowApplies(gw("subscription"), "codex")).toBe(false);
+  });
+
+  it("leaves an agent whose driver ignores the gateway address alone", () => {
+    expect(planWindowApplies(gw("key"), "gemini")).toBe(true);
   });
 });

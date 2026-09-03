@@ -3,7 +3,7 @@ import { onPosix } from "./platform";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { codexProviderConfig, CODEX_LOCAL_PROVIDER_ID } from "@/lib/agents/codex/provider";
+import { codexProviderConfig, CODEX_LOCAL_PROVIDER_ID, CODEX_GATEWAY_PROVIDER_ID } from "@/lib/agents/codex/provider";
 import {
   CODEX_PROVIDER_MIN_VERSION,
   clearCodexProviderChecks,
@@ -154,6 +154,28 @@ describe("readCodexProvider against the real codex CLI", () => {
     expect(bare.kind).toBe("provider");
     expect(bare.kind === "provider" && bare.provider).not.toBe(CODEX_LOCAL_PROVIDER_ID);
   }, 60_000);
+
+  // The gateway entry carries two keys the local one doesn't — `env_key` and a
+  // nested `http_headers` table — and a dotted `--config` path with a hyphenated
+  // leaf (`…http_headers.x-litellm-tags`). Measured accepted on codex-cli
+  // 0.146.0, `config.load` ok and the provider resolved, with the named variable
+  // UNSET: a gateway with no key configured still gets a turn attempted rather
+  // than a config error, which is the behaviour the driver's refusal path
+  // assumes.
+  onPosix("accepts the gateway entry's env_key and http_headers too", async (ctx) => {
+    if (!real) return ctx.skip();
+    const GATEWAY = "http://gw.example:4000";
+    const { config } = codexProviderConfig(
+      { OPENAI_BASE_URL: `${GATEWAY}/v1`, CALANDRIA_GATEWAY_TAGS: "calandria,project:p1,task:t1,agent:codex" },
+      GATEWAY,
+    );
+    const mapped = await readCodexProvider(serializeCodexConfigOverrides(config), {
+      bin: real,
+      cwd: dir,
+      env: { ...process.env, CALANDRIA_GATEWAY_KEY: undefined },
+    });
+    expect(mapped).toMatchObject({ kind: "provider", provider: CODEX_GATEWAY_PROVIDER_ID });
+  }, 60_000);
 });
 
 describe("verifyCodexProvider", () => {
@@ -206,6 +228,24 @@ describe("verifyCodexProvider", () => {
     const local = codexProviderConfig(OVERRIDE);
     const verdict = await verifyCodexProvider(local, { bin: path.join(dir, "absent") });
     expect(verdict.ok).toBe(false);
+  });
+
+  onPosix("asserts on the GATEWAY id for a gateway entry, and keeps the two verdicts apart", async () => {
+    const GATEWAY = "http://gw.example:4000";
+    const gw = codexProviderConfig({ OPENAI_BASE_URL: `${GATEWAY}/v1` }, GATEWAY);
+    expect(gw.config.model_provider).toBe(CODEX_GATEWAY_PROVIDER_ID);
+
+    // The id the probe demands comes from the config it was handed, so the entry
+    // that says `calandria-gateway` is only satisfied by that answer …
+    const ok = await verifyCodexProvider(gw, { bin: fakeBin, env: fakeEnv({ FAKE_PROVIDER: CODEX_GATEWAY_PROVIDER_ID }) });
+    expect(ok).toEqual({ ok: true, cliVersion: "9.9.9" });
+
+    // … and a verdict earned here says nothing about the local endpoint, whose
+    // base URL keys a cache entry of its own.
+    const local = codexProviderConfig(OVERRIDE);
+    const stolen = await verifyCodexProvider(local, { bin: fakeBin, env: fakeEnv({ FAKE_PROVIDER: CODEX_GATEWAY_PROVIDER_ID }) });
+    expect(stolen.ok).toBe(false);
+    expect(stolen.ok ? "" : stolen.message).toContain(BASE_URL);
   });
 
   onPosix("probes once per endpoint, then re-earns the verdict when the CLI version moves", async () => {
