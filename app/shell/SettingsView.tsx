@@ -205,6 +205,13 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
       {gateway.database === false && (
         <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
       )}
+      {!!gateway.gemini_missing_models?.length && (
+        <div className="hlp wiz-warn">
+          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, not in this gateway&apos;s catalog.
+          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or an Antigravity turn
+          against this gateway fails with an unhelpful error the moment it makes its side call.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
           placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}

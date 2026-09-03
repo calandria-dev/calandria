@@ -433,7 +433,7 @@ export interface EndpointModelsT { base_url: string; reachable: boolean; api: En
 // gateway didn't say — a proxy with no Postgres reports `database: false` and
 // has no keys, budgets or spend to show, which the card states rather than
 // leaving those rows blank.
-export interface GatewayHealthT { base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null; has_key: boolean; error: string | null }
+export interface GatewayHealthT { base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null; has_key: boolean; error: string | null; gemini_missing_models?: string[] | null }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

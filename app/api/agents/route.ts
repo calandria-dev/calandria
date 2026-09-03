@@ -9,6 +9,7 @@ import { gatewayHealth } from "@/lib/gatewayHealth";
 import { gatewayKey } from "@/lib/litellm-key";
 import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
 import { gatewayModelCatalog } from "@/lib/gatewayModels";
+import { geminiGatewayModelCheck, lastGeminiGatewayModelCheck } from "@/lib/agents/gemini/gatewayCheck";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,12 @@ export async function GET() {
   // gatewayHealth() above already hits /model/info too, but only for a count —
   // this is the full parse, cached separately (lib/gatewayModels.ts).
   if (LITELLM_BASE_URL) void gatewayModelCatalog(LITELLM_BASE_URL, gatewayKey());
+  // Whether the gateway's catalog covers what `agy` needs — a real CLI spawn,
+  // so it's fired the same way and read from whatever the last one found
+  // (lib/agents/gemini/gatewayCheck.ts). Harmless when Antigravity isn't
+  // connected or isn't installed: agyModelSlugs() returns null and the field
+  // stays null rather than claiming every model is missing.
+  if (LITELLM_BASE_URL) void geminiGatewayModelCheck(LITELLM_BASE_URL, gatewayKey());
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -65,7 +72,9 @@ export async function GET() {
     // KEY is never on this wire: only whether one is configured, so the card can
     // say "set a key" without ever being a way to read it.
     gateway_base_url: LITELLM_BASE_URL,
-    gateway,
+    gateway: gateway
+      ? { ...gateway, gemini_missing_models: LITELLM_BASE_URL ? (lastGeminiGatewayModelCheck(LITELLM_BASE_URL)?.missing ?? null) : null }
+      : gateway,
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
       // Effective-credential overlay (issue #4): the settings record says how

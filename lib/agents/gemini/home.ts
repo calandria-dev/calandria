@@ -42,6 +42,8 @@ import path from "node:path";
 import type { Project, Task } from "../../types";
 import { GEMINI_HOMES_DIR } from "../../config";
 import { bridgeConfig } from "./mcp";
+import { taskProvider } from "../../agentEnv";
+import { writeModelProviderSetting } from "./auth";
 
 /** The one directory that must stay shared: it carries the login. */
 const AUTH_DIR = "antigravity-cli";
@@ -124,6 +126,13 @@ export function prepareTaskHome(project: Project, task: Task): TaskHome {
     path.join(configDir, MCP_CONFIG_FILE),
     JSON.stringify(bridgeConfig(project, task), null, 2) + "\n"
   );
+
+  // The gateway kind needs `{"modelProvider":"gemini"}` before `agy` will read
+  // GEMINI_API_KEY at all (docs/design/litellm.md, "Antigravity driver",
+  // measured against agy 1.1.24). This is the one real, shared settings.json
+  // (see writeModelProviderSetting), the same file the API-key connect card
+  // writes — there is no per-task HOME for it, unlike the MCP config above.
+  if (taskProvider(project, task).kind === "gateway") writeModelProviderSetting(true);
 
   return { home, cwd: task.worktree_path || project.repo_path || process.cwd() };
 }

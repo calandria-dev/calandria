@@ -13,7 +13,7 @@ import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPick
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
-import { describeProvider, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
+import { describeProvider, gatewayInsecureForGemini, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
 import { useEndpointModels } from "./modelEndpoint";
 
 // Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
@@ -170,10 +170,6 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  const canStart = !blocked && agentReady;
-  const willAutoStart = autoStart && deps.length > 0;
-  const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   // Which SHAPE the model field takes. A cloud project picks from the driver's
   // catalog; a project pointed at a local server types an id, because the ids
   // on that machine are whatever was pulled and no catalog can know them
@@ -181,6 +177,15 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // server-side — the browser generally can't reach a loopback model server.
   const provider = useMemo(() => taskProvider(project), [project]);
   const localModel = provider.kind !== "cloud";
+  // Gemini CLI source refuses a plain-http endpoint unless it's loopback
+  // (docs/design/litellm.md, "Antigravity CLI"); a gateway is reachable from
+  // anywhere the app is deployed, so this would fail every turn inside `agy`
+  // rather than at launch. Refused here instead.
+  const gatewayInsecure = agent === "gemini" && gatewayInsecureForGemini(provider);
+  const canStart = !blocked && agentReady && !gatewayInsecure;
+  const willAutoStart = autoStart && deps.length > 0;
+  const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
+  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   const endpoint = useEndpointModels(project.id, "", localModel);
   // Permission modes and models are both provider-specific (each driver labels
   // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
@@ -207,7 +212,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
-          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
+          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session`
+            : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address — use an https:// gateway, or pick a different agent" : undefined}>
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
@@ -230,6 +236,12 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
         </label>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
+          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+        </div>
+      )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
         freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help=" (changeable later from the session rail)." />
@@ -923,9 +935,13 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     if (!modelOpts.some((m) => m.value === model)) setModel(null);
   }, [agent, task.agent, modelOpts, model]);
   const agentReady = selAgent ? selAgent.authenticated : true;
+  // Same refusal as the New-task dialog (lib/agentEnv.ts): a gateway that's
+  // http:// and not loopback fails every Antigravity turn inside `agy`.
+  const gatewayInsecure = (canChangeAgent ? agent : task.agent) === "gemini" && gatewayInsecureForGemini(provider);
   const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks. Clear them or drop the dependency first"
-    : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
-  const canStartNow = can && !blocked && agentReady;
+    : !agentReady ? `Connect ${selAgent?.label} to start a session`
+    : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address" : undefined;
+  const canStartNow = can && !blocked && agentReady && !gatewayInsecure;
   return (
     <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
       footer={<>
@@ -976,6 +992,12 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         )}
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
+          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+        </div>
+      )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
         freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />

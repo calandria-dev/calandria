@@ -72,6 +72,25 @@ export async function geminiStatus(): Promise<AgentAuthStatus> {
   };
 }
 
+/**
+ * The model slugs `agy models` reports right now — the same probe
+ * `geminiStatus()` uses, spent no quota either way. Used by the gateway
+ * health card to check the CLI's own models (side-call model included; the
+ * flash-lite the CLI calls on every turn is an ordinary selectable entry
+ * here, per docs/design/litellm.md's "Antigravity CLI" measurement) against
+ * the gateway's catalog — a model missing there fails the turn deep inside
+ * `agy` with an opaque "Agent execution terminated due to error". Null for
+ * "couldn't find out" (signed out, no binary, empty output), which the
+ * health check reads as "nothing to compare, say nothing" rather than "every
+ * model is missing".
+ */
+export async function agyModelSlugs(): Promise<string[] | null> {
+  const out = await runAgy(["models"], 60_000);
+  if (SIGNED_OUT.test(`${out.stdout}\n${out.stderr}`)) return null;
+  const slugs = modelSlugs(out.stdout);
+  return slugs.length ? slugs : null;
+}
+
 /** Model slugs from `agy models` TSV output, skipping its "Fetching…" chatter. */
 export function modelSlugs(stdout: string): string[] {
   return stdout
@@ -352,13 +371,18 @@ export async function submitGeminiCode(code: string): Promise<AgentLoginSession>
 const API_KEY_SETTING = "gemini_api_key";
 const SETTINGS_REL = path.join(".gemini", "antigravity-cli", "settings.json");
 
-function settingsPath(): string {
-  return path.join(os.homedir(), SETTINGS_REL);
-}
-
-/** Merge a key into the CLI's settings without discarding what's already there. */
-function writeProvider(useKey: boolean): void {
-  const file = settingsPath();
+/**
+ * Merge `modelProvider` into the CLI's settings without discarding what's
+ * already there. Always the REAL home, never a per-task one: a gateway turn
+ * (./home.ts) writes here too, and its per-task HOME only symlinks this
+ * directory back to the real one once it already exists (for the login) —
+ * writing through a dangling symlink to a directory that was never created
+ * fails outright (measured), where writing the real path directly just
+ * creates it. Either caller lands on the one shared file `agy` actually
+ * reads, which is the point: there is no per-task divergence to preserve.
+ */
+export function writeModelProviderSetting(useKey: boolean): void {
+  const file = path.join(os.homedir(), SETTINGS_REL);
   let current: Record<string, unknown> = {};
   try {
     current = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -387,19 +411,22 @@ export const geminiApiKey: AgentApiKeyAuth = {
     const k = key.trim();
     setSetting(API_KEY_SETTING, k);
     process.env.GEMINI_API_KEY = k;
-    writeProvider(true);
+    writeModelProviderSetting(true);
   },
   clear() {
     setSetting(API_KEY_SETTING, "");
     delete process.env.GEMINI_API_KEY;
-    writeProvider(false);
+    writeModelProviderSetting(false);
   },
 };
 
-/** Apply a persisted key to the environment a turn will inherit. */
+/** Apply a persisted key to the environment a turn will inherit. Never
+ *  overwrites a key already there — a gateway turn's `GEMINI_API_KEY`
+ *  (lib/agentEnv.ts) is composed before this runs and must win over the
+ *  user's own stored personal key. */
 export function applyStoredApiKey(env: Record<string, string>): Record<string, string> {
   const stored = getSetting(API_KEY_SETTING);
-  if (stored) env.GEMINI_API_KEY = stored;
+  if (stored && !env.GEMINI_API_KEY) env.GEMINI_API_KEY = stored;
   return env;
 }
 
