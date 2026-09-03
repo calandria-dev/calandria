@@ -46,6 +46,8 @@ module.exports = {
     "main.js",
     "supervisor.js",
     "env-file.js",
+    "instances.js",
+    "instances.html",
     "notifier.js",
     "tray-residency.js",
     "updater.js",

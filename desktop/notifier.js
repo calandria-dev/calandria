@@ -173,9 +173,17 @@ function trayTooltip(count) {
  * on every REconnect the project list is refetched, because anything published
  * while we were dark is simply gone.
  *
- * `fetchImpl` and `sleep` are injectable for the same reason the Supervisor's
- * env is: so the whole loop can be driven against a stub server, with no
- * display and no waiting, from test-supervisor.js.
+ * `fetchImpl` is injectable for two reasons now. The first is the Supervisor's:
+ * so the whole loop can be driven against a stub server, with no display and no
+ * waiting, from test-supervisor.js. The second is the load-bearing one — main.js
+ * passes `session.fromPartition("persist:instance-<id>").fetch` bound to the
+ * ACTIVE INSTANCE, so these requests carry that instance's cookies. Under
+ * Cloudflare Access the login lands `CF_Authorization` in the window's cookie
+ * jar, and `globalThis.fetch` in the main process is not in that jar: it would
+ * get a redirect to the identity provider on every reconnect, leaving the badge
+ * at zero and no notifications at all while the page beside it worked fine.
+ * `globalThis.fetch` remains the DEFAULT because a bare `new AppEvents(...)`
+ * against a loopback server (the tests) needs no session at all.
  */
 class AppEvents {
   constructor({
@@ -207,6 +215,11 @@ class AppEvents {
     // of the routes that accept a service token — under the default no-login
     // mode the loopback Host is what authorizes us — but sending it costs
     // nothing and is the difference on an instance that has one.
+    //
+    // The caller decides whether there IS one, and for a remote instance the
+    // answer is always no: SERVICE_TOKEN belongs to the server this machine
+    // spawned, so sending it anywhere else would hand a stranger a credential
+    // for the local database. main.js's `serviceTokenFor` is that rule.
     return this.serviceToken ? { "x-service-token": this.serviceToken } : {};
   }
 
