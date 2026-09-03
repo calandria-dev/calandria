@@ -107,6 +107,16 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   userMcpServersNote: CODEX_INHERIT_MCP
     ? "Mounted because CODEX_INHERIT_MCP is set. Their tools only work on servers where you've set default_tools_approval_mode = \"approve\". codex exec has nobody to ask."
     : "The MCP servers in your ~/.codex/config.toml are unmounted: codex exec can't approve their tool calls, so every one comes back cancelled. Set CODEX_INHERIT_MCP=1 to mount them anyway.",
+  // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
+  // from the flag above, and needs its own caveat for the same reason: codex
+  // exec has no approver. It's mounted, with every one of its tools
+  // auto-approved for the task, only under the bypass-equivalent permission
+  // mode — "plan" runs read-only and would offer tools no approver can grant
+  // (lib/agents/codex/driver.ts).
+  gatewayMcpNote:
+    "Hosted LiteLLM-gateway MCP servers mount only under the workspace-write permission mode, " +
+    "never plan, and every tool they offer is auto-approved for the task the moment it mounts — " +
+    "codex exec has nobody to ask.",
   // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
   // cost the driver emits is an estimate (tokens × published API prices for
   // the resolved model). The descriptor stays honest: reportsCostUsd=false,

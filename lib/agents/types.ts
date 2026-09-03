@@ -68,6 +68,17 @@ export interface AgentCapabilities {
    */
   userMcpServersNote: string | null;
   /**
+   * One line of driver-supplied detail about how hosted LiteLLM-gateway MCP
+   * servers (projects.gateway_mcp / tasks.gateway_mcp, lib/gatewayMcp.ts) mount
+   * for THIS driver, alongside the verdict `inheritsUserMcpServers` states for
+   * the user's own CLI-configured servers — a separate selection with its own
+   * per-driver caveat. Codex's names the bypass-only mount and the
+   * per-server auto-approval `codex exec` needs; Antigravity's names the
+   * alias-to-hyphen slugging its policy engine forces. null = nothing special
+   * to say — the server mounts exactly like Calandria's own tools (Claude).
+   */
+  gatewayMcpNote: string | null;
+  /**
    * run_in_background work survives the model's turn: the driver holds the
    * session open (bounded by BACKGROUND_LINGER_MS) until the tasks settle and
    * their completion notifications wake the model into a continuation turn.

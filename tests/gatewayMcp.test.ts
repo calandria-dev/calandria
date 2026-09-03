@@ -6,6 +6,9 @@ import {
   gatewayMcpCatalog,
   probeGatewayMcpMount,
   gatewayMcpServersFor,
+  gatewayMcpServersForCodex,
+  gatewayMcpServersForGemini,
+  slugifyGatewayAliasForGemini,
 } from "../lib/gatewayMcp";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
@@ -260,5 +263,74 @@ describe("gatewayMcpServersFor — CALANDRIA_LITELLM_MCP gate", () => {
     const mod = (await import("../lib/gatewayMcp")) as typeof import("../lib/gatewayMcp");
     const out = mod.gatewayMcpServersFor({ gateway_mcp: JSON.stringify(["demo"]) }, null, "http://gw.example");
     expect(out).toEqual({});
+  });
+});
+
+// Codex mounting (docs/design/litellm.md, "Mounting, per driver"): the same
+// URL/key resolution as Claude's gatewayMcpServersFor, but codex's own shape
+// (`url` + `http_headers`, never `Authorization`) and every entry carrying
+// default_tools_approval_mode: "approve" — codex exec has no approver, so a
+// mounted server's tools must be pre-approved or every call comes back
+// cancelled. The permission-mode GATE on whether this function is even
+// called lives in lib/agents/codex/driver.ts (gatewayMcpForPermission),
+// pinned in tests/codexMcpBridge.test.ts.
+describe("gatewayMcpServersForCodex", () => {
+  it("mounts one entry per resolved alias, with url + http_headers and always default_tools_approval_mode approve", () => {
+    const out = gatewayMcpServersForCodex({ gateway_mcp: JSON.stringify(["demo", "search"]) }, { gateway_mcp: null, gateway_key: "" }, "http://gw.example");
+    expect(Object.keys(out).sort()).toEqual(["demo", "search"]);
+    expect(out.demo).toEqual({ url: "http://gw.example/demo/mcp", default_tools_approval_mode: "approve" });
+  });
+
+  it("carries the litellm api key header, never Authorization", () => {
+    const out = gatewayMcpServersForCodex({ gateway_mcp: JSON.stringify(["demo"]) }, { gateway_mcp: null, gateway_key: "sk-task" }, "http://gw.example");
+    expect(out.demo.http_headers).toEqual({ "x-litellm-api-key": "Bearer sk-task" });
+    expect(out.demo).not.toHaveProperty("Authorization");
+  });
+
+  it("mounts nothing without a configured gateway or with an empty selection", () => {
+    expect(gatewayMcpServersForCodex({ gateway_mcp: JSON.stringify(["demo"]) }, null, null)).toEqual({});
+    expect(gatewayMcpServersForCodex({ gateway_mcp: "[]" }, null, "http://gw.example")).toEqual({});
+  });
+
+  it("never mounts an alias literally named 'calandria'", () => {
+    const out = gatewayMcpServersForCodex({ gateway_mcp: JSON.stringify(["calandria", "demo"]) }, null, "http://gw.example");
+    expect(Object.keys(out)).toEqual(["demo"]);
+  });
+});
+
+// Antigravity mounting: httpUrl + headers (the shape lib/agents/gemini/mcp.ts's
+// GeminiMcpConfig union accepts), keyed by the alias slugified to hyphens —
+// Gemini CLI's policy engine splits a tool name on the first underscore after
+// `mcp_`, so an alias with one breaks a wildcard rule for it.
+describe("gatewayMcpServersForGemini", () => {
+  it("mounts httpUrl + headers, keyed by the slugified alias", () => {
+    const out = gatewayMcpServersForGemini({ gateway_mcp: JSON.stringify(["demo"]) }, { gateway_mcp: null, gateway_key: "sk-task" }, "http://gw.example");
+    expect(out).toEqual({ demo: { httpUrl: "http://gw.example/demo/mcp", headers: { "x-litellm-api-key": "Bearer sk-task" } } });
+  });
+
+  it("slugifies an alias with underscores to hyphens, without touching the URL's real alias", () => {
+    const out = gatewayMcpServersForGemini({ gateway_mcp: JSON.stringify(["ticket_system"]) }, null, "http://gw.example");
+    expect(Object.keys(out)).toEqual(["ticket-system"]);
+    expect(out["ticket-system"].httpUrl).toBe("http://gw.example/ticket_system/mcp");
+  });
+
+  it("mounts nothing without a configured gateway or with an empty selection", () => {
+    expect(gatewayMcpServersForGemini({ gateway_mcp: JSON.stringify(["demo"]) }, null, null)).toEqual({});
+    expect(gatewayMcpServersForGemini({ gateway_mcp: "[]" }, null, "http://gw.example")).toEqual({});
+  });
+
+  it("never mounts an alias literally named 'calandria'", () => {
+    const out = gatewayMcpServersForGemini({ gateway_mcp: JSON.stringify(["calandria", "demo"]) }, null, "http://gw.example");
+    expect(Object.keys(out)).toEqual(["demo"]);
+  });
+});
+
+describe("slugifyGatewayAliasForGemini", () => {
+  it("replaces every underscore with a hyphen", () => {
+    expect(slugifyGatewayAliasForGemini("ticket_system_v2")).toBe("ticket-system-v2");
+  });
+
+  it("leaves an alias with no underscores untouched", () => {
+    expect(slugifyGatewayAliasForGemini("demo-server")).toBe("demo-server");
   });
 });

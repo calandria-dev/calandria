@@ -267,21 +267,38 @@ export interface GatewayMcpHttpServer {
   headers?: Record<string, string>;
 }
 
+type GatewayMount = { alias: string; url: string; key: string };
+
 /**
- * The `mcpServers` entries a turn mounts for its resolved hosted-MCP
- * selection (docs/design/litellm.md: `mcpServers[alias] = { type: "http",
- * url: <gateway>/<alias>/mcp, headers: { "x-litellm-api-key": "Bearer …" } }`).
- * Never `Authorization` — LiteLLM reserves that header for the upstream
- * server's own OAuth (the documented collision).
- *
- * Independent of the task's model-provider kind: a Cloud-login Claude task
- * can still reach the gateway's hosted tools, so this only gates on
+ * The task's resolved hosted-MCP selection, filtered to what's actually
+ * mountable — the shared gate behind every driver's mount function below.
+ * `calandria` is reserved for the in-process/bridge Calandria server and is
+ * dropped here even if picked, so a badly-named alias can't shadow it on any
+ * driver. Independent of the task's model-provider kind: a Cloud-login Claude
+ * task can still reach the gateway's hosted tools, so this only gates on
  * CALANDRIA_LITELLM_MCP, a configured gateway, and a non-empty selection —
  * not on `describeProvider(...).kind === "gateway"`. No network call and no
  * catalog lookup: mounting is blind to whether the alias still exists, the
  * same way a driver doesn't re-verify a Bash binary exists before running it.
- * `calandria` is reserved for the in-process Calandria server and is never
- * mounted here even if picked, so a badly-named alias can't shadow it.
+ */
+function resolvedGatewayMounts(
+  project: Pick<Project, "gateway_mcp"> | null | undefined,
+  task: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null | undefined,
+  gateway: string | null,
+): GatewayMount[] {
+  if (!LITELLM_MCP || !gateway) return [];
+  const aliases = resolveGatewayMcp(project, task).filter((a) => a !== "calandria");
+  if (!aliases.length) return [];
+  const key = (task?.gateway_key || gatewayKey()).trim();
+  return aliases.map((alias) => ({ alias, url: `${gateway}/${encodeURIComponent(alias)}/mcp`, key }));
+}
+
+/**
+ * The `mcpServers` entries a Claude turn mounts for its resolved hosted-MCP
+ * selection (docs/design/litellm.md: `mcpServers[alias] = { type: "http",
+ * url: <gateway>/<alias>/mcp, headers: { "x-litellm-api-key": "Bearer …" } }`).
+ * Never `Authorization` — LiteLLM reserves that header for the upstream
+ * server's own OAuth (the documented collision).
  */
 export function gatewayMcpServersFor(
   project: Pick<Project, "gateway_mcp"> | null | undefined,
@@ -289,17 +306,74 @@ export function gatewayMcpServersFor(
   gateway: string | null = gatewayBaseUrl(),
 ): Record<string, GatewayMcpHttpServer> {
   const out: Record<string, GatewayMcpHttpServer> = {};
-  if (!LITELLM_MCP || !gateway) return out;
-  const aliases = resolveGatewayMcp(project, task);
-  if (!aliases.length) return out;
-  const key = (task?.gateway_key || gatewayKey()).trim();
-  for (const alias of aliases) {
-    if (alias === "calandria") continue;
+  for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {
+    out[alias] = { type: "http", url, ...(key ? { headers: authHeaders(key) } : {}) };
+  }
+  return out;
+}
+
+export interface GatewayMcpCodexServer {
+  url: string;
+  http_headers?: Record<string, string>;
+  default_tools_approval_mode: "approve";
+}
+
+/**
+ * The `mcp_servers.<alias>` entries a Codex turn mounts for its resolved
+ * hosted-MCP selection (docs/design/litellm.md, "Mounting, per driver").
+ * `codex exec` has no approver, so every entry here also carries
+ * `default_tools_approval_mode: "approve"` — this function is only ever
+ * called by the driver under the task's bypass-equivalent permission mode
+ * (see lib/agents/codex/driver.ts), so that auto-approval is scoped to a
+ * task that already runs with no approvals asked of it.
+ */
+export function gatewayMcpServersForCodex(
+  project: Pick<Project, "gateway_mcp"> | null | undefined,
+  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null,
+  gateway: string | null = gatewayBaseUrl(),
+): Record<string, GatewayMcpCodexServer> {
+  const out: Record<string, GatewayMcpCodexServer> = {};
+  for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {
     out[alias] = {
-      type: "http",
-      url: `${gateway}/${encodeURIComponent(alias)}/mcp`,
-      ...(key ? { headers: { "x-litellm-api-key": `Bearer ${key}` } } : {}),
+      url,
+      ...(key ? { http_headers: authHeaders(key) } : {}),
+      default_tools_approval_mode: "approve",
     };
+  }
+  return out;
+}
+
+export interface GatewayMcpGeminiServer {
+  httpUrl: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Gemini CLI's policy engine splits an MCP tool name on the first underscore
+ * after `mcp_`, so an alias with an underscore breaks a wildcard policy rule
+ * for it (docs/design/litellm.md, "Mounting, per driver"). Slugified to
+ * hyphens for this driver's mount keys only — the URL still addresses the
+ * real alias LiteLLM hosts. Two aliases that only differ by underscore vs.
+ * hyphen collide here (last one mounted wins), which is an acceptable trade
+ * against every alias otherwise breaking Gemini's own policy rules.
+ */
+export function slugifyGatewayAliasForGemini(alias: string): string {
+  return alias.replace(/_/g, "-");
+}
+
+/**
+ * The `mcpServers` entries an Antigravity turn mounts for its resolved
+ * hosted-MCP selection, in the per-task `mcp_config.json`
+ * (lib/agents/gemini/mcp.ts).
+ */
+export function gatewayMcpServersForGemini(
+  project: Pick<Project, "gateway_mcp"> | null | undefined,
+  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null,
+  gateway: string | null = gatewayBaseUrl(),
+): Record<string, GatewayMcpGeminiServer> {
+  const out: Record<string, GatewayMcpGeminiServer> = {};
+  for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {
+    out[slugifyGatewayAliasForGemini(alias)] = { httpUrl: url, ...(key ? { headers: authHeaders(key) } : {}) };
   }
   return out;
 }

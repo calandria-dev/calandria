@@ -560,10 +560,22 @@ anyway, since LiteLLM holds the token for every later call once that's done. A w
 the mount endpoint itself answers **HTTP 400, not 401** (measured), so the picker's connection
 check reads the response body for the real reason rather than trusting the status code.
 
-Codex and Antigravity mounting hosted MCP servers is future work — `docs/design/litellm.md` has the
-per-driver plan (Codex needs `default_tools_approval_mode: "approve"` since `codex exec` has no
-approver at all, and Antigravity needs alias names slugified for its policy engine, which splits on
-underscores).
+**Codex and Antigravity mount the same selection too**, each with a driver-specific wrinkle
+(`docs/design/litellm.md`, "Hosted MCP servers").
+
+Codex has no approver at all — `codex exec` cannot service an interactive approval — so every
+mounted server also carries `default_tools_approval_mode: "approve"`, which auto-approves every one
+of its tools for the task the moment it mounts. That is only offered under the bypass-equivalent
+permission mode; a task set to `plan` mounts none of them, the same reason `codex/mcp.ts` unmounts
+the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
+the gate on Codex's card. Before relying on this in production, test `gpt-5-codex` plus a mounted
+MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
+completions for exactly that combination.
+
+Antigravity mounts every selected alias into the task's own `mcp_config.json`, slugified to
+hyphens: the CLI's policy engine splits a tool name on the first underscore after `mcp_`, so an
+alias with one would break a wildcard permission rule for it. The URL still addresses the real
+(unslugged) alias LiteLLM hosts.
 
 ### Two caveats from the spike
 

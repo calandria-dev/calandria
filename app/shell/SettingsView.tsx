@@ -247,13 +247,14 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
 // (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
 // agent states its own position here with no edit to this file.
 function McpInheritance({ agent }: { agent: AgentInfoT }) {
-  const { inheritsUserMcpServers: inherits, userMcpServersNote: note } = agent.capabilities;
+  const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
   return (
     <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
       <strong style={{ color: "var(--ink-2)" }}>
         {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
       </strong>
       {note ? ` ${note}` : ""}
+      {gatewayMcpNote && <div style={{ marginTop: 4 }}>{gatewayMcpNote}</div>}
     </div>
   );
 }

@@ -21,7 +21,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 import { createProject, createTask, updateTask, getThreadUsageCum, recordSession, setSetting } from "@/lib/store";
 import { geminiDriver, turnArgs, permissionFlags } from "@/lib/agents/gemini/driver";
-import { bridgeConfig, BRIDGE_SERVER_NAME } from "@/lib/agents/gemini/mcp";
+import { bridgeConfig, BRIDGE_SERVER_NAME, type GeminiMcpServer } from "@/lib/agents/gemini/mcp";
 import { prepareTaskHome } from "@/lib/agents/gemini/home";
 import { gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import type { GeminiCum } from "@/lib/agents/gemini/events";
@@ -240,7 +240,7 @@ describe("per-task MCP bridge", () => {
   it("carries this task's identity, which is what makes parallel tasks safe", () => {
     const { project, task } = rows();
     const cfg = bridgeConfig(project, task);
-    const server = cfg.mcpServers[BRIDGE_SERVER_NAME];
+    const server = cfg.mcpServers[BRIDGE_SERVER_NAME] as GeminiMcpServer;
     expect(server.env.CALANDRIA_TASK_ID).toBe(task.id);
     expect(server.env.CALANDRIA_PROJECT_ID).toBe(project.id);
     // Absolute node binary, so the spawn doesn't depend on PATH surviving.
@@ -279,6 +279,45 @@ describe("per-task MCP bridge", () => {
   });
 });
 
+// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+// driver"): merged into the same per-task mcp_config.json as the bridge, keyed
+// by the alias slugified to hyphens — Gemini CLI's policy engine splits a tool
+// name on the first underscore after `mcp_`, so an alias with one would break
+// a wildcard permission rule for it. Unlike Codex there's no permission-mode
+// gate: `agy` decides tool approval from its own settings, not per-server
+// config, so bridgeConfig mounts the selection unconditionally.
+describe("hosted gateway MCP mount", () => {
+  const GW = "http://gw.example.com:4000";
+  beforeEach(() => {
+    process.env.CALANDRIA_LITELLM_BASE_URL = GW;
+  });
+  afterEach(() => {
+    delete process.env.CALANDRIA_LITELLM_BASE_URL;
+  });
+
+  it("mounts the resolved selection alongside the bridge, slugified to hyphens", () => {
+    const { project, task } = rows();
+    const gwProject = { ...project, gateway_mcp: JSON.stringify(["ticket_system"]) } as Project;
+    const cfg = bridgeConfig(gwProject, task);
+    expect(cfg.mcpServers["ticket-system"]).toEqual({ httpUrl: `${GW}/ticket_system/mcp` });
+    expect(cfg.mcpServers[BRIDGE_SERVER_NAME]).toBeTruthy();
+  });
+
+  it("never lets a gateway alias shadow the bridge's own name", () => {
+    const { project, task } = rows();
+    const gwProject = { ...project, gateway_mcp: JSON.stringify(["calandria"]) } as Project;
+    const cfg = bridgeConfig(gwProject, task);
+    expect(Object.keys(cfg.mcpServers)).toEqual([BRIDGE_SERVER_NAME]);
+    expect((cfg.mcpServers[BRIDGE_SERVER_NAME] as { command: string }).command).toBe(process.execPath);
+  });
+
+  it("mounts nothing extra without a selection", () => {
+    const { project, task } = rows();
+    const cfg = bridgeConfig(project, task);
+    expect(Object.keys(cfg.mcpServers)).toEqual([BRIDGE_SERVER_NAME]);
+  });
+});
+
 describe("capabilities", () => {
   it("offers no reasoning picker, because the model slug already carries effort", () => {
     expect(geminiDriver.capabilities.reasoningOptions).toEqual([]);
@@ -296,6 +335,11 @@ describe("capabilities", () => {
     expect(geminiDriver.capabilities.reportsCostUsd).toBe(false);
     expect(geminiDriver.capabilities.costIsEstimated).toBe(true);
     expect(geminiDriver.capabilities.inheritsUserMcpServers).toBe(false);
+  });
+
+  it("names the alias-slugging caveat for hosted gateway MCP servers", () => {
+    expect(geminiDriver.capabilities.gatewayMcpNote).toContain("hyphens");
+    expect(geminiDriver.capabilities.gatewayMcpNote).toContain("mcp_");
   });
 
   it("watches the worktree hooks file, which executes shell commands", () => {
