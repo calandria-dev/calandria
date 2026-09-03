@@ -52,16 +52,19 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // 0.153.0 before being listed here: it answers on a ChatGPT-plan login, while
   // the bare `gpt-6` alias 400s with the familiar "not supported when using
   // Codex with a ChatGPT account" — so only the full slug belongs in this list.
-  // The pinned CLI is older than that check (@openai/codex-sdk 0.146.0, which
-  // exact-pins @openai/codex 0.146.0), and 0.146.0 embeds no gpt-6 slug. That
-  // is expected to be harmless for the reason stated above — the embedded
-  // catalog is the stale FALLBACK and the live one is fetched per account at
-  // startup, so Astra should arrive with full metadata on a login that has it.
-  // Worth knowing what failure looks like if it doesn't: a slug the CLI can't
-  // find metadata for still runs, warning "Defaulting to fallback metadata;
-  // this can degrade performance and cause issues" — a half-working turn, not a
-  // clean refusal. If that warning shows up on an Astra turn, the fix is to
-  // move the sdk pin (and CODEX_VERSION in the Dockerfile, which must match it).
+  // Astra also sets a CLI FLOOR, which is why the @openai/codex-sdk pin moved
+  // with this entry. The reasonable-sounding guess — that the embedded catalog
+  // is only a stale fallback, so an older CLI would still fetch Astra's real
+  // metadata per account — was tested and is wrong. On 0.146.0 an Astra turn
+  // warns "Defaulting to fallback metadata; this can degrade performance and
+  // cause issues" AND then fails outright with "model requires a newer version
+  // of codex". So the model line is not purely server-side: a new model can
+  // need CLI support, and offering one the pinned binary can't run is the
+  // stale-entry failure from the other direction. When adding a model here,
+  // verify on the version this repo PINS, not just on whatever is installed
+  // locally — and if it needs a newer one, move `@openai/codex-sdk` in
+  // package.json and CODEX_VERSION in the Dockerfile together, since the SDK
+  // exact-pins the CLI it speaks JSONL to.
   models: [
     { value: "gpt-6-astra", label: "GPT-6 Astra", sub: "most capable model for complex, demanding work", contextWindow: CTX, group: "Latest" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "latest frontier agentic coding model (default)", contextWindow: CTX, group: "Latest" },

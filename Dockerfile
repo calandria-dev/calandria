@@ -118,7 +118,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # can test a candidate version without editing this file:
 #   docker build --build-arg CODEX_VERSION=0.147.0 .
 ARG CLAUDE_CODE_VERSION=2.1.228
-ARG CODEX_VERSION=0.146.0
+ARG CODEX_VERSION=0.153.0
 ARG AGY_VERSION=1.1.25
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
@@ -134,6 +134,17 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claud
 # PATH lookup and the auth helpers resolve it next to `claude`. Keep this pin in
 # step with the @openai/codex-sdk version in package-lock.json — the SDK speaks
 # JSONL to this exact binary, so a minor skew between them is a real risk.
+# That dep is pinned EXACTLY (no caret) for this pair's sake: the SDK in turn
+# exact-pins @openai/codex, so a caret let an ordinary `npm install` float the
+# SDK a patch and silently desynchronize it from this ARG, which nothing checks
+# at build time. Both move together or neither does.
+#
+# This pin is also a FLOOR, not just hygiene. codex 0.146.0 could not run
+# gpt-6-astra at all — it warned "Defaulting to fallback metadata" and then
+# failed with "model requires a newer version of codex" — so a model in the
+# picker can require a CLI bump, and the catalog in lib/agents/codex/
+# capabilities.ts must be verified against THIS version rather than whatever a
+# developer happens to have installed.
 RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
 # The `agy` CLI (Antigravity — the Gemini agent driver spawns it directly; there
