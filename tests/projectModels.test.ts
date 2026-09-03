@@ -2,7 +2,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { GET } from "@/app/api/projects/[id]/models/route";
 import { createProject, createTask, listTasks, getTaskContext, updateProject, updateTask } from "@/lib/store";
 import { clearEndpointProbeCache } from "@/lib/modelEndpoint";
-import { cloudOverrideEnv, providerPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
+import { cloudOverrideEnv, gatewayPresetEnv, providerPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
+import { clearGatewayModelCache, gatewayModelCatalog } from "@/lib/gatewayModels";
+import { clearGatewayRates } from "@/lib/gatewayPricing";
+import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 // GET /api/projects/[id]/models — the browser's only route to a local model
 // server, since the endpoint is loopback on the SERVER and generally
@@ -11,6 +14,24 @@ import { cloudOverrideEnv, providerPresetEnv, serializeAgentEnv } from "@/lib/ag
 // says so rather than guessing.
 
 const local = (baseUrl: string, model = "") => serializeAgentEnv(providerPresetEnv({ baseUrl, model, token: "ollama" }));
+const gateway = (baseUrl: string, model = "") => serializeAgentEnv(gatewayPresetEnv({ baseUrl, billing: "key", model }));
+
+// taskProvider()'s gateway classification (lib/agentEnv.ts isGatewayEndpoint)
+// compares a project's ANTHROPIC_BASE_URL against the INSTANCE's own
+// CALANDRIA_LITELLM_BASE_URL, read fresh on every call — so a route-level test
+// has to point the instance at the fake gateway for the call to see it as
+// "gateway" rather than "custom". Restored after, since this env is otherwise
+// unset in a hermetic run (tests/setup.ts).
+async function withGatewayEnv<T>(url: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
+  process.env.CALANDRIA_LITELLM_BASE_URL = url;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
+    else process.env.CALANDRIA_LITELLM_BASE_URL = prev;
+  }
+}
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -23,14 +44,19 @@ function server(models: string[]) {
   return f;
 }
 
-const call = (id: string, baseUrl?: string) =>
-  GET(new Request(`http://test/api/projects/${id}/models${baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : ""}`), {
-    params: Promise.resolve({ id }),
-  });
+const call = (id: string, baseUrl?: string, agent?: string) => {
+  const params = new URLSearchParams();
+  if (baseUrl) params.set("base_url", baseUrl);
+  if (agent) params.set("agent", agent);
+  const qs = params.toString();
+  return GET(new Request(`http://test/api/projects/${id}/models${qs ? `?${qs}` : ""}`), { params: Promise.resolve({ id }) });
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
   clearEndpointProbeCache();
+  clearGatewayModelCache();
+  clearGatewayRates();
 });
 
 describe("GET /api/projects/[id]/models", () => {
@@ -87,6 +113,62 @@ describe("GET /api/projects/[id]/models", () => {
   });
 });
 
+describe("GET /api/projects/[id]/models — gateway", () => {
+  let gw: FakeGateway;
+  afterEach(async () => {
+    await gw?.close();
+  });
+
+  it("lists the gateway's catalog as model_options, filtered for the given agent", async () => {
+    gw = await startFakeGateway({
+      models: [
+        { name: "claude-sonnet-4-5", provider: "anthropic" },
+        { name: "gpt-5-codex", provider: "openai" },
+        { name: "gemini-3-flash", provider: "gemini" },
+      ],
+    });
+    const p = createProject({ name: "models-gateway" });
+    updateProject(p.id, { agent_env: gateway(gw.url) });
+
+    await withGatewayEnv(gw.url, async () => {
+      const claude = await (await call(p.id, undefined, "claude")).json();
+      expect(claude.api).toBe("gateway");
+      expect(claude.reachable).toBe(true);
+      expect(claude.models.sort()).toEqual(["claude-sonnet-4-5", "gemini-3-flash", "gpt-5-codex"].sort());
+      expect(claude.model_options.find((m: { value: string }) => m.value === "gpt-5-codex").sub).toContain("translated");
+
+      const codex = await (await call(p.id, undefined, "codex")).json();
+      expect(codex.models).toEqual(["gpt-5-codex"]);
+
+      const gemini = await (await call(p.id, undefined, "gemini")).json();
+      expect(gemini.models).toEqual(["gemini-3-flash"]);
+    });
+  });
+
+  it("defaults to the project's own agent when ?agent= is absent", async () => {
+    gw = await startFakeGateway({ models: [{ name: "gemini-3-flash", provider: "gemini" }] });
+    const p = createProject({ name: "models-gateway-default" });
+    updateProject(p.id, { default_agent: "gemini", agent_env: gateway(gw.url) });
+
+    await withGatewayEnv(gw.url, async () => {
+      const body = await (await call(p.id)).json();
+      expect(body.models).toEqual(["gemini-3-flash"]);
+    });
+  });
+
+  it("reports an unreachable gateway as an answer, with model_options empty", async () => {
+    const p = createProject({ name: "models-gateway-down" });
+    updateProject(p.id, { agent_env: gateway("http://127.0.0.1:1") });
+
+    await withGatewayEnv("http://127.0.0.1:1", async () => {
+      const body = await (await call(p.id)).json();
+      expect(body.reachable).toBe(false);
+      expect(body.model_options).toEqual([]);
+      expect(body.error).toBeTruthy();
+    });
+  });
+});
+
 describe("context window under a provider override", () => {
   it("is the catalog's for a cloud task and unknown for a local one", () => {
     const cloud = createProject({ name: "ctx-cloud" });
@@ -116,5 +198,30 @@ describe("context window under a provider override", () => {
     expect(getTaskContext(back.id).context_window).toBe(0);
     updateTask(back.id, { agent_env: serializeAgentEnv(cloudOverrideEnv()) });
     expect(getTaskContext(back.id).context_window).toBeGreaterThan(0);
+  });
+
+  it("is the gateway catalog's window for a gateway task, unlike a local/custom override", async () => {
+    const gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", max_input_tokens: 1_000_000 }] });
+    try {
+      await withGatewayEnv(gw.url, async () => {
+        const p = createProject({ name: "ctx-gateway" });
+        updateProject(p.id, { agent_env: gateway(gw.url, "claude-sonnet-4-5") });
+        const t = createTask({ project_id: p.id, title: "t", agent: "claude", model: "claude-sonnet-4-5" });
+        // Nothing probed yet: same "unknown" as any other override.
+        expect(getTaskContext(t.id).context_window).toBe(0);
+
+        await gatewayModelCatalog(gw.url, "");
+        expect(getTaskContext(t.id).context_window).toBe(1_000_000);
+        expect(listTasks(p.id).find((r) => r.id === t.id)!.context_window).toBe(1_000_000);
+
+        // A model the catalog never reported still reports unknown, same as a
+        // local override — the catalog is an ANSWER, not a blanket "gateway
+        // means sizable".
+        updateTask(t.id, { model: "some-unlisted-model" });
+        expect(getTaskContext(t.id).context_window).toBe(0);
+      });
+    } finally {
+      await gw.close();
+    }
   });
 });

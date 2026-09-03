@@ -452,10 +452,11 @@ export type ProviderKind = "cloud" | "local" | "custom" | "gateway";
  *   here and is left out of every total rather than folded in as a fake zero.
  * - `gateway` — the endpoint states its own prices (`GET /model/info`), so the
  *   figure is computable, but Calandria has to compute it: no CLI exposes the
- *   `x-litellm-response-cost` header LiteLLM answers with. Until the catalog
- *   step lands that table, a gateway turn records NULL and counts as unpriced,
- *   exactly like `custom` — the difference is that this one has an answer
- *   coming, and the ledger marks it `≈` rather than `+` when it does.
+ *   `x-litellm-response-cost` header LiteLLM answers with. `lib/gatewayPricing.ts`
+ *   keeps the rate table the catalog probe last reported and prices the turn's
+ *   own token counts against it; a model the last probe never saw still
+ *   records NULL and counts as unpriced, exactly like `custom`. Insights
+ *   marking the figure `≈` rather than `+` is a later step.
  */
 export type ProviderPricing = "vendor" | "free" | "unknown" | "gateway";
 
@@ -475,18 +476,29 @@ export function providerPricing(kind: ProviderKind): ProviderPricing {
 
 /**
  * What `task_usage.cost_usd` records for one turn: the driver's own figure, a
- * measured zero, or NULL for "nobody has stated a price". The runner asks here
- * from both of its ledger writes so they cannot drift, and so a fifth pricing
- * value has one place to be decided rather than two.
+ * measured zero, the gateway's own computed estimate, or NULL for "nobody has
+ * stated a price". The runner asks here from both of its ledger writes so
+ * they cannot drift, and so a fifth pricing value has one place to be decided
+ * rather than two.
+ *
+ * `gatewayEstimate` is the runner's own call into `lib/gatewayPricing.ts`'s
+ * `estimateCostUsd()`, passed in rather than computed here: it needs the
+ * turn's resolved model id and token counts, neither of which this function
+ * otherwise touches, and this module stays free of the usage-shape import
+ * that would pull in. Only read when `pricing` is `"gateway"`.
  */
-export function recordedCostUsd(pricing: ProviderPricing, vendorFigure: number | null | undefined): number | null {
+export function recordedCostUsd(
+  pricing: ProviderPricing,
+  vendorFigure: number | null | undefined,
+  gatewayEstimate?: number | null,
+): number | null {
   switch (pricing) {
     case "vendor":
       return vendorFigure ?? null;
     case "free":
       return 0;
-    // Both unpriced, for different reasons — see ProviderPricing above.
     case "gateway":
+      return gatewayEstimate ?? null;
     case "unknown":
       return null;
   }

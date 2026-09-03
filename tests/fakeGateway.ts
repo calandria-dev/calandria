@@ -19,9 +19,19 @@ import type { AddressInfo } from "node:net";
  * is why the card can show a version without a second call.
  */
 
+/** A model spec richer than a bare name — provider, window and mode, for
+ *  testing the picker's per-driver fit filter (lib/gatewayModels.ts). A plain
+ *  string is shorthand for `{ name }` (anthropic, 200k, chat). */
+export interface FakeGatewayModelSpec {
+  name: string;
+  provider?: string;
+  max_input_tokens?: number;
+  mode?: string;
+}
+
 export interface FakeGatewayOptions {
-  /** Model names in `/model/info`. */
-  models?: string[];
+  /** Model entries in `/model/info`. */
+  models?: (string | FakeGatewayModelSpec)[];
   /** With no LiteLLM database, `/key/info` 500s and there are no budgets. */
   database?: boolean;
   version?: string;
@@ -36,19 +46,20 @@ export interface FakeGateway {
   close(): Promise<void>;
 }
 
-function modelEntry(name: string) {
+function modelEntry(spec: FakeGatewayModelSpec) {
+  const provider = spec.provider ?? "anthropic";
   return {
-    model_name: name,
-    litellm_params: { model: `anthropic/${name}` },
+    model_name: spec.name,
+    litellm_params: { model: `${provider}/${spec.name}` },
     model_info: {
-      max_input_tokens: 200000,
+      max_input_tokens: spec.max_input_tokens ?? 200000,
       max_output_tokens: 64000,
       input_cost_per_token: 0.000003,
       output_cost_per_token: 0.000015,
       cache_read_input_token_cost: 0.0000003,
       cache_creation_input_token_cost: 0.00000375,
-      mode: "chat",
-      litellm_provider: "anthropic",
+      mode: spec.mode ?? "chat",
+      litellm_provider: provider,
       supports_function_calling: true,
       supports_prompt_caching: true,
       supports_vision: true,
@@ -57,7 +68,7 @@ function modelEntry(name: string) {
 }
 
 export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<FakeGateway> {
-  const models = opts.models ?? ["claude-sonnet-4-5", "gpt-5-codex"];
+  const models = (opts.models ?? ["claude-sonnet-4-5", "gpt-5-codex"]).map((m): FakeGatewayModelSpec => (typeof m === "string" ? { name: m } : m));
   const version = opts.version ?? "1.101.0";
   const calls: { path: string; key: string | null }[] = [];
 
@@ -83,7 +94,10 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       if (!opts.database) {
         return send(500, { error: { message: "Database not connected. Check your database URL.", type: "internal_server_error" } });
       }
-      return send(200, { key: "sk-test", info: { spend: 1.25, max_budget: 10, budget_reset_at: "2026-10-01T00:00:00Z", models } });
+      return send(200, {
+        key: "sk-test",
+        info: { spend: 1.25, max_budget: 10, budget_reset_at: "2026-10-01T00:00:00Z", models: models.map((m) => m.name) },
+      });
     }
     return send(404, { error: { message: `no route ${path}` } });
   });

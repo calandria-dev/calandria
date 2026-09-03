@@ -25,9 +25,13 @@
 import { normalizeBaseUrl } from "./agentEnv";
 import { MODEL_PROBE_MS } from "./config";
 
-/** Which of the two APIs answered. Not "which product": LM Studio, llama.cpp,
- *  vLLM and Ollama's own /v1 all answer the OpenAI shape. */
-export type EndpointApi = "ollama" | "openai";
+/** Which API answered. Not "which product": LM Studio, llama.cpp, vLLM and
+ *  Ollama's own /v1 all answer the OpenAI shape. "gateway" is never returned
+ *  by this module — it's the LiteLLM gateway branch in
+ *  app/api/projects/[id]/models/route.ts, which answers from
+ *  lib/gatewayModels.ts instead of probing here — but lives on the shared
+ *  type so the one response shape covers both branches. */
+export type EndpointApi = "ollama" | "openai" | "gateway";
 
 export interface EndpointModels {
   /** The normalized base URL that was probed ("" when there was none to probe). */

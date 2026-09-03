@@ -10,6 +10,8 @@ import type { AgentCapabilities, AgentModelOption } from "../types";
 import { BACKGROUND_LINGER_ENABLED } from "../../config";
 import { configuredProvider, claudeDefaultModels } from "./provider";
 import { resolvedModelIds } from "./modelIds";
+import { gatewayBaseUrl, isGatewayEndpoint } from "../../agentEnv";
+import { gatewayModelOptions, lastGatewayModelCatalog } from "../../gatewayModels";
 
 // Every value below is a string `claude --model` accepts: a family alias
 // ("opus" → the current Opus), a `[1m]` variant (the 1M-context beta of that
@@ -327,6 +329,19 @@ export function subscriptionModels(ids: Record<string, string>): AgentModelOptio
  *  code — and, on the subscription path, because the alias resolution is a
  *  background probe's answer that may land at any point after boot. */
 export function claudeCapabilities(env: Record<string, string | undefined> = process.env): AgentCapabilities {
+  // The gateway check comes first and reads ANTHROPIC_BASE_URL directly rather
+  // than going through configuredProvider(env): a gateway override is a
+  // Calandria-level redirect (lib/agentEnv.ts), invisible to the CLI's own
+  // backend-selection env vars, so configuredProvider(env) would read it as a
+  // bare "anthropic" login and miss it entirely.
+  const gateway = gatewayBaseUrl();
+  if (gateway && isGatewayEndpoint(env.ANTHROPIC_BASE_URL, gateway)) {
+    const catalog = lastGatewayModelCatalog(gateway);
+    // No probe yet (or the last one failed) is a supported state, same as
+    // every other branch below: the static catalog stands until one lands.
+    if (catalog && catalog.length) return { ...CLAUDE_CAPABILITIES, models: gatewayModelOptions(catalog, "claude") };
+    return CLAUDE_CAPABILITIES;
+  }
   // Bedrock deliberately gets no special-casing here: this fork runs Vertex and
   // has no Bedrock instance to measure against, and upstream's Bedrock list
   // (b5d995f) drops the `[1m]` variants — which demonstrably DO work on Vertex,

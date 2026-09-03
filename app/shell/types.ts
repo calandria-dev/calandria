@@ -419,12 +419,15 @@ export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: 
 // LOGIN and says nothing about a local server: a project on Ollama runs on a
 // login it never uses, and fails with a perfectly good one when Ollama is down.
 // So reachability is its own fact, reported separately.
-export type EndpointApiT = "ollama" | "openai";
+export type EndpointApiT = "ollama" | "openai" | "gateway";
 /** The instance-wide default endpoint on GET /api/agents — a count, since
  *  nothing there needs the ids. */
 export interface EndpointStatusT { base_url: string; reachable: boolean; api: EndpointApiT | null; model_count: number; error: string | null }
-/** One project's endpoint, with the ids — GET /api/projects/[id]/models. */
-export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; error: string | null }
+/** One project's endpoint, with the ids — GET /api/projects/[id]/models.
+ *  `model_options` is only present for the gateway branch: the richer
+ *  AgentModelOption[] the picker can grow into (group, price, contextWindow)
+ *  instead of the plain suggestion strings `models` already carries. */
+export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; model_options?: AgentModelOption[]; error: string | null }
 
 // Mirrors lib/gatewayHealth.ts. `model_count` and `database` are null when the
 // gateway didn't say — a proxy with no Postgres reports `database: false` and

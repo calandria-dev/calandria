@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The driver contract test: feed a SCRIPTED fake driver through lib/runner.ts
 // and assert the persistence + publish behavior downstream of the seam is
@@ -69,7 +69,10 @@ import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe, subscribeGlobal } from "@/lib/events";
 import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
-import { cloudOverrideEnv } from "@/lib/agentEnv";
+import { cloudOverrideEnv, gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
+import { gatewayModelCatalog, clearGatewayModelCache } from "@/lib/gatewayModels";
+import { clearGatewayRates } from "@/lib/gatewayPricing";
+import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 // Collect every event the runner publishes for a task until turn_end.
 function collectEvents(taskId: string): { events: TaskStreamEvent[]; done: Promise<void> } {
@@ -592,5 +595,79 @@ describe("provider override usage accounting", () => {
     expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0.25, turns: 1, unpriced_turns: 0 });
     const { getDb } = await import("@/lib/db");
     expect((getDb().prepare("SELECT provider FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string }).provider).toBe("");
+  });
+});
+
+// The gateway is the one override kind that gets a REAL computed figure
+// instead of a measured zero or an unpriced NULL (docs/design/litellm.md,
+// "Model catalog, context windows and prices"): lib/gatewayPricing.ts prices
+// the turn's own token counts against the resolved model's rate from the last
+// catalog probe.
+describe("gateway provider usage accounting", () => {
+  let gw: FakeGateway;
+
+  async function withGatewayEnv<T>(url: string, fn: () => Promise<T>): Promise<T> {
+    const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
+    process.env.CALANDRIA_LITELLM_BASE_URL = url;
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
+      else process.env.CALANDRIA_LITELLM_BASE_URL = prev;
+    }
+  }
+
+  afterEach(async () => {
+    await gw?.close();
+    clearGatewayModelCache();
+    clearGatewayRates();
+  });
+
+  it("bills a gateway turn at the catalog's own rate, not the driver's figure", async () => {
+    gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", provider: "anthropic" }] });
+    await withGatewayEnv(gw.url, async () => {
+      await gatewayModelCatalog(gw.url, "");
+      const project = createProject({ name: "Gateway" });
+      updateProject(project.id, { agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: gw.url, billing: "key", model: "claude-sonnet-4-5" })) });
+      const task = createTask({ project_id: project.id, title: "T", description: "" });
+      script([
+        { type: "session", sessionId: "gw-1" },
+        { type: "model", model: "claude-sonnet-4-5" },
+        // The driver's own cost_usd (Claude Code prices per api.anthropic.com's
+        // list price, invisible to a gateway redirect) must NOT be what lands —
+        // the gateway's own rate does instead.
+        { type: "usage", usage: { cost_usd: 999, input_tokens: 1000, output_tokens: 500, cache_read_tokens: 0, cache_creation_tokens: 0 } },
+        { type: "done", sessionId: "gw-1" },
+      ]);
+      const { events, done } = collectEvents(task.id);
+      await startResumeTurn(task, getProject(project.id)!, "go");
+      await done;
+      // 1000 * 0.000003 + 500 * 0.000015 (tests/fakeGateway.ts's fixed rates)
+      const expected = 1000 * 0.000003 + 500 * 0.000015;
+      expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: expected, turns: 1, unpriced_turns: 0 });
+      const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
+      expect(usageEv.usage.cost_usd).toBeCloseTo(expected, 10);
+      expect(usageEv.unpriced).toBe(false);
+    });
+  });
+
+  it("records NULL (unpriced) for a gateway model the last probe never reported", async () => {
+    gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", provider: "anthropic" }] });
+    await withGatewayEnv(gw.url, async () => {
+      await gatewayModelCatalog(gw.url, "");
+      const project = createProject({ name: "Gateway-unpriced" });
+      updateProject(project.id, { agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: gw.url, billing: "key", model: "some-unlisted-model" })) });
+      const task = createTask({ project_id: project.id, title: "T", description: "" });
+      script([
+        { type: "session", sessionId: "gw-2" },
+        { type: "model", model: "some-unlisted-model" },
+        { type: "usage", usage: { cost_usd: 0.5, input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } },
+        { type: "done", sessionId: "gw-2" },
+      ]);
+      const { done } = collectEvents(task.id);
+      await startResumeTurn(task, getProject(project.id)!, "go");
+      await done;
+      expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, turns: 1, unpriced_turns: 1 });
+    });
   });
 });
