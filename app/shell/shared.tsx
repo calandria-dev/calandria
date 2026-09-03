@@ -104,13 +104,18 @@ export function AgentBadge({ agent, label, multi }: { agent?: string | null; lab
 // Renders nothing for the cloud, so single-endpoint instances never see it.
 export function ProviderBadge({ provider }: { provider: AgentProvider }) {
   if (provider.kind === "cloud") return null;
-  const what = provider.kind === "local" ? "local model server" : "custom endpoint";
-  // The two non-cloud kinds are billed differently and the badge has to say so:
-  // a local server really is free, while a custom base URL may be a paid third
-  // party we have no prices for. See ProviderPricing in lib/agentEnv.ts.
+  const what = provider.kind === "local" ? "local model server" : provider.kind === "gateway" ? "LiteLLM gateway" : "custom endpoint";
+  // The three non-cloud kinds are billed differently and the badge has to say
+  // so: a local server really is free, a custom base URL may be a paid third
+  // party we have no prices for, and a gateway knows its own prices but bills
+  // either its key or the CLI's own plan. See ProviderPricing in lib/agentEnv.ts.
   const billing = provider.pricing === "free"
     ? "Not cloud spend: turns against it cost nothing."
-    : "Not cloud spend, and not free either — its prices are unknown, so turns against it are recorded unpriced and left out of cost totals.";
+    : provider.pricing === "gateway"
+      ? provider.gateway_billing === "subscription"
+        ? "Billed to your own plan: the gateway forwards the CLI's login. Turns are recorded unpriced and left out of cost totals."
+        : "Billed to the gateway's key, not your plan. Turns are recorded unpriced and left out of cost totals."
+      : "Not cloud spend, and not free either — its prices are unknown, so turns against it are recorded unpriced and left out of cost totals.";
   const title = `Runs against ${provider.host} (${what}${provider.model ? `, ${provider.model}` : ""}). ${billing}`;
   return (
     <span className={`provider-badge ${provider.kind}`} role="img" aria-label={title} title={title}>

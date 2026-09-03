@@ -1,3 +1,4 @@
+import { readEnv } from "./env.mjs";
 import type { Project, Task } from "./types";
 
 /**
@@ -85,7 +86,27 @@ export const AGENT_ENV_KEYS = [
   // read, for a user whose ~/.codex/config.toml already selects one of those.
   "OLLAMA_HOST",
   "CODEX_OSS_BASE_URL",
+  // Antigravity — the Gemini-native endpoint its CLI takes (docs/design/litellm.md
+  // measured `agy` sending POST /v1beta/models/<model>:streamGenerateContent
+  // there) and the model to run. Written by the gateway preset; the Antigravity
+  // half of the gateway lands with that driver's step.
+  "GOOGLE_GEMINI_BASE_URL",
+  "GEMINI_MODEL",
+  // Which account a LiteLLM-gateway turn bills. A marker, not a credential:
+  // "key" bills the gateway key's own API spend, "subscription" leaves the
+  // CLI's own login in place and lets the gateway forward it. See
+  // `gatewayPresetEnv` and the gateway block in `agentTurnEnv`.
+  "CALANDRIA_GATEWAY_BILLING",
 ] as const;
+
+// `ANTHROPIC_CUSTOM_HEADERS` is deliberately NOT on that list, and must not
+// join it. It is Claude Code's only knob for arbitrary request headers, so a
+// project row that could set it would be a way to make every turn in that
+// project send anything at all to whatever endpoint the same row names.
+// `agentTurnEnv()` composes it per turn instead, for the gateway kind only,
+// from the instance's own key and the ids of the project and task actually
+// running — which also keeps those ids current, where a stored header would go
+// stale the moment a task moved project.
 
 export type AgentEnvKey = (typeof AGENT_ENV_KEYS)[number];
 export type AgentEnv = Partial<Record<AgentEnvKey, string>>;
@@ -165,6 +186,52 @@ export function redirectsAnthropic(baseUrl: string | undefined): boolean {
   return !!host && !ANTHROPIC_HOST.test(host.replace(/:\d+$/, ""));
 }
 
+// ---- the LiteLLM gateway (docs/design/litellm.md) ----
+
+/** Which account a gateway turn bills. */
+export type GatewayBilling = "key" | "subscription";
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The instance's LiteLLM gateway (`CALANDRIA_LITELLM_BASE_URL`), or null when
+ * none is configured — which is what hides the Gateway preset everywhere.
+ *
+ * Read here rather than taken from `lib/config.ts` because this module is
+ * imported by the client too (the settings form and the session badge both
+ * describe a stored override), and `lib/config.ts` reaches for `node:path` and
+ * `node:os`. Same crossing as `lib/features.ts`: the server reads the env, and
+ * `app/layout.tsx` hands the browser the answer on `window`, so both sides
+ * classify a stored override identically and SSR and hydration agree.
+ * `lib/config.ts` re-exports this as `LITELLM_BASE_URL` so server code has one
+ * name for it.
+ */
+export function gatewayBaseUrl(): string | null {
+  const raw =
+    typeof window !== "undefined"
+      ? (window as { __GATEWAY_BASE_URL?: string }).__GATEWAY_BASE_URL
+      : readEnv("CALANDRIA_LITELLM_BASE_URL");
+  return normalizeBaseUrl(String(raw ?? "")) || null;
+}
+
+/**
+ * Whether a base URL IS the configured gateway. Origin equality rather than a
+ * string compare, so `http://gw:4000`, `http://gw:4000/` and `http://gw:4000/v1`
+ * are all the one gateway — which they have to be, since the preset writes the
+ * OpenAI surface as `<gateway>/v1` and the Anthropic one as `<gateway>`.
+ */
+export function isGatewayEndpoint(url: string | null | undefined, gateway: string | null = gatewayBaseUrl()): boolean {
+  if (!url || !gateway) return false;
+  const a = originOf(url);
+  return !!a && a === originOf(gateway);
+}
+
 /**
  * Lay a provider override over an env, in place. Three rules beyond "copy the
  * keys in", each one about credentials:
@@ -204,19 +271,80 @@ export function applyProviderEnv(out: Record<string, string>, override: AgentEnv
 }
 
 export function agentTurnEnv(
-  project: Pick<Project, "port" | "agent_env"> | null | undefined,
-  task?: Pick<Task, "agent_env"> | null,
+  project: (Pick<Project, "port" | "agent_env"> & Partial<Pick<Project, "id">>) | null | undefined,
+  task?: (Pick<Task, "agent_env"> & Partial<Pick<Task, "id" | "agent">>) | null,
   base: Readonly<Record<string, string | undefined>> = process.env,
+  gateway: string | null = gatewayBaseUrl(),
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v !== undefined) out[k] = v;
   }
   delete out.NODE_ENV;
-  applyProviderEnv(out, providerEnvFor(project, task));
+  const override = providerEnvFor(project, task);
+  applyProviderEnv(out, override);
+  // The instance's gateway key never reaches a spawned CLI under its own name.
+  // It is an instance credential that no agent process has any use for, and the
+  // one place it belongs in a turn's environment — the gateway header below —
+  // is composed here. Read before the delete so the block can still use it.
+  const gatewayKey = (out.CALANDRIA_LITELLM_KEY ?? "").trim();
+  delete out.CALANDRIA_LITELLM_KEY;
+  applyGatewayEnv(out, describeProvider(override, gateway), {
+    key: gatewayKey,
+    project: project?.id,
+    task: task?.id,
+    agent: task?.agent,
+  });
   if (project?.port) out.PORT = String(project.port);
   else delete out.PORT;
   return out;
+}
+
+/**
+ * The part of a gateway turn's environment that is composed rather than stored
+ * (docs/design/litellm.md, "The gateway provider kind"). Nothing here can come
+ * from `agent_env`: the header carries a credential and the ids of the project
+ * and task actually running, and the credential variable decides who pays.
+ *
+ * - `x-litellm-api-key` is how Claude Code authenticates to LiteLLM's proxy
+ *   layer while its own `Authorization` header carries whatever the billing
+ *   mode below put there. `ANTHROPIC_CUSTOM_HEADERS` is the CLI's only knob for
+ *   it, measured landing on every request (Claude Code 2.1.257).
+ * - `x-litellm-tags` is what makes LiteLLM's own spend views break down by
+ *   project and task without Calandria writing anything.
+ * - Billing `key` sends the gateway key as `ANTHROPIC_AUTH_TOKEN`, so the turn
+ *   bills that key's account. Billing `subscription` sets NO credential
+ *   variable: the CLI keeps its own `/login` and the gateway forwards it
+ *   (`forward_client_headers_to_llm_api: true`, measured working through
+ *   LiteLLM 1.101.0). Either way the inherited Anthropic credentials are
+ *   already gone — the gateway is a redirect away from Anthropic, so
+ *   `applyProviderEnv` dropped them before this runs.
+ */
+function applyGatewayEnv(
+  out: Record<string, string>,
+  provider: AgentProvider,
+  ctx: { key: string; project?: string; task?: string; agent?: string },
+): void {
+  if (provider.kind !== "gateway") return;
+  // The headers are newline-separated, so a key carrying one would append a
+  // header of its own. Nothing should be able to write such a key — the setter
+  // refuses it — but this is the line where it would matter, so it is checked
+  // here rather than trusted from three callers away.
+  const key = /[\0-\x1f\x7f]/.test(ctx.key) ? "" : ctx.key;
+  const headers: string[] = [];
+  if (key) headers.push(`x-litellm-api-key: Bearer ${key}`);
+  const tags = ["calandria"];
+  if (ctx.project) tags.push(`project:${ctx.project}`);
+  if (ctx.task) tags.push(`task:${ctx.task}`);
+  if (ctx.agent) tags.push(`agent:${ctx.agent}`);
+  headers.push(`x-litellm-tags: ${tags.join(",")}`);
+  out.ANTHROPIC_CUSTOM_HEADERS = headers.join("\n");
+  if (provider.gateway_billing === "subscription") {
+    delete out.ANTHROPIC_AUTH_TOKEN;
+    delete out.ANTHROPIC_API_KEY;
+  } else if (key) {
+    out.ANTHROPIC_AUTH_TOKEN = key;
+  }
 }
 
 // ---- presets: what the settings form and `suggest_task` write ----
@@ -256,6 +384,42 @@ export function providerPresetEnv(input: { baseUrl: string; model?: string; toke
   return env;
 }
 
+/**
+ * The override for the instance's LiteLLM gateway. Same shape as the local
+ * preset minus the one thing that matters: NO credential. The gateway key is
+ * an instance secret (`CALANDRIA_LITELLM_KEY`, or the persisted file behind
+ * Settings → Agents) and `agent_env` is served to the browser by
+ * `GET /api/projects`, so a key stored here would be a key anyone with the app
+ * open could read. `agentTurnEnv()` resolves it at turn time instead.
+ *
+ * `billing` is the marker that decides who pays, and it is stored rather than
+ * derived because both modes are legitimate against the same URL: a key-billed
+ * project and a subscription-billed one differ in nothing else.
+ */
+export function gatewayPresetEnv(input: { baseUrl: string; billing: GatewayBilling; model?: string }): AgentEnv {
+  const base = normalizeBaseUrl(input.baseUrl);
+  if (!base) return {};
+  const env: AgentEnv = {
+    ANTHROPIC_BASE_URL: base,
+    OPENAI_BASE_URL: `${base}/v1`,
+    GOOGLE_GEMINI_BASE_URL: base,
+    CALANDRIA_GATEWAY_BILLING: input.billing === "subscription" ? "subscription" : "key",
+  };
+  const model = input.model?.trim() ?? "";
+  if (model) {
+    // Claude Code's own `/model` list cannot see a LiteLLM catalog, so the
+    // picked id is written to the bare aliases as well as ANTHROPIC_MODEL —
+    // the same reason the local preset does it.
+    env.ANTHROPIC_MODEL = model;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+    env.CODEX_MODEL = model;
+    env.GEMINI_MODEL = model;
+  }
+  return env;
+}
+
 /** A task-level override that puts a task back on the agent's own cloud login
  *  inside a project whose default is a local model: every allowlisted key set
  *  to `""`, which `applyProviderEnv` reads as "unset". */
@@ -267,7 +431,7 @@ export function cloudOverrideEnv(): AgentEnv {
 
 // ---- describing an override, for the badge, the usage ledger and the form ----
 
-export type ProviderKind = "cloud" | "local" | "custom";
+export type ProviderKind = "cloud" | "local" | "custom" | "gateway";
 
 /**
  * What a turn against this endpoint is worth, which is a different question
@@ -286,18 +450,54 @@ export type ProviderKind = "cloud" | "local" | "custom";
  *   it over-reports and recording 0 under-reports. Neither number is defensible,
  *   so the ledger records neither — see `task_usage.cost_usd`, which is NULL
  *   here and is left out of every total rather than folded in as a fake zero.
+ * - `gateway` — the endpoint states its own prices (`GET /model/info`), so the
+ *   figure is computable, but Calandria has to compute it: no CLI exposes the
+ *   `x-litellm-response-cost` header LiteLLM answers with. Until the catalog
+ *   step lands that table, a gateway turn records NULL and counts as unpriced,
+ *   exactly like `custom` — the difference is that this one has an answer
+ *   coming, and the ledger marks it `≈` rather than `+` when it does.
  */
-export type ProviderPricing = "vendor" | "free" | "unknown";
+export type ProviderPricing = "vendor" | "free" | "unknown" | "gateway";
+
+/** Every kind maps explicitly. A cascading ternary would quietly hand a kind
+ *  added later whatever the last arm happened to be, which for the first three
+ *  was "unpriced" and could as easily have been "bill it as the vendor's". */
+const PRICING: Record<ProviderKind, ProviderPricing> = {
+  cloud: "vendor",
+  local: "free",
+  custom: "unknown",
+  gateway: "gateway",
+};
 
 export function providerPricing(kind: ProviderKind): ProviderPricing {
-  return kind === "cloud" ? "vendor" : kind === "local" ? "free" : "unknown";
+  return PRICING[kind];
+}
+
+/**
+ * What `task_usage.cost_usd` records for one turn: the driver's own figure, a
+ * measured zero, or NULL for "nobody has stated a price". The runner asks here
+ * from both of its ledger writes so they cannot drift, and so a fifth pricing
+ * value has one place to be decided rather than two.
+ */
+export function recordedCostUsd(pricing: ProviderPricing, vendorFigure: number | null | undefined): number | null {
+  switch (pricing) {
+    case "vendor":
+      return vendorFigure ?? null;
+    case "free":
+      return 0;
+    // Both unpriced, for different reasons — see ProviderPricing above.
+    case "gateway":
+    case "unknown":
+      return null;
+  }
 }
 
 export interface AgentProvider {
   /** cloud = the agent's own login, nothing overridden. local = an endpoint on
-   *  this machine / the Docker host / a private network. custom = any other
-   *  base URL. Both non-cloud kinds are "not the vendor's spend" for billing,
-   *  but they are not the same fact — see `pricing`. */
+   *  this machine / the Docker host / a private network. gateway = the
+   *  instance's own LiteLLM gateway, whatever address that is. custom = any
+   *  other base URL. None of the three non-cloud kinds is "the vendor's spend"
+   *  for billing, but they are not the same fact — see `pricing`. */
   kind: ProviderKind;
   /** How the ledger should treat this turn's dollar figure. Derived from
    *  `kind` so the badge, the ledger and the settings form can never disagree
@@ -308,9 +508,17 @@ export interface AgentProvider {
   host: string;
   anthropic_base_url: string | null;
   openai_base_url: string | null;
-  /** The model the override pins (ANTHROPIC_MODEL / CODEX_MODEL), if any. */
+  gemini_base_url: string | null;
+  /** The model the override pins (ANTHROPIC_MODEL / CODEX_MODEL / GEMINI_MODEL),
+   *  if any. */
   model: string | null;
   auth_token: string | null;
+  /** Who a gateway turn bills, from the stored `CALANDRIA_GATEWAY_BILLING`
+   *  marker; null for every other kind. An unmarked override that happens to
+   *  name the gateway address — the "type the URL into Custom" baseline that
+   *  worked before this preset existed — reads as `key`, which is what it was
+   *  doing. */
+  gateway_billing: GatewayBilling | null;
 }
 
 const LOCAL_HOST = /^(localhost|127\.(\d+\.){2}\d+|\[::1\]|0\.0\.0\.0|host\.docker\.internal|host\.containers\.internal|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[^.]+\.local)$/i;
@@ -321,23 +529,35 @@ export function isLocalEndpoint(url: string | null | undefined): boolean {
   return !!host && LOCAL_HOST.test(host.replace(/:\d+$/, ""));
 }
 
-/** What an override (already merged, see `providerEnvFor`) amounts to. */
-export function describeProvider(env: AgentEnv): AgentProvider {
+/**
+ * What an override (already merged, see `providerEnvFor`) amounts to.
+ *
+ * `gateway` outranks `local`, since a LiteLLM proxy on this machine is still a
+ * gateway: the interesting fact about it is that it meters and prices what it
+ * forwards, not where it is listening. `gateway` is passed in rather than read
+ * inside so the suite can describe an override against a stated gateway
+ * without touching the process env; the default is the instance's own.
+ */
+export function describeProvider(env: AgentEnv, gateway: string | null = gatewayBaseUrl()): AgentProvider {
   const anthropic = env.ANTHROPIC_BASE_URL || null;
   const openai = env.OPENAI_BASE_URL || null;
-  const first = anthropic ?? openai;
-  const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || null;
+  const gemini = env.GOOGLE_GEMINI_BASE_URL || null;
+  const first = anthropic ?? openai ?? gemini;
+  const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.GEMINI_MODEL || null;
   const auth_token = env.ANTHROPIC_AUTH_TOKEN || null;
-  if (!first) return { kind: "cloud", pricing: "vendor", host: "", anthropic_base_url: null, openai_base_url: null, model, auth_token };
-  const kind: ProviderKind = isLocalEndpoint(first) ? "local" : "custom";
+  const bare = { anthropic_base_url: null, openai_base_url: null, gemini_base_url: null, gateway_billing: null };
+  if (!first) return { kind: "cloud", pricing: "vendor", host: "", ...bare, model, auth_token };
+  const kind: ProviderKind = isGatewayEndpoint(first, gateway) ? "gateway" : isLocalEndpoint(first) ? "local" : "custom";
   return {
     kind,
     pricing: providerPricing(kind),
     host: hostOf(first) ?? first,
     anthropic_base_url: anthropic,
     openai_base_url: openai,
+    gemini_base_url: gemini,
     model,
     auth_token,
+    gateway_billing: kind !== "gateway" ? null : env.CALANDRIA_GATEWAY_BILLING === "subscription" ? "subscription" : "key",
   };
 }
 
@@ -346,6 +566,7 @@ export function describeProvider(env: AgentEnv): AgentProvider {
 export function taskProvider(
   project: Pick<Project, "agent_env"> | null | undefined,
   task?: Pick<Task, "agent_env"> | null,
+  gateway: string | null = gatewayBaseUrl(),
 ): AgentProvider {
-  return describeProvider(providerEnvFor(project, task));
+  return describeProvider(providerEnvFor(project, task), gateway);
 }

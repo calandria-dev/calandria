@@ -7,6 +7,7 @@ import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { SCHEMA_VERSION, schemaTooNew, schemaTooNewMessage } from "./schema-version.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
+import { loadPersistedGatewayKey } from "./litellm-key";
 
 // Single shared connection. Stored outside the repo (CALANDRIA_DB_DIR, default
 // ~/.calandria) so `git clean`/re-clone can't wipe it. The file is calandria.db
@@ -645,6 +646,9 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
+  // And the LiteLLM gateway key, which the Gateway model provider resolves at
+  // turn time rather than storing in any project row (lib/litellm-key.ts).
+  loadPersistedGatewayKey();
 }
 
 /**

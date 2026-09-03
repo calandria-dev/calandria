@@ -5,6 +5,7 @@ import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 import { DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "./agentToolGuard.mjs";
+import { gatewayBaseUrl } from "./agentEnv";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
@@ -363,6 +364,29 @@ export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
  */
 export const LOCAL_MODEL_BASE_URL =
   String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+
+/**
+ * The LiteLLM gateway this instance runs the "Gateway" model provider against
+ * (docs/design/litellm.md, docs/AGENTS.md "LiteLLM gateway"). UNSET IS THE OFF
+ * SWITCH: with no address there is no gateway to route to, so the preset is
+ * absent from the project settings form and the health card is not rendered or
+ * probed.
+ *
+ * The value is resolved by `gatewayBaseUrl()` rather than read here, because
+ * the client has to classify a stored override the same way the server does
+ * and cannot import this file. Re-exported so server code has one name for it.
+ */
+export const LITELLM_BASE_URL = gatewayBaseUrl();
+
+/**
+ * Whether hosted MCP servers on that gateway may be mounted at all. On by
+ * default and unused until the hosted-MCP step: it exists now so an operator
+ * who wants the routing without the tool surface can say so once, rather than
+ * discovering the knob only after servers appear.
+ */
+export const LITELLM_MCP = !["0", "off", "false", "no"].includes(
+  String(readEnv("CALANDRIA_LITELLM_MCP") || "").toLowerCase(),
+);
 
 /**
  * How long Calandria will wait for a local model server to say which models it
