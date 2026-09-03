@@ -313,12 +313,16 @@ describe("capabilities", () => {
 describe("gateway routing", () => {
   const GW = "http://gw.example.com:4000";
   let realHome: string | undefined;
+  let realUserProfile: string | undefined;
   let tmpHome: string;
 
   beforeEach(() => {
     realHome = process.env.HOME;
+    realUserProfile = process.env.USERPROFILE;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-gemini-gw-"));
     process.env.HOME = tmpHome;
+    // os.homedir() reads USERPROFILE on Windows, not HOME.
+    process.env.USERPROFILE = tmpHome;
     process.env.CALANDRIA_LITELLM_BASE_URL = GW;
     process.env.CALANDRIA_LITELLM_KEY = "sk-litellm";
   });
@@ -326,6 +330,8 @@ describe("gateway routing", () => {
   afterEach(() => {
     if (realHome === undefined) delete process.env.HOME;
     else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
     delete process.env.CALANDRIA_LITELLM_BASE_URL;
     delete process.env.CALANDRIA_LITELLM_KEY;
     setSetting("gemini_api_key", "");
