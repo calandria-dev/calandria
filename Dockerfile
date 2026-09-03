@@ -82,12 +82,19 @@ RUN apt-get update \
 # `apt-cache madison gh` (or the cli.github.com Packages index) for the
 # current version before bumping, then rebuild uncached to confirm the new
 # layer actually pulls it.
+# You should not have to notice this yourself: cli.github.com carries ONLY its
+# newest release, so a gh release does not leave this pin old, it leaves it
+# gone. `Pin drift` (.github/workflows/pin-drift.yml) reads the repo's Packages
+# index daily and files an issue when this line falls behind, and
+# publish-image.yml's Sunday cron builds uncached so a rotted pin cannot hide
+# behind a cached layer. Keep the `gh=` spelling on one line; the check's regex
+# reads it from here.
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.99.0 \
+  && apt-get install -y --no-install-recommends gh=2.100.0 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
@@ -139,6 +146,9 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # Refresh both digests together when bumping AGY_VERSION; they come from
 #   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
 # (and .../linux_arm64.json), whose `version` field is what the ARG must match.
+# `Pin drift` (.github/workflows/pin-drift.yml) reads those same two manifests
+# daily and files an issue when this ARG or either digest falls behind, so the
+# bump is scheduled work rather than a build failure (issue #182).
 #
 # The binary self-updates in the background by default, which would silently
 # replace this pin mid-turn — AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
