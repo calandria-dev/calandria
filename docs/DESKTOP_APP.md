@@ -177,6 +177,14 @@ carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
 - Copy and paste: Ctrl/Cmd+C in the renderer reaches the OS clipboard and
   Ctrl/Cmd+V comes back. The menu test above asserts the Edit roles exist; this
   asserts they do something.
+- Right-click: a context menu built from what is under the cursor. Electron
+  shows none on its own, so before `wireContextMenu` in `desktop/main.js` the
+  mouse half of copy and paste did nothing. An editable field gets Undo, Redo,
+  Cut, Copy, Paste and Select all, each enabled by Chromium's `editFlags`, plus
+  the spellchecker's suggestions; a selection gets Copy; a link gets Copy link
+  and Open in browser. xterm stages the terminal selection in its hidden
+  textarea on a right-click and relies on the native menu from there, so the
+  terminal is covered by the same template.
 - One smoke path through the app inside the window, so SSE and the renderer are
   known to work under Electron's own network stack — plus the terminal panel,
   which is xterm over the `/pty` upgrade `server.js` proxies to the sidecar and
@@ -343,6 +351,8 @@ serves the shell and ordinary browser tabs at the same moment.
 Menu roles run under a real menubar there too, which
 matters more here than anywhere else: on macOS `{ role: "editMenu" }` *is*
 Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
+The right-click menu is separate from the menubar and is missing on every
+platform until main builds one; see the "Right-click" item above.
 
 What remains open is distribution, not behaviour. Signing + notarization are
 required for anything downloaded (Gatekeeper blocks unsigned apps by default);

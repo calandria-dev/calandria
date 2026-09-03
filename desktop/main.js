@@ -22,7 +22,7 @@
  */
 "use strict";
 
-const { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, dialog, session } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, dialog, session, clipboard } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
@@ -359,6 +359,80 @@ function serviceTokenFor(inst) {
   return (supervisor?.effectiveEnv || process.env).SERVICE_TOKEN || null;
 }
 
+/**
+ * The right-click menu. Electron ships NONE: a BrowserWindow shows nothing on
+ * a right-click until the main process builds a menu for it, so the shell had
+ * the keyboard half of copy/paste (the Edit roles in `buildMenu()`) and not
+ * the mouse half — right-clicking a selection, the composer or the terminal
+ * simply did nothing, which reads as a broken app to anyone who reaches for
+ * the mouse first.
+ *
+ * Built per click from what Chromium says is under the cursor, the way a
+ * browser's own menu is: an editable field gets the full edit set with each
+ * item enabled by `editFlags`, plus the spellchecker's suggestions (the window
+ * turns `spellcheck` on, so the red underline was already there with no way to
+ * act on it); a selection anywhere gets Copy; a link gets Copy link and Open
+ * in browser, through the same `shell.openExternal` the navigation policy
+ * uses. The roles act on the focused webContents, so one template serves
+ * both windows, and xterm is covered without special-casing: on a right-click
+ * it stages the terminal selection in its hidden textarea and expects the
+ * NATIVE menu's Copy and Paste to do the rest, which is exactly what it gets.
+ *
+ * `desktop/e2e/01-shell.spec.ts` drives a real right-click through it.
+ */
+function contextMenuTemplate(params, contents) {
+  const flags = params.editFlags || {};
+  const items = [];
+  if (params.linkURL) {
+    items.push(
+      { label: "Open link in browser", click: () => shell.openExternal(params.linkURL) },
+      { label: "Copy link", click: () => clipboard.writeText(params.linkURL) },
+      { type: "separator" },
+    );
+  }
+  if (params.isEditable) {
+    const suggestions = params.dictionarySuggestions || [];
+    for (const word of suggestions) {
+      items.push({ label: word, click: () => contents?.replaceMisspelling(word) });
+    }
+    if (params.misspelledWord) {
+      items.push(
+        {
+          label: "Add to dictionary",
+          click: () => contents?.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        },
+        { type: "separator" },
+      );
+    }
+    items.push(
+      { role: "undo", enabled: !!flags.canUndo },
+      { role: "redo", enabled: !!flags.canRedo },
+      { type: "separator" },
+      { role: "cut", enabled: !!flags.canCut },
+      { role: "copy", enabled: !!flags.canCopy },
+      { role: "paste", enabled: !!flags.canPaste },
+      { type: "separator" },
+      { role: "selectAll", enabled: flags.canSelectAll !== false },
+    );
+  } else {
+    // Not editable: Copy for a selection, Select all for a page, and a Copy
+    // that is visibly disabled rather than no menu at all when there is
+    // nothing under the cursor — "nothing happened" is the bug being fixed.
+    items.push(
+      { role: "copy", enabled: !!(params.selectionText || "").trim() && flags.canCopy !== false },
+      { role: "selectAll", enabled: flags.canSelectAll !== false },
+    );
+  }
+  return items;
+}
+
+function wireContextMenu(window) {
+  window.webContents.on("context-menu", (_event, params) => {
+    const template = contextMenuTemplate(params, window.webContents);
+    Menu.buildFromTemplate(template).popup({ window, x: params.x, y: params.y });
+  });
+}
+
 function createWindow() {
   winPartition = partitionFor(instance || activeInstance(instancesState));
   win = new BrowserWindow({
@@ -421,6 +495,7 @@ function createWindow() {
     event.preventDefault();
     shell.openExternal(url);
   });
+  wireContextMenu(win);
 
   // CLOSE VS QUIT — one rule on all three platforms: the X button (and Cmd+W)
   // HIDES the window, and quitting is something you ask for by name. The
@@ -1206,6 +1281,7 @@ function openInstanceDialog({ mode, name = "", address = "", error = "" }) {
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     instanceDialog = dlg;
+    wireContextMenu(dlg);
     let settled = false;
     let answer = { action: "cancel" };
     // ANSWER ONLY ONCE THE WINDOW IS REALLY GONE, which is why this closes the

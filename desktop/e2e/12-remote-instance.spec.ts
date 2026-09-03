@@ -106,11 +106,19 @@ test("the window attaches to the remote origin, not to a server of its own", asy
   });
   expect(localUp, "a url instance must not start a local server").toBe(false);
 
+  // The handshake's own confirmation is the title: `attachOrigin` sets it from
+  // the instance name only after `probeVersion` answered. NOT read off
+  // `shell.log`, which used to be polled for the "attached to" line: the
+  // packaged shell reaches that line before `electron.launch()` resolves and
+  // the fixture's stdout listener exists, so the captured log begins at the
+  // tray and auto-update lines that follow it and the poll timed out on every
+  // packaged run (issue #191). The URL assertion above and this one are the
+  // same fact read from the main process, which has no capture window.
   await expect
-    .poll(() => shell.log.some((l) => l.includes(`attached to ${REMOTE_NAME} at ${remote.origin}`)), {
+    .poll(() => shell.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle() ?? ""), {
       timeout: 15_000,
     })
-    .toBe(true);
+    .toBe(`${REMOTE_NAME} · Calandria`);
 });
 
 test("the window title names the instance", async () => {
