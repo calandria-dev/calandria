@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProject, updateProject, deleteProject, listTasks, listTags, type TaskWithUsage } from "@/lib/store";
 import { removeWorktree, taskDiffStat } from "@/lib/git";
+import { resolveBaseBranch } from "@/lib/baseBranch";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
 import { turnIdleSince } from "@/lib/turnActivity";
@@ -39,7 +40,12 @@ async function withDiffStats(project: Project, tasks: TaskWithUsage[]) {
         return { ...t, diff_add: cached.additions, diff_del: cached.deletions };
       }
       try {
-        const { additions, deletions } = await taskDiffStat(project.repo_path, t.worktree_path, t.base_sha);
+        const { additions, deletions } = await taskDiffStat(
+          project.repo_path,
+          t.worktree_path,
+          t.base_sha,
+          resolveBaseBranch(t, project)
+        );
         diffStatCache.set(t.id, { at: Date.now(), additions, deletions });
         return { ...t, diff_add: additions, diff_del: deletions };
       } catch {
