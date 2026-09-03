@@ -342,6 +342,10 @@ export type AgentCapabilitiesT = {
   // agents when picking one for a task, so the Agents section states it.
   inheritsUserMcpServers: boolean;
   userMcpServersNote: string | null;
+  // The per-driver caveat for mounting the project's hosted LiteLLM-gateway
+  // MCP selection — a separate mount from the two fields above. null = mounts
+  // with no special behavior for this driver.
+  gatewayMcpNote: string | null;
 };
 export type AgentInfoT = {
   id: string;

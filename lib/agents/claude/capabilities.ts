@@ -148,6 +148,8 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   // an inherited tool call can never succeed. lib/agents/CLAUDE.md compares them.
   inheritsUserMcpServers: true,
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
+  // Mounted the same way Calandria's own MCP server is: no per-driver caveat.
+  gatewayMcpNote: null,
   // The driver holds the session open past the result while run_in_background
   // work runs (streaming-input linger — see driver.ts). Off when the operator
   // disabled the feature (CALANDRIA_BACKGROUND_LINGER=off), and then

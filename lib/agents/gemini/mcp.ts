@@ -4,6 +4,7 @@
 
 import type { Project, Task } from "../../types";
 import { INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
+import { gatewayMcpServersForGemini, type GatewayMcpGeminiServer } from "../../gatewayMcp";
 
 /**
  * The bridge's server name. The CLI dispatches MCP calls through its own
@@ -20,11 +21,16 @@ export interface GeminiMcpServer {
 }
 
 export interface GeminiMcpConfig {
-  mcpServers: Record<string, GeminiMcpServer>;
+  mcpServers: Record<string, GeminiMcpServer | GatewayMcpGeminiServer>;
 }
 
 /**
- * The `mcp_config.json` body mounting Calandria's stdio bridge for ONE task.
+ * The `mcp_config.json` body mounting Calandria's stdio bridge for ONE task,
+ * plus any hosted LiteLLM gateway MCP servers the project/task selected
+ * (docs/design/litellm.md, "Mounting, per driver"). Unlike Codex, mounting
+ * these needs no permission-mode gate: `agy` decides tool approval from its
+ * own settings/CLI flags rather than per-MCP-server config, so there's
+ * nothing here for a read-only mode to leave dangling.
  *
  * `command` is the absolute node binary (process.execPath) so the spawn doesn't
  * depend on PATH surviving into the MCP subprocess — the same reasoning as the
@@ -38,6 +44,11 @@ export interface GeminiMcpConfig {
 export function bridgeConfig(project: Project, task: Task): GeminiMcpConfig {
   return {
     mcpServers: {
+      // Spread first so the bridge below always wins a name collision. Keys
+      // are already slugified to hyphens (gatewayMcpServersForGemini), since
+      // the CLI's policy engine splits a tool name on the first underscore
+      // after `mcp_`.
+      ...gatewayMcpServersForGemini(project, task),
       [BRIDGE_SERVER_NAME]: {
         command: process.execPath,
         args: [CALANDRIA_MCP_SCRIPT],

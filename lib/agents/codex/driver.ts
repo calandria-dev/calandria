@@ -29,6 +29,7 @@ import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides } from "./mcp";
+import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
 import { agentTurnEnv } from "../../agentEnv";
@@ -52,12 +53,19 @@ import { getCodexPlanUsage } from "./planUsage";
 export function calandriaMcpConfig(
   project: Project,
   task: Task,
-  inherited: Record<string, { enabled: false }> = {}
+  inherited: Record<string, { enabled: false }> = {},
+  // Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+  // driver") the caller has already decided to mount — a param, not a call in
+  // here, for the same pure-function reason `inherited` is: the decision needs
+  // the task's resolved permission mode (see runTurn below), which this
+  // function has no business knowing about.
+  gatewayServers: Record<string, GatewayMcpCodexServer> = {}
 ): CodexOptions["config"] {
   return {
     mcp_servers: {
       // Spread FIRST so the bridge's own entry always wins a name collision.
       ...inherited,
+      ...gatewayServers,
       calandria: {
         command: process.execPath,
         args: [CALANDRIA_MCP_SCRIPT],
@@ -127,6 +135,25 @@ type RunControls = { sandboxMode: SandboxMode; networkAccessEnabled: boolean };
 function runControls(mode: string | null): RunControls {
   if (mode === "plan") return { sandboxMode: "read-only", networkAccessEnabled: false };
   return { sandboxMode: "workspace-write", networkAccessEnabled: true };
+}
+
+// Hosted gateway MCP servers (lib/gatewayMcp.ts) get every one of their tools
+// auto-approved the instant they mount (calandriaMcpConfig's
+// default_tools_approval_mode: "approve"), because codex exec has no approver
+// to ask instead. That's only safe to offer under the same bypass-equivalent
+// mode runControls above treats as workspace-write — "plan" runs read-only,
+// and dangling a set of pre-approved write/network-capable tools there would
+// contradict it, the same reason codex/mcp.ts unmounts the user's own
+// inherited servers rather than leave them uncallable. Exported for tests
+// (tests/codexMcpBridge.test.ts). BerriAI/litellm#14846 recorded silent empty
+// completions for gpt-5-codex plus a mounted MCP server — verify against the
+// pinned LiteLLM and codex versions before relying on this in production.
+export function gatewayMcpForPermission(
+  project: Project,
+  task: Task,
+  permission: string | null
+): Record<string, GatewayMcpCodexServer> {
+  return permission === "plan" ? {} : gatewayMcpServersForCodex(project, task);
 }
 
 // ---------- approval-policy negotiation ----------
@@ -207,6 +234,7 @@ async function* runTurn(
   const reasoning = task.reasoning ?? getSetting(`default_reasoning:${task.agent}`) ?? getSetting("default_reasoning");
   const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`) ?? getSetting("default_permission_mode");
   const controls = runControls(permission);
+  const gatewayServers = gatewayMcpForPermission(project, task, permission);
 
   const threadOptions: ThreadOptions = {
     // Prefer the task's isolated worktree; fall back to the shared repo path.
@@ -249,7 +277,7 @@ async function* runTurn(
     // The provider entry goes in as config rather than env: codex reads
     // `model_provider` from config.toml, never from the environment, and with
     // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
-    config: { ...calandriaMcpConfig(project, task, await inheritedServerOverrides()), ...local.config },
+    config: { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config },
     env,
   });
   const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
