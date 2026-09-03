@@ -12,7 +12,7 @@ import { setAgentConnection, isAgentConnected, firstConnectedAgent, resolveConne
 import { utilityDriver, resolveUtilityAgent } from "../lib/agents/oneshots";
 import { completeOnboarding } from "../lib/onboarding";
 import { createSuggestedTask } from "../lib/agentTools";
-import { agentPickerNeeded, defaultAgentFor } from "../app/shell/agents";
+import { agentPickerNeeded, defaultAgentFor, pickerAgents } from "../app/shell/agents";
 import type { AgentsBundle } from "../app/shell/types";
 
 // Settings persist across tests (one shared DB per suite run) — reset every key
@@ -201,10 +201,12 @@ describe("defaultAgentFor (client, connected-first)", () => {
       expect(agentPickerNeeded(bundle({ claude: true, codex: true }), "claude")).toBe(true);
     });
 
-    // The third driver is a third entry in the same bundle. Nothing about the
-    // picker or the default counts agents, so this is the whole "does a third
+    // The third driver is a third entry in the same bundle. Neither the default
+    // nor this predicate counts agents, so this is the whole "does a third
     // agent id work" test the mock driver can't stand in for (its id is fixed
-    // at "mock", so the onboarding e2e can only ever exercise one extra).
+    // at "mock", so the onboarding e2e can only ever exercise one extra). What
+    // the picker OFFERS does change with a third driver; that's pickerAgents
+    // below.
     it("treats a third agent id exactly like the second", () => {
       const only = bundle({ claude: false, codex: false, gemini: true });
       expect(defaultAgentFor(only, null)).toBe("gemini");
@@ -218,6 +220,51 @@ describe("defaultAgentFor (client, connected-first)", () => {
 
     it("shows when nothing is connected, so the Connect CTA still renders", () => {
       expect(agentPickerNeeded(bundle({ claude: false, codex: false }), "claude")).toBe(true);
+    });
+  });
+
+  // What the picker RENDERS, which hiding it was only ever a special case of.
+  // With two drivers the two questions coincided: hide the picker and the dead
+  // "not connected" button went with it. A third driver split them — a
+  // Claude + Antigravity instance has a real choice, so the picker shows, and
+  // an unconnected Codex was riding along inside it.
+  const ids = (b: AgentsBundle, value: string) => pickerAgents(b, value).map((a) => a.id);
+
+  describe("pickerAgents", () => {
+    it("offers only the connected agents", () => {
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "claude")).toEqual(["claude", "gemini"]);
+      // The New-task dialog opens on defaultAgentFor(), so this is the exact
+      // list the reported regression rendered.
+      const b = bundle({ claude: true, codex: false, gemini: true });
+      expect(ids(b, defaultAgentFor(b, null))).not.toContain("codex");
+    });
+
+    it("keeps an unconnected agent when it is the one selected", () => {
+      // An old Codex task in Edit, or a project default that was signed out:
+      // dropping it would leave the picker with nothing on and no way off.
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "codex")).toEqual(["claude", "gemini", "codex"]);
+    });
+
+    it("offers everything when nothing is connected, so the CTA has a target", () => {
+      expect(ids(bundle({ claude: false, codex: false, gemini: false }), "claude")).toEqual(["claude", "codex", "gemini"]);
+    });
+
+    it("agrees with agentPickerNeeded about there being a choice", () => {
+      // The picker must never render a single button that is already selected,
+      // and must never hide while it still had a second entry to offer.
+      for (const authed of [
+        { claude: true, codex: false, gemini: false },
+        { claude: true, codex: false, gemini: true },
+        { claude: false, codex: false, gemini: false },
+        { claude: true, codex: true, gemini: true },
+      ]) {
+        for (const value of ["claude", "codex", "gemini"]) {
+          const b = bundle(authed, "claude");
+          const offered = ids(b, value);
+          const alone = offered.length === 1 && offered[0] === value;
+          expect(agentPickerNeeded(b, value)).toBe(!alone);
+        }
+      }
     });
   });
 });
