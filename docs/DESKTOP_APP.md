@@ -1794,10 +1794,10 @@ one for an occasional user.
 
 The shell is no longer a wrapper around *this machine's* server. It keeps a list of
 instances and attaches its window to one of them; `local` — the pair of sidecars
-`supervisor.js` spawns — is the first entry and the default, and any number of `url`
-entries point at a Calandria running somewhere else. The design and its phasing are in
+`supervisor.js` spawns — is the first entry and the default, and any number of `url` and
+`ssh` entries point at a Calandria running somewhere else. The design and its phasing are in
 [`superpowers/specs/2026-09-02-remote-instances-design.md`](superpowers/specs/2026-09-02-remote-instances-design.md);
-what follows is what phase 1 shipped.
+what follows is what phases 1 and 2 shipped.
 
 Nothing about the server changed. Every URL the web client builds is relative
 (`app/shell/api.ts`), turns run detached and server-owned, and transcripts live in the
@@ -1817,7 +1817,8 @@ resolved the same way (`CALANDRIA_INSTANCES_FILE` wins, then `XDG_CONFIG_HOME`):
   "active": "a1f3",
   "instances": [
     { "id": "local", "kind": "local", "name": "This computer" },
-    { "id": "a1f3", "kind": "url", "name": "Lab", "url": "https://calandria.example.com" }
+    { "id": "a1f3", "kind": "url", "name": "Lab", "url": "https://calandria.example.com" },
+    { "id": "9c2e", "kind": "ssh", "name": "Build box", "ssh": { "host": "build", "remotePort": 3000 } }
   ]
 }
 ```
@@ -1826,13 +1827,24 @@ resolved the same way (`CALANDRIA_INSTANCES_FILE` wins, then `XDG_CONFIG_HOME`):
 write, because the file is one people are invited to edit: `local` always exists, is
 always first, and is always kind `local`; and `active` always names an instance that is
 present. A file that breaks either is repaired rather than rejected, so a stray comma
-cannot leave the app with nowhere to go. An unknown kind is dropped, which is what keeps a
-phase-2 `ssh` entry from confusing a shell that predates it.
+cannot leave the app with nowhere to go. An unknown kind is dropped, and so is a malformed
+entry of a known one, which is how a list written by a newer shell degrades on an older one
+instead of stopping it.
 
-Adding an instance takes a name and an address. A bare host is read as `https`, because
-the two things this is for are a tunnel hostname and a LAN box behind TLS, and defaulting
-to `http` would send an Access cookie over plaintext on a typo. The path is dropped; only
-the origin is saved.
+Adding an instance takes a name and an address, one field for both kinds. A bare host is
+read as `https`, because the two things that is for are a tunnel hostname and a LAN box
+behind TLS, and defaulting to `http` would send an Access cookie over plaintext on a typo.
+The path is dropped; only the origin is saved. An address beginning `ssh://` is the other
+kind: `ssh://build`, `ssh://me@build`, or `ssh://build:3000` when the Calandria over there
+is not on the default port. The port in an `ssh://` address is the **remote server's**, not
+sshd's — how to reach the host is `~/.ssh/config`'s business, and any `Host` alias defined
+there works as the host.
+
+An `ssh` entry may also carry `"localPort"`, which pins the local end of the forward. It is
+not offered in the dialog because the app picks a free port from 3100 upward and that is
+the right answer nearly always; it is there for someone who needs the origin to be a
+constant. A pinned port that is busy fails the attach rather than moving, since the reason
+to pin one is that something else expects the forward to be there.
 
 ### 8.2 Attaching
 
@@ -1840,6 +1852,12 @@ the origin is saved.
 |-|-|
 | `local` | `supervisor.start()` as before, then load its ready URL. Started on demand, so a shell whose active instance is a `url` one never spawns a server at all. |
 | `url` | `GET /api/version` through the instance's own session, then `loadURL`. |
+| `ssh` | Spawn `ssh -L`, wait for the local port to accept, then proceed exactly as `url` on `http://127.0.0.1:<localPort>`. |
+
+`attach()` in `desktop/main.js` is the one door all three go through, and `attachOrigin()`
+is where the two remote kinds converge: past "we have an origin" an `ssh` instance **is** a
+`url` instance, with the same handshake, the same cookie jar and the same event stream. The
+forward is the only thing that kind adds.
 
 The handshake is one-directional. The shell declares a `minServerVersion`
 (`MIN_SERVER_VERSION` in `desktop/instances.js`); a server older than that still **loads**,
@@ -1863,6 +1881,47 @@ login — lands on the boot screen's failure state with the error and two button
 wants there are "try that again" and "go somewhere that works", and a dialog can only
 offer OK. There is no background reconnect loop for this kind — there is no transport to
 reconnect, only an origin that did not answer.
+
+**The SSH transport** (`desktop/ssh-tunnel.js`) is the user's own `ssh` binary, shelled out
+to rather than reimplemented:
+
+```
+ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes \
+    -L 127.0.0.1:<localPort>:127.0.0.1:<remotePort> <host>
+```
+
+Their config, agent, jump hosts, `ControlMaster` sockets and hardware keys already work
+there, and none of that survives being reimplemented against an SSH library.
+`ExitOnForwardFailure=yes` is what makes the wait terminate: without it an ssh whose local
+port is taken stays up with no forward, and "connected" would mean nothing. Both ends of
+`-L` are loopback — the local one so the forward is not offered to the LAN, the remote one
+because the server over there is bound to loopback in local mode. That is what makes SSH
+the credential: the window's `Host` is `127.0.0.1`, so `lib/auth/local-origin.mjs` passes
+with no configuration at all, and no origin has to be allowlisted anywhere.
+
+`BatchMode=yes` follows from the same decision in the other direction. A GUI has no
+terminal to type a password or a 2FA code into, so a host that wants one has to be told
+rather than left at an invisible prompt: when ssh exits before the port opens, the failure
+state carries ssh's own last lines **and** names the two ways out — set up key
+authentication (`ssh-copy-id <host>`) or leave a `ControlMaster` session open
+(`ssh -fN <host>`). Anything the user could have answered in a terminal is a setup step
+here, and saying so is the whole difference between an app that looks broken and one that
+looks configurable.
+
+A forward that comes up and then **drops** is a different case and is not a question for
+the user: the host demonstrably worked a minute ago. The window goes back to the boot
+screen with ssh's last stderr lines and how long until the next try, and the tunnel
+reconnects on its own with backoff (1 s doubling to 15 s, matching `notifier.js`'s stream
+loop). The local port is chosen once and kept for the life of the tunnel, so a reconnect
+returns to the **same origin** the window was already on — the web UI keeps per-origin
+state in `localStorage`, and a port that moved on every reconnect would quietly reset the
+user's theme and selection. A recovered forward re-enters `attachOrigin()`, because the
+page behind it has a transcript stream and a WebSocket that both died with the tunnel.
+
+The ssh child belongs to the attach, not to the saved list: `attach()` closes the previous
+forward before starting anything, and `before-quit` closes the live one. An orphaned
+`ssh -N` would hold the local port for the rest of the login session and the next launch
+would fail to bind it.
 
 ### 8.3 Sessions, cookies and the service token
 
@@ -1912,10 +1971,8 @@ which is not subject to a page's CSP. That is the same no-preload, no-IPC rule t
 has always had, stated from the other side: the dialog needs a form and a list, and it gets
 them without shipping a bridge into every page the window later loads.
 
-### 8.6 What phase 1 does not do
+### 8.6 What this does not do
 
-- **`ssh` instances** (phase 2): a local port-forward spawned with the user's own `ssh`
-  binary, so their config, agent, jump hosts and hardware keys already work.
 - **A badge that sums across instances** (phase 3), with `CALANDRIA_INSTANCE_NAME` on
   `/api/version` and a "Connecting the desktop app" section in `SELF_HOSTING.md`.
 - **Installing or launching a server on a remote host from the client.** That is the
@@ -1924,9 +1981,15 @@ them without shipping a bridge into every page the window later loads.
 - **Anything server-side.** No cross-instance inbox, no task list spanning servers, no
   login for local mode. The saved list is a client-side bookmark file, not a control plane.
 
-One known gap, from the design's risk list: exposed services do not traverse an `ssh`
-forward, since `lib/service-router.mjs` dispatches on a `<slug>--<appHost>` hostname a
-forwarded loopback port does not have. Over `url` they work exactly as they do in a browser.
+**Exposed services do not traverse an `ssh` forward.** A managed service is published on a
+hostname, `<slug>--<appHost>`, and `lib/service-router.mjs` dispatches on it — a forwarded
+loopback port has no such hostname, so the Services panel's links do not open through the
+tunnel. Three ways round it, in the order they are usually wanted: forward that service's
+own port too (`ssh -L 8080:127.0.0.1:8080 build`) and open `127.0.0.1:8080`; reach the
+remote's public service hostname in an ordinary browser, which is what the operator set the
+wildcard DNS up for; or attach that instance as a `url` one, where services work exactly as
+they do in a browser tab. This is a property of hostname-based routing rather than a bug in
+the forward, and it is the one thing an `ssh` instance does not carry.
 
 ## 9. Next steps
 

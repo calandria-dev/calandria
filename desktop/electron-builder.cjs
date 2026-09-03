@@ -49,6 +49,7 @@ module.exports = {
     "instances.js",
     "instances.html",
     "notifier.js",
+    "ssh-tunnel.js",
     "tray-residency.js",
     "updater.js",
     "loading.html",

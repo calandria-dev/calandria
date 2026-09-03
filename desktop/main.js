@@ -16,8 +16,9 @@
  * WHICH SERVER. Not necessarily this machine's. `instances.js` holds a saved
  * list, `local` being the pair of sidecars supervisor.js spawns and everything
  * else an origin this window attaches to over the network, each in its own
- * persistent session partition. `attach()` below is the one door both go
- * through.
+ * persistent session partition. `attach()` below is the one door all three go
+ * through, and `attachOrigin()` is where they converge: an `ssh` instance is a
+ * `url` one whose origin ssh-tunnel.js had to build a forward for first.
  */
 "use strict";
 
@@ -39,11 +40,12 @@ const { confirmTrayResidency } = require("./tray-residency");
 const {
   MIN_SERVER_VERSION,
   activeInstance,
-  addUrlInstance,
+  addInstance,
   findInstance,
+  instanceAddress,
   instanceMenuItems,
   loadInstances,
-  normalizeInstanceUrl,
+  parseInstanceAddress,
   partitionFor,
   removeInstance,
   saveInstances,
@@ -52,6 +54,7 @@ const {
   versionBannerText,
   windowTitle,
 } = require("./instances");
+const { SshTunnel } = require("./ssh-tunnel");
 const {
   CHECK_INTERVAL_MS,
   FIRST_CHECK_DELAY_MS,
@@ -116,6 +119,11 @@ let quitting = false;
 // it. See instances.js for the file and its invariants.
 let instancesState = null;
 let instance = null;
+// The live `ssh -L` child for an `ssh` instance, or null. At most one: one
+// window shows one instance, and the forward belongs to the attach rather than
+// to the saved list, so it is created by `attachSsh` and killed by every path
+// that leaves the instance behind (see `stopTunnel`).
+let tunnel = null;
 // Every attach bumps this, and every async step of an attach checks it before
 // it writes anything. Switching instances is the one action here that can be
 // asked for while a previous answer is still on the way — a probe waiting out
@@ -249,6 +257,9 @@ function main() {
     // going anywhere.
     if (supervisor) showDraining();
     try {
+      // The ssh child is this process's to reap, whatever it was forwarding:
+      // an orphaned `ssh -N` holds the local port and outlives the app.
+      await stopTunnel();
       if (supervisor) await supervisor.stop();
     } finally {
       // Explicitly, before exit: a tray icon whose process is gone is left
@@ -549,8 +560,20 @@ async function attach(inst) {
   appUrl = null;
   win?.setTitle(windowTitle(inst));
   refreshInstanceMenus();
+  // Before anything else, and on EVERY attach including a retry of the same
+  // instance: a forward whose window has moved on is a port nobody is reading
+  // and an ssh child nobody will ever kill.
+  await stopTunnel();
   if (inst.kind === "local") await bootLocal(seq);
+  else if (inst.kind === "ssh") await attachSsh(inst, seq);
   else await attachUrl(inst, seq);
+}
+
+/** Close the current forward, if there is one. Safe to call with none. */
+async function stopTunnel() {
+  const t = tunnel;
+  tunnel = null;
+  if (t) await t.stop();
 }
 
 /**
@@ -599,11 +622,84 @@ async function afterAttach(seq) {
  */
 async function attachUrl(inst, seq) {
   await showLoading(`Connecting to ${inst.name}`, inst.url);
-  const probe = await probeVersion(inst);
+  await attachOrigin(inst, inst.url, seq);
+}
+
+/**
+ * Attach to a remote Calandria over an `ssh -L` forward.
+ *
+ * The forward is the only difference from `attachUrl`: once the local port
+ * accepts, this hands the origin it produced to the same `attachOrigin` below,
+ * so an `ssh` instance gets the identical handshake, banner, cookie jar and
+ * event stream a `url` one does. See ssh-tunnel.js for the transport.
+ *
+ * Two failure shapes, deliberately different. A forward that never came up is
+ * the user's to answer — usually ssh asked for something BatchMode would not
+ * let it ask for — so it lands on the boot screen's failure state with Retry
+ * and Switch, exactly where an unreachable `url` instance lands. A forward that
+ * WAS up and dropped is not a question: the host worked a minute ago, so the
+ * tunnel reconnects on its own and the window goes back to the boot screen with
+ * ssh's last words on it until it does.
+ */
+async function attachSsh(inst, seq) {
+  const target = instanceAddress(inst);
+  await showLoading(`Connecting to ${inst.name}`, `Opening an SSH forward to ${inst.ssh.host}…`);
+  const t = new SshTunnel({
+    ...inst.ssh,
+    onLog: (line) => console.log(line),
+    // Both callbacks re-check `seq` for `attach`'s reason: a reconnect can
+    // land minutes after the user switched away, and the tunnel it belongs to
+    // may already have been replaced.
+    onDown: ({ error, delayMs }) => {
+      if (seq !== attachSeq || tunnel !== t) return;
+      appUrl = null;
+      void showLoading(
+        `Reconnecting to ${inst.name}`,
+        `${error}\n\nRetrying in ${Math.round(delayMs / 1000)}s.`,
+      );
+    },
+    onUp: () => {
+      if (seq !== attachSeq || tunnel !== t) return;
+      void attachOrigin(inst, t.url, seq);
+    },
+  });
+  tunnel = t;
+  const started = await t.start();
+  if (seq !== attachSeq) {
+    // Switched away while ssh was connecting. Whoever switched has already
+    // called stopTunnel on whatever `tunnel` pointed at; this one is ours.
+    await t.stop();
+    return;
+  }
+  if (!started.ok) {
+    console.log(`[shell] ${inst.name} (${target}) could not be forwarded: ${started.error}`);
+    tunnel = null;
+    const answer = await showAttachFailure(inst, target, started.error);
+    if (seq !== attachSeq) return;
+    if (answer === "switch") void manageInstances();
+    else void attach(inst);
+    return;
+  }
+  console.log(`[shell] ssh forward for ${inst.name}: ${t.url} -> ${inst.ssh.host}:${inst.ssh.remotePort}`);
+  await attachOrigin(inst, t.url, seq);
+}
+
+/**
+ * Everything an attach does once it HAS an origin: handshake, load, banner,
+ * native surface.
+ *
+ * Split out of `attachUrl` when `ssh` arrived, because the forward is the only
+ * thing that kind adds — past this line the two are the same client talking to
+ * the same server, and a second copy of the handshake would be a second thing
+ * to get wrong. It is also the reconnect path: a dropped forward that comes
+ * back re-enters here to reload a page whose fetches all died.
+ */
+async function attachOrigin(inst, origin, seq) {
+  const probe = await probeVersion(inst, origin);
   if (seq !== attachSeq) return;
   if (!probe.ok && !probe.signIn) {
-    console.log(`[shell] ${inst.name} (${inst.url}) is unreachable: ${probe.error}`);
-    const answer = await showAttachFailure(inst, probe.error);
+    console.log(`[shell] ${inst.name} (${origin}) is unreachable: ${probe.error}`);
+    const answer = await showAttachFailure(inst, origin, probe.error);
     if (seq !== attachSeq) return;
     if (answer === "switch") void manageInstances();
     else void attach(inst);
@@ -617,9 +713,9 @@ async function attachUrl(inst, seq) {
   // the redirect lands.
   const serverVersion = probe.signIn ? null : probe.version?.version || "unknown";
   if (probe.signIn) console.log(`[shell] ${inst.name} needs a sign-in (${probe.error}) — loading it`);
-  console.log(`[shell] attached to ${inst.name} at ${inst.url} (server ${serverVersion || "not yet known"})`);
-  appUrl = inst.url;
-  await win?.loadURL(inst.url);
+  console.log(`[shell] attached to ${inst.name} at ${origin} (server ${serverVersion || "not yet known"})`);
+  appUrl = origin;
+  await win?.loadURL(origin);
   if (seq !== attachSeq) return;
   win?.setTitle(windowTitle(inst));
   // The one compatibility point, and it only ever warns: the server still
@@ -641,10 +737,10 @@ async function attachUrl(inst, seq) {
  * `credentials: "include"` is explicit because it is the whole point of routing
  * through the session at all.
  */
-async function probeVersion(inst) {
+async function probeVersion(inst, origin) {
   let res;
   try {
-    res = await sessionFor(inst).fetch(`${inst.url}/api/version`, {
+    res = await sessionFor(inst).fetch(`${origin}/api/version`, {
       credentials: "include",
       signal: AbortSignal.timeout(8000),
     });
@@ -845,6 +941,9 @@ async function showLoading(heading, sub) {
     document.getElementById("booting").hidden = false;
     document.getElementById("fail").hidden = true;
     document.getElementById("heading").textContent = ${JSON.stringify(heading)};
+    // A reconnecting ssh forward puts its last stderr lines here, so the
+    // subheading has to keep the newlines it was given.
+    document.getElementById("subheading").style.whiteSpace = "pre-wrap";
     document.getElementById("subheading").textContent = ${JSON.stringify(sub || "")};
   })()`;
   await win.webContents.executeJavaScript(script).catch(() => {});
@@ -857,7 +956,7 @@ async function showLoading(heading, sub) {
  * underneath, since a destroyed window means a switch or a quit is already
  * happening and the caller's seq check will catch it either way.
  */
-async function showAttachFailure(inst, detail) {
+async function showAttachFailure(inst, address, detail) {
   if (!win || win.isDestroyed()) return "switch";
   if (!onLoadingPage()) await win.loadURL(LOADING_PAGE).catch(() => {});
   const script = `(() => new Promise((resolve) => {
@@ -865,7 +964,10 @@ async function showAttachFailure(inst, detail) {
     const fail = document.getElementById("fail");
     fail.hidden = false;
     document.getElementById("fail-title").textContent = ${JSON.stringify(`Cannot reach ${inst.name}`)};
-    document.getElementById("detail").textContent = ${JSON.stringify(`${inst.url} — ${detail}`)};
+    // pre-wrap because an ssh failure is several lines: what it said, and what
+    // to do about a host that wanted a password.
+    document.getElementById("detail").style.whiteSpace = "pre-wrap";
+    document.getElementById("detail").textContent = ${JSON.stringify(`${address} — ${detail}`)};
     document.getElementById("retry").onclick = () => resolve("retry");
     document.getElementById("switch").onclick = () => resolve("switch");
   }))()`;
@@ -940,23 +1042,23 @@ async function instanceDialogLoop(opts) {
     instanceDialog.focus();
     return;
   }
-  let draft = { name: "", url: "", error: "" };
+  let draft = { name: "", address: "", error: "" };
   for (;;) {
     const result = await openInstanceDialog({ ...opts, ...draft });
     if (result.action === "cancel") return;
     if (result.action === "add") {
       try {
-        normalizeInstanceUrl(result.url);
+        parseInstanceAddress(result.address);
       } catch (err) {
         // Straight back into the dialog with what they typed and why it was
         // refused. A message box would take the text away to say so.
-        draft = { name: result.name, url: result.url, error: err?.message || String(err) };
+        draft = { name: result.name, address: result.address, error: err?.message || String(err) };
         continue;
       }
-      const { state, instance: added } = addUrlInstance(instancesState, result);
+      const { state, instance: added } = addInstance(instancesState, result);
       instancesState = setActive(state, added.id);
       saveInstanceList();
-      console.log(`[shell] added instance ${added.name} (${added.url})`);
+      console.log(`[shell] added instance ${added.name} (${instanceAddress(added)})`);
       await applyActiveInstance();
       return;
     }
@@ -1019,12 +1121,12 @@ async function clearInstanceSession(inst) {
  * expression, so a Promise in the page becomes a Promise here, and a window
  * closed with the X rejects it, which reads as a cancel.
  */
-function openInstanceDialog({ mode, name = "", url = "", error = "" }) {
+function openInstanceDialog({ mode, name = "", address = "", error = "" }) {
   return new Promise((resolve) => {
     const parent = win && !win.isDestroyed() ? win : null;
     const dlg = new BrowserWindow({
       width: 520,
-      height: mode === "manage" ? 560 : 300,
+      height: mode === "manage" ? 600 : 360,
       resizable: false,
       minimizable: false,
       maximizable: false,
@@ -1063,7 +1165,7 @@ function openInstanceDialog({ mode, name = "", url = "", error = "" }) {
     dlg.loadURL(INSTANCES_PAGE).then(
       () =>
         dlg.webContents
-          .executeJavaScript(instanceDialogScript({ mode, name, url, error }))
+          .executeJavaScript(instanceDialogScript({ mode, name, address, error }))
           .then(done)
           .catch(() => done({ action: "cancel" })),
       () => done({ action: "cancel" }),
@@ -1078,11 +1180,11 @@ function openInstanceDialog({ mode, name = "", url = "", error = "" }) {
  * `textContent` / `value`, never as markup — an instance name is user text and
  * this page's CSP would not stop a DOM-built injection.
  */
-function instanceDialogScript({ mode, name, url, error }) {
+function instanceDialogScript({ mode, name, address, error }) {
   const rows = instancesState.instances.map((i) => ({
     id: i.id,
     name: i.name,
-    addr: i.kind === "local" ? "Managed by this app" : i.url,
+    addr: instanceAddress(i),
     local: i.kind === "local",
     active: i.id === instancesState.active,
   }));
@@ -1139,9 +1241,9 @@ function instanceDialogScript({ mode, name, url, error }) {
     const nameEl = document.getElementById("name");
     const urlEl = document.getElementById("url");
     nameEl.value = ${JSON.stringify(name)};
-    urlEl.value = ${JSON.stringify(url)};
+    urlEl.value = ${JSON.stringify(address)};
     document.getElementById("error").textContent = ${JSON.stringify(error)};
-    const submit = () => resolve({ action: "add", name: nameEl.value, url: urlEl.value });
+    const submit = () => resolve({ action: "add", name: nameEl.value, address: urlEl.value });
     document.getElementById("save").onclick = submit;
     document.getElementById("cancel").onclick = () => resolve({ action: "cancel" });
     for (const el of [nameEl, urlEl]) {
