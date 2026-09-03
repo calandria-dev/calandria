@@ -24,6 +24,18 @@ describe("projects.branch", () => {
     updateProject(project.id, { branch: " dev " });
     expect(getProject(project.id)!.branch).toBe("dev");
   });
+
+  it("defaults a blank branch at CREATE too, where ?? let one through", () => {
+    // The update path is guarded twice over now, but the insert defaulted with
+    // `??`, which catches null and undefined and nothing else. POST /api/projects
+    // passes body.branch straight to createProject, so a caller spelling the
+    // field out as "" wrote the same blank the PATCH route refuses. Cloning a
+    // repository with no HEAD is the same shape from inside the app.
+    expect(createProject({ name: "Born blank", branch: "" }).branch).toBe("main");
+    expect(createProject({ name: "Born whitespace", branch: "   " }).branch).toBe("main");
+    expect(createProject({ name: "Born padded", branch: " main " }).branch).toBe("main");
+    expect(createProject({ name: "Born default" }).branch).toBe("main");
+  });
 });
 
 describe("PATCH /api/projects/[id]", () => {

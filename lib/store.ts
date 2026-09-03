@@ -251,12 +251,18 @@ export function createProject(input: {
   // New projects inherit the app-level default agent (Settings → Run defaults);
   // per-project it can then be changed in the Context editor.
   const defaultAgent = getSetting("default_agent") || "claude";
+  // The branch default is `|| "main"` rather than `?? "main"` for updateProject's
+  // reason: a blank projects.branch is where resolveBaseBranch's last leg lands,
+  // and branchExists answers false for it before running any git, so every task
+  // in the project shows the sync banner naming no branch at all. `??` defaults
+  // null and undefined and nothing else, so a create body that spells the field
+  // out as "" wrote exactly the blank the update path now refuses.
   getDb()
     .prepare(
       `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch?.trim() || "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
