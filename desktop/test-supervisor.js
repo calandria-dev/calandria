@@ -17,6 +17,26 @@ const http = require("node:http");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
 const {
+  LOCAL_ID,
+  MIN_SERVER_VERSION,
+  activeInstance,
+  addUrlInstance,
+  compareVersions,
+  findInstance,
+  instanceMenuItems,
+  instancesFilePath,
+  loadInstances,
+  normalizeInstanceUrl,
+  normalizeState,
+  partitionFor,
+  removeInstance,
+  saveInstances,
+  serverTooOld,
+  setActive,
+  versionBannerText,
+  windowTitle,
+} = require("./instances");
+const {
   AppEvents,
   NeedsYou,
   createSseParser,
@@ -215,6 +235,157 @@ function hold(port) {
       assert.equal(loaded.path, file);
       assert.deepEqual(loaded.vars, { FOO: "bar" });
       assert.equal(loaded.skipped.length, 1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * instances.js — the saved instance list and the version handshake.
+   * ----------------------------------------------------------------------- */
+
+  await test("instancesFilePath sits beside the env file and honours the same overrides", async () => {
+    const env = { XDG_CONFIG_HOME: "/x/cfg" };
+    assert.equal(instancesFilePath(env), path.join("/x/cfg", "calandria", "instances.json"));
+    assert.equal(path.dirname(instancesFilePath(env)), path.dirname(envFilePath(env)));
+    assert.equal(instancesFilePath({ CALANDRIA_INSTANCES_FILE: "/tmp/other.json" }), "/tmp/other.json");
+  });
+
+  await test("normalizeState repairs a hand-edited file into something usable", async () => {
+    // Everything wrong at once: no local entry, an unknown kind, a duplicate
+    // id, a junk id, a url that will not parse, and an `active` naming an
+    // instance that is not in the list.
+    const state = normalizeState({
+      active: "ghost",
+      instances: [
+        { id: "a1f3", kind: "url", name: "Lab", url: "https://lab.example.com/some/path" },
+        { id: "a1f3", kind: "url", name: "Dup", url: "https://dup.example.com" },
+        { id: "9c2e", kind: "ssh", name: "Build box" },
+        { id: "!!", kind: "url", url: "https://bad.example.com" },
+        { id: "beef", kind: "url", name: "Broken", url: "not a url at all ://" },
+      ],
+    });
+    assert.equal(state.active, LOCAL_ID, "an active naming nothing falls back to local");
+    assert.equal(state.instances[0].id, LOCAL_ID, "local is always present and always first");
+    assert.equal(state.instances[0].kind, "local");
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      [LOCAL_ID, "a1f3"],
+    );
+    // The path is dropped: every client URL is relative to the origin.
+    assert.equal(state.instances[1].url, "https://lab.example.com");
+  });
+
+  await test("normalizeState keeps a renamed local and refuses to let it stop being local", async () => {
+    const state = normalizeState({ active: "local", instances: [{ id: "local", kind: "url", name: "Laptop", url: "https://elsewhere" }] });
+    assert.equal(state.instances.length, 1);
+    assert.deepEqual(state.instances[0], { id: "local", kind: "local", name: "Laptop" });
+  });
+
+  await test("normalizeInstanceUrl defaults to https, keeps the origin, and refuses the rest", async () => {
+    assert.equal(normalizeInstanceUrl("calandria.example.com"), "https://calandria.example.com");
+    assert.equal(normalizeInstanceUrl("  https://x.example.com/  "), "https://x.example.com");
+    assert.equal(normalizeInstanceUrl("http://192.168.1.9:3000/tasks?a=1"), "http://192.168.1.9:3000");
+    for (const bad of ["", "   ", "ftp://x.example.com", "file:///etc/passwd", "http://"]) {
+      assert.throws(() => normalizeInstanceUrl(bad), undefined, `${JSON.stringify(bad)} should be refused`);
+    }
+  });
+
+  await test("adding, switching and removing an instance", async () => {
+    let state = normalizeState({});
+    assert.equal(activeInstance(state).id, LOCAL_ID);
+
+    let added;
+    ({ state, instance: added } = addUrlInstance(state, { name: "", url: "lab.example.com:8443" }));
+    // An unnamed instance is named after its host rather than left blank.
+    assert.equal(added.name, "lab.example.com:8443");
+    assert.equal(added.url, "https://lab.example.com:8443");
+    assert.equal(added.kind, "url");
+    assert.notEqual(added.id, LOCAL_ID);
+
+    state = setActive(state, added.id);
+    assert.equal(activeInstance(state).id, added.id);
+    assert.deepEqual(
+      instanceMenuItems(state).map((i) => i.checked),
+      [false, true],
+    );
+    assert.equal(instanceMenuItems(state)[1].label, "lab.example.com:8443 — lab.example.com:8443");
+
+    // Removing the ATTACHED instance has to leave the app somewhere to go.
+    state = removeInstance(state, added.id);
+    assert.equal(state.active, LOCAL_ID);
+    assert.equal(findInstance(state, added.id), null);
+
+    // And local is never removable, or there would be nowhere at all.
+    const before = normalizeState({});
+    assert.deepEqual(removeInstance(before, LOCAL_ID), before);
+  });
+
+  await test("every non-local instance gets its own persistent partition", async () => {
+    const { instance: a } = addUrlInstance(normalizeState({}), { name: "A", url: "https://a.example.com" });
+    const { instance: b } = addUrlInstance(normalizeState({}), { name: "B", url: "https://b.example.com" }, () => 0.5);
+    assert.equal(partitionFor({ id: "local", kind: "local", name: "This computer" }), null);
+    assert.equal(partitionFor(a), `persist:instance-${a.id}`);
+    assert.notEqual(partitionFor(a), partitionFor(b), "two instances must not share a cookie jar");
+  });
+
+  await test("windowTitle names the instance", async () => {
+    assert.equal(windowTitle({ id: "local", kind: "local", name: "This computer" }), "This computer · Calandria");
+    assert.equal(windowTitle({ id: "a1f3", kind: "url", name: "Lab" }), "Lab · Calandria");
+    assert.equal(windowTitle(null), "Calandria");
+  });
+
+  await test("the version handshake warns on an older server and never on an unreadable one", async () => {
+    assert.equal(compareVersions("0.7.0", "0.7.0"), 0);
+    assert.equal(compareVersions("0.6.9", "0.7.0"), -1);
+    assert.equal(compareVersions("0.10.0", "0.9.9"), 1);
+    assert.equal(compareVersions("1.2", "1.2.0"), 0);
+    // A prerelease of a NEWER server must not be reported as older.
+    assert.equal(compareVersions("0.8.0-rc.1", "0.7.0"), 1);
+    assert.equal(compareVersions("unknown", "0.7.0"), null);
+
+    assert.equal(serverTooOld("0.6.0", "0.7.0"), true);
+    assert.equal(serverTooOld("0.7.0", "0.7.0"), false);
+    assert.equal(serverTooOld("9.9.9", "0.7.0"), false);
+    // Not a version at all is not evidence of anything, so it must not nag.
+    for (const v of ["unknown", "", null, undefined, "dev"]) {
+      assert.equal(serverTooOld(v, "0.7.0"), false, `${JSON.stringify(v)} must not trip the banner`);
+    }
+
+    const text = versionBannerText({ instanceName: "Lab", serverVersion: "0.6.0", minVersion: "0.7.0" });
+    assert.ok(text.includes("Lab"), "the banner names the instance");
+    assert.ok(text.includes("0.6.0") && text.includes("0.7.0"), "the banner names BOTH versions");
+    assert.ok(typeof MIN_SERVER_VERSION === "string" && /^\d+\.\d+\.\d+$/.test(MIN_SERVER_VERSION));
+  });
+
+  await test("loadInstances/saveInstances round-trip, and a corrupt file still launches", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-instances-"));
+    const file = path.join(dir, "nested", "instances.json");
+    try {
+      const missing = loadInstances({ file });
+      assert.equal(missing.found, false);
+      assert.equal(missing.error, null, "a file that was never written is not an error");
+      assert.equal(missing.state.active, LOCAL_ID);
+      assert.equal(missing.state.instances.length, 1);
+
+      const { state } = addUrlInstance(missing.state, { name: "Lab", url: "https://lab.example.com" });
+      // The parent directory does not exist yet — saving has to make it.
+      saveInstances(setActive(state, state.instances[1].id), { file });
+      const back = loadInstances({ file });
+      assert.equal(back.found, true);
+      assert.equal(back.state.active, state.instances[1].id);
+      assert.deepEqual(back.state.instances[1], state.instances[1]);
+      // Nothing left behind by the atomic write.
+      assert.deepEqual(
+        fs.readdirSync(path.dirname(file)),
+        ["instances.json"],
+      );
+
+      fs.writeFileSync(file, "{ this is not json");
+      const corrupt = loadInstances({ file });
+      assert.equal(corrupt.found, false);
+      assert.ok(corrupt.error, "a parse failure is reported, not swallowed");
+      assert.equal(corrupt.state.active, LOCAL_ID, "and the app still has somewhere to go");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -961,6 +1132,125 @@ function hold(port) {
     assert.deepEqual(never, []);
   });
 
+  await test("main.js scopes SERVICE_TOKEN to the local instance and fetches through the instance session", async () => {
+    // Source-pinned for the reason every other main.js case here is: the file
+    // is `require("electron")` at line 1 and cannot be loaded by this runner.
+    // Both halves matter and neither has a headless failure mode.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+
+    // THE TOKEN. It authorizes the database this machine's server owns, so a
+    // `url` instance must never see it. There is exactly one reader, and it
+    // refuses anything that is not `local`.
+    // `.SERVICE_TOKEN`, so the prose above serviceTokenFor() explaining the rule
+    // does not count as a second place that breaks it.
+    const reads = [...src.matchAll(/\.SERVICE_TOKEN\b/g)].length;
+    assert.equal(reads, 1, `SERVICE_TOKEN should be read in exactly one place, found ${reads}`);
+    const gate = src.indexOf("function serviceTokenFor(");
+    assert.notEqual(gate, -1, "main.js should funnel the token through serviceTokenFor()");
+    const gateBody = src.slice(gate, gate + 400);
+    assert.ok(/kind !== "local"/.test(gateBody), "serviceTokenFor must refuse every non-local instance");
+    assert.ok(/SERVICE_TOKEN/.test(gateBody), "and it is the one place the env is read");
+
+    // THE COOKIE. Every main-process request now goes through the active
+    // instance's session, or a Cloudflare Access instance answers the badge and
+    // the notification stream with a redirect to its identity provider.
+    assert.ok(/function sessionFor\(/.test(src), "main.js should resolve a session per instance");
+    assert.ok(/session\.fromPartition\(/.test(src), "a non-local instance needs its own partition");
+    assert.ok(
+      /fetchImpl:\s*\(url, init\) =>\s*sess\.fetch\(/.test(src),
+      "the notifier must fetch through the instance session, not globalThis.fetch",
+    );
+    assert.ok(
+      !/\bawait fetch\(/.test(src) && !/[^.]\bfetch\(`\$\{appUrl\}/.test(src),
+      "no main-process request should use the global fetch",
+    );
+
+    // THE PARTITION. The window and the notifier have to be in the SAME jar, or
+    // the login the user completed in the window buys the badge nothing.
+    assert.ok(/partition: winPartition/.test(src), "the window must be built in the instance's partition");
+    assert.ok(/clearStorageData\(\)/.test(src), "sign out must delete the partition's storage");
+  });
+
+  await test("the instance dialog is closed before its answer is acted on", async () => {
+    // The dialog is a MODAL CHILD of the main window, and answering it usually
+    // ends with that window being rebuilt. `BrowserWindow.close()` is
+    // asynchronous, so resolving the answer first left a live modal parented to
+    // a window about to be destroyed — which took the whole process down, with
+    // no crash output and no quit path taken. Measured under the desktop e2e on
+    // a bare X server: the shell stopped existing between two log lines.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const open = src.indexOf("function openInstanceDialog(");
+    assert.notEqual(open, -1, "main.js should have an instance dialog");
+    const body = src.slice(open, open + 2600);
+    assert.ok(/dlg\.on\("closed"[\s\S]{0,220}?resolve\(answer\)/.test(body), "the answer must be resolved from `closed`");
+    assert.ok(
+      body.indexOf("else dlg.close();") < body.indexOf('dlg.on("closed"'),
+      "done() must close the window rather than resolve straight from the click",
+    );
+    assert.ok(/modal: !!parent/.test(body), "the dialog is modal on its parent window");
+  });
+
+  await test("main.js attaches by URL, warns on an old server, and keeps the local one running", async () => {
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const attach = src.indexOf("async function attachUrl(");
+    assert.notEqual(attach, -1, "main.js should have a url attach path");
+    const body = src.slice(attach, attach + 2000);
+    assert.ok(/probeVersion\(inst\)/.test(body), "the handshake runs before the window is pointed anywhere");
+    assert.ok(/showAttachFailure\(/.test(body), "an unreachable instance gets the loading page, not a modal");
+    // A login in front of the server is not a failure: the window IS a browser,
+    // so the way through it is to load the page. Getting this wrong strands
+    // every Cloudflare Access instance on an error screen it can never leave.
+    assert.ok(/probe\.signIn/.test(body), "a sign-in must not be treated as unreachable");
+    assert.ok(/serverTooOld\(/.test(body) && /showVersionBanner\(/.test(body), "an older server loads with a banner");
+    assert.ok(/loadURL\(inst\.url\)/.test(body), "and then it is loaded");
+    assert.ok(/api\/version/.test(src.slice(src.indexOf("async function probeVersion("), src.indexOf("async function probeVersion(") + 900)));
+
+    // Switching away from local must not stop its server: turns are detached
+    // and server-owned, which is the whole point of the app.
+    const apply = src.indexOf("async function applyActiveInstance()");
+    assert.notEqual(apply, -1);
+    const applyBody = src.slice(apply, apply + 1800);
+    assert.ok(!/supervisor\.stop\(\)/.test(applyBody), "a switch must never stop the local server");
+    assert.ok(/createWindow\(\)/.test(applyBody), "a partition change means a new window");
+    // ORDER, and it is load-bearing. Electron emits `window-all-closed`
+    // synchronously from `destroy()`, and this shell answers that by quitting
+    // when nothing is hosting its tray icon — so destroying before building
+    // exits the app halfway through every switch on a session with no status
+    // area. Measured against the desktop e2e, which quit mid-spec.
+    assert.ok(
+      applyBody.indexOf("createWindow();") < applyBody.indexOf("old?.destroy();"),
+      "the replacement window must be built BEFORE the old one is destroyed",
+    );
+    // And `appUrl` is cleared first, or `createWindow()` opens the replacement
+    // on the PREVIOUS instance's origin — inside the new instance's partition,
+    // which is one server's page in another's cookie jar.
+    assert.ok(
+      applyBody.indexOf("appUrl = null;") < applyBody.indexOf("createWindow();"),
+      "appUrl must be cleared before the replacement window is built",
+    );
+
+    // Both menus draw the same radio list.
+    assert.ok(/function instanceMenuTemplate\(/.test(src));
+    const template = src.slice(src.indexOf("function instanceMenuTemplate("), src.indexOf("function instanceMenuTemplate(") + 1800);
+    assert.ok(/type: "radio"/.test(template), "the instance list is a radio group");
+    // Off the menu callback. Switching destroys a window and replaces the
+    // application menu; doing either from inside the activation handler of an
+    // item in that very menu wedged the whole main process on the second
+    // switch, reproducibly, under the desktop e2e.
+    assert.ok(
+      /click: \(\) => setImmediate\(\(\) => void switchTo\(/.test(template),
+      "an instance switch must be deferred off the menu click",
+    );
+    assert.ok(/Add instance…/.test(template) && /Manage instances…/.test(template));
+    const tray = src.indexOf("function rebuildTrayMenu()");
+    assert.ok(/instanceMenuTemplate\(\)/.test(src.slice(tray, tray + 1600)), "the tray carries the switcher too");
+    const menu = src.indexOf("function buildMenu()");
+    assert.ok(/instanceMenuTemplate\(\)/.test(src.slice(menu, menu + 1600)), "and so does the app menu");
+
+    // The window title names the instance.
+    assert.ok(/setTitle\(windowTitle\(/.test(src), "the title should come from windowTitle()");
+  });
+
   await test("main.js wires the shell half of all of that", async () => {
     // main.js is `require("electron")` at line 1 and cannot be loaded by this
     // runner, so the wiring — as opposed to the policy above — is asserted on
@@ -1073,7 +1363,7 @@ function hold(port) {
     // e2e (06-packaged.spec.ts) only runs on a labelled CI lane.
     const { files } = require("./electron-builder.cjs");
     const packed = new Set(files.filter((f) => f.endsWith(".js")));
-    const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js"];
+    const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "instances.js"];
     for (const entry of entrypoints) {
       const src = fs.readFileSync(path.join(__dirname, entry), "utf8");
       for (const m of src.matchAll(/require\(["']\.\/([^"']+)["']\)/g)) {

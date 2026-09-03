@@ -259,9 +259,17 @@ describe("the drain's tail waits for the install it started", () => {
   // because the updater's own trace is the thing a bug report needs.
   it("writes a failed install down and reports it on the next launch", () => {
     expect(finishQuit).toContain("recordInstallFailure(");
-    const boot = mainSource.slice(mainSource.indexOf("async function boot()"), mainSource.indexOf("function showDraining()"));
-    expect(boot).toContain("await startUpdater()");
-    expect(boot).toContain("await reportLastInstallFailure()");
+    // `afterAttach()` is what boot became when the shell learned to attach to
+    // instances other than the local one (docs/DESKTOP_APP.md §8): it is the
+    // tail every attach runs once a server has answered, and the updater is
+    // armed there — once per process, since it updates the SHELL rather than
+    // whichever server is on screen.
+    const attached = mainSource.slice(
+      mainSource.indexOf("async function afterAttach("),
+      mainSource.indexOf("async function attachUrl(")
+    );
+    expect(attached).toContain("await startUpdater()");
+    expect(attached).toContain("await reportLastInstallFailure()");
 
     const notice = updater.installFailureNotice({
       version: "0.7.0",
