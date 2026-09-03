@@ -468,6 +468,26 @@ handing Claude a `gpt-*` id would be a model the catalog can't run. That case is
 still satisfies `AgentDriver` — the same tolerance the interface already extends to a driver that
 implements none of them.
 
+### …and which model it DID run
+
+The setting only says what was ASKED for, and it is null exactly when the answer is interesting:
+tier unset means the job inherited the CLI's own default, which no setting can name. So
+`OneShotResult` carries `model` beside `usage`, and `internal_usage.model` stores what the DRIVER
+reported, falling back to the requested id and then to NULL rather than to a guess.
+
+Each driver answers from what it can see. Claude reads the `init` message's resolved model — the
+same field a turn badges as `resolved_model` — with the result message's `modelUsage` keys as the
+fallback for a stream that never announced one, since `SDKResultSuccess` has no scalar model
+field and that per-model rollup is the only place the id appears (`claudeMessageModel()` in
+`claude/usage.ts`; one-shots mount no Task tool, so it holds a single key). Codex and Antigravity
+have nothing in their event streams to read, so each reports the `resolve*Model()` value it
+already computes for pricing. `verifyTurn()` records one too, and is the purest case: it passes no
+`--model` at all, so the row is the only record of what the CLI picked.
+
+Insights names the models under "Calandria's own usage" and Settings names them beside the
+utility-job run count. A run with no recorded model still counts in the run total and the cost —
+it happened, we just can't say on what.
+
 ## Slash-command discovery
 
 The composer's `/` menu is discovered, not hardcoded. It used to be a one-element array holding

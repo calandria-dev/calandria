@@ -2193,7 +2193,7 @@ export interface InsightsData {
   /** The tags those `g` keys name, for the leaderboard's labels. */
   tags: { id: string; name: string; color: string | null; project_id: string }[];
   /** Calandria's own one-shot work, kept separate from task usage. */
-  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  internal: { d: string; p: string; a: string; job: string; m: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   /** Tasks whose (latest) merge landed that day. */
   shipped: { d: string; p: string; a: string; n: number }[];
   /** Lines landed on the base branch that day (from task_merges). */
@@ -2251,10 +2251,11 @@ export function getInsightsData(sinceMs: number): InsightsData {
   const internal = db
     .prepare(
       `SELECT date(created_at/1000, 'unixepoch', 'localtime') AS d,
-              COALESCE(project_id, '') AS p, agent AS a, job, COUNT(*) AS n,
+              COALESCE(project_id, '') AS p, agent AS a, job,
+              COALESCE(model, '') AS m, COUNT(*) AS n,
               SUM(cost_usd) AS cost, SUM(input_tokens) AS inp, SUM(output_tokens) AS out,
               SUM(cache_read_tokens) AS cr, SUM(cache_creation_tokens) AS cw
-       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job`
+       FROM internal_usage WHERE created_at >= ? GROUP BY d, p, a, job, m`
     )
     .all(sinceMs) as InsightsData["internal"];
   const shipped = db

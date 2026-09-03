@@ -343,7 +343,11 @@ async function oneShot(
   // The last agent_message wins — the same semantics as the SDK's finalResponse.
   let finalResponse = "";
   let usage: TurnUsage | undefined;
-  const state = newState(resolveCodexModel(chosen));
+  // The same resolution the pricing path already does: `chosen` is null when
+  // no tier is set, and what the CLI then runs is its own default, which this
+  // names rather than leaving the recorded row blank.
+  const model = resolveCodexModel(chosen);
+  const state = newState(model);
   try {
     const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
     for await (const ev of events) {
@@ -351,7 +355,7 @@ async function oneShot(
         if (mapped.type === "usage") usage = mapped.usage;
         if (mapped.type === "error") noteApprovalDowngrade(mapped.content);
       }
-      if (ev.type === "turn.failed" || ev.type === "error") return { text: "", usage };
+      if (ev.type === "turn.failed" || ev.type === "error") return { text: "", usage, model };
       if (ev.type === "item.started" && ++items > maxItems) {
         abort.abort(); // kills the codex process; keep what we have
         break;
@@ -361,9 +365,9 @@ async function oneShot(
   } catch {
     // Aborting above surfaces as a throw from the stream — that's the guard
     // firing, not a failure. A throw without our abort is a real error: degrade.
-    if (!abort.signal.aborted) return { text: "", usage };
+    if (!abort.signal.aborted) return { text: "", usage, model };
   }
-  return { text: finalResponse.trim(), usage };
+  return { text: finalResponse.trim(), usage, model };
 }
 
 async function summarizeTranscript(transcript: string, project: Project, opts?: OneShotOptions): Promise<OneShotResult> {
@@ -375,7 +379,7 @@ async function summarizeTranscript(transcript: string, project: Project, opts?: 
     ONESHOT_MAX_ITEMS_TEXT,
     opts
   );
-  return { text: result.text || "(no summary produced)", usage: result.usage };
+  return { text: result.text || "(no summary produced)", usage: result.usage, model: result.model };
 }
 
 const CTX_OPEN = "<<<CONTEXT>>>";
@@ -404,7 +408,7 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
   const close = result.text.lastIndexOf(CTX_CLOSE);
   let doc = open !== -1 && close > open ? result.text.slice(open + CTX_OPEN.length, close) : result.text;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return { text: doc || "(no context produced)", usage: result.usage };
+  return { text: doc || "(no context produced)", usage: result.usage, model: result.model };
 }
 
 /**
@@ -426,7 +430,7 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
     ONESHOT_MAX_ITEMS_TEXT,
     opts
   );
-  return { text: result.text || "(no recap produced)", usage: result.usage };
+  return { text: result.text || "(no recap produced)", usage: result.usage, model: result.model };
 }
 
 export const codexDriver: AgentDriver = {

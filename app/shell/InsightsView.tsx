@@ -32,7 +32,11 @@ interface Payload {
    * `unp` has the same meaning as on `usage` above.
    */
   tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number; unp: number }[];
-  internal: { d: string; p: string; a: string; job: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
+  /**
+   * `m` is the model the job ACTUALLY ran on, "" for a run recorded before
+   * that was tracked or by a driver that could not report one.
+   */
+  internal: { d: string; p: string; a: string; job: string; m: string; n: number; cost: number; inp: number; out: number; cr: number; cw: number }[];
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
   models: { a: string; m: string }[];
@@ -490,18 +494,27 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       .sort((a, b) => b.spend - a.spend);
 
     // ---- Calandria convenience work, grouped into actionable job rows ----
-    const jobs = new Map<string, { job: string; n: number; tokens: number; cost: number; estimated: boolean; projects: Set<string> }>();
+    const jobs = new Map<string, { job: string; n: number; tokens: number; cost: number; estimated: boolean; projects: Set<string>; models: Map<string, number> }>();
     for (const u of data.internal) {
       if (!matchP(u.p) || !matchA(u.a) || dayIndex.get(u.d) === undefined) continue;
-      const e = jobs.get(u.job) ?? { job: u.job, n: 0, tokens: 0, cost: 0, estimated: false, projects: new Set<string>() };
+      const e = jobs.get(u.job) ?? { job: u.job, n: 0, tokens: 0, cost: 0, estimated: false, projects: new Set<string>(), models: new Map<string, number>() };
       e.n += u.n;
       e.tokens += u.inp + u.out + u.cr + u.cw;
       e.cost += u.cost;
       e.estimated ||= !!capsFor(agents, u.a)?.costIsEstimated;
       e.projects.add(u.p);
+      // Labelled against the agent that RAN it, since a model id only means
+      // something inside one provider's catalog. A run with no recorded model
+      // still counts in `n`: it happened, we just can't name what ran it.
+      if (u.m) {
+        const label = modelLabel(u.m, capsFor(agents, u.a)) || u.m;
+        e.models.set(label, (e.models.get(label) ?? 0) + u.n);
+      }
       jobs.set(u.job, e);
     }
-    const jobRows = [...jobs.values()].sort((a, b) => b.cost - a.cost);
+    const jobRows = [...jobs.values()]
+      .sort((a, b) => b.cost - a.cost)
+      .map((j) => ({ ...j, modelNames: [...j.models.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => m) }));
 
     const isEmpty = data.usage.length === 0 && data.internal.length === 0 && data.shipped.length === 0 && data.merges.length === 0;
 
@@ -801,6 +814,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                       <span>
                         <span className="in-oname">{meta.label}</span>
                         <span className="mono in-oscope">{[...j.projects].map((p) => p ? projName(p) : "—").join(" · ")}</span>
+                        <span className="mono in-oscope" title="The models these runs actually ran on">{j.modelNames.length ? j.modelNames.join(" · ") : "model not recorded"}</span>
                       </span>
                       <span className="mono dim">{j.n.toLocaleString()}</span>
                       <span className="mono dim">{fmtCompact(j.tokens)}</span>

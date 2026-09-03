@@ -25,6 +25,37 @@ type ModelUsage = Record<string, {
 }>;
 
 /**
+ * The model a message says the run is ACTUALLY on, or null if it doesn't say.
+ *
+ * Two sources, in the order they arrive. The init message's `model` is the one
+ * the SDK resolved — the same field a task turn badges as `resolved_model` —
+ * and is authoritative even when the caller passed no model at all, which is
+ * exactly the case a job-tier setting can't describe. The result message has no
+ * scalar model field, but its per-model rollup keys are model ids, so it is the
+ * fallback for a stream that never announced an init (the CLI's `--print` JSON
+ * path is one). One-shots mount no Task tool, so that map holds a single key in
+ * practice; the busiest wins if a future one ever fans out.
+ */
+export function claudeMessageModel(message: unknown): string | null {
+  const msg = message as { type?: string; model?: string; modelUsage?: ModelUsage | null };
+  if (msg.type === "system") return msg.model || null;
+  if (msg.type !== "result") return null;
+  const models = msg.modelUsage;
+  if (!models || typeof models !== "object") return null;
+  let best: string | null = null;
+  let most = -1;
+  for (const [id, m] of Object.entries(models)) {
+    if (!m || typeof m !== "object") continue;
+    const n = (m.inputTokens ?? 0) + (m.outputTokens ?? 0) + (m.cacheReadInputTokens ?? 0) + (m.cacheCreationInputTokens ?? 0);
+    if (n > most) {
+      most = n;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/**
  * Tokens this turn spent inside SUBAGENT sidechains — Task-tool fan-outs, each
  * running in its own context window.
  *

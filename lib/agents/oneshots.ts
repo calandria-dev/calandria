@@ -136,20 +136,27 @@ async function run<K extends OneShotKey>(
   }
   const started = Date.now();
   let agent: string | null = null;
+  // What we ASKED for, which is null whenever the tier is unset. Kept for the
+  // failure path and as the backstop when the driver can't report what ran.
+  let requestedModel: string | null = null;
   try {
     const driver = resolveFor(preferred(), job);
     agent = driver.id;
     // Read the tier setting off the RESOLVED driver, not the requested one:
     // when a fallback kicks in, the job runs on another provider whose catalog
     // the requested agent's model id doesn't belong to.
-    const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>, { model: oneShotModel(agent, job) });
+    requestedModel = oneShotModel(agent, job);
+    const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>, { model: requestedModel });
     // Keep older third-party/test drivers from breaking at runtime while the
     // TypeScript contract moves them to OneShotResult.
     const result: OneShotResult = typeof raw === "string" ? { text: raw } : raw;
     const ms = Date.now() - started;
     const usage = result.usage;
+    // The driver's own reading wins over the setting: with no tier set the job
+    // ran on the driver's default, and only the driver can name it.
     addInternalUsage({
       job, agent, requested_agent: requested, fallback: agent !== requested,
+      model: result.model ?? requestedModel,
       ...scope, ok: true, ms, usage,
     });
     return result.text;
@@ -160,7 +167,8 @@ async function run<K extends OneShotKey>(
     const recordedAgent = agent ?? requested;
     addInternalUsage({
       job, agent: recordedAgent, requested_agent: requested,
-      fallback: agent !== null && agent !== requested, ...scope, ok: false, ms,
+      fallback: agent !== null && agent !== requested, model: requestedModel,
+      ...scope, ok: false, ms,
     });
     throw e;
   }

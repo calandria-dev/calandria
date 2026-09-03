@@ -183,7 +183,7 @@ rather than reaching a dead CLI. Unattended work is gated server-side by `backgr
 (default `on`), and recap scheduling additionally by `recap_mode` (`automatic` default, `on_open`,
 `off`); explicit `/clear`, Refresh with AI and manual recap refreshes still run. A driver that
 doesn't implement a helper is backstopped by the utility agent. Every one-shot funnels through one
-`run()` wrapper that records the agent that **actually** ran it plus `fallback` via
+`run()` wrapper that records the agent and MODEL that **actually** ran it plus `fallback` via
 `addInternalUsage()`, since both fallback paths are invisible otherwise. `resolveUtilityAgent()`
 reports the same resolution without throwing, so `GET /api/agents` can hand Settings the effective
 utility agent and its `(fallback)` hint.

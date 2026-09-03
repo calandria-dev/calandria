@@ -99,7 +99,7 @@ import {
   cancelClaudeLogin,
   verifyTurn,
 } from "../../claude-auth";
-import { claudeUsage, claudeSubagentTokens } from "./usage";
+import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
 
 const log = createLogger("claude");
@@ -1509,14 +1509,19 @@ async function summarizeTranscript(transcript: string, project: Project, opts?: 
 
   let out = "";
   let usage: TurnUsage | undefined;
+  // First reading wins — init's resolved model, else the result's rollup.
+  let model: string | null = null;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+    } else if (message.type === "result") {
+      usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+      model ??= claudeMessageModel(message);
+    } else if (message.type === "system") model ??= claudeMessageModel(message);
   }
-  return { text: out.trim() || "(no summary produced)", usage };
+  return { text: out.trim() || "(no summary produced)", usage, model };
 }
 
 // Delimiters Claude wraps the final context document in, so we can extract just
@@ -1589,12 +1594,17 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
 
   let out = "";
   let usage: TurnUsage | undefined;
+  // First reading wins — init's resolved model, else the result's rollup.
+  let model: string | null = null;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+    } else if (message.type === "result") {
+      usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+      model ??= claudeMessageModel(message);
+    } else if (message.type === "system") model ??= claudeMessageModel(message);
   }
   // Extract just the wrapped document; fall back to the raw text if the model
   // didn't emit the markers (then strip a stray fence if it wrapped the whole
@@ -1603,7 +1613,7 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
   const close = out.lastIndexOf(CTX_CLOSE);
   let doc = open !== -1 && close > open ? out.slice(open + CTX_OPEN.length, close) : out;
   doc = doc.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1").trim();
-  return { text: doc || "(no context produced)", usage };
+  return { text: doc || "(no context produced)", usage, model };
 }
 
 /**
@@ -1631,14 +1641,19 @@ async function planTagRefresh(project: Project, digest: string, opts?: OneShotOp
 
   let out = "";
   let usage: TurnUsage | undefined;
+  // First reading wins — init's resolved model, else the result's rollup.
+  let model: string | null = null;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+    } else if (message.type === "result") {
+      usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+      model ??= claudeMessageModel(message);
+    } else if (message.type === "system") model ??= claudeMessageModel(message);
   }
-  return { text: out, usage };
+  return { text: out, usage, model };
 }
 
 /**
@@ -1665,14 +1680,19 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
 
   let out = "";
   let usage: TurnUsage | undefined;
+  // First reading wins — init's resolved model, else the result's rollup.
+  let model: string | null = null;
   for await (const message of response) {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
         if (block.type === "text") out += block.text;
       }
-    } else if (message.type === "result") usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+    } else if (message.type === "result") {
+      usage = claudeUsage(message as unknown as { total_cost_usd?: number; usage?: Record<string, number> });
+      model ??= claudeMessageModel(message);
+    } else if (message.type === "system") model ??= claudeMessageModel(message);
   }
-  return { text: out.trim() || "(no recap produced)", usage };
+  return { text: out.trim() || "(no recap produced)", usage, model };
 }
 
 export const claudeDriver: AgentDriver = {

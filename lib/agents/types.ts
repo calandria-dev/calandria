@@ -172,6 +172,13 @@ export interface AgentVerifyResult {
 export interface OneShotResult {
   text: string;
   usage?: TurnUsage;
+  /**
+   * The model this run ACTUALLY used, as the driver observed it — not the id
+   * `OneShotOptions.model` asked for, which is null whenever the job inherits
+   * the driver's own default. Optional: a driver with no way to see it omits
+   * this and the recorded row falls back to what was requested.
+   */
+  model?: string | null;
 }
 
 /**

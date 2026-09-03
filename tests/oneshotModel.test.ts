@@ -27,6 +27,7 @@ import { setAgentConnection } from "../lib/agents/connections";
 import { draftProjectContext, oneShotModel, summarizeProjectRecap, summarizeTranscript } from "../lib/agents/oneshots";
 import { PATCH as patchSettings } from "../app/api/settings/route";
 import type { Project, Task } from "../lib/types";
+import { claudeMessageModel } from "../lib/agents/claude/usage";
 
 
 describe("one-shot model selection", () => {
@@ -134,5 +135,38 @@ describe("one-shot model selection", () => {
     expect(settings["job_model_heavy:codex"]).toBe("gpt-5.6-sol");
     expect(settings.job_model_light).toBeUndefined();
     expect(settings.job_model_medium).toBeUndefined();
+  });
+});
+
+// The setting above says what was ASKED for. This says what RAN, which is the
+// only answer available when no tier is set and the CLI picks for itself.
+describe("reading back the model a Claude one-shot actually ran", () => {
+  it("takes the init message's resolved model, alias or not", () => {
+    expect(claudeMessageModel({ type: "system", subtype: "init", model: "claude-opus-5" })).toBe("claude-opus-5");
+  });
+
+  it("falls back to the result message's per-model rollup, which has no scalar model field", () => {
+    expect(claudeMessageModel({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      modelUsage: { "claude-haiku-4-5": { inputTokens: 10, outputTokens: 5 } },
+    })).toBe("claude-haiku-4-5");
+  });
+
+  it("picks the busiest model when a run somehow used more than one", () => {
+    expect(claudeMessageModel({
+      type: "result",
+      modelUsage: {
+        "claude-haiku-4-5": { inputTokens: 10, outputTokens: 5 },
+        "claude-opus-5": { inputTokens: 900, cacheReadInputTokens: 4_000 },
+      },
+    })).toBe("claude-opus-5");
+  });
+
+  it("says nothing rather than guessing when the stream never names one", () => {
+    expect(claudeMessageModel({ type: "system", subtype: "compact_boundary" })).toBeNull();
+    expect(claudeMessageModel({ type: "result", subtype: "success" })).toBeNull();
+    expect(claudeMessageModel({ type: "assistant" })).toBeNull();
   });
 });
