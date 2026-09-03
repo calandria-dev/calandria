@@ -1,4 +1,5 @@
-import { serializeAgentEnv, taskProvider } from "./agentEnv";
+import { serializeAgentEnv, taskProvider, type ProviderKind } from "./agentEnv";
+import { gatewayContextWindow } from "./gatewayModels";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
@@ -452,8 +453,8 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     else tagsByTask.set(m.task_id, [m.tag_id]);
   }
   return rows.map((r) => {
-    const override = (anyOverride || !!r.agent_env) && taskProvider(project, r).kind !== "cloud";
-    const window = taskContextWindow(r.agent, r.model, override);
+    const kind = (anyOverride || !!r.agent_env) ? taskProvider(project, r).kind : "cloud";
+    const window = taskContextWindow(r.agent, r.model, kind);
     return {
       ...r,
       context_window: window,
@@ -2031,8 +2032,19 @@ export function getTaskUsage(taskId: string): UsageTotals {
 // unrecognised CLOUD id (see lib/contextWindow.ts) and the wrong one here: it
 // would report a 32K local model as 200K and draw a 4% gauge on a window about
 // to overflow. So an override reports nothing and the gauge says so.
-function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, override: boolean): number {
-  return override ? 0 : modelContextWindow(agent, model);
+//
+// The gateway is the one override kind that gets an answer anyway: unlike a
+// local server or a custom URL, it STATES its models' windows (GET
+// <gateway>/model/info, lib/gatewayModels.ts), so a task pointed there is
+// sized from that catalog instead of reported unknown. A model missing from
+// the catalog (a stale pick, or nothing probed yet) still falls back to 0.
+function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, kind: ProviderKind): number {
+  if (kind === "cloud") return modelContextWindow(agent, model);
+  if (kind === "gateway") {
+    const window = gatewayContextWindow(model);
+    if (window > 0) return window;
+  }
+  return 0;
 }
 
 // Percent (0–100, one decimal) of that window `tokens` occupies. 0 when the
@@ -2080,8 +2092,8 @@ export function getTaskContext(taskId: string): TaskContext {
     )
     .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
-  const override = taskProvider(task ? getProject(task.project_id) : null, task).kind !== "cloud";
-  const context_window = taskContextWindow(task?.agent, task?.model, override);
+  const kind = taskProvider(task ? getProject(task.project_id) : null, task).kind;
+  const context_window = taskContextWindow(task?.agent, task?.model, kind);
   return {
     context_tokens,
     context_window,

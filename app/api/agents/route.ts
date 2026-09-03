@@ -8,6 +8,7 @@ import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
 import { gatewayHealth } from "@/lib/gatewayHealth";
 import { gatewayKey } from "@/lib/litellm-key";
 import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
+import { gatewayModelCatalog } from "@/lib/gatewayModels";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,12 @@ export async function GET() {
   // read of this same route. Cheap after the first time — one `claude --version`
   // per minute at most, and nothing at all once this CLI's answer is cached.
   ensureClaudeModelIds();
+  // The gateway's own model catalog, same reason: not awaited, so a slow proxy
+  // never slows this route down, and it's what claudeCapabilities()'s gateway
+  // branch and lib/gatewayPricing.ts's rate table read on their next call.
+  // gatewayHealth() above already hits /model/info too, but only for a count —
+  // this is the full parse, cached separately (lib/gatewayModels.ts).
+  if (LITELLM_BASE_URL) void gatewayModelCatalog(LITELLM_BASE_URL, gatewayKey());
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.

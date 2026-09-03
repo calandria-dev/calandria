@@ -11,6 +11,7 @@ import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
 import { recordedCostUsd, taskProvider } from "@/lib/agentEnv";
+import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -558,6 +559,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // sum over the others, so this is what stops the lifecycle line logging a
   // confident "cost_usd: 0" for a turn that may well have cost real money.
   let unpricedTurns = 0;
+  // What the driver has actually reported running, for pricing a gateway turn
+  // (lib/gatewayPricing.ts prices by model id, and the gateway's own catalog
+  // is the only place that id's rate lives). Seeded from the task's pick and
+  // overwritten the moment a "model" event names the resolved id — the same
+  // fact resolved_model persists, held here too since a usage event can land
+  // before the finally reads it back out of the task row.
+  let resolvedModel: string | null = task.model ?? null;
   // Start the idle clock (lib/turnActivity.ts) at the launch rather than at the
   // first event: a turn that hangs before the session ever opens is exactly the
   // kind of silence worth reporting, and with no baseline it would never be.
@@ -761,6 +769,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       } else if (ev.type === "model") {
         // Persist the model the SDK actually ran so the badge survives reloads.
         updateTask(id, { resolved_model: ev.model });
+        resolvedModel = ev.model;
         publish(id, ev);
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
@@ -996,7 +1005,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // Anthropic or OpenAI spend, whatever the driver's own figure says:
         // Claude Code prices whatever model id it was TOLD, and the Codex
         // estimate prices an unknown id at the CLI-default family. But "not
-        // vendor spend" splits in two, and folding the halves together is what
+        // vendor spend" splits further, and folding the cases together is what
         // this decides once, HERE, before the ledger, the running total and the
         // live chip all read it:
         //
@@ -1008,13 +1017,21 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         //    driver's figure over-reports a catalog that isn't the one being
         //    charged. So it is recorded as UNKNOWN (null) and left out of every
         //    total, rather than either lie.
+        //  - the GATEWAY states its own prices, so it gets a real computed
+        //    figure instead: lib/gatewayPricing.ts prices this turn's token
+        //    counts against the resolved model's rate from the last catalog
+        //    probe, falling back to the provider's pinned model when the SDK
+        //    hasn't announced one yet. Still NULL when that model never
+        //    appeared in a probe, same as `custom`.
         //
         // The kind comes from `taskProvider`, the same call the session header's
         // provider badge renders from, so the ledger and the badge cannot
         // disagree about which endpoint a turn ran against. Tokens are kept
         // whichever way it lands: an unpriced turn still filled a context window.
         const provider = taskProvider(project, task);
-        const cost = recordedCostUsd(provider.pricing, ev.usage.cost_usd);
+        const gatewayEstimate =
+          provider.pricing === "gateway" ? estimateGatewayCostUsd(resolvedModel ?? provider.model, ev.usage) : undefined;
+        const cost = recordedCostUsd(provider.pricing, ev.usage.cost_usd, gatewayEstimate);
         const usage: LedgerUsage = { ...ev.usage, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
@@ -1151,7 +1168,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // No vendor figure to offer: this path exists precisely because the
         // turn ended without one. Asked through the same helper anyway, so the
         // free-endpoint zero and the unpriced NULL are decided in one place.
-        const cost = recordedCostUsd(provider.pricing, null);
+        // A gateway turn still gets a real estimate here — the accumulator
+        // holds exactly the tokens a full report would have priced.
+        const gatewayEstimate =
+          provider.pricing === "gateway" ? estimateGatewayCostUsd(resolvedModel ?? provider.model, provisional) : undefined;
+        const cost = recordedCostUsd(provider.pricing, null, gatewayEstimate);
         const usage: LedgerUsage = { ...provisional, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
