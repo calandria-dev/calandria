@@ -1199,12 +1199,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        {/* Saving a blank branch is refused here rather than repaired later: every
-            task in the project inherits this column for its base, so one cleared
-            field flags all of them at once. updateProject() keeps the old value
-            anyway, but a Save that silently ignores what the field says is worse
-            than one that won't run. */}
-        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Every task in this project falls back to this branch, so it can't be blank."} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch: branch.trim(), landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1276,7 +1271,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </div>
         </div>
         <div className="field" style={{ flex: "0 0 170px", marginBottom: 0 }}>
-          <div className="lab">{Icon.git()} Branch <span className="opt">(required)</span></div>
+          <div className="lab">{Icon.git()} Branch <span className="opt">(required to run tasks)</span></div>
           <input type="text" className="ctx-mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
         </div>
       </div>

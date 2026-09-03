@@ -256,7 +256,7 @@ export function createProject(input: {
       `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch?.trim() || "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
+    .run(id, input.name, icon, input.sub ?? "", input.color ?? "#C2603C", input.context ?? "", input.repo_path ?? "", input.branch ?? "main", isLandingMode(input.landing_mode) ? input.landing_mode : "merge", defaultAgent, nextServicePort(), position, now);
   return getProject(id)!;
 }
 
@@ -285,13 +285,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const cur = getProject(id);
   if (!cur) return undefined;
   const n = { ...cur, ...patch };
-  // A blank branch KEEPS the current one. Every task falls through to this
-  // column for its base (task -> tag -> project, lib/baseBranch.ts), and
-  // branchExists() reports false for a falsy name without running git, so one
-  // cleared field in the Context dialog put every task in the project behind a
-  // "'' isn't a branch in this repository" banner that named nothing. Creation
-  // defaults to "main", so only an edit can produce it.
-  const branch = (typeof n.branch === "string" ? n.branch.trim() : "") || cur.branch;
+  // branch is normalized like landing_mode below: a blank patch (missing base
+  // branch field, or one cleared to "" / whitespace in Settings) keeps the
+  // CURRENT branch rather than saving emptiness. An empty projects.branch
+  // makes resolveBaseBranch fall through to "", and every task then shows
+  // "isn't a branch in this repository" with a blank name.
+  const branch = n.branch.trim() || cur.branch;
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,

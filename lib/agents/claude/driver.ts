@@ -73,7 +73,8 @@ import {
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
-import { guardToolHandler } from "../../agentToolGuard.mjs";
+import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolInterruptedMessage } from "../../agentToolGuard.mjs";
+import { createLogger } from "../../log.mjs";
 import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
 import { hasApiKey, looksLikeApiKey, setApiKey, clearApiKey } from "../../anthropic-key";
@@ -100,6 +101,8 @@ import {
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
+
+const log = createLogger("claude");
 
 // Which on-disk setting sources every Claude query loads, pinned explicitly
 // rather than left to the SDK default (sdk.d.ts: "when omitted, all sources
@@ -674,6 +677,10 @@ async function* runTurn(
   let askSeq = 0;
   // tool_use id -> how to summarize its eventual result into a peek.
   const resultKinds = new Map<string, ResultKind>();
+  // tool_use id -> tool name, for Calandria's own tools only. The CLI can
+  // answer one of these itself without the call ever reaching a handler, and
+  // this is the only place that is visible (see lib/agentToolGuard.mjs).
+  const calandriaCalls = new Map<string, string>();
   // tool_use ids whose tool_result has streamed. A task_notification for a
   // call NOT yet in here is a foreground completion — the CLI announces
   // every Bash/Agent task it registers (measured on 2.1.240: task_started +
@@ -920,6 +927,19 @@ async function* runTurn(
   // number does — the CLI splits one API response into several assistant
   // messages (one per content block) that all carry the same usage.
   let lastContext = 0;
+  // What has already been reported as PARTIAL spend for the assistant message
+  // currently arriving, keyed by its id. Same split as above — one API response
+  // becomes several messages carrying the same usage — but where the gauge can
+  // simply ignore an unchanged number, spend summed per message would bill that
+  // response once per content block. So each copy reports only its GROWTH over
+  // the last one: an identical repeat contributes nothing, and an
+  // `output_tokens` figure that was a mid-stream snapshot on the first copy
+  // still lands in full. Copies of one response arrive consecutively, so one
+  // slot is enough; a message with no id gets its own so two of them never
+  // collapse into each other.
+  let partialFor: string | undefined;
+  let partialSeq = 0;
+  let partialSent = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
   // The held-open input is a real message CHANNEL, not just a latch: the CLI
   // reads stdin for the life of the query, so a message the user sends while
   // the turn lingers can be yielded straight into the open session as a second
@@ -1255,6 +1275,42 @@ async function* runTurn(
               lastContext = ctx;
               queue.push({ type: "context", tokens: ctx });
             }
+            // The same numbers are also this request's SPEND, and reporting it
+            // as it happens is what stops a Stopped turn recording nothing: the
+            // result message is the only other source and a turn can run for
+            // half an hour of tool calls without producing one, so a Stop three
+            // minutes or thirty into that segment used to write zero tokens for
+            // work the API had already billed. These are provisional — the
+            // result message's usage is exactly the sum over the main-session
+            // assistant messages of its segment (verified to the token; see
+            // claudeSubagentTokens), so the runner drops what it accumulated
+            // here the moment a full report arrives rather than billing both.
+            // Sidechains are excluded for the reason above and because summing
+            // their messages undercounts by half; a Stopped turn's subagent
+            // spend is therefore unrecorded, which is the same floor the
+            // stored token totals have always been.
+            const seen = {
+              input_tokens: u?.input_tokens ?? 0,
+              output_tokens: u?.output_tokens ?? 0,
+              cache_read_tokens: u?.cache_read_input_tokens ?? 0,
+              cache_creation_tokens: u?.cache_creation_input_tokens ?? 0,
+            };
+            const mid = message.message.id || `anon-${partialSeq++}`;
+            if (mid !== partialFor) {
+              partialFor = mid;
+              partialSent = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+            }
+            const partial: TurnUsage = { cost_usd: 0, ...partialSent };
+            let any = false;
+            for (const k of Object.keys(partialSent) as (keyof typeof partialSent)[]) {
+              const grew = Math.max(0, seen[k] - partialSent[k]);
+              partial[k] = grew;
+              if (grew > 0) {
+                partialSent[k] = seen[k];
+                any = true;
+              }
+            }
+            if (any) queue.push({ type: "usage", usage: partial, partial: true });
           }
           for (const block of message.message.content) {
             if (block.type === "text" && block.text.trim()) {
@@ -1264,6 +1320,7 @@ async function* runTurn(
               if (block.name === "AskUserQuestion") continue;
               const { title, detail, peek, diff, resultKind, file } = describeToolUse(block.name, block.input as Record<string, unknown>);
               if (resultKind) resultKinds.set(block.id, resultKind);
+              if (isCalandriaToolName(block.name)) calandriaCalls.set(block.id, block.name);
               // The tool's own name travels with the row: the runner matches
               // on it to settle a suggestion card onto a suggest_task call, and
               // the title it would otherwise have to match is human prose.
@@ -1280,7 +1337,22 @@ async function* runTurn(
                 resultSeen.add(b.tool_use_id);
                 // The deny-result of an answered ask is already shown via ask_answered.
                 if (askIds.has(b.tool_use_id)) continue;
-                const raw = resultText(b.content);
+                let raw = resultText(b.content);
+                // A Calandria tool the CLI answered on its own behalf: it cut
+                // the call off above the MCP seam, so lib/agentToolGuard.mjs
+                // never saw it and the sentence the model is holding is the
+                // CLI's. Say whose it is and what to do about it, and log it —
+                // otherwise a turn whose Calandria calls all failed still
+                // reports `turn ok` with nothing in the journal to find it by.
+                const cut = calandriaCalls.get(b.tool_use_id);
+                if (cut && isCliInterruptedToolResult(raw)) {
+                  log.warn("agent tool call cut off before Calandria answered", {
+                    task: task.id,
+                    tool: cut,
+                    tool_use_id: b.tool_use_id,
+                  });
+                  raw = toolInterruptedMessage(cut);
+                }
                 const kind = resultKinds.get(b.tool_use_id);
                 // Summarize from the raw (pre-clip) output so counts are exact.
                 // A failure ("Exit code N" + output, stderr last) is peeked
