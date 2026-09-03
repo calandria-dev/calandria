@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { baseStartPoint, branchDriftStatus, fetchBase, syncBranchFrom } from "@/lib/git";
+import { baseStartPoint, branchDriftStatus, createBranchAt, ensureLocalBaseBranch, fetchBase, syncBranchFrom } from "@/lib/git";
 import { getTag, getProject } from "@/lib/store";
 import { jsonGuard } from "@/lib/apiGuard";
 
@@ -34,6 +34,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (tag.base_branch === project.branch)
     return NextResponse.json({ inherited: false, sameAsProject: true, projectBranch: project.branch, branch: tag.base_branch });
 
+  // The reading must describe the cut a task under this tag would get, and
+  // `ensureWorktree` gives a branch that exists only on the remote a local ref
+  // before cutting from it. Measuring the bare local ref instead reported a
+  // colleague's pushed integration branch as gone, which is the one answer a
+  // reader can't act on. Same call, same outcome: a tracking branch the next
+  // launch would have created anyway. Best-effort, like every fetch here.
+  await ensureLocalBaseBranch(project.repo_path, tag.base_branch).catch(() => {});
+
   // Fetched first because `branchDriftStatus` is read-only by contract, and a
   // stale local default UNDERSTATES the drift — the one direction this reading
   // must not be wrong in. Measured at `baseStartPoint`, the commit
@@ -57,15 +65,27 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 /**
- * Merge the project default INTO the tag's base branch — Sync, one level up from
- * the per-task one. Never a reset: `lib/git.ts`'s `syncBranchFrom` carries the
- * why, and the refusal when a live worktree is holding the branch over unsaved
- * work comes from there too, in `worktreePruneSafety`'s words.
+ * Two actions on the tag's base branch, chosen by the body's `action`.
  *
- * Nothing in the database changes, so no event is published: the tag row is
- * untouched and the drift number the strip re-reads is a fact about git.
+ * The default, Sync, merges the project default INTO the tag's base branch —
+ * one level up from the per-task one. Never a reset: `lib/git.ts`'s
+ * `syncBranchFrom` carries the why, and the refusal when a live worktree is
+ * holding the branch over unsaved work comes from there too, in
+ * `worktreePruneSafety`'s words.
+ *
+ * `create` makes the branch when nothing has yet. A tag's base is settable before
+ * the branch exists, on purpose (`PATCH /api/tags/[id]` touches no git), so the
+ * usual first sighting is a name typed into the editor that nothing has created
+ * anywhere. Until something does, every task under the tag is silently cut from
+ * HEAD, and the drift line said the branch "no longer exists" about one that
+ * never had. This cuts it at the very commit a new task would be cut from
+ * (`baseStartPoint`: the fetched remote tip when the local default is merely
+ * behind it), so the integration branch starts where its first member would.
+ *
+ * Nothing in the database changes either way, so no event is published: the
+ * tag row is untouched and what the strip re-reads is a fact about git.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return jsonGuard(`tag sync ${id}`, async () => {
     const tag = getTag(id);
@@ -76,6 +96,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "this tag follows the project's default branch — there is nothing to sync" }, { status: 400 });
     if (!project.branch)
       return NextResponse.json({ error: "this project has no default branch to sync from" }, { status: 400 });
+
+    const body = (await req.json().catch(() => ({}))) as { action?: unknown };
+    if (body.action === "create") {
+      await fetchBase(project.repo_path, project.branch).catch(() => {});
+      const sha = await baseStartPoint(project.repo_path, project.branch);
+      if (!sha) return NextResponse.json({ error: `${project.branch} doesn't exist here, so there is nothing to start ${tag.base_branch} from` }, { status: 409 });
+      const res = await createBranchAt(project.repo_path, tag.base_branch, sha);
+      if (!res.ok) return NextResponse.json({ error: res.error }, { status: 409 });
+      return NextResponse.json({ ok: true, created: true, branch: tag.base_branch, from: project.branch, sha });
+    }
 
     const res = await syncBranchFrom({ repoPath: project.repo_path, branch: tag.base_branch, from: project.branch });
     return NextResponse.json(res, { status: res.ok ? 200 : 409 });

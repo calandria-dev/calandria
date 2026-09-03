@@ -47,8 +47,9 @@ covers it. No API key needed.
   PR'd against it. Several tasks can land on one feature branch while the
   rest keep shipping to `main`. A tag can set that branch for a whole plan —
   and says when it has fallen behind the project default ("3 behind main"),
-  with a Sync that merges the default into it. Left alone, an integration
-  branch drifts and every task cut from it is minted stale.
+  with a Sync that merges the default into it, and a Create for a base branch
+  nothing has made yet. Left alone, an integration branch drifts and every
+  task cut from it is minted stale.
 - **Say how work lands.** A project lands by merge or by pull request, and
   every session in it is told which. On a repo whose base branch requires a
   PR, agents stop reaching for a Merge that GitHub will reject — and so does

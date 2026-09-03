@@ -190,14 +190,18 @@ request proposes reverting whatever landed in between. The reading is taken agai
 commit a new task would actually be cut from (the fetched remote tip when your local default
 is merely behind it), so a stale checkout of your own can't hide it.
 
-Sync **merges the default into the tag's branch**. It never resets it: proving a branch has
-been fully superseded is unreliable under squash merges — `git cherry` called 30 and 10
-commits "not upstream" on two branches `main` had in fact entirely absorbed — and a reset also
-force-moves a ref a live session may have checked out. A merge needs no such proof and can't
-drop a commit. If a worktree is holding the branch, the merge happens inside it so its files
-move too, and is refused outright when that worktree has uncommitted work, naming it. A
-conflict is reported and changes nothing. A tag pinned to a branch that has since been
-**deleted** says so here too, rather than silently cutting new tasks from whatever `HEAD` is.
+Sync **merges the default into the tag's branch**. It never resets it: proving a branch has been
+fully superseded is unreliable under squash merges — `git cherry` called 30 and 10 commits "not
+upstream" on two branches `main` had in fact entirely absorbed — and a reset also force-moves a ref
+a live session may have checked out. A merge needs no such proof and can't drop a commit. If a
+worktree is holding the branch, the merge happens inside it so its files move too, and is refused
+outright when that worktree has uncommitted work, naming it. A conflict is reported and changes
+nothing. A tag pinned to a branch that **doesn't exist here** says so too, rather than silently
+cutting new tasks from whatever `HEAD` is. The usual case is a base typed into the editor before
+anything created it: the field accepts a branch that doesn't exist yet on purpose, and a **Create
+from main** button beside the line makes it, at the commit a new task would otherwise have been cut
+from. A branch that lives only on the remote counts as existing, and gets a local ref the way a task
+cut would give it one.
 
 The strip is the half of this you can act on; the other half reaches the session. A task whose
 worktree was cut from a base branch already behind the default is told so in its opening

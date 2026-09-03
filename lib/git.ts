@@ -751,6 +751,31 @@ export async function ensureLocalBaseBranch(repoPath: string, branch: string): P
   return { found: "created", label: up.label };
 }
 
+/** What `createBranchAt` did, or why it refused, in words a reader can be shown. */
+export type CreateBranchResult = { ok: true; sha: string } | { ok: false; error: string };
+
+/**
+ * Create a local `branch` at `sha`, with no upstream.
+ *
+ * The branch that exists nowhere yet: a tag's base branch is settable before
+ * anything has created it (the integration branch a plan is about to grow), and
+ * until something does, every task under the tag is cut from HEAD. This is the
+ * one place that materializes it. Pinned to a SHA for the same reason
+ * `selectStartPoint` resolves one, and `--no-track` so a bare push from a task
+ * worktree cut off it can never target the project default it was cut from.
+ */
+export async function createBranchAt(repoPath: string, branch: string, sha: string): Promise<CreateBranchResult> {
+  if (!refNameSafe(branch)) return { ok: false, error: `"${branch}" isn't a usable git branch name` };
+  if (!sha) return { ok: false, error: `there is no commit to start ${branch} from` };
+  if (await branchExists(repoPath, branch)) return { ok: false, error: `${branch} already exists` };
+  try {
+    await git(repoPath, ["branch", "--no-track", branch, sha]);
+  } catch (e) {
+    return { ok: false, error: gitErrorLine(e, `could not create ${branch}`) };
+  }
+  return { ok: true, sha };
+}
+
 /**
  * The commit a task retargeted onto `baseBranch` should be re-cut at — the very
  * choice `ensureWorktree` makes for a fresh task, so a re-cut task lands exactly
