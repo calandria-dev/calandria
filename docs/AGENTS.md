@@ -31,6 +31,16 @@ task's model for its next turn), and **Settings → Run defaults → Default mod
 comes from the agent, not Calandria: a Vertex-routed instance sees the corrected context
 windows its aliases actually resolve to, and a new driver's models appear with no UI change.
 
+A family alias such as **Opus (latest)** is resolved by the installed CLI at turn time, not by
+Calandria, so the row's label never claims a version. It does report the id the alias currently
+resolves to, in the subtitle under the name. Calandria reads that by asking the CLI once per CLI
+version: `claude -p --bare --model opus --output-format stream-json` prints the resolved id
+before any request goes out, so the reading spends nothing — `--bare` never touches your login,
+and the process is killed as soon as the line arrives. It does spawn the CLI five times at a few
+seconds each, so it runs in the background the first time you open a picker and the ids appear on
+a later load. Set `CALANDRIA_CLAUDE_MODEL_PROBE=off` to skip it; the picker then shows the
+built-in catalog, with the labels but not the ids.
+
 Every picker leads with an **Inherit** entry, following the same fallback chain as reasoning
 level and permission mode: the task's own pick wins; failing that, the agent's default from
 Settings; failing that, nothing is sent and the CLI's own configured model runs. That's why
