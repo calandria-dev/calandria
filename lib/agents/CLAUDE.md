@@ -260,6 +260,20 @@ login ignores `OPENAI_BASE_URL`. The override's `CODEX_MODEL` sits below the tas
 the Settings default in the model fallback. Claude Code needs no mapping: the same override
 IS its environment.
 
+A LiteLLM gateway gets a SECOND entry, `calandria-gateway`, rather than a conditional inside
+the local one: the id is what `codex doctor` reports back, and one id for both would let a
+gateway turn pass a verdict earned against a local endpoint. It adds `env_key`, which names the
+variable `CALANDRIA_GATEWAY_KEY` rather than carrying the key — `applyGatewayEnv` in
+`lib/agentEnv.ts` puts the instance key there — and `http_headers` carrying the same
+`x-litellm-tags` list Claude Code sends, composed by that one function so the two CLIs can't
+attribute a task differently. Codex bills the key in BOTH billing modes: the ChatGPT-forwarding
+knob (`requires_openai_auth`) sent no `Authorization` header when it was measured, so it stays
+out until someone with a ChatGPT login measures it through LiteLLM. `planWindowApplies()` is
+where that fact reaches the UI — a gateway Codex task offers no queue-at-reset, since its
+rate-limit snapshot behind a gateway is empty and no plan window is being spent anyway.
+`docs/AGENTS.md` carries the three operational hazards (the deployment cooldown, LiteLLM's
+`reasoning.summary` injection, and `gpt-5-codex` with MCP servers attached).
+
 ### …and `codex/providerCheck.ts` proves the mapping took
 
 That mapping is three assumptions about another tool's config schema — `model_providers.<name>`,
@@ -273,7 +287,8 @@ above, same answer: refuse.
 
 `codex doctor --json` accepts the same `-c` overrides the SDK passes and reports what it resolved
 under `checks["config.load"].details["model provider"]`. The driver asks before building the Codex
-client and yields an `error` instead of running when the answer isn't `calandria-local`.
+client and yields an `error` instead of running when the answer isn't the id the config it was
+handed selected (`calandria-local`, or `calandria-gateway`).
 Load-bearing details:
 
 - **Only that one field is read.** `overallStatus` is `fail` whenever the local server happens to

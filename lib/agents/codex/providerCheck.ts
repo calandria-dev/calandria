@@ -19,8 +19,9 @@
 // `codex doctor --json` is the CLI's own account of the configuration it just
 // loaded, and it accepts the same `-c` overrides the SDK passes. Its
 // `config.load` check reports the RESOLVED `model provider`, which is exactly
-// the fact in question: "calandria-local" means the mapping took, "openai"
-// means the turn was about to be billed to the ChatGPT login. Measured on
+// the fact in question: our own id ("calandria-local", or "calandria-gateway"
+// for the LiteLLM entry) means the mapping took, "openai" means the turn was
+// about to be billed to the ChatGPT login. Measured on
 // codex-cli 0.146.0, ~1.1s, so the verdict is cached per endpoint against the
 // CLI version that produced it and re-earned whenever that version moves.
 //
@@ -51,7 +52,10 @@ const run = promisify(execFile);
  */
 export const CODEX_PROVIDER_MIN_VERSION = "0.146.0";
 
-/** Where a proven endpoint is remembered: the CLI version that proved it. */
+/** Where a proven endpoint is remembered: the CLI version that proved it. Keyed
+ *  by the endpoint's own base URL, which is what keeps a gateway verdict and a
+ *  local-endpoint verdict apart — same instance, different URLs, and a URL that
+ *  matched the gateway's origin would BE the gateway. */
 const okKey = (baseUrl: string) => `codex_provider_ok:${baseUrl}`;
 
 export type CodexProviderVerdict =
@@ -196,8 +200,10 @@ export async function readCodexProvider(overrides: string[], opts: CodexProbeOpt
 
 /**
  * The gate the driver calls before building a Codex client for a turn whose
- * project (or task) redirects to a local endpoint. `{ ok: true }` for the cloud,
- * which needs no mapping and so has nothing to prove.
+ * project (or task) redirects to a local endpoint or the LiteLLM gateway.
+ * `{ ok: true }` for the cloud, which needs no mapping and so has nothing to
+ * prove. The provider id it asserts on comes from the config it was handed, so
+ * both entries are checked the same way.
  */
 export async function verifyCodexProvider(local: CodexProviderConfig, opts: CodexProbeOpts = {}): Promise<CodexProviderVerdict> {
   if (Object.keys(local.config).length === 0) return { ok: true, cliVersion: null };
@@ -226,7 +232,7 @@ export async function verifyCodexProvider(local: CodexProviderConfig, opts: Code
   }
   if (reading.kind === "unreadable")
     return { ok: false, message: unverifiableMessage(reading.detail, version, baseUrl) };
-  if (reading.provider !== CODEX_LOCAL_PROVIDER_ID)
+  if (reading.provider !== providerIdOf(local))
     return { ok: false, message: mismatchMessage(reading.provider, reading.cliVersion ?? version, baseUrl) };
 
   setSetting(okKey(baseUrl), reading.cliVersion ?? version ?? CODEX_PROVIDER_MIN_VERSION);
@@ -238,10 +244,18 @@ export function clearCodexProviderChecks(baseUrl: string): void {
   setSetting(okKey(baseUrl), null);
 }
 
+/** The entry's own id — `calandria-local` or `calandria-gateway`. Read back off
+ *  the config rather than assumed, so the probe checks the provider the turn
+ *  will actually select. */
+function providerIdOf(local: CodexProviderConfig): string {
+  const id = local.config.model_provider;
+  return typeof id === "string" ? id : CODEX_LOCAL_PROVIDER_ID;
+}
+
 function baseUrlOf(local: CodexProviderConfig): string | null {
   const providers = local.config.model_providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) return null;
-  const entry = (providers as Record<string, CodexConfigValue>)[CODEX_LOCAL_PROVIDER_ID];
+  const entry = (providers as Record<string, CodexConfigValue>)[providerIdOf(local)];
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
   const url = (entry as Record<string, CodexConfigValue>).base_url;
   return typeof url === "string" ? url : null;

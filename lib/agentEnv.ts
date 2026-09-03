@@ -289,6 +289,11 @@ export function agentTurnEnv(
   // is composed here. Read before the delete so the block can still use it.
   const gatewayKey = (out.CALANDRIA_LITELLM_KEY ?? "").trim();
   delete out.CALANDRIA_LITELLM_KEY;
+  // Composed below for a gateway turn and never inherited: a stale pair in the
+  // server's own environment would otherwise hand a cloud turn a credential and
+  // the wrong task's tags.
+  delete out.CALANDRIA_GATEWAY_KEY;
+  delete out.CALANDRIA_GATEWAY_TAGS;
   applyGatewayEnv(out, describeProvider(override, gateway), {
     key: gatewayKey,
     project: project?.id,
@@ -319,6 +324,11 @@ export function agentTurnEnv(
  *   LiteLLM 1.101.0). Either way the inherited Anthropic credentials are
  *   already gone — the gateway is a redirect away from Anthropic, so
  *   `applyProviderEnv` dropped them before this runs.
+ *
+ * The billing choice is Claude's alone. Codex gets the key either way, because
+ * the ChatGPT-forwarding equivalent (`requires_openai_auth`) sent no
+ * `Authorization` header at all when it was measured, so key billing is the
+ * only mode its gateway support ships (docs/design/litellm.md, "Codex driver").
  */
 function applyGatewayEnv(
   out: Record<string, string>,
@@ -339,6 +349,15 @@ function applyGatewayEnv(
   if (ctx.agent) tags.push(`agent:${ctx.agent}`);
   headers.push(`x-litellm-tags: ${tags.join(",")}`);
   out.ANTHROPIC_CUSTOM_HEADERS = headers.join("\n");
+  // The Codex half of the same two facts. Codex takes its headers from a
+  // provider ENTRY rather than the environment (lib/agents/codex/provider.ts),
+  // and `env_key` there names a VARIABLE the CLI reads rather than carrying the
+  // value, so the key has to exist in the turn's env under a name of our own —
+  // never `OPENAI_API_KEY`, which the built-in `openai` provider would pick up
+  // and bill a cloud turn against. The tag list is exported rather than rebuilt
+  // there so one function composes it for both CLIs.
+  out.CALANDRIA_GATEWAY_TAGS = tags.join(",");
+  if (key) out.CALANDRIA_GATEWAY_KEY = key;
   if (provider.gateway_billing === "subscription") {
     delete out.ANTHROPIC_AUTH_TOKEN;
     delete out.ANTHROPIC_API_KEY;
@@ -571,6 +590,38 @@ export function describeProvider(env: AgentEnv, gateway: string | null = gateway
     auth_token,
     gateway_billing: kind !== "gateway" ? null : env.CALANDRIA_GATEWAY_BILLING === "subscription" ? "subscription" : "key",
   };
+}
+
+/**
+ * Whether the agent's own subscription plan window says anything about THIS
+ * task's turns — what decides if the plan meter's reset time may be offered as
+ * "resume when the window rolls" (`lib/usageReset.ts`).
+ *
+ * Behind a gateway it usually does not, and the meter would be describing a
+ * quota the turn never touches:
+ *
+ * - Billed to the gateway's key, the turn draws on that key's account and no
+ *   subscription is consumed at all.
+ * - Billed to your own plan, only Claude Code forwards its login for the
+ *   gateway to pass upstream. Codex's equivalent (`requires_openai_auth`) sent
+ *   no `Authorization` header when it was measured, so its gateway support
+ *   bills the key in both modes and its ChatGPT window is untouched — and its
+ *   rate-limit snapshot behind a gateway is empty besides
+ *   (docs/design/litellm.md, "Codex").
+ *
+ * Every other kind is left alone. A local endpoint consumes no plan either, but
+ * that predates the gateway and is a separate question from this one — and an
+ * agent whose driver does not route through the gateway at all keeps its meter,
+ * since a gateway project changes nothing about the turns it runs.
+ */
+export function planWindowApplies(provider: AgentProvider, agent?: string | null): boolean {
+  if (provider.kind !== "gateway") return true;
+  // Add an agent here in the change that makes its driver honour the gateway
+  // address, not before: until then a gateway project's tasks on that agent run
+  // on its own login and spend its own plan.
+  const routed = agent === "claude" || agent === "codex";
+  if (!routed) return true;
+  return agent === "claude" && provider.gateway_billing === "subscription";
 }
 
 /** The provider a task's turns run against: the project's override with the

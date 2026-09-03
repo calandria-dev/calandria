@@ -401,10 +401,9 @@ Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as 
 What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
 attribute per key and tag, and budgets it enforces.
 
-**Scope today: Claude Code.** The preset writes the OpenAI and Gemini base URLs too, because the
-Codex and Antigravity halves build on them, but neither driver can authenticate to the gateway
-yet: a Codex task in a gateway project reaches it with no credential, and Antigravity ignores the
-address. Point those tasks at Claude until their gateway support lands.
+**Scope today: Claude Code and Codex.** The preset writes the Gemini base URL too, because the
+Antigravity half builds on it, but that driver still ignores the address. Point Antigravity tasks
+at another agent until its gateway support lands.
 
 **Setup.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin. Unset is the off switch: with
 no address the preset is absent from the settings form and Settings → Agents shows no card. Then
@@ -440,6 +439,52 @@ its prices in `/model/info` and computes the real figure itself, but no CLI expo
 `x-litellm-response-cost` header it answers with, so the number has to be recomputed from token
 counts. Until that lands, unpriced is the honest record. The session header shows a `gateway`
 chip.
+
+### Codex through the gateway
+
+Codex reads its provider from `~/.codex/config.toml` rather than from the environment, so the
+gateway reaches it as a provider entry the driver passes on the command line — the same mapping a
+local endpoint gets (**Local models** above), with a second entry named `calandria-gateway`:
+
+```toml
+[model_providers.calandria-gateway]
+name = "Calandria gateway"
+base_url = "<gateway>/v1"
+env_key = "CALANDRIA_GATEWAY_KEY"
+wire_api = "responses"
+http_headers = { "x-litellm-tags" = "calandria,project:<id>,task:<id>,agent:codex" }
+```
+
+`env_key` names a VARIABLE the CLI reads, not the key itself, which is the part people get wrong:
+the value goes in the turn's environment as `CALANDRIA_GATEWAY_KEY`, set from the same instance key
+Claude Code sends as `x-litellm-api-key`. The tag list is identical too, so LiteLLM's spend views
+break down a Codex task the same way. `codex doctor --json` proves the entry took before the turn
+spends anything, and remembers its verdict against this base URL rather than the local endpoint's.
+
+**Codex is billed to the gateway's key in both billing modes.** The ChatGPT-forwarding equivalent
+is `requires_openai_auth = true`, and on the spike host it sent no `Authorization` header at all,
+so it stays out until someone with a ChatGPT login measures it through LiteLLM. A gateway project
+set to *Billed to your own plan* still forwards the Claude Code login for its Claude tasks; its
+Codex tasks draw on the key.
+
+Three things to expect, none of them fixable here:
+
+- **The deployment cooldown below hits Codex hardest.** Codex retries a failed request several
+  times on its own, so one upstream error can turn every retry into `429 No deployments available`
+  until the CLI gives up with "exceeded retry limit". Tune `router_settings.allowed_fails` and
+  `cooldown_time` before running Codex tasks in parallel.
+- **LiteLLM adds `reasoning.summary` to reasoning-effort requests**, which OpenAI rejects for
+  organisations that have not completed verification (BerriAI/litellm#16032). Either verify the
+  organisation upstream or run Codex on a model that takes no reasoning effort.
+- **`gpt-5-codex` through LiteLLM has a history of silent empty completions when MCP servers are
+  attached** (BerriAI/litellm#14846, closed). Nothing mounts MCP servers on a gateway Codex task
+  today; the hosted-MCP work will test that combination on pinned versions before enabling it.
+
+**No plan meter.** Codex's rate-limit snapshot is empty behind a gateway, and the key's spend is
+not a plan window in any case, so a gateway Codex task offers no "resume when your window resets".
+The titlebar meter still reports the ChatGPT login for whatever cloud Codex tasks the instance runs.
+Codex also prints `Model metadata for gpt-5-codex not found. Defaulting to fallback metadata` for
+any custom provider; it is noise, not a failure.
 
 ### Two caveats from the spike
 
