@@ -1,0 +1,131 @@
+# Advance notice for the two Dockerfile pins that rot without telling anyone.
+#
+# Most of the Dockerfile's pins are safe to leave behind: npm and Debian both
+# keep old versions, so a stale pin still builds. `gh=<version>` and
+# `AGY_VERSION` are different — their upstreams serve exactly one version, so an
+# upstream release does not make the pin old, it makes it GONE, and the build
+# fails. `gh` is the worse of the two, because publish-image.yml's `type=gha`
+# layer cache keeps reusing the layer that installed the old version: the
+# `Publish image` lane stayed green through a `gh` pin that no cold build could
+# resolve, and it was found only because PR #183 happened to build locally
+# without a cache. Issue #182 was the second time the agy pin fired.
+#
+# The pins themselves stay (issue #21, and the comments at both Dockerfile
+# sites). This is the missing half: a two-request check that reads both
+# upstreams, compares them with the Dockerfile, and turns a surprise build
+# failure into an issue filed days earlier.
+#
+# WHY NOT A BOT. .github/dependabot.yml already covers what Dependabot can see:
+# action SHAs, the base-image digest, website/ npm. Its `docker` ecosystem reads
+# `FROM` lines and rewrites digests; it has no idea what `gh=2.99.0` inside a
+# `RUN` or an `ARG AGY_VERSION` mean. Renovate's regex customManagers CAN see
+# both, and were prototyped against this repo — and declined, for the reasons
+# recorded at length in dependabot.yml. That decision holds here: a bumped pin
+# needs a rebuilt checksum and a cold build to confirm, which is a human step
+# either way, so the useful artifact is the notice, not the PR.
+name: Pin drift
+
+on:
+  schedule:
+    # 08:11 UTC, an hour ahead of `Publish image`'s nightly 09:23, so a pin that
+    # aged out overnight is already an open issue by the time the build it
+    # breaks would have run. Daily rather than weekly because the check is two
+    # HTTP GETs against static files — cheaper than the notice being six days
+    # late.
+    - cron: "11 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # For the drift issue below. Nothing here reads or writes code.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No setup-node and no `npm ci`: the script imports nothing outside
+      # node:*, so the runner's bundled Node runs it as-is.
+      - name: Compare pins with upstream
+        id: check
+        run: |
+          set -u
+          status=0
+          node scripts/check-pin-drift.mjs --report "$RUNNER_TEMP/drift.md" || status=$?
+          case "$status" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            # Exit 2 is the check failing, not a pin failing — an unreachable
+            # upstream, or a pin it can no longer find in the Dockerfile because
+            # the ARG was renamed. Go red instead of reporting an all-clear; the
+            # notify job below is what makes that red visible.
+            *) exit "$status" ;;
+          esac
+
+      - name: Open, update or close the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.check.outputs.drift }}
+        run: |
+          set -euo pipefail
+          # `gh issue create --label` fails outright on a label that does not
+          # exist, so the first run has to create it.
+          gh label create pin-drift \
+            --description "A pinned CLI has aged out of its upstream" \
+            --color d93f0b >/dev/null 2>&1 || true
+
+          existing="$(gh issue list --label pin-drift --state open \
+            --json number --jq '.[0].number // empty')"
+
+          if [ "$DRIFT" = "true" ]; then
+            if [ -n "$existing" ]; then
+              # Rewrite the body rather than adding a comment. This runs daily,
+              # and a comment a day would notify everyone subscribed about a
+              # fact they already have; the body is regenerated so a SECOND pin
+              # ageing out still shows up on the same issue.
+              gh issue edit "$existing" --body-file "$RUNNER_TEMP/drift.md"
+              echo "Updated #$existing."
+            else
+              gh issue create \
+                --title "A pinned CLI has aged out of its upstream" \
+                --label pin-drift \
+                --body-file "$RUNNER_TEMP/drift.md"
+            fi
+          elif [ -n "$existing" ]; then
+            # Self-closing, so the issue tracks the live state instead of
+            # needing someone to remember it after the bump lands.
+            gh issue close "$existing" \
+              --comment "Every pin now matches upstream. Closed by \`Pin drift\`."
+            echo "Closed #$existing."
+          else
+            echo "No drift, and no open issue to close."
+          fi
+
+  # A checker that dies quietly is worth nothing, which is the whole failure
+  # mode this workflow exists to fix. Same action and same shape as
+  # publish-image.yml's notify job, so a broken check announces itself the way a
+  # broken build does. Restricted to `schedule`: a manual dispatch is somebody
+  # already watching, and should not file build-failure issues while debugging.
+  notify:
+    needs: [check]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b # v1.2.0
+        with:
+          # Required, and the action has no default — see the same note in
+          # publish-image.yml's notify job (issue #26).
+          github-token: ${{ github.token }}

@@ -164,9 +164,9 @@ export interface TagDriftInfo {
 }
 
 /**
- * The one line a drift reading is worth, and whether Sync is on offer — split
- * out from the component because it is the whole judgement and the rest is
- * plumbing.
+ * The one line a drift reading is worth, and whether Sync or Create is on
+ * offer — split out from the component because it is the whole judgement and
+ * the rest is plumbing.
  *
  * `null` means say nothing: a tag that follows the project default, or names it
  * explicitly, has no second branch to fall behind. "Up to date" IS said, though,
@@ -177,12 +177,21 @@ export interface TagDriftInfo {
  * definition — that's what it's for — and counting it beside the number that
  * matters would bury it.
  */
-export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" | "bad"; syncable: boolean } | null {
+export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" | "bad"; syncable: boolean; creatable?: boolean } | null {
   if (d.inherited || d.sameAsProject) return null;
   const branch = d.branch || "this tag's base branch";
   const against = d.against || d.projectBranch || "the project default";
+  // Git can't tell a deleted branch from one nobody has created yet, and the
+  // usual case is the latter: a base typed into the editor before any plan cut
+  // it. Said as "yet", with Create on offer, rather than mourning a branch that
+  // never was.
   if (d.exists === false)
-    return { text: `${branch} no longer exists here — new tasks are cut from HEAD instead`, tone: "bad", syncable: false };
+    return {
+      text: `${branch} doesn't exist here yet — new tasks are cut from HEAD until it does`,
+      tone: "bad",
+      syncable: false,
+      creatable: d.againstExists !== false,
+    };
   if (d.againstExists === false) return { text: `${against} doesn't exist here`, tone: "bad", syncable: false };
   if (d.unknown) return { text: `can't compare with ${against}`, tone: "warn", syncable: false };
   const behind = d.behind ?? 0;
@@ -237,6 +246,23 @@ function TagDriftRow({ tag }: { tag: TagRow }) {
     }
   };
 
+  // The branch that exists nowhere: cut it at the project default's tip, the
+  // commit the tag's first task would otherwise have been cut from.
+  const create = async () => {
+    setBusy(true);
+    setErr(null);
+    setNote(null);
+    try {
+      const r = await jsend<{ branch: string; from: string }>(`/api/tags/${tag.id}/sync`, "POST", { action: "create" });
+      setNote(`Created ${r.branch} at ${r.from}'s tip.`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
+
   const line = drift && driftLine(drift);
   if (!line) return null;
   return (
@@ -246,6 +272,12 @@ function TagDriftRow({ tag }: { tag: TagRow }) {
         <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void sync()}
           title={`Merge ${drift?.against ?? "the project default"} into ${drift?.branch ?? "this branch"}, so tasks tagged this stop being cut stale`}>
           {busy ? "Syncing…" : "Sync"}
+        </button>
+      )}
+      {line.creatable && (
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void create()}
+          title={`Create ${drift?.branch ?? "this branch"} at ${drift?.against ?? "the project default"}'s current tip, so tasks tagged this are cut from it`}>
+          {busy ? "Creating…" : `Create from ${drift?.against ?? "default"}`}
         </button>
       )}
       {note && <span className="gs-drift-note">{note}</span>}

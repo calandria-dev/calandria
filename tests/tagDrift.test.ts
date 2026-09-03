@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/tags/[id]/sync/route";
 import { driftLine } from "../app/shell/TagStrip";
-import { branchDriftStatus, syncBranchFrom } from "../lib/git";
+import { branchDriftStatus, createBranchAt, syncBranchFrom } from "../lib/git";
 import { createProject, createTag } from "../lib/store";
 import { commitFile, git, makeRepo, makeRepoWithOrigin, pushFromColleague, uid, writeFile } from "./helpers";
 
@@ -123,6 +123,8 @@ describe("GET/POST /api/tags/[id]/sync", () => {
   const params = (id: string) => ({ params: Promise.resolve({ id }) });
   const get = (id: string) => GET(new Request("http://t/"), params(id));
   const post = (id: string) => POST(new Request("http://t/", { method: "POST" }), params(id));
+  const create = (id: string) =>
+    POST(new Request("http://t/", { method: "POST", body: JSON.stringify({ action: "create" }) }), params(id));
 
   it("GET answers inherited, no git touched, for a tag with no base of its own", async () => {
     const repo = await makeRepo();
@@ -174,6 +176,81 @@ describe("GET/POST /api/tags/[id]/sync", () => {
   it("GET 404s on an unknown tag id", async () => {
     expect((await get("no-such-tag")).status).toBe(404);
   });
+
+  // The bug: a base typed into the editor before anything created it read as
+  // "no longer exists", and nothing on offer could make it exist.
+  it("GET reports exists: false for a base branch nothing has created", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });
+    const tag = createTag({ project_id: project.id, name: "T", base_branch: "litellm-support" });
+    const body = await (await get(tag.id)).json();
+    expect(body).toMatchObject({ exists: false, againstExists: true, branch: "litellm-support" });
+  });
+
+  it("POST create cuts the missing branch at the project default's tip, and GET then reads up to date", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });
+    const tag = createTag({ project_id: project.id, name: "T", base_branch: "litellm-support" });
+
+    const res = await create(tag.id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, created: true, branch: "litellm-support", from: "main" });
+    expect(await git(repo, "rev-parse", "litellm-support")).toBe(await git(repo, "rev-parse", "main"));
+    // No upstream: a bare push from a task cut off it must not target main.
+    await expect(git(repo, "rev-parse", "--abbrev-ref", "litellm-support@{upstream}")).rejects.toThrow();
+    expect(await (await get(tag.id)).json()).toMatchObject({ exists: true, behind: 0 });
+  });
+
+  it("POST create starts the branch at the fetched remote tip when the local default is behind", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    const remoteTip = await pushFromColleague(colleague, "f.txt", "x");
+    const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });
+    const tag = createTag({ project_id: project.id, name: "T", base_branch: "integration" });
+
+    expect((await create(tag.id)).status).toBe(200);
+    expect(await git(repo, "rev-parse", "integration")).toBe(remoteTip);
+  });
+
+  it("POST create refuses with 409 when the branch already exists", async () => {
+    const repo = await makeRepo();
+    await git(repo, "branch", "integration");
+    const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });
+    const tag = createTag({ project_id: project.id, name: "T", base_branch: "integration" });
+    const res = await create(tag.id);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already exists");
+  });
+
+  // A colleague's pushed integration branch has no local ref until something
+  // asks for one; the reading must match the cut `ensureWorktree` would make.
+  it("GET counts a branch that exists only on the remote as existing", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "integration");
+    await git(colleague, "push", "-u", "origin", "integration");
+    await git(colleague, "checkout", "main");
+    const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });
+    const tag = createTag({ project_id: project.id, name: "T", base_branch: "integration" });
+    const body = await (await get(tag.id)).json();
+    expect(body).toMatchObject({ exists: true, behind: 0 });
+    expect(await git(repo, "rev-parse", "--verify", "refs/heads/integration")).toBeTruthy();
+  });
+});
+
+describe("createBranchAt", () => {
+  it("creates the branch at the sha with no upstream", async () => {
+    const repo = await makeRepo();
+    const sha = await git(repo, "rev-parse", "main");
+    expect(await createBranchAt(repo, "integration", sha)).toEqual({ ok: true, sha });
+    expect(await git(repo, "rev-parse", "integration")).toBe(sha);
+  });
+
+  it("refuses an existing branch, an unsafe name and an empty start point, each named", async () => {
+    const repo = await makeRepo();
+    const sha = await git(repo, "rev-parse", "main");
+    expect(await createBranchAt(repo, "main", sha)).toMatchObject({ ok: false, error: expect.stringContaining("already exists") });
+    expect(await createBranchAt(repo, "-bad", sha)).toMatchObject({ ok: false, error: expect.stringContaining("-bad") });
+    expect(await createBranchAt(repo, "integration", "")).toMatchObject({ ok: false, error: expect.stringContaining("integration") });
+  });
 });
 
 describe("driftLine", () => {
@@ -182,10 +259,17 @@ describe("driftLine", () => {
     expect(driftLine({ sameAsProject: true })).toBeNull();
   });
 
-  it("flags a deleted base branch as bad and unsyncable, naming HEAD", () => {
-    const line = driftLine({ exists: false, branch: "x", against: "main" });
-    expect(line).toMatchObject({ tone: "bad", syncable: false });
+  it("flags a missing base branch as bad, unsyncable and creatable, naming HEAD and saying yet", () => {
+    const line = driftLine({ exists: false, branch: "x", against: "main", againstExists: true });
+    expect(line).toMatchObject({ tone: "bad", syncable: false, creatable: true });
     expect(line!.text).toContain("HEAD");
+    expect(line!.text).toContain("yet");
+    expect(line!.text).not.toContain("no longer");
+  });
+
+  it("withholds Create when there is no project default to cut from", () => {
+    const line = driftLine({ exists: false, branch: "x", against: "main", againstExists: false });
+    expect(line).toMatchObject({ tone: "bad", creatable: false });
   });
 
   it("reports up to date as ok and not offering Sync", () => {
