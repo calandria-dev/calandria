@@ -249,6 +249,12 @@ for a Docker instance.
 
 [Recipes and the allowlist](docs/AGENTS.md#local-models)
 
+### LiteLLM gateway
+
+A [LiteLLM](https://docs.litellm.ai) proxy is a fourth **Model provider**, on the same seam and with no new driver. Set `CALANDRIA_LITELLM_BASE_URL` and a project can route its Claude Code turns through the gateway, either billed to the gateway's virtual key or to your own plan with the CLI's login forwarded. Every turn carries tags naming the project, task and agent, so LiteLLM's spend views break down by task on their own. Settings → Agents shows whether the gateway answers, which LiteLLM version it is, how many models it serves, and says so plainly when the proxy has no database and therefore no keys, budgets or spend. Gateway turns are recorded unpriced for now, and Codex and Antigravity tasks cannot use the gateway yet.
+
+[Setup, billing modes and the two caveats](docs/AGENTS.md#litellm-gateway)
+
 ### Preparing a project for parallel tasks
 
 Every task is its own git worktree, so it starts from a checkout holding

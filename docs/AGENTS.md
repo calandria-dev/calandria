@@ -393,6 +393,86 @@ what lets a frontier model hand routine work to a local one. `suggest_task` take
 endpoint whatever the project's setting, and `provider: "cloud"` does the reverse inside a
 local project. The same field is `agent_env` on `PATCH /api/tasks/[id]`.
 
+## LiteLLM gateway
+
+A [LiteLLM](https://docs.litellm.ai) proxy is the fourth **Model provider**, beside *Local model*
+and *Custom base URL* and on the same seam. It is not a driver: LiteLLM speaks the Anthropic
+Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as it reaches Ollama.
+What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
+attribute per key and tag, and budgets it enforces.
+
+**Scope today: Claude Code.** The preset writes the OpenAI and Gemini base URLs too, because the
+Codex and Antigravity halves build on them, but neither driver can authenticate to the gateway
+yet: a Codex task in a gateway project reaches it with no credential, and Antigravity ignores the
+address. Point those tasks at Claude until their gateway support lands.
+
+**Setup.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin. Unset is the off switch: with
+no address the preset is absent from the settings form and Settings → Agents shows no card. Then
+open a project's settings, set **Model provider** to *Gateway*, name a model your `model_list`
+serves, and choose who pays:
+
+- **Billed to the gateway's key** — the instance's virtual key goes out as the turn's Anthropic
+  auth token, so the turn draws on that key's account. Set the key with `CALANDRIA_LITELLM_KEY`
+  or in Settings → Agents.
+- **Billed to your own plan** — no credential variable is set, the CLI keeps its own `/login`, and
+  the gateway forwards it upstream. This needs `general_settings.forward_client_headers_to_llm_api:
+  true` on the proxy. Measured working on Claude Code 2.1.257 through LiteLLM 1.101.0.
+
+Every gateway turn also carries `x-litellm-api-key` and a tag list naming the project, task and
+agent, so LiteLLM's own spend views break down by task with nothing written on Calandria's side.
+Those headers are composed per turn rather than stored: `ANTHROPIC_CUSTOM_HEADERS` is Claude
+Code's only knob for arbitrary request headers, and a project field that could set it would be a
+way to make every turn in that project send anything at all. It is deliberately absent from the
+`agent_env` allowlist, and the key is absent from the project row entirely — it lives in a 0600
+file beside the database and is resolved at turn time.
+
+**The health card.** Settings → Agents reports the gateway separately from the agents above it,
+for the reason the local endpoint is reported separately: an agent's *connected* is its CLI login
+and says nothing about whether the gateway is up. It reads `/health/readiness` (which takes no
+key, so an instance with the address and no key still gets an answer), the `x-litellm-version`
+header that rides on every response, and a model count from `/model/info`. `/key/info` answers
+`500 Database not connected` on a proxy with no Postgres behind it, and the card says **keys,
+budgets and spend need LiteLLM's database** rather than showing blanks where those would go.
+
+**What a gateway turn costs.** Recorded as **unpriced** (`task_usage.cost_usd` is NULL) and left
+out of every total, the same row a custom base URL gets. The reason differs: the gateway states
+its prices in `/model/info` and computes the real figure itself, but no CLI exposes the
+`x-litellm-response-cost` header it answers with, so the number has to be recomputed from token
+counts. Until that lands, unpriced is the honest record. The session header shows a `gateway`
+chip.
+
+### Two caveats from the spike
+
+**One upstream error cools the deployment for everyone.** A single 401 from upstream put the
+deployment in cooldown and every later request got `429 No deployments available for selected
+model` until the window expired. With many parallel sessions on one deployment, a transient
+upstream failure takes them all down. Raise `router_settings.allowed_fails` and shorten
+`cooldown_time` if you run more than a handful of tasks at once:
+
+```yaml
+router_settings:
+  allowed_fails: 8
+  cooldown_time: 30
+```
+
+**LiteLLM rebuilds `anthropic-beta` and drops values it does not recognise.** On the unified
+route, three of the eight betas Claude Code sent did not reach upstream:
+`claude-code-20250219`, `thinking-token-count-2026-05-13` and `extended-cache-ttl-2025-04-11`.
+The last one is a billing regression — a 1-hour cache request silently becomes a 5-minute one —
+so **1-hour prompt caching is unavailable through the gateway**. LiteLLM assembles the header
+from a set of betas it knows plus its own additions
+(`litellm/llms/anthropic/common_utils.py`, `get_anthropic_headers`), while Claude Code's gateway
+protocol asks that it be forwarded as an open list.
+
+Two more worth knowing. Do not point `ANTHROPIC_BASE_URL` at `<gateway>/anthropic`: that
+pass-through is byte-faithful but ignores `model_list` and calls api.anthropic.com directly with
+your forwarded token. And `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` cannot help, because
+LiteLLM's `/v1/models` is OpenAI-shaped and Claude Code expects the Anthropic shape
+(BerriAI/litellm#27180); Calandria does its own discovery from `/model/info`.
+
+The full spike, including the reproduction recipe and the measured request shapes, is in
+`docs/design/litellm.md`.
+
 ## Adding another agent
 
 The app is agent-agnostic behind a small driver interface. A new driver supplies normalized

@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
-import { taskProvider } from "@/lib/agentEnv";
+import { recordedCostUsd, taskProvider } from "@/lib/agentEnv";
 import { getDriver } from "@/lib/agents/registry";
 import { claimTurn, handoffTurn, hasTurn, ownsTurn, unregisterTurn, abortTurn, activeTurnIds } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -1014,7 +1014,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // disagree about which endpoint a turn ran against. Tokens are kept
         // whichever way it lands: an unpriced turn still filled a context window.
         const provider = taskProvider(project, task);
-        const cost = provider.pricing === "vendor" ? ev.usage.cost_usd : provider.pricing === "free" ? 0 : null;
+        const cost = recordedCostUsd(provider.pricing, ev.usage.cost_usd);
         const usage: LedgerUsage = { ...ev.usage, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
@@ -1148,7 +1148,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     if (!isEmptyUsage(provisional)) {
       try {
         const provider = taskProvider(project, task);
-        const cost = provider.pricing === "free" ? 0 : null;
+        // No vendor figure to offer: this path exists precisely because the
+        // turn ended without one. Asked through the same helper anyway, so the
+        // free-endpoint zero and the unpriced NULL are decided in one place.
+        const cost = recordedCostUsd(provider.pricing, null);
         const usage: LedgerUsage = { ...provisional, cost_usd: cost };
         addUsage({ project_id: project.id, task_id: id, generation: gen, agent: task.agent, provider: provider.host, usage });
         for (const k of Object.keys(spent) as (keyof typeof spent)[]) spent[k] += usage[k] ?? 0;
