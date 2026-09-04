@@ -22,7 +22,7 @@ import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
-import { CODEX_CAPABILITIES } from "./capabilities";
+import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
@@ -193,9 +193,11 @@ async function* runTurn(
   // (codex emits no model event of its own, so this resolved value is the best
   // truth available). It prices the cost estimate and is reported as a `model`
   // event so the badge + Insights provider panel populate. When nothing chose,
-  // we still OMIT the model override below — a user's ~/.codex/config.toml
-  // default keeps winning — so the resolved value is an assumption in that edge
-  // case, consistent with the estimated-cost framing.
+  // we still OMIT the model override below and let the CLI pick — but the
+  // resolution is no longer a guess about what it picks: ./catalog.ts reads the
+  // same two files the CLI reads, ~/.codex/config.toml's `model` and the
+  // top-`priority` entry of the account catalog, and only falls back to the
+  // constant where the CLI falls back to its own embedded one.
   const model = resolveCodexModel(chosen);
   // Codex reports the thread's CUMULATIVE token counts on every turn.completed,
   // so a resumed thread starts from the baseline the last turn stored (see
@@ -436,7 +438,11 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
 export const codexDriver: AgentDriver = {
   id: "codex",
   label: "Codex",
-  capabilities: CODEX_CAPABILITIES,
+  // A getter, like the Claude driver's: the descriptor's context windows are
+  // read from ~/.codex per call, so freezing one at module load would undo it.
+  get capabilities() {
+    return codexCapabilities();
+  },
   runTurn,
   // The titlebar session/week meter. Unlike Claude's, nothing rides the turn
   // stream to feed it (the exec JSONL protocol carries no rate limits — see

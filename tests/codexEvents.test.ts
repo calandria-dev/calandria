@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { mapThreadEvent, newState } from "@/lib/agents/codex/events";
 import { estimateCostUsd, resolveCodexModel, DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
-import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import type { StreamEvent } from "@/lib/types";
 
 // The Codex event-mapping unit test. Feeds recorded codex `codex exec
@@ -195,7 +195,7 @@ describe("codex cost estimation", () => {
     // with no row of its own falls through to the bare "gpt-5" catch-all and
     // quietly prices at the wrong rate instead of failing.
     const catchAll = estimateCostUsd("gpt-5-nonexistent-family", usage);
-    for (const m of CODEX_CAPABILITIES.models) {
+    for (const m of codexCapabilities().models) {
       expect(estimateCostUsd(m.value, usage), m.value).not.toBeCloseTo(catchAll, 10);
     }
   });

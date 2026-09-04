@@ -37,6 +37,8 @@ const RESULT = {
 // this module's own concern — point it at a scratch dir so the developer's real
 // ~/.codex login can't make these tests pass or fail.
 let codexHome: string;
+// tests/setup.ts pins CODEX_HOME suite-wide; put it back rather than deleting it.
+const suiteCodexHome = process.env.CODEX_HOME;
 const authPath = () => path.join(codexHome, "auth.json");
 
 function writeLogin(body: unknown = { OPENAI_API_KEY: null, tokens: { access_token: "t", account_id: "a" } }) {
@@ -53,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(codexHome, { recursive: true, force: true });
-  delete process.env.CODEX_HOME;
+  process.env.CODEX_HOME = suiteCodexHome;
   vi.restoreAllMocks();
 });
 
