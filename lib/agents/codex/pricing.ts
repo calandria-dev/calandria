@@ -47,21 +47,51 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 
 // The codex CLI's own default model, assumed when a task doesn't pick one
 // (tasks.model = null → we omit the model override and the CLI runs its
-// default). Used to resolve pricing and the resolved-model badge; bump when
-// upstream changes its default. Verify rather than guess: it's the
-// lowest-`priority` entry in the catalog embedded in the CLI binary, and can be
-// confirmed end-to-end by running `codex exec` under a scratch CODEX_HOME (no
-// config.toml to override it) and reading the model off the session rollout.
+// default). Used to resolve pricing and the resolved-model badge.
 //
-// SUSPECTED STALE, deliberately not changed here. A 0.153.0 account catalog
-// ranks gpt-6-astra `priority: 1` against Sol's 6, and by the rule above that
-// makes Astra the CLI default. If it is, every task that never picked a model
-// runs Astra and is costed as Sol — half price — and the "(default)" note on
-// Sol's picker entry reads wrong too. It isn't flipped on that evidence alone
-// because `priority` is the catalog's ORDERING field and this constant claims
-// something stronger, the check above is the one that settles it, and guessing
-// wrong mis-prices the same turns in the other direction. Settle it with a
-// no-`--model` run under a scratch CODEX_HOME, then change both places.
+// KNOWN WRONG for some accounts, and deliberately still a constant. Read the
+// next three paragraphs before touching it, because both values are wrong for
+// somebody and flipping it just moves who.
+//
+// The `priority` rule holds up: the CLI ranks models by it, 1 is the top, and
+// the top entry is the default. What that rule returns depends on WHICH
+// catalog is in force, and there are two. The fallback catalog compiled into
+// the binary is one; the catalog the CLI fetches per ACCOUNT at startup is the
+// other, and it wins when it is there. They disagree about the answer:
+//
+//   embedded fallback, 0.153.0    gpt-5.6-sol priority 1, no gpt-6-astra at all
+//   account catalog,   0.153.0    gpt-6-astra priority 1, gpt-5.6-sol at 6
+//
+// So the default is gpt-6-astra on an account that has Astra, and gpt-5.6-sol
+// on one that doesn't, offline, or on any pin that can't run it. Astra shipped
+// Daybreak-gated (the embedded catalog still carries two hidden
+// gpt-daybreak-*-latest rows), so both kinds of account are real right now.
+// Setting this to Astra would misprice every account without it by the same 2x
+// this currently misprices every account with it, in the other direction. One
+// hardcoded id cannot be right for both, which is the actual finding: the fix
+// is to READ the catalog (~/.codex/models_cache.json, the sibling task that
+// already owns parsing that file), not to re-guess this string. Until then
+// this holds the value that is right for the account that has fetched no
+// catalog, because that is also the value the CLI itself falls back to.
+//
+// To re-check, cheapest first:
+//   1. Offline, no login. The binary embeds that fallback catalog as readable
+//      JSON. Find `{\n  "models": [`, brace-match it, and read `slug` and
+//      `priority`; a slug that appears zero times in the binary is one the
+//      fallback has never heard of.
+//   2. End-to-end, needs a live login, and this is the only check that sees
+//      the ACCOUNT catalog. Run `codex exec` with no `--model` under a scratch
+//      CODEX_HOME (no config.toml to override the default) and read the model
+//      off the rollout in $CODEX_HOME/sessions. Copy credentials in from
+//      wherever the CLI keeps them; there is no ~/.codex/auth.json on a 0.146
+//      or 0.153 install, and a recipe that cp's one fails silently, then 401s
+//      five times, then exits 0 with an empty rollout that reads like a
+//      missing answer rather than a broken run.
+//
+// Measured 2026-09-03 by step 1 against both the old 0.146.0 pin and the
+// current 0.153.0 one, which agree. Step 2 has never been run: `codex login
+// status` reports "Not logged in" on the machine this was checked from.
+
 export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 
 /** The model a codex turn effectively runs: the task's choice, else the CLI default. */
