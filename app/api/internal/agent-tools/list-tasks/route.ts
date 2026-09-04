@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getProject } from "@/lib/store";
 import { listTasksForAgent, resolveTagRefs, resolveTargetProject } from "@/lib/agentTools";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("list_tasks", "bridge", body.taskId);
 
   const callingProject = body.projectId ? getProject(body.projectId) : undefined;
   if (!callingProject) return NextResponse.json({ error: "unknown project" }, { status: 404 });

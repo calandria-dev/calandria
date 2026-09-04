@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { modelLabel, contextWindowOf } from "@/app/shell/format";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
-import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
 const claude = CLAUDE_CAPABILITIES;
 
@@ -42,11 +42,11 @@ describe("modelLabel", () => {
   });
 
   it("falls back to capability labels for ids with no version shape", () => {
-    expect(modelLabel("gpt-5.5", CODEX_CAPABILITIES)).toBe("GPT-5.5");
-    expect(modelLabel("gpt-5.6-sol", CODEX_CAPABILITIES)).toBe("GPT-5.6 Sol");
+    expect(modelLabel("gpt-5.5", codexCapabilities())).toBe("GPT-5.5");
+    expect(modelLabel("gpt-5.6-sol", codexCapabilities())).toBe("GPT-5.6 Sol");
     // "gpt-5.6-terra" also contains "gpt-5.6" — longest-first matching must not
     // let a shorter value shadow the more specific one.
-    expect(modelLabel("gpt-5.6-terra", CODEX_CAPABILITIES)).toBe("GPT-5.6 Terra");
+    expect(modelLabel("gpt-5.6-terra", codexCapabilities())).toBe("GPT-5.6 Terra");
   });
 
   it("degrades to the family, then the raw id", () => {

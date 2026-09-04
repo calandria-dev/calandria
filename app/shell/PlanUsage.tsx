@@ -134,27 +134,43 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
 const SESSION_IDS = ["five_hour", "primary"];
 const WEEK_IDS = ["seven_day", "secondary"];
 
+/**
+ * Whether an agent's titlebar usage tracker is shown. Settings → Agents writes
+ * `plan_usage:<agent>` = "off" to hide one; unset means shown, so an instance
+ * that never opens the setting keeps every tracker it had.
+ */
+export function planUsageShown(appDefaults: Record<string, string>, agentId: string): boolean {
+  return appDefaults[`plan_usage:${agentId}`] !== "off";
+}
+
 // One pill per agent that reports plan usage, in the order GET /api/plan-usage
 // lists them (driver registration order). Usually that is one (nobody runs two
 // metered subscriptions in the same instance by accident), but an Antigravity
 // + Claude workspace — or a Claude + ChatGPT one — meters two independent
 // quotas, and hiding either would misreport how much room the next batch of
-// turns has. Each pill wears its agent's brand mark once there is more than
-// one to tell apart.
-export function PlanUsagePill({ agents }: { agents: AgentsBundle }) {
+// turns has. Which of them earn titlebar space is the user's call
+// (`plan_usage:<agent>`, Settings → Agents): a second login you only use for
+// utility jobs is worth metering on the server and not worth a pill.
+//
+// Each pill wears its agent's brand mark and no name — the marks are what tell
+// two pills apart, and the button's tooltip and popover both spell out whose
+// plan it is.
+export function PlanUsagePill({ agents, appDefaults }: { agents: AgentsBundle; appDefaults: Record<string, string> }) {
   const map = usePlanUsage();
-  const metered = Object.entries(map).filter(([, s]) => s.available && s.windows.length > 0);
+  const metered = Object.entries(map).filter(
+    ([id, s]) => s.available && s.windows.length > 0 && planUsageShown(appDefaults, id),
+  );
   if (metered.length === 0) return null;
   return (
     <>
       {metered.map(([id, snap]) => (
-        <AgentPlanPill key={id} agentId={id} label={id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id)} snap={snap} multi={metered.length > 1} />
+        <AgentPlanPill key={id} agentId={id} label={id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id)} snap={snap} />
       ))}
     </>
   );
 }
 
-function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label: string; snap: PlanUsageSnapshot; multi: boolean }) {
+function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: string; snap: PlanUsageSnapshot }) {
   const [open, setOpen] = useState(false);
 
   // By kind where the driver says so: every metered plan has a session window
@@ -182,8 +198,8 @@ function AgentPlanPill({ agentId, label, snap, multi }: { agentId: string; label
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         title={`${who} plan usage: click for the breakdown`}
       >
-        {multi && mark && <span className="pp-mark" aria-hidden>{mark()}</span>}
-        {multi && <span className="pp-who">{label.split(" ")[0]}</span>}
+        {/* The gateway plan has no brand mark, so its pill wears its name instead. */}
+        {mark ? <span className="pp-mark" aria-hidden>{mark()}</span> : <span className="pp-seg">{label}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%

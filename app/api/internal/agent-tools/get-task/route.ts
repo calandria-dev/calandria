@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getTaskForAgent } from "@/lib/agentTools";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("get_task", "bridge", body.taskId);
 
   const id = body.task?.trim() || body.taskId?.trim() || "";
   if (!id) return NextResponse.json({ error: "task id is required" }, { status: 400 });

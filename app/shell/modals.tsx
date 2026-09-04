@@ -7,7 +7,7 @@ import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking } from "./format";
 import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
-import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
+import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
 import { StatusDot, Skel, ErrNote, EndpointNote } from "./shared";
 import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
@@ -26,19 +26,27 @@ import { useEndpointModels } from "./modelEndpoint";
 // default pointing at an agent that was since signed out — because hiding it
 // there would strand the task on an agent it can't run and hide the way out.
 // Nothing connected keeps the picker too, so the connect CTA still renders.
-// An unauthenticated agent is still selectable (you can create a not-started
-// task and connect later) but flagged, with a Connect CTA that jumps to the
-// setup wizard.
+//
+// The entries themselves come from pickerAgents(), not from the whole bundle:
+// an agent nobody is signed in to can't run a session, so offering it is a dead
+// end. Hiding the picker was only ever half of that rule and it stopped holding
+// the moment a third driver shipped — a Claude + Antigravity instance has a
+// genuine choice to render, so the picker appeared, and Codex rode along in it
+// as a "· not connected" button. The one unconnected entry still rendered is
+// the SELECTED agent, flagged, with a Connect CTA that jumps to the setup
+// wizard: that is the way off a task whose agent was signed out, so it is the
+// one case where a dead button is the point.
 export function AgentPicker({ agents, value, onChange, onConnect, help, label = "Agent" }: {
   agents: AgentsBundle; value: string; onChange: (id: string) => void; onConnect?: () => void; help?: string; label?: string;
 }) {
   if (!agentPickerNeeded(agents, value)) return null;
   const sel = findAgent(agents, value);
+  const offered = pickerAgents(agents, value);
   return (
     <div className="field">
       <div className="lab">{label}</div>
       <div className="seg wrap">
-        {agents.agents.map((a) => (
+        {offered.map((a) => (
           <button key={a.id} className={a.id === value ? "on" : ""} onClick={() => onChange(a.id)}
             title={a.authenticated ? `Run on ${a.label}` : `${a.label} isn't connected yet`}>
             {a.label}{!a.authenticated && <span className="opt"> · not connected</span>}

@@ -26,7 +26,11 @@ export const dynamic = "force-dynamic";
 // The notify_* keys and their master switch (`notifications`) gate
 // lib/notifications — server-side rather than in the browser because the
 // webhook channel planned next must obey the same policy. All default on.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+)$/;
+// `plan_usage:<agent>` is display-only, "off" hiding that agent's titlebar
+// usage tracker; it lives here rather than in browser storage so the choice
+// follows the instance to every device it's opened from, like every other
+// preference on this route.
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());

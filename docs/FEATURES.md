@@ -51,15 +51,17 @@ Calandria puts the task conversation and git diff side by side. From there you c
 
 ![Diff review beside the agent session](images/changes.png)
 
-Once a task has a PR, its session header carries a live chip: the PR number, whether it is
-open, merged or closed, how its checks are doing, and the review decision. Calandria keeps
-that current by re-reading the PR from GitHub (`gh pr view`) in the background — when the PR
-is created, when you open the task, when you press the chip's Refresh button, and on a timer
-while the PR is still open. Nothing polls from the browser: a change reaches every open tab
-over the same event stream every other lifecycle fact uses. A merged or closed PR is never
-re-read, and a sweep is skipped entirely when no tab is open, so the cost is bounded by open
-work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
-turns the timer off and leaves the other three triggers.
+Once a task has a PR, the diff view's toolbar carries a live chip: the PR number, whether it
+is open, merged or closed, how its checks are doing, and the review decision. It sits with the
+diff rather than in the session header so the PR's state and the buttons that act on it are in
+one place, which matters most on a phone, where the diff and the chat are separate views.
+Calandria keeps that current by re-reading the PR from GitHub (`gh pr view`) in the background
+— when the PR is created, when you open the task, when you press the chip's Refresh button,
+and on a timer while the PR is still open. Nothing polls from the browser: a change reaches
+every open tab over the same event stream every other lifecycle fact uses. A merged or closed
+PR is never re-read, and a sweep is skipped entirely when no tab is open, so the cost is
+bounded by open work rather than by how many PRs the instance has ever opened.
+`CALANDRIA_PR_POLL_MS=0` turns the timer off and leaves the other three triggers.
 
 **A red PR is treated as work that needs you.** When the check rollup on a task's open PR
 goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
@@ -246,6 +248,19 @@ in git and landing was entirely a human click. It is registered only on a `pr` p
 `merge` project there is nothing for it to open, so it is absent rather than
 present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
 merging is deciding, and that stays yours.
+
+A PR that a session opened **by hand** is linked to its task anyway. `create_pr` can be cut
+off by the CLI before it reaches Calandria, and a session that sees that failure falls back to
+`git push` plus `gh pr create` in a terminal. That opens a real PR, but nothing on the task
+row knows about it: no chip in the session header, no state polling, no auto-reclaim when it
+lands, and you relink it by hand. So at the end of every turn, a task on a `pr` project that
+has a work branch and no PR yet is checked: if the branch was pushed, one `gh pr list --head
+<branch> --state open` asks whether a PR for it exists, and an open one whose head is exactly
+that branch is recorded the way `create_pr` records its own. The branch check is local, so a
+task that never pushed costs nothing, and a PR whose head is any other branch is never
+adopted. It is best-effort like the rest of the network git: bounded, never prompting, and a
+`gh` that is missing, logged out or offline leaves the task exactly as it was. The link is
+logged as one line.
 
 **Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
 `pull_request` rule, and classic branch protection, neither of which reports the other. It

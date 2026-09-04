@@ -78,6 +78,27 @@ afterEach(() => {
 });
 
 describe("turn lifecycle logging", () => {
+  it("counts the Calandria tool calls the agent CLI answered itself onto the ok line", async () => {
+    const project = createProject({ name: "Cutoffs" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([
+      { type: "session", sessionId: "s-1" },
+      { type: "tool", id: "c1", name: "mcp__calandria__suggest_task", title: "✦ Suggest a task", detail: "" },
+      { type: "tool_result", id: "c1", content: "cut off", isError: true, cutOff: true },
+      { type: "tool", id: "b1", name: "Bash", title: "❯ true", detail: "true" },
+      { type: "tool_result", id: "b1", content: "", isError: false },
+      { type: "tool", id: "c2", name: "mcp__calandria__create_pr", title: "✦ Open a PR", detail: "" },
+      { type: "tool_result", id: "c2", content: "cut off", isError: true, cutOff: true },
+      { type: "done", sessionId: "s-1" },
+    ]);
+    const ended = turnEnded(task.id);
+    await startResumeTurn(getTask(task.id)!, project, "go");
+    await ended;
+    const end = runnerLines(spies).find((l) => l.msg === "turn ok")!;
+    // Two of three calls were the CLI's own answers; the Bash one was not.
+    expect(end.tool_cutoffs).toBe(2);
+  });
+
   it("logs a start line and an ok line carrying duration and this turn's token usage", async () => {
     const project = createProject({ name: "Logging" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
@@ -121,6 +142,8 @@ describe("turn lifecycle logging", () => {
     expect(end.ms as number).toBeGreaterThanOrEqual(0);
     // A clean turn says nothing about an error; the field is dropped, not null.
     expect("error" in end).toBe(false);
+    // Likewise a turn whose Calandria tool calls all reached Calandria.
+    expect("tool_cutoffs" in end).toBe(false);
     // Exactly two lines per turn — the point is a readable log, not a trace.
     expect(lines.map((l) => l.msg)).toEqual(["turn start", "turn ok"]);
   });

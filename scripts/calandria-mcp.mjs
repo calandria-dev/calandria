@@ -14,13 +14,20 @@
  * internal endpoints (app/api/internal/agent-tools/*), which run the SAME shared
  * logic (lib/agentTools.ts) the in-process server calls.
  *
+ * The Claude driver can mount it too, under
+ * CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio (lib/agents/claude/mcp.ts) — the escape
+ * hatch from the resumed-session cut-off the in-process transport is subject to.
+ * So "non-Claude" above describes who needs this, not who may use it.
+ *
  * Per-turn wiring comes from env, injected by the driver when it registers this
- * server (lib/agents/codex/driver.ts):
+ * server (lib/agents/codex/driver.ts, lib/agents/gemini/mcp.ts,
+ * lib/agents/claude/mcp.ts):
  *   CALANDRIA_TASK_ID     the task this turn belongs to
  *   CALANDRIA_PROJECT_ID  the owning project (tasks/services are created under it)
  *   CALANDRIA_LANDING_MODE  "merge" | "pr" — whether create_pr is offered at all
  *   CALANDRIA_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
  *   SERVICE_TOKEN         the per-instance secret the internal endpoints require
+ *   CALANDRIA_MCP_ASK_USER  "0" to withhold ask_user from an agent that has its own
  *
  * Tool names / descriptions / param docs come from lib/agentToolDefs.mjs so this
  * bridge and the in-process server never drift. Plain .mjs: this file AND
@@ -41,6 +48,12 @@ const SERVICE_TOKEN = process.env.SERVICE_TOKEN || "";
 // endpoint re-checks it against the project row, so a stale value cannot grant
 // anything.
 const LANDING_MODE = process.env.CALANDRIA_LANDING_MODE || "merge";
+// Whether ask_user is registered at all. On by default, because the agents this
+// bridge was written for have no native way to ask. The Claude driver turns it
+// OFF when it mounts this bridge (CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio): the
+// CLI has AskUserQuestion, already routed to the same card through the same
+// registry, and a second asking tool is a second thing to get wrong.
+const ASK_USER_ENABLED = !["0", "off", "false", "no"].includes(String(process.env.CALANDRIA_MCP_ASK_USER || "").toLowerCase());
 
 // Titles created this turn → their task ids, so `blocked_by` can reference an
 // earlier suggestion by title (mirrors the in-process server's per-turn map).
@@ -340,45 +353,50 @@ server.registerTool(
   }
 );
 
-server.registerTool(
-  ASK_USER.name,
-  {
-    description: ASK_USER.description,
-    inputSchema: {
-      questions: z
-        .array(
-          z.object({
-            question: z.string().describe("The full question to ask the user."),
-            header: z.string().max(24).optional().describe("Short chip label for the question (≤12 chars ideal)."),
-            multiSelect: z.boolean().optional().describe("Allow choosing more than one option."),
-            options: z
-              .array(z.object({ label: z.string(), description: z.string().optional() }))
-              .min(1)
-              .max(8)
-              .describe("2–4 choices work best. The user can always type a free-text answer too."),
-          })
-        )
-        .min(1)
-        .max(4)
-        .describe(ASK_USER.params.questions),
+// ask_user is the only tool here that is transport-dependent rather than
+// project-dependent: an agent with a native ask of its own must not be handed
+// a second one (CALANDRIA_MCP_ASK_USER, set by lib/agents/claude/mcp.ts).
+if (ASK_USER_ENABLED) {
+  server.registerTool(
+    ASK_USER.name,
+    {
+      description: ASK_USER.description,
+      inputSchema: {
+        questions: z
+          .array(
+            z.object({
+              question: z.string().describe("The full question to ask the user."),
+              header: z.string().max(24).optional().describe("Short chip label for the question (≤12 chars ideal)."),
+              multiSelect: z.boolean().optional().describe("Allow choosing more than one option."),
+              options: z
+                .array(z.object({ label: z.string(), description: z.string().optional() }))
+                .min(1)
+                .max(8)
+                .describe("2–4 choices work best. The user can always type a free-text answer too."),
+            })
+          )
+          .min(1)
+          .max(4)
+          .describe(ASK_USER.params.questions),
+      },
     },
-  },
-  async ({ questions }) => {
-    // Start the ask (persists + publishes the interactive card), then poll for
-    // the outcome. Polling instead of one held request: the user may take hours,
-    // far beyond any HTTP timeout, and the ask survives page reloads server-side.
-    const { askId } = await callInternal("ask-user", { questions });
-    const deadline = Date.now() + 24 * 60 * 60 * 1000; // mirror the Claude hook's ~1-day cap
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 1500));
-      const r = await callInternal("ask-user/wait", { askId });
-      if (r.status === "done") return { content: [{ type: "text", text: r.text }] };
-      if (Date.now() > deadline) {
-        return { content: [{ type: "text", text: "The user did not answer the question. Proceed with your best judgment." }] };
+    async ({ questions }) => {
+      // Start the ask (persists + publishes the interactive card), then poll for
+      // the outcome. Polling instead of one held request: the user may take hours,
+      // far beyond any HTTP timeout, and the ask survives page reloads server-side.
+      const { askId } = await callInternal("ask-user", { questions });
+      const deadline = Date.now() + 24 * 60 * 60 * 1000; // mirror the Claude hook's ~1-day cap
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const r = await callInternal("ask-user/wait", { askId });
+        if (r.status === "done") return { content: [{ type: "text", text: r.text }] };
+        if (Date.now() > deadline) {
+          return { content: [{ type: "text", text: "The user did not answer the question. Proceed with your best judgment." }] };
+        }
       }
     }
-  }
-);
+  );
+}
 
 // ---- runbooks: a saved recipe the user can dispatch later. Inert until they
 // do, which is why create needs no review gate — but also why there is no

@@ -13,6 +13,7 @@ import { WorktreePrune } from "./WorktreePrune";
 import { AgentConnect } from "./AgentConnect";
 import { endpointSummary } from "./modelEndpoint";
 import { ErrNote, LoadNote } from "./shared";
+import { usePlanUsage, planUsageShown } from "./PlanUsage";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
@@ -97,8 +98,19 @@ function AccountSection() {
 // agent) gets a "connect another agent" card driven by AgentConnect against the
 // generic /api/agents/[id]/* routes. Reads the same GET /api/agents the task
 // pickers gate on, so connecting here immediately un-grays the agent there.
-function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onChanged?: () => void }) {
+function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: {
+  defaultAgent: string;
+  appDefaults: Record<string, string>;
+  setAppDefault: (key: string, value: string | null) => void;
+  onChanged?: () => void;
+}) {
   const [agents, setAgents] = useState<AgentInfoT[] | null>(null);
+  // Which agents the titlebar could meter, so the show/hide switch below only
+  // appears on cards where there is something to show. Same shared poll the
+  // pill itself subscribes to, and it lists an agent regardless of the setting
+  // (the server doesn't know about it), so hiding a tracker doesn't hide the
+  // switch that brings it back.
+  const planUsage = usePlanUsage();
   const [def, setDef] = useState<string>(defaultAgent);
   // Reachability of the instance's local model endpoint, which is NOT any
   // agent's connection state: a project on Ollama runs through a Claude login
@@ -135,6 +147,22 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
               : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
           </div>
           <McpInheritance agent={a} />
+          {planUsage[a.id]?.available && planUsage[a.id].windows.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+              <div style={{ flex: 1 }}>
+                <div className="hlp" style={{ marginTop: 0 }}>
+                  Show {a.label}&apos;s plan usage in the titlebar.
+                </div>
+              </div>
+              <button
+                role="switch"
+                aria-label={`Show ${a.label}'s plan usage in the titlebar`}
+                aria-checked={planUsageShown(appDefaults, a.id)}
+                className={`in-switch${planUsageShown(appDefaults, a.id) ? " on" : ""}`}
+                onClick={() => setAppDefault(`plan_usage:${a.id}`, planUsageShown(appDefaults, a.id) ? "off" : null)}
+              ><span /></button>
+            </div>
+          )}
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
@@ -1078,7 +1106,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <PermissionRules />
               </>
             )}
-            {section === "agents" && <AgentsSection defaultAgent="claude" onChanged={onAgentsRefresh} />}
+            {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
             {section === "github" && <GitHubSettings />}
             {section === "account" && <AccountSection />}

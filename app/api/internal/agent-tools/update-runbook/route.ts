@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getTask, getProject } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { updateRunbookForAgent } from "@/lib/runbookTools";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("update_runbook", "bridge", body.taskId);
 
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });

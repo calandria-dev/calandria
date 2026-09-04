@@ -34,14 +34,36 @@ export function defaultAgentFor(bundle: AgentsBundle, projectDefault: string | n
   return connected?.id ?? want?.id ?? bundle.agents[0]?.id ?? bundle.default;
 }
 
-// Whether an agent picker has a choice to offer. False when only one agent is
-// registered, or when exactly one is connected and `value` already names it —
-// the picker's other entries would all be dead "not connected" buttons. True
-// whenever `value` is NOT the lone connected agent (the user needs the picker
-// to move off it, or its Connect CTA), and when nothing is connected at all.
+// Which agents an agent picker may OFFER: the connected ones, since a button
+// that can't run a session is a dead end rather than a choice. Two exceptions,
+// both about not stranding the user:
+//   - `value` itself, when it names an agent that isn't connected — an old
+//     Codex task in Edit, a project default that was since signed out. Hiding
+//     it would leave the picker with nothing selected and no Connect CTA.
+//   - nothing connected at all, where every entry is dead and filtering would
+//     empty the picker; the CTA is the whole point of rendering it then.
+// The selected-but-unconnected entry sorts last, after the runnable ones.
+export function pickerAgents(bundle: AgentsBundle, value: string | null | undefined): AgentInfo[] {
+  const connected = bundle.agents.filter((a) => a.authenticated);
+  if (connected.length === 0) return bundle.agents;
+  const sel = findAgent(bundle, value);
+  return sel && !sel.authenticated ? [...connected, sel] : connected;
+}
+
+// Whether an agent picker has a choice to offer, over the entries it would
+// actually render. False when only one agent is registered, or when the offer
+// is a single agent that `value` already names. True whenever `value` is NOT
+// that lone connected agent (the user needs the picker to move off it, or its
+// Connect CTA), and when nothing is connected at all.
+//
+// It reads pickerAgents() rather than counting the bundle so the two can't
+// drift: counting connections directly was right while two drivers shipped and
+// wrong the moment a third did, because a Claude+Antigravity instance has a
+// real choice to render and was handed an unconnected Codex button along with
+// it (issue: "not connected" providers in the New-task dialog).
 export function agentPickerNeeded(bundle: AgentsBundle, value: string | null | undefined): boolean {
   if (bundle.agents.length <= 1) return false;
-  const connected = bundle.agents.filter((a) => a.authenticated);
-  if (connected.length === 1 && connected[0].id === value) return false;
+  const offered = pickerAgents(bundle, value);
+  if (offered.length <= 1 && offered[0]?.id === value) return false;
   return true;
 }

@@ -195,6 +195,17 @@ export const PERMISSION_UNATTENDED_MS = ms(readEnv("CALANDRIA_PERMISSION_UNATTEN
 export const AGENT_TOOL_TIMEOUT_MS = ms(readEnv("CALANDRIA_AGENT_TOOL_TIMEOUT_MS"), DEFAULT_AGENT_TOOL_TIMEOUT_MS);
 
 /**
+ * Directory for per-turn Claude CLI debug logs (the CLI's `--debug-file`), one
+ * file per turn named `<task>-g<generation>-<timestamp>.log`. Empty (the
+ * default) writes none. The one diagnostic for a Calandria tool call the CLI
+ * answers itself (lib/agentToolGuard.mjs): that failure happens above the seam
+ * every server-side record sits on, so only the CLI's own log says what it
+ * did. Verbose and never pruned; turn it on to catch the next occurrence, off
+ * once caught.
+ */
+export const CLAUDE_DEBUG_DIR = (readEnv("CALANDRIA_CLAUDE_DEBUG_DIR") || "").trim();
+
+/**
  * Master switch for background linger. Each Claude turn is one SDK query
  * whose CLI process owns both the run_in_background children and the
  * in-memory task registry that promises "you'll be notified when it
@@ -518,6 +529,25 @@ export const INTERNAL_BASE_URL =
 
 /** Absolute path to the stdio MCP bridge the non-Claude drivers register per turn. */
 export const CALANDRIA_MCP_SCRIPT = path.join(process.cwd(), "scripts", "calandria-mcp.mjs");
+
+/**
+ * Which transport carries Calandria's own tools into a Claude turn.
+ *
+ * `in-process` (the default) registers them as the Agent SDK's `type: "sdk"`
+ * MCP server: no subprocess, and the tool handlers close over the turn's own
+ * scope. `stdio` mounts scripts/calandria-mcp.mjs instead — the same bridge the
+ * Codex and Antigravity drivers spawn — and the calls come back over loopback
+ * HTTP to /api/internal/agent-tools/*, running the same lib/agentTools.ts logic.
+ *
+ * It is an escape hatch, not a preference. The in-process server is the
+ * transport the CLI cuts calls off on in RESUMED sessions (31 of 123
+ * resumed-turn calls over 14 days on 2.1.257; the measurement is in
+ * lib/agents/CLAUDE.md), and upstream anthropics/claude-agent-sdk-typescript#436
+ * reports stdio and HTTP servers unaffected. Anything unrecognized falls back
+ * to in-process: a typo here must not fail a turn.
+ */
+export const CLAUDE_TOOL_TRANSPORT: "in-process" | "stdio" =
+  String(readEnv("CALANDRIA_CLAUDE_TOOL_TRANSPORT") || "").toLowerCase() === "stdio" ? "stdio" : "in-process";
 
 /**
  * Whether the app may talk to a project's git remote at all. On by default: a

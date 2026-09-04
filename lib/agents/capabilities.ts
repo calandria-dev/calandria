@@ -17,19 +17,20 @@
 import type { AgentCapabilities } from "./types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import { claudeCapabilities } from "./claude/capabilities";
-import { CODEX_CAPABILITIES } from "./codex/capabilities";
+import { codexCapabilities } from "./codex/capabilities";
 import { GEMINI_CAPABILITIES } from "./gemini/capabilities";
 import { MOCK_CAPABILITIES } from "./mock/capabilities";
 
 export const DEFAULT_AGENT = "claude";
 
 // Thunks, not constants: Claude's descriptor depends on which backend the
-// instance routes through (lib/agents/claude/provider.ts), which is config read
-// from disk at run time rather than something known when this module loads.
-// Agents whose descriptor is genuinely static just return theirs.
+// instance routes through (lib/agents/claude/provider.ts) and Codex's on the
+// account catalog and config.toml under ~/.codex — both config read from disk
+// at run time rather than something known when this module loads. Agents whose
+// descriptor is genuinely static just return theirs.
 const CAPABILITIES: Record<string, () => AgentCapabilities> = {
   claude: () => claudeCapabilities(),
-  codex: () => CODEX_CAPABILITIES,
+  codex: () => codexCapabilities(),
   gemini: () => GEMINI_CAPABILITIES,
 };
 

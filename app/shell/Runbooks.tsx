@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { agentLabel, capsFor, defaultAgentFor } from "./agents";
+import { agentLabel, capsFor, defaultAgentFor, pickerAgents } from "./agents";
 import { relTime } from "./format";
 import { ErrNote } from "./shared";
 import { Modal, PrioritySeg } from "./Modal";
@@ -167,7 +167,7 @@ function RunbookForm({
       <div className="field">
         <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
         <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
-          {agents.agents.map((a) => (
+          {pickerAgents(agents, agent).map((a) => (
             <option key={a.id} value={a.id}>{a.label}{a.authenticated ? "" : " (not connected)"}</option>
           ))}
         </select>

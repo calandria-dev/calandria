@@ -644,7 +644,9 @@ export type StreamEvent =
   // suggestion onto that row (see lib/suggestionCard.ts). Optional: older
   // persisted rows and any driver that doesn't set it simply grow no card.
   | { type: "tool"; id: string; name?: string; title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[]; file?: string }
-  | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek }
+  // `cutOff`: the agent CLI answered this call itself and it never reached
+  // Calandria (lib/agentToolGuard.mjs); `content` is the driver's rewrite.
+  | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek; cutOff?: boolean }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
   | { type: "ask_dismissed"; id: string; dismissal: AskDismissal }

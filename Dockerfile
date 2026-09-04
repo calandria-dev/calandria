@@ -111,14 +111,21 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # per bump; see that file for the current CVE list and revisit policy.
 RUN npm install -g npm@12.0.2 && npm --version
 
-# The agent CLIs, pinned. Floating `@latest` installs would make two supply-chain
-# decisions per build and leave no two images alike; bump these deliberately
-# (`npm view <pkg> version`, then rebuild and exercise the agent) rather than
-# inheriting whatever published most recently. Both are ARGs so a one-off build
-# can test a candidate version without editing this file:
+# The agent CLIs, pinned. Floating `@latest` installs would make a supply-chain
+# decision per build and leave no two images alike; bump these deliberately
+# rather than inheriting whatever published most recently. All three are ARGs so
+# a one-off build can test a candidate without editing this file:
 #   docker build --build-arg CODEX_VERSION=0.147.0 .
-ARG CLAUDE_CODE_VERSION=2.1.228
-ARG CODEX_VERSION=0.146.0
+#
+# Deliberately is not the same as never. npm keeps old versions, so a stale pin
+# here still BUILDS and fails later instead: 0.146.0 could not run GPT-6 Astra
+# at all ("model requires a newer version of codex"), because a new model can
+# require a CLI bump and not just a catalog entry. `Pin drift`
+# (.github/workflows/pin-drift.yml) watches both npm pins and files an issue at
+# three weeks old or three newer minors, carrying the bump checklist — including
+# the one step no job can take, exercising the agent against a real login.
+ARG CLAUDE_CODE_VERSION=2.1.260
+ARG CODEX_VERSION=0.153.0
 ARG AGY_VERSION=1.1.25
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
@@ -131,9 +138,21 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claud
 
 # The `codex` CLI (the Codex agent driver drives it via @openai/codex-sdk; login
 # state lives in ~/.codex on the volume). Installed globally so CODEX_CLI_PATH /
-# PATH lookup and the auth helpers resolve it next to `claude`. Keep this pin in
-# step with the @openai/codex-sdk version in package-lock.json — the SDK speaks
-# JSONL to this exact binary, so a minor skew between them is a real risk.
+# PATH lookup and the auth helpers resolve it next to `claude`. This pin must
+# EQUAL the @openai/codex version that @openai/codex-sdk exact-depends on: the
+# SDK speaks JSONL to one binary, and which one depends on where Calandria runs
+# — ENV CODEX_CLI_PATH below points at this global install, while outside the
+# image that variable is empty and the SDK drives its own vendored copy. Let the
+# two diverge and dev and prod run different CLIs. `tests/cliPins.test.ts`
+# compares this ARG against package.json and the lockfile, which is also why
+# @openai/codex-sdk is pinned exactly there: a caret let `npm install` float the
+# SDK a patch and desynchronize it from this line with nothing to notice.
+#
+# One consequence for the model catalog, since the floor above is easy to miss
+# from a dev machine: verify a new entry in lib/agents/codex/capabilities.ts
+# against THIS pin, not against whatever codex a developer happens to have
+# installed locally. Astra was confirmed working on 0.153.0 and listed while
+# this ARG still read 0.146.0 — the same skew, arriving through the catalog.
 RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
 # The `agy` CLI (Antigravity — the Gemini agent driver spawns it directly; there

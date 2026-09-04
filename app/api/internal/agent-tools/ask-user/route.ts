@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { startAskUser } from "@/lib/agentTools";
 import { hasTurn } from "@/lib/abort";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 import type { AskQuestion, AskOption } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("ask_user", "bridge", body.taskId);
 
   const task = body.taskId ? getTask(body.taskId) : undefined;
   if (!task) return NextResponse.json({ error: "unknown task" }, { status: 404 });

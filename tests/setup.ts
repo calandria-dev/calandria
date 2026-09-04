@@ -36,6 +36,15 @@ process.env.CALANDRIA_DB_DIR = path.join(root, "db");
 // ~/projects/welcome on the contributor's machine (issue #34). e2e/env.ts
 // already pins all three.
 process.env.CALANDRIA_PROJECTS_DIR = path.join(root, "projects");
+// And ~/.codex: lib/agents/codex/catalog.ts reads models_cache.json and
+// config.toml from there to size the context gauge and resolve the default
+// model, so a contributor with a real Codex login would otherwise have their
+// own account's catalog decide what the suite asserts. An empty scratch dir is
+// the fail-soft branch, which is what every test that doesn't write its own
+// fixture expects. Tests that point CODEX_HOME somewhere else must RESTORE this
+// value rather than deleting the var, or later files fall back to the real one.
+process.env.CODEX_HOME = path.join(root, "codex-home");
+fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
 
 // Hermetic agent credentials: a developer's real API key exported in their
 // shell would otherwise leak into the suite — hasApiKey()/hasOpenAiKey() are

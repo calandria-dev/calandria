@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { takeAskOutcome } from "@/lib/asks";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("ask_user.wait", "bridge", body.taskId);
   if (!body.taskId || !body.askId) {
     return NextResponse.json({ error: "taskId and askId are required" }, { status: 400 });
   }

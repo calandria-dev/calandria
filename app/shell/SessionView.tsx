@@ -27,8 +27,8 @@ import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } f
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
-import { PrChip } from "./PrChip";
 import { ReclaimButton } from "./ReclaimButton";
+import { usePrOpenRefresh } from "./PrChip";
 import { ColResize, ColRail } from "./Layout";
 import { useOverflowRail } from "./useOverflowRail";
 import { jget, jsend } from "./api";
@@ -489,6 +489,11 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // the held-open notice rather than into a banner of its own.
   const idleTurn = isIdleTurn(task, running) && !awaiting;
   useIdleClock(idleTurn);
+  // Ask GitHub about this task's PR when the session is opened. The chip that
+  // SHOWS the answer lives in the diff toolbar now, which a collapsed rail and
+  // the mobile chat view don't render — so the trigger stays here, where "the
+  // user opened this task" actually happens.
+  usePrOpenRefresh(task.id, !!task.pr_url);
   const stableAnswer = useStableHandler(onAnswer);
   const stableDecidePermission = useStableHandler(onDecidePermission);
   const stableCancelQueued = useStableHandler(onCancelQueued);
@@ -963,13 +968,16 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // being a phone.
   const railItems: { key: string; node: ReactNode; drop?: number }[] = [];
   if (mobile && hasSession) railItems.push({ key: "view", node: viewSeg });
-  // Live PR state — number, state, check rollup, review decision — read off the
-  // task row and kept fresh by lib/prState.ts.
-  if (task.pr_url) railItems.push({ key: "pr", node: <PrChip task={task} />, drop: 8 });
+  // Live PR state is NOT here. It moved to the diff toolbar (app/TaskChanges.tsx
+  // via ./PrChip), beside the Create PR / Squash & merge buttons it reports on.
+  // On a phone the header and the diff are separate views, so a chip up here
+  // meant reading the PR's state in one view and acting on it in the other.
+  // The open-the-task refresh trigger stays with the session (usePrOpenRefresh,
+  // called above), because a collapsed rail renders no chip and still wants a
+  // fresh answer waiting when the user opens the diff.
   // Once this task's work has LANDED, one click frees the checkout, deletes the
-  // local branch and marks it done (lib/reclaim.ts). It sits beside the chip
-  // reporting the fact it acts on, and is never collapsed away: it is a
-  // one-shot action on a task that is finished with, not a standing control.
+  // local branch and marks it done (lib/reclaim.ts). Never collapsed away: it is
+  // a one-shot action on a task that is finished with, not a standing control.
   railItems.push({ key: "reclaim", node: <ReclaimButton task={task} /> });
   if (showUsage) railItems.push({ key: "usage", node: usageChip, drop: 1 });
   railItems.push({ key: "model", node: modelCtl, drop: 7 });

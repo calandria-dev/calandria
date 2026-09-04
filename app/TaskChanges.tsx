@@ -4,11 +4,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
 import { Icon } from "./icons";
+import { PrChip, type PrChipTask } from "./shell/PrChip";
 import type { LandingMode, TaskComment } from "@/lib/types";
 import { prMergeBlocker, type PrMergeFacts } from "@/lib/prMerge";
 
-/** The PR fields this panel reads — exactly the set the merge decision needs. */
-type PrFacts = PrMergeFacts;
+/** The PR fields this panel reads: what the merge decision needs, plus what the
+ *  status chip in the toolbar draws. Both are satisfied by the client's TaskRow,
+ *  which is what every caller passes. */
+type PrFacts = PrMergeFacts & PrChipTask;
 
 interface DiffFile {
   path: string;
@@ -962,6 +965,14 @@ export default function TaskChanges({
         )}
         {data.isDirty && <span className="tc-dirty">● uncommitted</span>}
         {data.ahead > 0 && <span className="tc-ahead">{data.ahead} commit{data.ahead === 1 ? "" : "s"}</span>}
+        {/* Live PR state — number, state, check rollup, review decision, and a
+            Refresh — beside the branch it was opened from and one row above the
+            buttons that act on it. It reads as the last fact in this bar's
+            status group ("what this branch is, what changed, where it went")
+            rather than as an action, so it sits ahead of the spacer and stays
+            put through a conflict review, when the actions to its right are
+            replaced by Discard / Accept. */}
+        {pr && <PrChip task={pr} />}
         {!nothing && (
           <span className="tc-vseg">
             <button className={viewMode === "unified" ? "on" : ""} onClick={() => setView("unified")}>Unified</button>
@@ -993,11 +1004,9 @@ export default function TaskChanges({
         ) : (
           <>
             {merged && !pending && <span className="tc-merged">✓ Merged · up to date</span>}
-            {prUrl && (
-              <a className="tc-btn tc-pr" href={prUrl} target="_blank" rel="noreferrer" title="Open this task's pull request on GitHub">
-                PR ↗
-              </a>
-            )}
+            {/* No bare "PR ↗" button here any more: the chip in the status group
+                above is itself the link to GitHub, and says what state the PR is
+                in on the way. */}
             {(data.ahead > 0 || data.isDirty) && (
               <button
                 className={`tc-btn${prMode ? " primary" : ""}`}

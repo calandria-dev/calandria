@@ -96,13 +96,109 @@ Nothing landed in that session. `tasks.pr_url` stayed empty and no branch was pu
 so `toolInterruptedMessage()` says the call may or may not have taken effect rather than promising
 it did nothing.
 
-It does not reproduce from `resume` alone. Four spikes (fresh, two resumes, and a mid-turn
-injection, with and without the real `settingSources`) all returned their results. So the driver
-does the only thing available to it. The stream pump classifies the CLI's sentence for calls it
-recorded as Calandria's, replaces it with one that names the tool and says whose answer it is, and
-logs `agent tool call cut off before Calandria answered`. Without that line a turn whose Calandria
-calls all failed still logs `turn ok`, with nothing in the journal to find it by. The stdio bridge
-cannot do the same, being a separate process that never learns its answer was discarded.
+Measured again 2026-09-03 over the 14 days of journal and transcripts on the same instance (486
+calls, 336 turns, `tests/` has nothing to add to a number this size). It is a resumed-session
+failure: 1 of 363 calls made in a task's first session came back this way, against 31 of 123 in
+turns the driver started with `resume`, and every one of the 31 is on CLI 2.1.257 (160 calls on
+2.1.240 had none; 2.1.246's changelog says the same abort used to be reported as "completed with no
+output", the blank result the guard was written for on 2026-08-24 and 08-30). Once a session has
+failed one call, every later Calandria call in it fails, in a new CLI process resuming the same
+session id as much as in the process that failed first, while Bash, Read, Edit and ToolSearch keep
+working. In `bypassPermissions` the answer arrives 3–5 ms after the call; in `auto` it arrives after
+~1.3 s, which is the classifier stage running first, so the classifier is not the cause. The CLI's
+own transcript tags each one `toolDenialKind: "interrupted"`, which is the tag `aFn()` gives an
+`AbortError` thrown while the turn's own controller is NOT aborted, so the signal the MCP call was
+given is not the turn's, and what aborted it is not visible from outside the CLI. Upstream
+`anthropics/claude-agent-sdk-typescript#436` reports the same signature from Task subagents.
+
+It does not reproduce on demand. Seven spikes against the SDK directly — fresh, resumed twice, a
+background Bash then a wake, a foreground subagent, a message injected mid-turn, a background Bash
+and a background subagent each in flight at the moment of the call — all returned their results.
+So the driver does what is available to it. The stream pump classifies the CLI's sentence for calls
+it recorded as Calandria's, replaces it with one that names the tool and says whose answer it is,
+flags the event `cutOff` (the runner counts it onto the `turn ok` line as `tool_cutoffs`), logs
+`agent tool call cut off before Calandria answered` per call, and on the first one in a turn posts
+a transcript notice telling the user that `/clear` starts the fresh session measured to work. Two
+records that did not exist before now do: every Calandria tool call that ARRIVES logs
+`[agent-tools] agent tool call received` and `… settled` (in-process through the guard's hooks,
+the bridge through its endpoints), so a call with a `cut off` line and no `received` line is the
+CLI's; and `CALANDRIA_CLAUDE_DEBUG_DIR` makes the CLI write its own per-turn debug log, MCP traffic
+included, the one place the next occurrence's cause can be read. The CLI's stderr is captured with
+the task on it. The stdio bridge cannot see any of this, being a separate process that never learns
+its answer was discarded.
+
+The one consequence with a repair is `create_pr`, since a session that sees it fail falls back to
+`git push` plus `gh pr create` in a terminal and the PR it opens is invisible to the task row.
+`adoptExistingPr` in `lib/prTools.ts` runs at the end of every turn and links it: on a `pr` project
+only, gated first on the row (a branch, no `pr_url`) and then on `refs/remotes/origin/<branch>`
+existing locally, so the ordinary task costs no subprocess, and adopting only a PR whose
+`headRefName` is exactly the task branch. Everything downstream — the header chip,
+`lib/prState.ts`'s polling, auto-reclaim — then works as if `create_pr` had run.
+
+### …and the escape hatch from them: serving Claude's tools over the stdio bridge
+
+`CALANDRIA_CLAUDE_TOOL_TRANSPORT` picks which transport carries Calandria's tools into a Claude
+turn. `in-process` (the default) is `createSdkMcpServer`, above. `stdio` mounts
+`scripts/calandria-mcp.mjs` instead — the same bridge the Codex and Antigravity drivers spawn, whose
+calls POST to `/api/internal/agent-tools/*` and run the same `lib/agentTools.ts` logic the
+in-process handlers call directly. `./mcp.ts` is the entry, built to be the Codex driver's env block
+field for field. The knob exists because every cut-off measured above is on the in-process
+transport, and upstream `anthropics/claude-agent-sdk-typescript#436` reports stdio and HTTP servers
+unaffected.
+
+Four seams the in-process server has and the bridge answers for itself, all pre-existing (Codex has
+run on them since the bridge shipped) but worth naming, since switching Claude over is where a
+divergence would first be noticed:
+
+- The **`suggested` queue callback** is a `StreamEvent` on the turn's own stream, so the runner
+  settles the suggestion card by tool_use id. The bridge's endpoint is reached out of band with no
+  such id, so it publishes the event itself and patches the newest unclaimed `suggest_task` row
+  instead (`lib/suggestionCard.ts`). Same card, different correlation.
+- The **`notice` queue callback** has no counterpart, and this one is a real (small) loss:
+  `expose_service` in-process posts a transcript line saying the service is live at its URL, while
+  the bridged call returns the same sentence only as the tool's own result. The URL still reaches
+  the model and the Services panel; what's missing is the standalone transcript line.
+- The **`TurnHooks` auto-start callback** hands a cleared blocker back to the runner because this
+  file must not import `lib/autoStart.ts`. The endpoint has no such constraint and calls
+  `maybeAutoStartDependents()` directly. Same sweep, one hop shorter. `onPrOpened` is the same
+  story with `lib/prState.ts`.
+- **`ask_user` is withheld** (`CALANDRIA_MCP_ASK_USER=0`, the one env field ./mcp.ts adds to the
+  Codex block). AskUserQuestion stays the CLI's own, routed to the same card by the `PreToolUse`
+  hook; a second asking tool would mean two kinds of card for one question. It is the only tool
+  whose presence depends on the AGENT rather than on the project.
+
+**Measured 2026-09-03, and it did not settle the question.** A hermetic instance on this repo's
+prod build, the host's real Claude login, CLI 2.1.257 (the version every cut-off above is on), haiku
+in `bypassPermissions`, one Calandria tool call asked for per turn:
+
+| transport | turns | resumed | `turn ok` | tool calls arrived | `tool_cutoffs` |
+|-|-|-|-|-|-|
+| in-process | 32 | 28 | 32 | 21 | **0** |
+| stdio | 17 | 14 | 16 | 16 | **0** |
+
+Zero on both, so the run says nothing about whether the bridge fixes anything: the BASELINE didn't
+reproduce either. At the 25% per-resumed-call rate measured on real sessions, 21 in-process calls
+should have produced five or six. It joins the seven SDK spikes above as another synthetic probe
+that stays green — the failure wants a real session's shape (long turns, big context, many tools),
+not a loop of one-tool turns. Note also that in-process made 21 calls across 32 turns while stdio
+made 16 across 17: haiku often answered a repeated prompt from context instead of re-calling the
+tool, which is why the arms aren't matched call for call.
+
+What the run DOES establish is that the hatch works and costs nothing visible. Every bridged call
+arrived and settled, every turn ended `ok`, and `[agent-tools] agent tool call received` reports
+`transport: "bridge"` on a Claude task. **So the default stays `in-process`.** Flipping it would
+trade a failure we can't reproduce on demand for a subprocess per turn and the four seams above, on
+evidence that is currently one upstream report. The knob is here so an instance actually suffering
+the cut-off has somewhere to go, and so the next measurement — on a real workload, where the bug
+lives — has both arms available.
+
+Two more differences are visible in the logs rather than in behaviour. `[agent-tools] agent tool
+call received` says `transport: "bridge"` for a Claude task now, which is how you tell which
+transport a turn actually ran on. And `timeout` / `alwaysLoad` are set on the stdio entry: the
+CLI's per-server cap, which the in-process transport gives no way to set (the reason
+`AGENT_TOOL_TIMEOUT_MS` exists), is placed 30s ABOVE the bridge's own guard deadline so the guard
+is always the one that answers; `alwaysLoad` keeps the tools out of tool-search deferral, which the
+in-process server is never subject to.
 
 ### Model catalog and Vertex corrections
 
@@ -232,6 +328,30 @@ thread. Counters going backwards mean the report isn't cumulative after all, so 
 taken at face value rather than clamped to zero. The three token buckets are also netted into
 the disjoint shape the contract expects: codex folds cache reads and cache writes into
 `input_tokens`, which would otherwise double-count them in the task total and the context gauge.
+
+**The window that gauge divides by, and the model it prices, come off the CLI's own state**
+(`codex/catalog.ts`), because both are per account and no constant can be right for everyone.
+It reads two files under `CODEX_HOME` (default `~/.codex`): `models_cache.json`, the catalog the
+CLI fetches per account at startup, and the top-level keys of `config.toml`. The window is the
+slug's `context_window`, replaced by `model_context_window` if the user set one, clamped to the
+slug's `max_context_window` ceiling, then scaled to `effective_context_window_percent` — the
+point the CLI compacts at, so the gauge ends where the usable window does. The default model is
+`config.toml`'s `model`, else the lowest-`priority` entry with `visibility: "list"`. That second
+half is a pricing bug, not a cosmetic one: a 0.153.0 account catalog ranks `gpt-6-astra` first
+and `gpt-5.6-sol` sixth while the catalog compiled into the binary has never heard of Astra, and
+Astra bills $10/$50 against Sol's $5/$30, so a hardcoded default misprices every turn that picks
+no model by 2x in one direction or the other.
+
+The reads are SYNC behind a 60s cache, because `getCapabilities()` is sync and sits on the
+request path, and they fail soft in every direction — absent file, unparseable JSON, a shape a
+future `client_version` writes, a field of the wrong type. Every one of those falls back to
+`CTX_FALLBACK` (272k) and `DEFAULT_CODEX_MODEL`, which is what the CLI itself falls back to when
+it has fetched no catalog. A wrong gauge is worse than a static one and a wrong price is worse
+than both. Only TOP-LEVEL `config.toml` keys are read: a `[profiles.x]` block sets the same keys
+for a profile we don't model selecting, and applying somebody's occasional profile to every turn
+is the failure this is built to avoid. `CODEX_CAPABILITIES` became `codexCapabilities()` for the
+same reason `claudeCapabilities()` is a function — a descriptor frozen at module load would be
+the old hardcoded number under a new name.
 
 **Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
 the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn

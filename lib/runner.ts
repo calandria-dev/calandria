@@ -20,6 +20,7 @@ import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
+import { adoptExistingPr } from "@/lib/prTools";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { recordBaseCut } from "@/lib/baseDrift";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
@@ -575,6 +576,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // sum over the others, so this is what stops the lifecycle line logging a
   // confident "cost_usd: 0" for a turn that may well have cost real money.
   let unpricedTurns = 0;
+  // Calandria tool calls the agent CLI answered itself this turn (the
+  // `cutOff` tool_result flag, lib/agentToolGuard.mjs). On the turn line so a
+  // turn whose tool calls all failed is one grep away, not one per call.
+  let toolCutoffs = 0;
   // What the driver has actually reported running, for pricing a gateway turn
   // (lib/gatewayPricing.ts prices by model id, and the gateway's own catalog
   // is the only place that id's rate lives). Seeded from the task's pick and
@@ -828,6 +833,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         if (isSuggestTaskTool(ev.name)) pendingSuggestCalls.push(ev.id);
         publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
+        if (ev.cutOff) toolCutoffs++;
         const t = toolMsgs[ev.id];
         if (t) {
           // A suggest_task row can have been given its card OUT OF BAND while
@@ -1258,6 +1264,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // logged 0 would be read as a measurement, and there isn't one.
       cost_usd: unpricedTurns && !spent.cost_usd ? undefined : Math.round(spent.cost_usd * 10000) / 10000,
       unpriced_turns: unpricedTurns || undefined,
+      tool_cutoffs: toolCutoffs || undefined,
       // Only when they say something: `superseded` means a Stop released this
       // turn's slot and a successor claimed it, so this line describes a turn
       // that settled nothing; `error` is the whole reason the line is at error
@@ -1500,6 +1507,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // follow-up or a successor turn is taking over — that turn will emit its
       // own turn_end.
       publish(id, { type: "turn_end" });
+      // A PR this session opened by hand, because create_pr was cut off before
+      // it reached us (lib/agents/CLAUDE.md), is linked here. Detached and after
+      // turn_end on purpose: it may spend a gh subprocess on github.com, and the
+      // turn is over — the chip arrives on the task_edited it publishes, the way
+      // every other background PR read reaches the client. Screened down to
+      // almost nothing on the ordinary task (see adoptExistingPr).
+      void adoptExistingPr(id, (taskId) => hooks?.onPrOpened(taskId)).catch((e) => {
+        log.warn(`pr adoption for task ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
     }
   }
 }

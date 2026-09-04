@@ -1715,6 +1715,25 @@ export async function branchExists(repoPath: string, branch: string): Promise<bo
   }
 }
 
+/**
+ * Does `refs/remotes/<remote>/<branch>` exist locally? Purely local — a
+ * rev-parse of a ref this repo already has, never a network call.
+ *
+ * It answers "was this branch ever pushed from here", which is the cheap gate in
+ * front of asking GitHub whether a branch has a PR (lib/prTools.ts's
+ * adoptExistingPr). A branch nobody pushed cannot have one, and every `git push`
+ * of a branch updates its remote-tracking ref as a side effect.
+ */
+export async function remoteBranchExists(repoPath: string, branch: string, remote = "origin"): Promise<boolean> {
+  if (!branch) return false;
+  try {
+    await git(repoPath, ["rev-parse", "--verify", `refs/remotes/${remote}/${branch}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function currentBranch(repoPath: string): Promise<string> {
   try {
     return await git(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
