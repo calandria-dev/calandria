@@ -35,6 +35,7 @@ const PINNED = [
   "lib/agents/capabilities.ts", // the whole point of the module
   "lib/agents/connections.ts", // connection state is ID lookups only — no driving
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
+  "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
   "lib/agents/codex/providerCheck.ts", // proves that mapping took by asking the CLI; subprocess + store, no SDK
   "lib/modelEndpoint.ts",

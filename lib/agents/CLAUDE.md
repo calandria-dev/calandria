@@ -256,6 +256,30 @@ taken at face value rather than clamped to zero. The three token buckets are als
 the disjoint shape the contract expects: codex folds cache reads and cache writes into
 `input_tokens`, which would otherwise double-count them in the task total and the context gauge.
 
+**The window that gauge divides by, and the model it prices, come off the CLI's own state**
+(`codex/catalog.ts`), because both are per account and no constant can be right for everyone.
+It reads two files under `CODEX_HOME` (default `~/.codex`): `models_cache.json`, the catalog the
+CLI fetches per account at startup, and the top-level keys of `config.toml`. The window is the
+slug's `context_window`, replaced by `model_context_window` if the user set one, clamped to the
+slug's `max_context_window` ceiling, then scaled to `effective_context_window_percent` — the
+point the CLI compacts at, so the gauge ends where the usable window does. The default model is
+`config.toml`'s `model`, else the lowest-`priority` entry with `visibility: "list"`. That second
+half is a pricing bug, not a cosmetic one: a 0.153.0 account catalog ranks `gpt-6-astra` first
+and `gpt-5.6-sol` sixth while the catalog compiled into the binary has never heard of Astra, and
+Astra bills $10/$50 against Sol's $5/$30, so a hardcoded default misprices every turn that picks
+no model by 2x in one direction or the other.
+
+The reads are SYNC behind a 60s cache, because `getCapabilities()` is sync and sits on the
+request path, and they fail soft in every direction — absent file, unparseable JSON, a shape a
+future `client_version` writes, a field of the wrong type. Every one of those falls back to
+`CTX_FALLBACK` (272k) and `DEFAULT_CODEX_MODEL`, which is what the CLI itself falls back to when
+it has fetched no catalog. A wrong gauge is worse than a static one and a wrong price is worse
+than both. Only TOP-LEVEL `config.toml` keys are read: a `[profiles.x]` block sets the same keys
+for a profile we don't model selecting, and applying somebody's occasional profile to every turn
+is the failure this is built to avoid. `CODEX_CAPABILITIES` became `codexCapabilities()` for the
+same reason `claudeCapabilities()` is a function — a descriptor frozen at module load would be
+the old hardcoded number under a new name.
+
 **Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
 the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn
 stream carries no equivalent, and this was verified against the shipped CLI rather than
