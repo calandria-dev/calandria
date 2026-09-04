@@ -3,7 +3,12 @@
 #
 # Nine jobs, deliberately on different schedules:
 #
-#   audit — `npm audit --omit=dev --audit-level=high`. Seconds. Runs on
+#   audit — `npm audit --package-lock-only --omit=dev --audit-level=high`.
+#           Seconds — genuinely, now: no `npm ci` precedes it, since the
+#           advisory set comes from the registry keyed on the lockfile, not
+#           from an installed tree, so the install bought this job nothing but
+#           its cost. It didn't used to be seconds: with the install, this job
+#           timed out and was cancelled on PR #202 (issue #203). Runs on
 #           everything, always — the same coverage repeats weekly, unattended,
 #           in security-scan.yml, so a newly-disclosed advisory against
 #           unchanged code is still caught between pushes.
@@ -77,9 +82,10 @@
 #
 # The Ubuntu three are independent jobs, not steps in one: they run
 # concurrently, each reports its own red/green, and a type error does not hide
-# behind a two-minute vitest run. Each does its own `npm ci` — setup-node caches
-# npm's download cache (not node_modules), so the copies are isolated and
-# concurrent restores of the same key are safe. `windows` is the deliberate
+# behind a two-minute vitest run. `typecheck` and `unit` each do their own
+# `npm ci` — setup-node caches npm's download cache (not node_modules), so the
+# copies are isolated and concurrent restores of the same key are safe.
+# `audit` needs no install at all (see the job). `windows` is the deliberate
 # exception: it runs both checks in ONE job, because a Windows runner bills at
 # 2x and its `npm ci` (native module install, no Docker layer cache, slow
 # filesystem) costs more than either check it is setting up for. Splitting it
@@ -312,22 +318,35 @@ jobs:
           && (github.event_name != 'pull_request'
               || github.event.pull_request.state == 'open')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # No install happens here (see below), so 10 minutes was never headroom —
+    # it was the `npm ci` this job no longer runs. 5 minutes covers registry
+    # latency on the audit call itself with room to spare.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # No `cache: npm`: that caches npm's download cache for an `npm ci` this
+      # job doesn't run, so there is nothing here for it to speed up.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
-          cache: npm
-
-      - run: npm ci
 
       # dependabot.yml excludes npm on the claim that `npm audit` covers it —
       # this job is what makes that claim true. --omit=dev matches what
       # actually ships; --audit-level=high fails on HIGH/CRITICAL only, so a
       # moderate advisory in a transitive dep doesn't red-flag every PR.
-      - run: npm audit --omit=dev --audit-level=high
+      #
+      # --package-lock-only, and deliberately no `npm ci` before it: the
+      # advisory set npm reports is keyed off the lockfile against the
+      # registry, not off what's unpacked into node_modules, so installing
+      # first bought this job nothing but the cost of the install. On PR #202
+      # this job hit its old 10-minute timeout and was cancelled mid-audit at
+      # 10m15s while the identical `npm ci` + audit pair passed in 8m1s in the
+      # sibling `Publish image` run on the same SHA — not headroom, and it
+      # reds unrelated PRs at random (issue #203). Measured with no
+      # node_modules present: `npm audit --package-lock-only --omit=dev
+      # --audit-level=high` completes in well under a minute.
+      - run: npm audit --package-lock-only --omit=dev --audit-level=high
 
   typecheck:
     name: Types (tsc)
