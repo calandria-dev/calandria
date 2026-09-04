@@ -35,10 +35,11 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { DEFAULT_REMOTE_PORT } = require("./ssh-tunnel");
+const { instancesFilePath } = require("./instances-path");
+const { normalizeAuth } = require("./instance-auth");
 
 const LOCAL_ID = "local";
 const LOCAL_NAME = "This computer";
@@ -58,17 +59,6 @@ const LOCAL_NAME = "This computer";
  */
 const MIN_SERVER_VERSION = "0.7.0";
 
-/**
- * Where the instance list lives. Mirrors env-file.js's `envFilePath` exactly,
- * including the one-path-on-every-platform rule and the env override, so the
- * two desktop config files are never in two places.
- */
-function instancesFilePath(env = process.env) {
-  if (env.CALANDRIA_INSTANCES_FILE) return env.CALANDRIA_INSTANCES_FILE;
-  const configHome = env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(configHome, "calandria", "instances.json");
-}
-
 function localInstance(name) {
   return { id: LOCAL_ID, kind: "local", name: name || LOCAL_NAME };
 }
@@ -79,6 +69,27 @@ function defaultState() {
 }
 
 const ID_RE = /^[a-z0-9]{1,32}$/;
+
+/**
+ * The `auth` block of an entry, or nothing, spread into the instance being
+ * rebuilt.
+ *
+ * Repaired rather than rejected, like everything else in `normalizeState`, and
+ * repaired NARROWLY: a malformed sign-in config drops the sign-in config, not
+ * the instance. Losing the whole row would take the server's address with it,
+ * and the address is the part the user cannot reconstruct from memory. What is
+ * left is an instance that signs in the old way — in the window — which is a
+ * working app rather than a missing one. instance-auth.js's `normalizeAuth`
+ * holds the actual rules; this is only the decision about what a failure costs.
+ */
+function withAuth(entry) {
+  try {
+    const auth = normalizeAuth(entry?.auth);
+    return auth ? { auth } : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Coerce whatever was on disk into a state that satisfies both invariants.
@@ -116,6 +127,7 @@ function normalizeState(raw) {
         kind: "ssh",
         name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : ssh.host,
         ssh,
+        ...withAuth(entry),
       });
       continue;
     }
@@ -132,6 +144,7 @@ function normalizeState(raw) {
       kind: "url",
       name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : url,
       url,
+      ...withAuth(entry),
     });
   }
   const instances = [localInstance(localName), ...out];
@@ -347,6 +360,29 @@ function removeInstance(state, id) {
   return { active, instances };
 }
 
+/**
+ * Set (or clear, with `null`) how one instance signs in. Throws on a config
+ * `normalizeAuth` will not accept, so the dialog can put the sentence back in
+ * front of the user with what they typed still in the fields.
+ *
+ * `local` is refused silently. It is the pair of sidecars this app spawned on
+ * loopback, its credential is SERVICE_TOKEN, and a browser sign-in in front of
+ * a server that has no identity provider would be a form with nowhere to go.
+ */
+function setInstanceAuth(state, id, auth) {
+  const target = findInstance(state, id);
+  if (!target || target.kind === "local") return state;
+  const normalized = normalizeAuth(auth);
+  return {
+    active: state.active,
+    instances: state.instances.map((i) => {
+      if (i.id !== id) return i;
+      const { auth: _drop, ...rest } = i;
+      return normalized ? { ...rest, auth: normalized } : rest;
+    }),
+  };
+}
+
 function setActive(state, id) {
   if (!state.instances.some((i) => i.id === id)) return state;
   return { active: id, instances: state.instances };
@@ -507,6 +543,7 @@ module.exports = {
   saveInstances,
   serverTooOld,
   setActive,
+  setInstanceAuth,
   versionBannerText,
   windowTitle,
 };

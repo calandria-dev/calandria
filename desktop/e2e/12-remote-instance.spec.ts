@@ -150,9 +150,15 @@ test("both menus carry the instance list as a radio group", async () => {
       checked: i.checked,
     }));
   });
+  // `instance-auth` sits between the radio group and the two verbs because the
+  // active instance here is a remote one. It is the offer of a browser sign-in,
+  // and it is the only route to that dialog for somebody who is looking at a
+  // working app rather than at the sign-in screen. A `local` instance gets
+  // neither it nor `instance-signin` — see the case below.
   expect(items.filter((i) => i.type !== "separator").map((i) => i.id)).toEqual([
     "instance-local",
     "instance-a1f3",
+    "instance-auth",
     "instance-add",
     "instance-manage",
   ]);
@@ -161,6 +167,12 @@ test("both menus carry the instance list as a radio group", async () => {
   expect(items[1].type).toBe("radio");
   expect(items[1].checked).toBe(true);
   expect(items[1].label).toContain(REMOTE_NAME);
+  // No `auth` block on this instance, so the label offers to set one up rather
+  // than to run a flow that has nothing configured behind it. `instance-signin`
+  // is absent for exactly that reason.
+  const setUp = items.find((i) => i.id === "instance-auth");
+  expect(setUp?.label).toBe("Set up browser sign-in…");
+  expect(items.some((i) => i.id === "instance-signin")).toBe(false);
 });
 
 /**

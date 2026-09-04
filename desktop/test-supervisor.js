@@ -14,6 +14,7 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
@@ -40,9 +41,36 @@ const {
   saveInstances,
   serverTooOld,
   setActive,
+  setInstanceAuth,
   versionBannerText,
   windowTitle,
 } = require("./instances");
+const {
+  DISCOVERY_PATH,
+  LoopbackReceiver,
+  authorizeUrl,
+  createPkce,
+  createState,
+  discover,
+  discoveryUrl,
+  exchangeCode,
+  parseCallback,
+  refreshCredential,
+} = require("./oauth");
+const {
+  MAX_REFRESH_DELAY_MS,
+  NO_CIPHER,
+  REFRESH_SKEW_MS,
+  authHeaders,
+  credentialExpired,
+  credentialsFilePath,
+  formatHeaderLines,
+  loadCredentials,
+  normalizeAuth,
+  parseHeaderLines,
+  refreshDelay,
+  saveCredentials,
+} = require("./instance-auth");
 const { SshTunnel, pickLocalPort, portAccepts, sshArgs, sshFailureMessage, waitForPort } = require("./ssh-tunnel");
 const {
   AppEvents,
@@ -1352,7 +1380,7 @@ function hold(port) {
     // is why these assertions live on attachOrigin rather than attachUrl.
     const attach = src.indexOf("async function attachOrigin(");
     assert.notEqual(attach, -1, "main.js should converge both remote kinds on attachOrigin");
-    const body = src.slice(attach, attach + 2000);
+    const body = src.slice(attach, attach + 4000);
     assert.ok(/probeVersion\(inst, origin\)/.test(body), "the handshake runs before the window is pointed anywhere");
     assert.ok(/showAttachFailure\(/.test(body), "an unreachable instance gets the loading page, not a modal");
     // A login in front of the server is not a failure: the window IS a browser,
@@ -1753,7 +1781,7 @@ function hold(port) {
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
     const attach = src.indexOf("async function attach(inst)");
     assert.notEqual(attach, -1);
-    const body = src.slice(attach, attach + 900);
+    const body = src.slice(attach, attach + 2000);
     assert.ok(/inst\.kind === "ssh"/.test(body) && /attachSsh\(/.test(body), "attach() should dispatch the ssh kind");
     // Every attach, including a retry of the same instance: a forward whose
     // window has moved on is a port nobody reads and a child nobody reaps.
@@ -1855,6 +1883,510 @@ function hold(port) {
     // stops being readable as the answer to "what ships".
     for (const f of packed) {
       assert.ok(fs.existsSync(path.join(__dirname, f)), `files names ${f}, which is not in desktop/`);
+    }
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * oauth.js — the RFC 8252 loopback sign-in flow.
+   * ----------------------------------------------------------------------- */
+
+  await test("createPkce returns a base64url verifier and the real S256 challenge of it", async () => {
+    const { verifier, challenge, method } = createPkce();
+    assert.equal(method, "S256");
+    for (const v of [verifier, challenge]) {
+      assert.ok(v.length > 0, "must not be empty");
+      assert.ok(!/[+/=]/.test(v), `"${v}" is not base64url`);
+    }
+    const expected = crypto
+      .createHash("sha256")
+      .update(verifier)
+      .digest("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    assert.equal(challenge, expected);
+  });
+
+  await test("createState returns a fresh value every call", async () => {
+    const a = createState();
+    const b = createState();
+    assert.notEqual(a, b);
+    assert.ok(a.length > 0 && b.length > 0);
+  });
+
+  await test("discoveryUrl appends the well-known path, keeps a path already there, and leaves a full discovery URL alone", async () => {
+    assert.equal(discoveryUrl("sso.example.com"), `https://sso.example.com${DISCOVERY_PATH}`);
+    assert.equal(discoveryUrl("https://sso.x/application/o/cal/"), "https://sso.x/application/o/cal/.well-known/openid-configuration");
+    const already = "https://sso.x/application/o/cal/.well-known/openid-configuration";
+    assert.equal(discoveryUrl(already), already);
+    assert.throws(() => discoveryUrl(""), /issuer/i);
+    assert.throws(() => discoveryUrl("ftp://sso.example.com"), /http/i);
+  });
+
+  await test("discover() reads the metadata document over a real HTTP request", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          issuer: `http://127.0.0.1:${server.address().port}`,
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+          code_challenge_methods_supported: ["S256"],
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const doc = await discover(issuer, { fetchImpl: globalThis.fetch });
+      assert.equal(doc.authorizationEndpoint, "https://sso.example.com/authorize");
+      assert.equal(doc.tokenEndpoint, "https://sso.example.com/token");
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws when the document's issuer disagrees with the one requested, naming both", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          issuer: "https://not-the-one.example.com",
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(
+        () => discover(issuer, { fetchImpl: globalThis.fetch }),
+        (err) => {
+          assert.ok(err.message.includes("not-the-one.example.com"), `should name the document's issuer: ${err.message}`);
+          assert.ok(err.message.includes(issuer), `should name the requested issuer: ${err.message}`);
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() refuses a provider that does not advertise PKCE with S256", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+          code_challenge_methods_supported: ["plain"],
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(() => discover(issuer, { fetchImpl: globalThis.fetch }), /S256/);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws naming the status on a non-200", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(() => discover(issuer, { fetchImpl: globalThis.fetch }), /404/);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws its own error on an HTML body rather than leaking a JSON parse error", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html><body>not json</body></html>");
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(
+        () => discover(issuer, { fetchImpl: globalThis.fetch }),
+        (err) => {
+          assert.ok(!/Unexpected token/i.test(err.message), `a raw JSON parse error escaped: ${err.message}`);
+          assert.match(err.message, /not JSON/i);
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("authorizeUrl sets response_type=code and S256, and omits audience unless given", async () => {
+    const url = new URL(
+      authorizeUrl({
+        authorizationEndpoint: "https://sso.example.com/authorize",
+        clientId: "cal",
+        redirectUri: "http://127.0.0.1:9999/callback",
+        scope: "openid",
+        state: "st4t3",
+        challenge: "ch4ll",
+      }),
+    );
+    assert.equal(url.searchParams.get("response_type"), "code");
+    assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+    assert.equal(url.searchParams.has("audience"), false);
+
+    const withAudience = new URL(
+      authorizeUrl({
+        authorizationEndpoint: "https://sso.example.com/authorize",
+        clientId: "cal",
+        redirectUri: "http://127.0.0.1:9999/callback",
+        state: "st4t3",
+        challenge: "ch4ll",
+        audience: "https://api.example.com",
+      }),
+    );
+    assert.equal(withAudience.searchParams.get("audience"), "https://api.example.com");
+  });
+
+  await test("parseCallback checks state before code, and surfaces the provider's own refusal", async () => {
+    assert.equal(parseCallback(new URLSearchParams({ state: "s1", code: "abc" }), "s1").code, "abc");
+    assert.throws(() => parseCallback(new URLSearchParams({ state: "wrong", code: "abc" }), "s1"), /wrong state/i);
+    assert.throws(
+      () => parseCallback(new URLSearchParams({ state: "s1", error: "access_denied", error_description: "the user said no" }), "s1"),
+      /the user said no/,
+    );
+    assert.throws(() => parseCallback(new URLSearchParams({ state: "s1" }), "s1"), /without an authorization code/i);
+  });
+
+  await test("exchangeCode POSTs a form-encoded authorization_code grant and returns a credential with expiresAt/tokenType", async () => {
+    let received = null;
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received = { contentType: req.headers["content-type"], body };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "at1", token_type: "Bearer", expires_in: 3600, refresh_token: "rt1" }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      const now = Date.now();
+      const cred = await exchangeCode(
+        { tokenEndpoint, clientId: "cal", code: "c0d3", verifier: "v3r1f13r", redirectUri: "http://127.0.0.1:9/callback" },
+        { fetchImpl: globalThis.fetch, now },
+      );
+      assert.match(received.contentType, /application\/x-www-form-urlencoded/);
+      const params = new URLSearchParams(received.body);
+      assert.equal(params.get("grant_type"), "authorization_code");
+      assert.equal(params.get("code_verifier"), "v3r1f13r");
+      assert.equal(params.get("client_id"), "cal");
+      assert.equal(cred.tokenType, "Bearer");
+      assert.ok(Math.abs(cred.expiresAt - (now + 3600 * 1000)) < 2000, `expiresAt looks wrong: ${cred.expiresAt}`);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("refreshCredential POSTs a refresh_token grant and keeps the previous refresh token when none comes back", async () => {
+    let received = null;
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received = body;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "at2", token_type: "Bearer", expires_in: 60 }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      const previous = { kind: "oauth", refreshToken: "rt-old", accessToken: "old" };
+      const cred = await refreshCredential({ tokenEndpoint, clientId: "cal", credential: previous }, { fetchImpl: globalThis.fetch });
+      const params = new URLSearchParams(received);
+      assert.equal(params.get("grant_type"), "refresh_token");
+      assert.equal(params.get("refresh_token"), "rt-old");
+      assert.equal(params.get("client_id"), "cal");
+      assert.equal(cred.refreshToken, "rt-old", "no refresh_token in the response should keep the previous one");
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("a token-endpoint refusal throws with both the error code and description", async () => {
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid_grant", error_description: "the code was already used" }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      await assert.rejects(
+        () =>
+          exchangeCode(
+            { tokenEndpoint, clientId: "cal", code: "c", verifier: "v", redirectUri: "http://127.0.0.1:9/callback" },
+            { fetchImpl: globalThis.fetch },
+          ),
+        (err) => {
+          assert.ok(err.message.includes("invalid_grant"));
+          assert.ok(err.message.includes("the code was already used"));
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("LoopbackReceiver answers the real callback, 404s a wrong path, refuses a non-GET, and never resolves on those", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    try {
+      const uri = await receiver.start();
+      assert.match(uri, /^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+
+      const other = await fetch(uri.replace("/callback", "/nope"));
+      assert.equal(other.status, 404);
+
+      const posted = await fetch(uri, { method: "POST" });
+      assert.equal(posted.status, 405);
+
+      const resolved = fetch(`${uri}?state=s1&code=abc`);
+      const params = await receiver.wait();
+      assert.equal(params.get("state"), "s1");
+      assert.equal(params.get("code"), "abc");
+      const res = await resolved;
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), /Signed in/);
+    } finally {
+      receiver.close();
+    }
+  });
+
+  await test("LoopbackReceiver.cancel() rejects wait()", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    try {
+      await receiver.start();
+      const waiting = receiver.wait();
+      receiver.cancel("nope, changed my mind");
+      await assert.rejects(() => waiting, /nope, changed my mind/);
+    } finally {
+      receiver.close();
+    }
+  });
+
+  await test("LoopbackReceiver.close() frees the port it bound", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    const uri = await receiver.start();
+    const port = Number(new URL(uri).port);
+    receiver.close();
+    let rebound;
+    await waitUntil(async () => {
+      try {
+        rebound = await hold(port);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 2000, "the loopback port to be freed");
+    rebound.close();
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * instance-auth.js — the per-instance sign-in config and stored credentials.
+   * ----------------------------------------------------------------------- */
+
+  await test("normalizeAuth: none/null/undefined collapse to null, and a valid oauth block round-trips minus empty fields", async () => {
+    assert.equal(normalizeAuth(null), null);
+    assert.equal(normalizeAuth(undefined), null);
+    assert.equal(normalizeAuth({ kind: "none" }), null);
+    const bare = normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "", audience: "", redirectPort: "" });
+    assert.deepEqual(bare, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    const full = normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid", audience: "aud", redirectPort: "8123" });
+    assert.deepEqual(full, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid", audience: "aud", redirectPort: 8123 });
+  });
+
+  await test("normalizeAuth refuses a missing issuer/clientId, a client secret, a bad redirect port and an unknown kind", async () => {
+    assert.throws(() => normalizeAuth({ kind: "oauth", clientId: "cal" }), /issuer/i);
+    assert.throws(() => normalizeAuth({ kind: "oauth", issuer: "https://sso.x" }), /client id/i);
+    assert.throws(
+      () => normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", clientSecret: "s3cret" }),
+      /public client/i,
+    );
+    assert.throws(() => normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", redirectPort: 99999 }), /port/i);
+    assert.deepEqual(normalizeAuth({ kind: "header" }), { kind: "header" });
+    assert.throws(() => normalizeAuth({ kind: "smoke-signal" }), /kind of sign-in/i);
+  });
+
+  await test("parseHeaderLines parses multiple lines, skips comments/blanks, and refuses everything it will not send", async () => {
+    const headers = parseHeaderLines("# a comment\n\nAuthorization: Bearer abc\nCF-Access-Client-Id: id1\n");
+    assert.deepEqual(headers, { Authorization: "Bearer abc", "CF-Access-Client-Id": "id1" });
+    assert.throws(() => parseHeaderLines("nocolonhere"), /Name: value/);
+    assert.throws(() => parseHeaderLines("Cookie: a=b"), /Cookie/);
+    assert.throws(() => parseHeaderLines("Host: evil.example.com"), /Host/);
+    assert.throws(() => parseHeaderLines("X-Thing: has\ra carriage return"), /cannot be sent/);
+    assert.throws(() => parseHeaderLines("X-Thing: héllo"), /cannot be sent/);
+    assert.throws(() => parseHeaderLines(""), /at least one header/i);
+  });
+
+  await test("formatHeaderLines round-trips with parseHeaderLines", async () => {
+    const headers = { Authorization: "Bearer abc", "X-Thing": "1" };
+    assert.deepEqual(parseHeaderLines(formatHeaderLines(headers)), headers);
+  });
+
+  await test("authHeaders: a bearer token for a live oauth credential, null for an expired one, a copy for a header credential, null for none", async () => {
+    const now = Date.now();
+    assert.equal(authHeaders(null), null);
+    const oauth = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: now + 60000 };
+    assert.deepEqual(authHeaders(oauth, now), { Authorization: "Bearer at1" });
+    const expired = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: now - 1000 };
+    assert.equal(authHeaders(expired, now), null);
+    const headerCred = { kind: "header", headers: { "X-Thing": "1" } };
+    const got = authHeaders(headerCred, now);
+    assert.deepEqual(got, { "X-Thing": "1" });
+    got.mutated = "yes";
+    assert.equal(headerCred.headers.mutated, undefined, "mutating the result must not mutate the credential");
+  });
+
+  await test("credentialExpired/refreshDelay: no expiry never expires and never schedules; the floor and ceiling clamp the delay", async () => {
+    const now = Date.now();
+    assert.equal(credentialExpired({}, now), false);
+    assert.equal(refreshDelay({}, now), null);
+
+    const farFuture = now + 365 * 24 * 60 * 60 * 1000;
+    assert.equal(refreshDelay({ refreshToken: "rt", expiresAt: farFuture }, now), MAX_REFRESH_DELAY_MS);
+    assert.equal(refreshDelay({ refreshToken: "rt", expiresAt: now + 1000 }, now), 5000);
+    assert.equal(refreshDelay({ expiresAt: farFuture }, now), null, "no refresh token, so never scheduled");
+
+    assert.equal(credentialExpired({ expiresAt: now + 1000 }, now), true, "inside the skew window is expired");
+    assert.equal(credentialExpired({ expiresAt: now + REFRESH_SKEW_MS + 60000 }, now), false);
+  });
+
+  await test("saveCredentials/loadCredentials round-trip through NO_CIPHER at 0600, and a corrupt file loads empty", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-creds-"));
+    const file = path.join(dir, "credentials.json");
+    try {
+      const missing = loadCredentials({ file });
+      assert.equal(missing.found, false);
+      assert.equal(missing.credentials.size, 0);
+
+      const cred = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: Date.now() + 60000 };
+      saveCredentials(new Map([["a1", cred]]), { file });
+      if (process.platform !== "win32") {
+        assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      }
+      const loaded = loadCredentials({ file });
+      assert.equal(loaded.found, true);
+      assert.deepEqual(loaded.credentials.get("a1"), cred);
+      assert.deepEqual(loaded.plain, ["a1"]);
+
+      fs.writeFileSync(file, "{ not json");
+      const corrupt = loadCredentials({ file });
+      assert.equal(corrupt.found, false);
+      assert.equal(corrupt.credentials.size, 0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a real cipher round-trips its entries, and NO_CIPHER sees none of them rather than throwing", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-creds-"));
+    const file = path.join(dir, "credentials.json");
+    try {
+      const fakeCipher = {
+        available: true,
+        encrypt: (s) => Buffer.from(s).reverse(),
+        decrypt: (b) => Buffer.from(b).reverse().toString(),
+      };
+      const cred = { kind: "header", headers: { Authorization: "Bearer abc" } };
+      saveCredentials(new Map([["a1", cred]]), { file, cipher: fakeCipher });
+      const loaded = loadCredentials({ file, cipher: fakeCipher });
+      assert.deepEqual(loaded.credentials.get("a1"), cred);
+      assert.deepEqual(loaded.plain, [], "encrypted entries must not be reported plain");
+
+      const withNoCipher = loadCredentials({ file, cipher: NO_CIPHER });
+      assert.equal(withNoCipher.credentials.size, 0, "NO_CIPHER cannot decrypt these entries and must not throw");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("credentialsFilePath honours CALANDRIA_CREDENTIALS_FILE, and otherwise sits beside instances.json", async () => {
+    assert.equal(credentialsFilePath({ CALANDRIA_CREDENTIALS_FILE: "/tmp/creds.json" }), "/tmp/creds.json");
+    const env = { XDG_CONFIG_HOME: "/x/cfg" };
+    assert.equal(path.dirname(credentialsFilePath(env)), path.dirname(instancesFilePath(env)));
+    assert.equal(credentialsFilePath(env), path.join(path.dirname(instancesFilePath(env)), "credentials.json"));
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * instances.js — the `auth` block on an instance (normalizeState, setInstanceAuth).
+   * ----------------------------------------------------------------------- */
+
+  await test("normalizeState keeps a valid auth block on a url and an ssh instance, and drops a malformed one while keeping the instance", async () => {
+    const state = normalizeState({
+      instances: [
+        { id: "a1f3", kind: "url", name: "Lab", url: "https://lab.example.com", auth: { kind: "oauth", issuer: "https://sso.x", clientId: "cal" } },
+        { id: "9c2e", kind: "ssh", name: "Build", ssh: { host: "build" }, auth: { kind: "header" } },
+        { id: "beef", kind: "url", name: "Broken auth", url: "https://broken.example.com", auth: { kind: "oauth", clientId: "cal" } },
+      ],
+    });
+    assert.deepEqual(findInstance(state, "a1f3").auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    assert.deepEqual(findInstance(state, "9c2e").auth, { kind: "header" });
+    const broken = findInstance(state, "beef");
+    assert.ok(broken, "the instance itself must survive a malformed auth block");
+    assert.ok(!("auth" in broken), "a malformed auth block must be dropped, not the whole instance");
+  });
+
+  await test("setInstanceAuth sets, replaces and clears an instance's auth, refuses local/unknown, and never mutates its input on a bad config", async () => {
+    let state = normalizeState({});
+    const { state: withLab, instance: lab } = addUrlInstance(state, { name: "Lab", url: "https://lab.example.com" });
+    state = withLab;
+
+    state = setInstanceAuth(state, lab.id, { kind: "header" });
+    assert.deepEqual(findInstance(state, lab.id).auth, { kind: "header" });
+
+    state = setInstanceAuth(state, lab.id, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    assert.deepEqual(findInstance(state, lab.id).auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+
+    state = setInstanceAuth(state, lab.id, null);
+    assert.ok(!("auth" in findInstance(state, lab.id)), "null clears the auth block entirely");
+
+    // `local` is refused silently — the same state comes back, unchanged.
+    assert.equal(setInstanceAuth(state, LOCAL_ID, { kind: "header" }), state);
+    // An unknown id is a no-op too.
+    assert.equal(setInstanceAuth(state, "nope", { kind: "header" }), state);
+
+    // A config normalizeAuth will not accept throws, and must not have mutated
+    // the state object handed in.
+    const snapshot = JSON.parse(JSON.stringify(state));
+    assert.throws(() => setInstanceAuth(state, lab.id, { kind: "oauth", clientId: "cal" }));
+    assert.deepEqual(state, snapshot);
+  });
+
+  await test("a save/load round trip through a temp instances file preserves auth", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-instances-auth-"));
+    const file = path.join(dir, "instances.json");
+    try {
+      let state = normalizeState({});
+      const { state: withLab, instance: lab } = addUrlInstance(state, { name: "Lab", url: "https://lab.example.com" });
+      state = setInstanceAuth(withLab, lab.id, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid" });
+      saveInstances(state, { file });
+      const loaded = loadInstances({ file });
+      assert.deepEqual(findInstance(loaded.state, lab.id).auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid" });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
