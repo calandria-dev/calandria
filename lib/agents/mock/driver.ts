@@ -1,4 +1,4 @@
-// The e2e mock driver — a deterministic AgentDriver used only by the Playwright
+// The e2e mock driver: a deterministic AgentDriver used only by the Playwright
 // suite (registered when CALANDRIA_E2E_MOCK_AGENT=1, see registry.ts). It exercises
 // the full turn contract (session/model/tool/assistant/usage/done, plus error,
 // suggested, and abort-aware sleeps) without any real agent CLI or login, so
@@ -12,20 +12,20 @@
 //   e2e:sleep=<ms>                  hold the turn open (Stop / queue tests)
 //   e2e:fail=<message>              end the turn with an error event
 //   e2e:suggest=<title>             create a suggested task + emit "suggested"
-//   e2e:suggest-into=<proj>|<title> …but file it into ANOTHER project (by id or
+//   e2e:suggest-into=<proj>|<title> …but file it into another project (by id or
 //                                   name), through the same strict resolution the
 //                                   real suggest_task tool uses
-//   e2e:retitle=<title>             rename the RUNNING task through the same
+//   e2e:retitle=<title>             rename the running task through the same
 //                                   shared logic the real update_task tool calls
 //   e2e:permission=<command>        raise a Bash permission card and park on it
-//   e2e:blocked=<command>           a Bash call the CLI refused on its own — an
+//   e2e:blocked=<command>           a Bash call the CLI refused on its own, an
 //                                   already-decided card, no buttons, nothing parked
 //   e2e:ask=[header|]<question>|<a>,<b>[|multi]
 //                                   raise an AskUserQuestion card and park on it,
 //                                   through the same startAskUser() the stdio
 //                                   bridge's ask_user tool calls. Repeat the
 //                                   directive to put several questions on one card
-// With no directives, the turn appends the prompt to AGENT_NOTES.md — so every
+// With no directives, the turn appends the prompt to AGENT_NOTES.md, so every
 // plain turn still produces a diff to view and merge.
 
 import { execFileSync } from "node:child_process";
@@ -57,7 +57,7 @@ import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/co
 import { MOCK_CAPABILITIES } from "./capabilities";
 
 const MOCK_EMAIL = "e2e@example.com";
-// How the mock spells the tool, matching the shape a real driver reports:
+// How the mock spells the tool, matching the shape a real driver reports.
 // lib/suggestionCard.ts matches a substring precisely because every driver
 // prefixes it differently.
 const SUGGEST_TOOL = "mcp__calandria__suggest_task";
@@ -83,8 +83,8 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 // How long an `e2e:ask=` turn will sit parked before giving up, and how often it
 // looks. The stdio bridge waits a day at 1.5s intervals; a mock turn nobody
-// answers has to end on its own rather than hold the turn slot for the life of
-// the test server, and a spec that clicks the card wants the resume to be
+// answers has to end on its own instead of holding the turn slot for the life
+// of the test server, and a spec that clicks the card wants the resume to be
 // prompt rather than realistic.
 const ASK_WAIT_MS = 120_000;
 const ASK_POLL_MS = 100;
@@ -92,7 +92,7 @@ const ASK_POLL_MS = 100;
 /**
  * Parse one `e2e:ask=` directive into an AskQuestion.
  *
- * `[<header>|]<question>|<optA>,<optB>[|multi]` — the header is optional
+ * `[<header>|]<question>|<optA>,<optB>[|multi]`: the header is optional
  * because a one-question card reads fine without one. Defaults match the
  * bridge's own sanitizeQuestions() (header "Question", single-select), so a
  * card raised from here is indistinguishable from one ask_user raised.
@@ -123,11 +123,11 @@ function safeJoin(cwd: string, rel: string): string | null {
 let currentLogin: AgentLoginSession | null = null;
 
 // A fixed command set standing in for what a real CLI would report, so the
-// composer's "/" menu has something deterministic to render. Deliberately
-// covers the shapes the menu has to handle: a plain command, one that takes
-// arguments, a namespaced plugin command with an alias, and two entries the
-// server is expected to filter out (the agent's own /clear, which Calandria
-// overrides, and an internal sentinel).
+// composer's "/" menu has something deterministic to render. Covers the
+// shapes the menu has to handle: a plain command, one that takes arguments, a
+// namespaced plugin command with an alias, and two entries the server is
+// expected to filter out (the agent's own /clear, which Calandria overrides,
+// and an internal sentinel).
 const MOCK_COMMANDS = [
   { name: "mock-echo", description: "echo the arguments back", argumentHint: "<text>" },
   { name: "mock-status", description: "report mock agent status" },
@@ -147,7 +147,7 @@ export const mockDriver: AgentDriver = {
   // file; what the e2e is testing is the gate and its UI, and both are the
   // runner's, driven off exactly this declaration. `e2e:write=` is what plants
   // the file, which is also the escalation being modelled: an agent writing
-  // the settings its NEXT turn would run under.
+  // the settings its next turn would run under.
   watchedSettingsFiles: [".claude/settings.json"],
 
   async listCommands() {
@@ -179,10 +179,10 @@ export const mockDriver: AgentDriver = {
       return;
     }
 
-    // A tool-permission prompt. Deliberately runs the REAL gate helpers
-    // (lib/permissions.ts) rather than a hand-rolled stand-in, so the e2e suite
-    // covers the same rule lookup, card shape, parking, and rule storage the
-    // Claude driver's canUseTool goes through — everything except the SDK.
+    // A tool-permission prompt. Runs the real gate helpers (lib/permissions.ts)
+    // instead of a hand-rolled stand-in, so the e2e suite covers the same rule
+    // lookup, card shape, parking, and rule storage the Claude driver's
+    // canUseTool goes through, everything except the SDK.
     const gated = instructionText.match(/e2e:permission=([^\n]+)/)?.[1]?.trim();
     if (gated) {
       const input = { command: gated };
@@ -226,14 +226,14 @@ export const mockDriver: AgentDriver = {
       }
     }
 
-    // An AskUserQuestion, raised through lib/agentTools.startAskUser — the call
-    // the stdio bridge's ask_user tool makes, rather than the Claude driver's
+    // An AskUserQuestion, raised through lib/agentTools.startAskUser: the call
+    // the stdio bridge's ask_user tool makes, instead of the Claude driver's
     // in-SDK PreToolUse hook, because the bridge is the path with no browser
     // coverage at all. startAskUser owns the card completely: it persists the
-    // tool row, publishes it, raises awaiting_input and parks a DETACHED waiter
-    // on lib/asks.ts. So there is nothing to yield here and the turn's only job
-    // is to wait for the outcome the way the bridge does — polling
-    // takeAskOutcome() rather than holding anything open.
+    // tool row, publishes it, raises awaiting_input and parks a detached waiter
+    // on lib/asks.ts. So there is nothing to yield here, and the turn's only
+    // job is to wait for the outcome the way the bridge does, by polling
+    // takeAskOutcome() instead of holding anything open.
     const asks = [...instructionText.matchAll(/e2e:ask=([^\n]+)/g)]
       .map((m) => parseAsk(m[1].trim()))
       .filter((q): q is AskQuestion => q !== null);
@@ -256,13 +256,13 @@ export const mockDriver: AgentDriver = {
       yield { type: "assistant", content: outcome };
     }
 
-    // A call the CLI refused BY ITSELF, with no card — the "auto" classifier or
+    // A call the CLI refused by itself, with no card: the "auto" classifier or
     // a deny rule in the Claude driver, and nothing to answer here either. The
     // sequence mirrors the real one exactly: the tool call, then the refusal
     // against its tool_use id, then the is_error tool_result the CLI feeds the
     // model. The reason text goes through the same blockedReason() the driver
     // uses, boilerplate tail and all, so the e2e covers what the user actually
-    // reads rather than a cleaned-up version of it.
+    // reads instead of a cleaned-up version of it.
     const blocked = instructionText.match(/e2e:blocked=([^\n]+)/)?.[1]?.trim();
     if (blocked) {
       const id = `mock-blocked-${task.id}-g${task.generation}`;
@@ -291,7 +291,7 @@ export const mockDriver: AgentDriver = {
       const abs = safeJoin(cwd, w.rel);
       const id = `mock-tool-${++toolN}`;
       // The same shape the Claude driver's describeToolUse() yields for a
-      // Write — absolute path in `detail` and `file` — so the runner's
+      // Write (absolute path in `detail` and `file`), so the runner's
       // worktree-relative resolution and the transcript's Collaborate button
       // are exercised on the real contract, not a mock-only one.
       yield {
@@ -312,18 +312,18 @@ export const mockDriver: AgentDriver = {
       yield { type: "tool_result", id, content: `wrote ${w.rel}`, isError: false };
     }
 
-    // Commit the work like a real coding agent would — an uncommitted-only
+    // Commit the work like a real coding agent would: an uncommitted-only
     // worktree has zero commits ahead of base, which the diff route reads as
     // "already merged". Best-effort: a non-git cwd just skips it.
     try {
       execFileSync("git", ["add", "-A"], { cwd, stdio: "ignore" });
       execFileSync("git", ["commit", "-m", `mock: ${task.title}`], { cwd, stdio: "ignore" });
     } catch {
-      // not a repo / nothing to commit — fine
+      // not a repo / nothing to commit, fine
     }
 
     // Emitted as a real tool call (row, result, then the `suggested` event), the
-    // way both real drivers do it — that ordering is what lets the runner settle
+    // way both real drivers do it. That ordering is what lets the runner settle
     // the suggestion card onto the call that made it, so the e2e exercises the
     // transcript card and not just the tray.
     for (const m of instructionText.matchAll(/e2e:suggest=([^\n]+)/g)) {
@@ -335,7 +335,7 @@ export const mockDriver: AgentDriver = {
       if (made) yield { type: "suggested", title, projectId: project.id, taskId: made.id };
     }
 
-    // Cross-project filing, through the SAME resolver the real tool calls — a
+    // Cross-project filing, through the same resolver the real tool calls: a
     // bad project ref surfaces as an error event, exactly as the tool refuses it.
     for (const m of instructionText.matchAll(/e2e:suggest-into=([^|\n]+)\|([^\n]+)/g)) {
       const [ref, title] = [m[1].trim(), m[2].trim()];
@@ -351,7 +351,7 @@ export const mockDriver: AgentDriver = {
       if (made) yield { type: "suggested", title, projectId: target.project.id, taskId: made.id };
     }
 
-    // A turn editing its OWN row — update_task's default target. Nothing is
+    // A turn editing its own row: update_task's default target. Nothing is
     // yielded onto the task's stream: the write publishes "task_edited"
     // globally from updateTaskForAgent, and that's precisely what the e2e
     // asserts, so a stream event here would mask a broken global path.
@@ -380,9 +380,9 @@ export const mockDriver: AgentDriver = {
   async summarizeProjectRecap(project: Project) {
     return { text: `Mock recap for ${project.name}: everything is fine.` };
   },
-  // "Refresh tag" reads a JSON plan back, so the mock has to emit one — canned
+  // "Refresh tag" reads a JSON plan back, so the mock has to emit one; canned
   // text would parse as an empty plan and the e2e would only ever see the
-  // nothing-changed path. It rewords the FIRST member (whose id it lifts out of
+  // nothing-changed path. It rewords the first member (whose id it lifts out of
   // the digest it was handed) so the apply half, and the "Changed by agent"
   // chip that half exists to raise, are both exercisable.
   async planTagRefresh(project: Project, digest: string) {

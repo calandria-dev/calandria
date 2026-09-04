@@ -1,7 +1,7 @@
 // Agent-agnostic building blocks shared by every driver: the project-context
 // prompt, the conflict-resolution prompt, and the normalizers that turn a raw
 // tool call/result into the UI's title/detail/peek shape. Nothing in here
-// knows which agent is running — drivers reuse these to emit the normalized
+// knows which agent is running; drivers reuse these to emit the normalized
 // StreamEvent contract (see lib/agents/types.ts).
 
 import type { Project, Task, AskQuestion, AskAnswers, ToolPeek, DiffLine } from "../types";
@@ -13,8 +13,8 @@ import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
-// already supplied by buildProjectContext(). Keep this prompt deliberately
-// generic so the title and details have one canonical representation.
+// already supplied by buildProjectContext(). This prompt stays generic so the
+// title and details have one canonical representation.
 export const INITIAL_TASK_PROMPT = "Start working on the task described in the task context.";
 
 /**
@@ -22,10 +22,9 @@ export const INITIAL_TASK_PROMPT = "Start working on the task described in the t
  * landing mode. Exported so tests can pin both wordings without rebuilding a
  * whole context string.
  *
- * Under `pr` the session is told three separate things, because knowing only the
- * first two still ends with it clicking Merge: the branch is protected, Merge
- * will be REJECTED, and what finishing actually means instead. The `merge`
- * wording is the historic sentence, unchanged.
+ * Under `pr` the session is told three separate things, because knowing only
+ * the first two still ends with it clicking Merge: the branch is protected,
+ * Merge will be rejected, and what finishing actually means instead.
  */
 export function landingSentence(project: Pick<Project, "landing_mode">, base: string): string {
   if (project.landing_mode === "pr")
@@ -42,7 +41,7 @@ export function landingSentence(project: Pick<Project, "landing_mode">, base: st
 /**
  * Build the context string that is prepended to every task's session via the
  * agent's system prompt. This is the "write project context once" feature:
- * project description + conventions + the task framing + any prior-session
+ * project description, conventions, the task framing, and any prior-session
  * summaries from earlier generations of this task.
  *
  * When the task opted out of the saved project context (send_context = 0), the
@@ -56,44 +55,45 @@ export function buildProjectContext(project: Project, task: Task): string {
   const lines: string[] = [];
   lines.push(`You are working inside the project "${project.name}".`);
   if (ctx && task.send_context !== 0) lines.push(`\nWhat we're building (project context):\n${ctx}`);
-  // The base branch, not "the project's branch": what this worktree was cut
-  // from is also what Sync catches it up to and what it LANDS on, and a task on
-  // a feature branch has to know that before it reasons about any of the three.
-  // The parenthetical only when the task has a base of its own — on every other
-  // task it would just restate the line above it.
+  // The line names the base branch rather than "the project's branch": what
+  // this worktree was cut from is also what Sync catches it up to and what it
+  // lands on, and a task on a feature branch has to know that before it
+  // reasons about any of the three. The parenthetical is added only when the
+  // task has a base of its own; on every other task it would just restate the
+  // line above it.
   //
-  // How it lands is the project's landing_mode, and the difference is not a
-  // preference the model can ignore: on a repo whose base branch carries a
-  // ruleset requiring a pull request, Merge is rejected by the server, so the
-  // old unconditional "Merge lands into it" sent every such session off to press
-  // a button that cannot work. Say which one is true here (lib/types.ts
-  // LandingMode, set per project in the settings form).
+  // How it lands is the project's landing_mode, and the model must be told
+  // which: on a repo whose base branch carries a ruleset requiring a pull
+  // request, Merge is rejected by the server, so an unconditional "Merge lands
+  // into it" would send such a session to press a button that cannot work.
+  // Say which one is true here (lib/types.ts LandingMode, set per project in
+  // the settings form).
   const base = resolveBaseBranch(task, project);
   if (base)
     lines.push(
       `\nBase branch: ${base} — ${landingSentence(project, base)}` +
         (hasOwnBase(task, project) ? ` (The project's default is ${project.branch}.)` : "")
     );
-  // What the cut ACTUALLY got, when that differs from what the line above
+  // What the cut actually got, when that differs from what the line above
   // promises: a base branch that has fallen behind the project default, or one
   // that no longer exists at all. Recorded at worktree-cut time by
   // lib/baseDrift.ts and consumed here, so it reaches the session that is about
-  // to be damaged by the drift rather than only the user's tag chip. Empty on
-  // every ordinary task, and immediately after the line it qualifies, because on
-  // its own "Base branch: core-fixes" reads as reassurance.
+  // to be damaged by the drift instead of only the user's tag chip. Empty on
+  // every ordinary task, and placed immediately after the line it qualifies,
+  // since on its own "Base branch: core-fixes" reads as reassurance.
   const cutNote = takeBaseCutNote(task.id);
   if (cutNote) lines.push(`\n${cutNote}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
 
-  // Where this task sits in the features it's part of — each tag's name and
+  // Where this task sits in the features it's part of: each tag's name and
   // description, the siblings in dependency order, and the planning session
-  // that filed them — one block per tag, in tag order. Empty for an untagged
+  // that filed them, one block per tag, in tag order. Empty for an untagged
   // task, and suppressed by send_context = 0 exactly like the project context
   // above (lib/tagContext.ts).
-  // Placed here, straight after the brief, because it is the FRAMING of that
-  // brief: "port the login route" reads differently once the session knows two
-  // earlier steps already landed AuthService.
+  // Placed here, straight after the brief, because it frames that brief: "port
+  // the login route" reads differently once the session knows two earlier
+  // steps already landed AuthService.
   const tagBlocks = tagContextBlock(task);
   if (tagBlocks) lines.push(tagBlocks);
 
@@ -106,27 +106,27 @@ export function buildProjectContext(project: Project, task: Task): string {
   }
 
   // Per-driver truth about backgrounded work. A lingering driver (Claude, via
-  // streaming-input mode — see BACKGROUND_LINGER_MS) keeps the CLI alive after
+  // streaming-input mode; see BACKGROUND_LINGER_MS) keeps the CLI alive after
   // the turn so run_in_background tasks finish and their notifications wake
-  // the model; there the shell tool's own docs are finally accurate and the
-  // model only needs the bound. Everywhere else (Codex's `codex exec`, or
-  // Claude with the linger disabled) each turn's process is killed at result
-  // time, backgrounded commands with it — so the model is warned off a promise
+  // the model; there the shell tool's own docs are accurate and the model only
+  // needs the bound. Everywhere else (Codex's `codex exec`, or Claude with the
+  // linger disabled) each turn's process is killed at result time, taking
+  // backgrounded commands with it, so the model is warned off a promise
   // ("you'll be notified when it completes") its harness cannot keep.
   if (getCapabilities(task.agent).backgroundTasksLinger) {
-    // The bound is instance config, so say what's actually true here: with a
-    // deadline set, name it (and that a cut is announced); without one, the
-    // hazard flips — nothing expires, so a backgrounded process that never
-    // exits (a dev server) holds the session open until the user stops it.
-    // Scheduled wakeups (ScheduleWakeup / CronCreate / /loop) follow the same
-    // rule — they only fire while the session is held open — so the model
+    // The bound is instance config, so this states what's actually true: with
+    // a deadline set, name it (and that a cut is announced); without one, the
+    // hazard flips, since nothing expires and a backgrounded process that
+    // never exits (a dev server) holds the session open until the user stops
+    // it. Scheduled wakeups (ScheduleWakeup / CronCreate / /loop) follow the
+    // same rule, firing only while the session is held open, so the model
     // learns the wakeup policy here rather than from a wake that never comes.
     // The self-matching `pgrep -f` loop is named only in the unbounded branch:
     // it is a process that never exits, written in the exact shape the shell
-    // tool's own "sleep is blocked" error recommends, and it held a real
-    // session open for ~30 minutes after its tests had passed. With a deadline
-    // set the linger cap eventually cuts it, so the warning isn't worth its
-    // tokens twice.
+    // tool's own "sleep is blocked" error recommends, and it can hold a real
+    // session open well past when its tests have passed. With a deadline set
+    // the linger cap eventually cuts it, so the warning isn't worth its tokens
+    // twice.
     lines.push(
       `\n---\nBackground shell tasks keep running after your turn ends: the session stays open ` +
         `until they settle and their completion notifications re-invoke you. ` +
@@ -180,8 +180,8 @@ export function buildProjectContext(project: Project, task: Task): string {
       `chain where the work can genuinely run in any order. Dependencies never cross projects: ` +
       `refs must be tasks in the same project the dependent task is filed into.\n` +
       // Ordering is only half of what makes a batch a plan; the other half is
-      // saying it IS one. Stated here as well as in the tool description
-      // because this is the standing instruction a planning turn reads before
+      // saying it is one. Stated here as well as in the tool description,
+      // since this is the standing instruction a planning turn reads before
       // it decides how to file, and a plan filed untagged can't be named after
       // the fact without one edit per task.
       `NAME THE PLAN. Pass the same \`tags\` to every task of one feature, migration or refactor — ` +
@@ -223,20 +223,19 @@ export function buildProjectContext(project: Project, task: Task): string {
       `Calandria starts.`
   );
 
-  // Bulk collection goes to subagents. Last on purpose: this block countermands
-  // instructions the CLI puts in the same window (auto mode's "do your work
-  // through the Bash tool", and — on Opus — "do not call the AgentTool unless
-  // the user requested it"), and the append lands after both.
+  // Bulk collection goes to subagents. This block is placed last because it
+  // countermands instructions the CLI puts in the same window (auto mode's "do
+  // your work through the Bash tool", and, on Opus, "do not call the AgentTool
+  // unless the user requested it"), and the append lands after both.
   //
-  // It is here rather than in a CLAUDE.md file because that was tried and
-  // measured losing: same rule, same repo, same prompts, it delegated only
-  // after a median of two read-only commands and ran 10.3 Bash calls to this
-  // version's 3.6 (docs/DELEGATION.md). A project's own instructions are read as context; the
-  // CLI's are read as the rules of the harness, and a general principle does
-  // not beat a specific instruction. The trigger is stated as a COUNT for the
-  // same reason — the CLAUDE.md version said "a third read-only command in a
-  // row against the same question", and a model that judges each command a
-  // different question never fires it by its own reckoning.
+  // It lives here rather than in a CLAUDE.md file because a project's own
+  // instructions are read as context while the CLI's are read as the rules of
+  // the harness, so a general principle placed in CLAUDE.md does not beat a
+  // specific instruction from the CLI
+  // (https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md).
+  // The trigger is stated as a count for the same reason: a model that judges
+  // each command a different question won't reliably fire a rule phrased as
+  // "a third read-only command in a row against the same question".
   if (DELEGATE_COLLECTION && getCapabilities(task.agent).dispatchesSubagents) {
     lines.push(
       `\n---\nCollecting context: the bulk reads go to a subagent.\n\n` +
@@ -273,8 +272,9 @@ export function buildProjectContext(project: Project, task: Task): string {
  * Prompt for an AI conflict-resolution turn. The task's base branch has been
  * trial-merged into its work branch (in the isolated worktree), leaving conflict
  * markers in the listed files. The agent resolves them in place. Completion
- * (commit + land into base) is handled by the app on the user's Accept, so we
- * tell it not to commit — though the flow is robust if it does anyway.
+ * (commit and land into base) is handled by the app on the user's Accept, so
+ * the prompt tells it not to commit, though the flow is robust if it does
+ * anyway.
  */
 export function buildConflictPrompt(baseBranch: string, conflicts: string[]): string {
   const files = conflicts.map((f) => `  - ${f}`).join("\n");
@@ -306,13 +306,14 @@ export interface CiFailure {
 }
 
 /**
- * Prompt for a "Fix CI" turn. The task's own session, in its own worktree, told
- * which job on its PR went red and shown the tail of that job's failed steps.
+ * Prompt for a "Fix CI" turn. The task's own session, in its own worktree, is
+ * told which job on its PR went red and shown the tail of that job's failed
+ * steps.
  *
- * The shape mirrors buildConflictPrompt deliberately: an ordinary user message
- * on the existing session (the client sends it through POST /messages), not a
+ * The shape mirrors buildConflictPrompt: an ordinary user message on the
+ * existing session (the client sends it through POST /messages), not a
  * special turn kind. The agent already has the branch checked out, so it needs
- * the FAILURE, not the context.
+ * the failure, not the context.
  *
  * A missing log is stated rather than hidden. `gh run view --log-failed` can
  * come back empty for an expired run, a legacy status context or a check
@@ -356,12 +357,12 @@ export function clip(s: unknown, n = 4000): string {
   return str.length > n ? str.slice(0, n) + `\n… (${str.length - n} more chars)` : str;
 }
 
-// The clip for a FAILED result: cut the middle, keep both ends. A shell
+// The clip for a failed result: cut the middle, keep both ends. A shell
 // appends stderr after stdout, so a long failed command ("cat a b" where only
 // b is missing, a compound command whose last step errored) carries its
-// explanation in the last few hundred bytes — and clip() threw exactly that
-// away, leaving 6000 chars of perfectly good output under a red ✗ with no
-// visible reason. The head stays too: the exit status is the first line.
+// explanation in the last few hundred bytes, and a plain clip() would throw
+// exactly that away, leaving thousands of chars of good output under a red ✗
+// with no visible reason. The head stays too: the exit status is the first line.
 export function clipKeepTail(s: string, n = 6000): string {
   if (s.length <= n) return s;
   const tail = Math.floor(n / 3);
@@ -371,9 +372,9 @@ export function clipKeepTail(s: string, n = 6000): string {
 
 // Turn a failed tool result into its peek: the exit status (the Claude CLI
 // writes "Exit code N" as the first line; Codex reports it as a field, passed
-// in) and the LAST lines of the output, where the reason lives. Applies to
-// every tool, not just shell commands — a Read's "File does not exist" is one
-// line either way. `omitted` is what the full body holds ABOVE the tail; the
+// in) and the last lines of the output, where the reason lives. Applies to
+// every tool, not just shell commands: a Read's "File does not exist" is one
+// line either way. `omitted` is what the full body holds above the tail; the
 // renderer offers it as "+N earlier lines", not "more".
 export function summarizeFailure(raw: string, exitCode?: number | null): ToolPeek {
   const exitLine = /^Exit code (-?\d+)\n?/.exec(raw);
@@ -387,7 +388,7 @@ export function summarizeFailure(raw: string, exitCode?: number | null): ToolPee
 
 // How a tool's eventual result should be summarized into a peek. The result
 // content only arrives later (a separate tool_result event), so describeToolUse
-// records the *kind* and summarizeResult turns the raw output into the peek.
+// records the kind and summarizeResult turns the raw output into the peek.
 export type ResultKind = "read" | "output" | "grep" | "glob";
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -411,7 +412,7 @@ export function diffLines(oldS: string, newS: string): DiffLine[] {
   ];
 }
 
-// Cap the stored full diff so a giant Edit doesn't bloat the DB row / SSE event.
+// Cap the stored full diff so a giant Edit doesn't bloat the DB row or SSE event.
 const DIFF_MAX = 400;
 function capDiff(diff: DiffLine[]): DiffLine[] {
   return diff.length <= DIFF_MAX ? diff : [...diff.slice(0, DIFF_MAX), { sign: " ", text: `… (${diff.length - DIFF_MAX} more lines)` }];
@@ -448,13 +449,13 @@ export function summarizeResult(kind: ResultKind, raw: string): ToolPeek {
 // always-visible peek, and (for result-derived peeks) the kind to summarize the
 // eventual output with. Mirrors what Claude Code reveals per tool; the names
 // are the common coding-agent tool vocabulary, and the default arm renders any
-// unknown tool generically — so other drivers can reuse this as-is.
+// unknown tool generically, so other drivers can reuse this as-is.
 export function describeToolUse(
   name: string,
   input: Record<string, unknown>
 ): { title: string; detail: string; peek?: ToolPeek; diff?: DiffLine[]; resultKind?: ResultKind; file?: string } {
   const file = (input?.file_path || input?.path || input?.notebook_path) as string | undefined;
-  // `file` on the RETURN is the path a text-writing call touched, for the
+  // `file` on the return is the path a text-writing call touched, for the
   // transcript's Collaborate button. Only Write/Edit carry it: a notebook is
   // JSON no one reviews as a document, and reads change nothing.
   const base = file ? file.split("/").slice(-1)[0] : undefined;
@@ -494,7 +495,7 @@ export function describeToolUse(
     case "Task":
       return { title: `🤖 Subagent: ${String(input?.description ?? "task")}`, detail: clip(input?.prompt) };
     case "ExitPlanMode":
-      // Plan mode's hand-off: the agent is asking to stop planning and start
+      // Plan mode's handoff: the agent is asking to stop planning and start
       // editing, with the plan itself as the input worth reading.
       return { title: `📋 Proposed a plan`, detail: clip(input?.plan) };
     default:
@@ -516,9 +517,9 @@ export function formatAnswers(questions: AskQuestion[], answers: AskAnswers): st
 
 // Minimal push/pull async queue. A driver's native message pump and any
 // interactive hooks (asks) both push events; runTurn yields them in order
-// until the queue closes. A queue is needed because hooks fire *inside* the
+// until the queue closes. A queue is needed because hooks fire inside the
 // native iteration (they park awaiting the user), so they can't yield from
-// runTurn directly — they push here.
+// runTurn directly and push here instead.
 export function makeQueue<T>() {
   const items: T[] = [];
   let waiting: ((r: IteratorResult<T>) => void) | null = null;
@@ -568,12 +569,12 @@ export function resultText(content: unknown): string {
 
 // ---------- the "Refresh tag" plan (lib/tagRefresh.ts) ----------
 //
-// Prompt AND parser live here rather than in each driver, unlike the older
+// The prompt and parser live here rather than in each driver, unlike the older
 // one-shots whose prose is duplicated per driver. Those return free text, where
 // drift is a style difference; this one returns a machine-read contract that
-// the SERVER applies to real rows. Two copies of the schema would eventually
-// disagree about a field name, and the symptom would be a Codex instance whose
-// refresh silently changes nothing.
+// the server applies to real rows. Two copies of the schema could disagree
+// about a field name, and the symptom would be a Codex instance whose refresh
+// silently changes nothing.
 
 /** Delimiters the plan JSON is wrapped in, so interim narration can be dropped. */
 export const TAG_PLAN_OPEN = "<<<TAG_PLAN>>>";
@@ -586,7 +587,7 @@ export interface TagPlanTask {
   description?: string;
   /** Retract this task: it is already done elsewhere, or a sibling superseded it. */
   retire?: boolean;
-  /** Why — required for a retirement, and shown to the user on the struck-through card. */
+  /** Why, required for a retirement, and shown to the user on the struck-through card. */
   reason?: string;
 }
 
@@ -599,9 +600,9 @@ export interface TagPlan {
 /**
  * What the utility agent is asked to do when the user presses "Refresh tag".
  *
- * The instruction that matters most is the LAST one: say nothing about a task
+ * The instruction that matters most is the last one: say nothing about a task
  * that is still accurate. A model asked to review seven briefs will, unprompted,
- * return seven improved briefs — and the user gets seven "Changed by agent"
+ * return seven improved briefs, and the user then gets seven "Changed by agent"
  * chips for a plan that hadn't actually gone stale, which teaches them to stop
  * pressing the button. Silence is the expected output of a healthy tag.
  */
@@ -640,9 +641,9 @@ export function buildTagRefreshPrompt(project: Project, digest: string): string 
 
 /**
  * Pull the plan out of a one-shot's raw text. Every failure mode degrades to an
- * empty plan rather than throwing: the job's job is to change what it can
- * justify, and a model that emitted prose instead of JSON has justified nothing.
- * The caller reports "nothing needed changing", which is honest — we did look.
+ * empty plan instead of throwing: the job is to change what it can justify, and
+ * a model that emitted prose instead of JSON has justified nothing. The caller
+ * reports "nothing needed changing", which is honest, since the check did run.
  */
 export function parseTagPlan(raw: string): TagPlan {
   const empty: TagPlan = { description: "", tasks: [] };
@@ -673,7 +674,7 @@ export function parseTagPlan(raw: string): TagPlan {
         const id = str(e.id);
         if (!id) return [];
         const entry: TagPlanTask = { id };
-        // "" is not a proposed rewrite, it's a field the model left blank —
+        // "" is not a proposed rewrite, it's a field the model left blank;
         // applying it would blank a real brief.
         if (str(e.title)) entry.title = str(e.title);
         if (str(e.description)) entry.description = str(e.description);

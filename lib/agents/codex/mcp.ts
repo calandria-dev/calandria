@@ -1,12 +1,12 @@
-// Which MCP servers a Codex run mounts — the deliberate, documented difference
-// between the two drivers.
+// Which MCP servers a Codex run mounts: a documented difference from the
+// Claude driver.
 //
 // The Claude driver inherits the user's own MCP servers (settingSources in
 // lib/agents/claude/driver.ts), and bypassPermissions auto-approves their tools,
-// so a Claude task can genuinely use them. Codex CANNOT do the same, and the
-// reason is the CLI, not a config we forgot to pass:
+// so a Claude task can genuinely use them. Codex cannot do the same, and the
+// reason is the CLI, not a config gap:
 //
-//   * The @openai/codex-sdk `config` object is flattened into LEAF-level
+//   * The @openai/codex-sdk `config` object is flattened into leaf-level
 //     `--config mcp_servers.calandria.command="…"` overrides, and the codex
 //     CLI merges those into ~/.codex/config.toml rather than replacing the
 //     table. So the user's servers are already inherited today, with no code
@@ -14,23 +14,22 @@
 //   * But codex gates every MCP tool call behind its own approval decision, and
 //     `codex exec` (what the SDK spawns) has nobody to ask. A server that hasn't
 //     set `default_tools_approval_mode = "approve"` therefore has tools the
-//     model can SEE and can never CALL: each attempt returns
+//     model can see and can never call: each attempt returns
 //     `error: "user cancelled MCP tool call"` immediately.
 //
-// Verified live on codex-cli 0.146.0 with a probe MCP server: the tool is
-// offered, the call is cancelled, and `mcp_servers.<name>.enabled = false`
-// unmounts it entirely (the process isn't even spawned and the model doesn't
-// see the tool). Visible-but-dead tools cost context and turns and teach the
-// model nothing, so the driver disables them by default and says so — see
-// CODEX_INHERIT_MCP in lib/config.ts for the escape hatch, and "Agent MCP
-// inheritance is asymmetric" in lib/agents/CLAUDE.md for the product-level
-// statement.
+// Verified live with a probe MCP server: the tool is offered, the call is
+// cancelled, and `mcp_servers.<name>.enabled = false` unmounts it entirely
+// (the process isn't even spawned and the model doesn't see the tool).
+// Visible-but-dead tools cost context and turns and teach the model nothing,
+// so the driver disables them by default and says so; see CODEX_INHERIT_MCP
+// in lib/config.ts for the escape hatch, and "Agent MCP inheritance is
+// asymmetric" in lib/agents/CLAUDE.md for the product-level statement.
 //
 // The binary itself is resolved by ./bin.ts rather than spawned as a bare
 // "codex": that name resolves nowhere on native Windows, where npm installs a
-// `codex.cmd` shim, and the best-effort contract below would have turned that
-// into a permanent silent regression — every turn paying for uncallable
-// inherited tools, with nothing logged.
+// `codex.cmd` shim, and the best-effort contract below would otherwise be a
+// permanent silent regression, with every turn paying for uncallable
+// inherited tools and nothing logged.
 //
 // SDK-free on purpose (child_process + config only) so it can be unit-tested
 // without @openai/codex-sdk.
@@ -42,28 +41,28 @@ import { codexSpawn } from "./bin";
 
 const run = promisify(execFile);
 
-// The name our own bridge is mounted under. Never disabled, and never treated
-// as an inherited server even if the user happens to have one by that name —
-// our leaf overrides would land on top of theirs either way.
+// The name the bridge is mounted under. Never disabled, and never treated as
+// an inherited server even if the user happens to have one by that name: the
+// leaf overrides land on top of theirs either way.
 export const CALANDRIA_SERVER = "calandria";
 
 // One segment of a `--config` dotted path is a TOML bare key. The SDK builds
 // those paths by string concatenation with no quoting, so a server named
 // `foo.bar` or `foo bar` would address the wrong table (or fail to parse).
-// Rather than emit a broken override we skip such a name — it stays mounted,
+// Rather than emit a broken override such a name is skipped; it stays mounted,
 // which is exactly the pre-existing behavior, and is vanishingly rare.
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 
 /**
  * The MCP servers codex would mount from the user's own configuration, by name.
  * Read through the CLI (`codex mcp list --json`) rather than by parsing
- * ~/.codex/config.toml ourselves: the CLI is the authority on what's actually
+ * ~/.codex/config.toml directly: the CLI is the authority on what's actually
  * enabled and where it came from (config.toml, plugins, marketplaces), and the
  * repo has no TOML parser. ~30ms, next to a turn that runs for minutes.
  *
  * Best-effort by contract: any failure (CLI missing, malformed JSON, timeout)
- * degrades to an empty list, which leaves the user's servers mounted — the
- * behavior before this existed, never a failed turn.
+ * degrades to an empty list, which leaves the user's servers mounted rather
+ * than failing the turn.
  */
 export async function listUserMcpServers(): Promise<string[]> {
   try {
@@ -80,7 +79,7 @@ export async function listUserMcpServers(): Promise<string[]> {
       .filter((n): n is string => typeof n === "string" && n !== CALANDRIA_SERVER);
   } catch (e) {
     // ENOENT here just means codex isn't installed, which the auth surface
-    // already reports far more usefully; anything else is worth a line.
+    // already reports more usefully; anything else is worth a line.
     if ((e as { code?: string }).code !== "ENOENT") {
       console.warn(`[codex] could not enumerate MCP servers, leaving the user's mounted: ${(e as Error).message}`);
     }

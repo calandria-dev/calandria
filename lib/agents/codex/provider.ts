@@ -3,12 +3,12 @@
 // anything.
 //
 // Claude Code reads its endpoint from the environment, so for it the override
-// IS the env and the driver has nothing to add. Codex doesn't: `model_provider`
+// is the env and the driver has nothing to add. Codex doesn't: `model_provider`
 // comes from ~/.codex/config.toml (a project-scoped config can't override it),
 // and the built-in `openai` provider only honours OPENAI_BASE_URL under API-key
-// auth — with the ChatGPT login Calandria recommends, requests go to the
+// auth; with the ChatGPT login Calandria recommends, requests go to the
 // chatgpt.com backend whatever the env says. So the override is mapped onto a
-// provider ENTRY of our own, passed through the SDK's `config` option (which it
+// provider entry of its own, passed through the SDK's `config` option (which it
 // flattens to `--config key=value` overrides, the one channel that outranks the
 // user's config.toml), and selected by name:
 //
@@ -22,16 +22,14 @@
 // its default of false, so the ChatGPT login is left alone.
 //
 // The entry is named for Calandria rather than reusing the CLI's built-in
-// `ollama` / `lmstudio` ids on purpose: those assume localhost (openai/codex
-// #8240), and the whole point of the override is a URL the user chose — a
-// Docker instance reaches its host as host.docker.internal.
-
+// `ollama` / `lmstudio` ids: those assume localhost (openai/codex #8240), and
+// the override exists to carry a URL the user chose; a Docker instance reaches
+// its host as host.docker.internal.
 //
 // A LiteLLM gateway is the same mapping with three additions, so it gets an
-// entry of its own rather than a conditional inside the local one — the id is
+// entry of its own rather than a conditional inside the local one: the id is
 // what `codex doctor` reports back, and a shared id would let a gateway turn
-// pass a verdict earned by a local endpoint (docs/design/litellm.md, "Codex
-// driver"):
+// pass a verdict earned by a local endpoint (docs/AGENTS.md, "Codex driver"):
 //
 //   model_provider = "calandria-gateway"
 //   model_providers.calandria-gateway = {
@@ -39,7 +37,7 @@
 //     http_headers = { "x-litellm-tags" = "calandria,project:…,task:…,agent:codex" }
 //   }
 //
-// `env_key` names the VARIABLE, not the value — the documented Codex footgun,
+// `env_key` names the variable, not the value: the documented Codex footgun,
 // and the reason `agentTurnEnv()` puts the instance's gateway key in the turn's
 // environment under that name. The tags are the same list Claude Code sends as
 // `x-litellm-tags`, composed once in `applyGatewayEnv` and read back off the
