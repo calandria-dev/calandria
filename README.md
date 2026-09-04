@@ -55,7 +55,9 @@ covers it. No API key needed.
   PR, agents stop reaching for a Merge that GitHub will reject — and so does
   the diff rail: Create PR becomes the primary button, and the local merge
   says up front that it can't be pushed. Calandria can read the branch's rules
-  from GitHub and preselect the answer.
+  from GitHub and preselect the answer. A PR a session opened by hand, in a
+  terminal, is linked to its task at the end of the turn, so it gets the same
+  chip, state polling and reclaim as one opened through the app.
 
 ## How it works
 

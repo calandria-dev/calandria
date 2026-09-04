@@ -127,6 +127,14 @@ included, the one place the next occurrence's cause can be read. The CLI's stder
 the task on it. The stdio bridge cannot see any of this, being a separate process that never learns
 its answer was discarded.
 
+The one consequence with a repair is `create_pr`, since a session that sees it fail falls back to
+`git push` plus `gh pr create` in a terminal and the PR it opens is invisible to the task row.
+`adoptExistingPr` in `lib/prTools.ts` runs at the end of every turn and links it: on a `pr` project
+only, gated first on the row (a branch, no `pr_url`) and then on `refs/remotes/origin/<branch>`
+existing locally, so the ordinary task costs no subprocess, and adopting only a PR whose
+`headRefName` is exactly the task branch. Everything downstream — the header chip,
+`lib/prState.ts`'s polling, auto-reclaim — then works as if `create_pr` had run.
+
 ### Model catalog and Vertex corrections
 
 The model half of the capability descriptor is computed per read rather than held constant,
