@@ -42,9 +42,22 @@
       button.primary { background: #2563c9; border-color: #2f6fd6; }
       button.primary:hover { background: #2a6ddb; }
       button.danger:hover { background: #3a1f22; border-color: #5a2b30; }
+      select, textarea {
+        display: block; width: 100%; box-sizing: border-box; margin-top: 4px;
+        background: #10141a; color: #e6e8eb; border: 1px solid #1e232b; border-radius: 6px;
+        padding: 7px 9px; font: inherit;
+      }
+      select:focus, textarea:focus { outline: none; border-color: #4c9aff; }
+      textarea { min-height: 84px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+      /* Two narrow fields on one line — scope is long and the redirect port is
+         four characters, and stacking them pushes the buttons off a 600px
+         dialog. */
+      .pair { display: flex; gap: 10px; }
+      .pair > label { flex: 1; }
+      .pair > label.narrow { flex: 0 0 128px; }
       .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-      #hint { color: #6b737c; font-size: 12px; margin: -4px 0 8px; }
-      #hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b939c; }
+      #hint, .hint { color: #6b737c; font-size: 12px; margin: -4px 0 8px; }
+      #hint code, .hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b939c; }
       #error { color: #ff8a8a; font-size: 12.5px; min-height: 17px; margin-top: 2px; }
       [hidden] { display: none !important; }
     </style>
@@ -57,6 +70,43 @@
       <h2>Add an instance</h2>
     </div>
 
+    <!-- The sign-in form. A third mode of the same dialog rather than a fourth
+         window: it is one instance's settings, opened from that instance's row,
+         and it shares the error line and the button bar with the add form. -->
+    <div id="authform" hidden>
+      <label>How to sign in
+        <select id="auth-kind">
+          <option value="none">In this window (no native flow)</option>
+          <option value="oauth">In my browser (OAuth 2.0 with PKCE)</option>
+          <option value="header">With a credential I already have</option>
+        </select>
+      </label>
+      <div id="auth-none-hint" class="hint" hidden>
+        Today's behaviour: the window loads the instance and whatever stands in front of it renders its
+        login page here. Fine for a password or an emailed code. A passkey, a security key or a code
+        from your phone cannot be completed in this window.
+      </div>
+      <div id="auth-oauth" hidden>
+        <label>Issuer URL<input id="auth-issuer" type="text" placeholder="https://sso.example.com/application/o/calandria/" autocomplete="off" spellcheck="false" /></label>
+        <label>Client ID<input id="auth-client" type="text" placeholder="the public client you registered" autocomplete="off" spellcheck="false" /></label>
+        <div class="pair">
+          <label>Scope<input id="auth-scope" type="text" placeholder="openid profile email offline_access" autocomplete="off" spellcheck="false" /></label>
+          <label class="narrow">Redirect port<input id="auth-port" type="text" placeholder="any" autocomplete="off" spellcheck="false" /></label>
+        </div>
+        <div class="hint">
+          Register this app as a <b>public client</b> with the redirect URI <code>http://127.0.0.1/callback</code>
+          on any port. Leave the port blank unless your provider needs an exact URI rather than a pattern.
+        </div>
+      </div>
+      <div id="auth-header" hidden>
+        <label>Headers to send<textarea id="auth-headers" placeholder="Authorization: Bearer …" autocomplete="off" spellcheck="false"></textarea></label>
+        <div class="hint">
+          One <code>Name: value</code> per line. Sent on every request to this instance and nowhere else.
+          Lines starting with <code>#</code> are ignored.
+        </div>
+      </div>
+    </div>
+
     <div id="form">
       <label>Name<input id="name" type="text" placeholder="Lab" autocomplete="off" spellcheck="false" /></label>
       <label>Address<input id="url" type="text" placeholder="https://calandria.example.com" autocomplete="off" spellcheck="false" /></label>
@@ -65,11 +115,15 @@
         listens on through your own <code>ssh</code>. The host may be any name your
         <code>~/.ssh/config</code> knows.
       </div>
-      <div id="error"></div>
-      <div class="actions">
-        <button id="cancel" type="button">Cancel</button>
-        <button id="save" type="button" class="primary">Add instance</button>
-      </div>
+    </div>
+
+    <!-- Outside both forms, because both use them: the error line is where a
+         rejected address and a rejected header line both land, and the button
+         bar's labels are rewritten per mode from main.js. -->
+    <div id="error"></div>
+    <div class="actions">
+      <button id="cancel" type="button">Cancel</button>
+      <button id="save" type="button" class="primary">Add instance</button>
     </div>
   </body>
 </html>

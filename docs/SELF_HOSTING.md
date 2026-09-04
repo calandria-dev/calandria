@@ -382,6 +382,19 @@ to the app's badge count, because reaching it means holding an SSH connection
 open to a machine you are not looking at. `url` instances have no such cost and
 are watched whether or not the window is on them.
 
+**Signing in when the login page needs a passkey.** The Cloudflare Access
+transport above works because the app window is a browser and the login
+completes inside it. That breaks down for an identity provider in front of
+your own reverse proxy that wants a passkey, a security key or a phone-based
+ceremony: Electron has no WebAuthn implementation, so the provider hands the
+ceremony off to your system browser, and the app's window and that browser are
+two different cookie jars. For that case, configure the instance's sign-in
+settings in "Manage instances…" instead: the whole login runs in your real
+browser and a token comes back to the app over a loopback redirect, or you
+supply a credential you already hold as request headers. See
+[`docs/DESKTOP_APP.md`](DESKTOP_APP.md) §8.8 for how it works and which case
+it is for.
+
 ### Naming an instance
 
 `CALANDRIA_INSTANCE_NAME` is a human name for an instance ("Lab", "Build box").

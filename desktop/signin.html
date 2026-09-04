@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Same policy as loading.html and instances.html, and for the same
+         reason: this page has no script of its own. main.js injects the
+         behaviour with executeJavaScript, which is not subject to the page's
+         CSP, so the document cannot be turned into an active one by anything it
+         loads. That matters more here than on the other two — this is the page
+         that stands in for an identity provider's login form, and the whole
+         point of it is that no third-party page is ever rendered in this
+         window. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+    <title>Sign in</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; height: 100vh; display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        background: #0b0d10; color: #e6e8eb;
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .stack {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 16px;
+        max-width: 560px; text-align: center; padding: 0 24px;
+      }
+      h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+      .sub { color: #8b939c; font-size: 12.5px; }
+      /* The waiting state's spinner, identical to the boot screen's so the two
+         "we are working on it" surfaces do not look like different apps. */
+      .spinner {
+        width: 24px; height: 24px; border-radius: 50%;
+        border: 2.5px solid #1e232b; border-top-color: #4c9aff;
+        animation: spin .9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner { animation: pulse 1.6s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
+      }
+      .buttons { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+      button {
+        background: #1a2029; color: #e6e8eb; border: 1px solid #262d38; border-radius: 6px;
+        padding: 7px 14px; font: inherit; cursor: pointer;
+      }
+      button:hover { background: #222a35; }
+      button.primary { background: #2563c9; border-color: #2f6fd6; }
+      button.primary:hover { background: #2a6ddb; }
+      #error { color: #ff8a8a; font-size: 12.5px; word-break: break-word; }
+      /* The authorize URL, shown only while waiting. A browser that did not
+         open — no default handler, a locked-down kiosk, ssh with no forwarding
+         — leaves the user with nothing to act on unless the URL is on screen
+         to be copied out with the right-click menu. */
+      #url {
+        font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #6b737c; user-select: text; word-break: break-all; max-width: 100%;
+      }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div id="stack" class="stack">
+      <div id="spinner" class="spinner" hidden></div>
+      <h1 id="heading">Sign in</h1>
+      <div class="sub" id="subheading"></div>
+      <div id="error"></div>
+      <div id="url" hidden></div>
+      <div class="buttons">
+        <button id="signin" type="button" class="primary" hidden>Sign in with your browser</button>
+        <button id="configure" type="button" hidden>Set up sign-in…</button>
+        <button id="cancel" type="button" hidden>Cancel</button>
+        <button id="switch" type="button" hidden>Switch instance</button>
+      </div>
+    </div>
+  </body>
+</html>

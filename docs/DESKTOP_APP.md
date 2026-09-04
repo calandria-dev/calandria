@@ -2038,6 +2038,102 @@ wildcard DNS up for; or attach that instance as a `url` one, where services work
 they do in a browser tab. This is a property of hostname-based routing rather than a bug in
 the forward, and it is the one thing an `ssh` instance does not carry.
 
+### 8.8 Signing in to an instance
+
+An instance behind a forward-auth proxy renders its identity provider's login page inside
+the window, and that is fine for a password or an emailed code. It fails for a passkey, a
+security key or a phone-based ceremony, because Electron has no WebAuthn implementation:
+the provider's page hands off to the **system browser** for the ceremony, and the window
+and the browser are two separate cookie jars. The callback then arrives carrying a
+different session than the `state` was minted against. Measured against an authentik
+forward-auth outpost (`sso-hypercube-blue`, `mode: forward_domain`): the outpost logged
+`mismatched session ID` and `record not found` for the session the state named, and
+answered the OAuth callback HTTP 400. The worse half is the second one — even after a
+retry that succeeded in the browser, the window fired roughly twenty forward-auth requests
+in three seconds that all failed, because the cookie the browser had just been issued
+never reached it. No server-side configuration fixes this: forward-auth assumes one
+continuous browser context, and an embedded webview breaks that by design. See
+`desktop/oauth.js`'s own header for the same finding.
+
+Per instance, stored on the row as `auth`, the shell now offers two kinds of sign-in:
+
+| kind | what it is |
+|-|-|
+| `oauth` | RFC 8252: the whole flow runs in the user's real browser, with a loopback redirect back to the app and PKCE (S256, mandatory). Needs a dedicated OAuth2 provider registered as a **public** client — no client secret; the app refuses one and says why. |
+| `header` | A credential the user already holds, sent verbatim as one or more request headers — an authentik app password, Cloudflare Access's two service-token headers, a PAT. Weakest on revocation, and the option when whatever is out front speaks no OIDC. |
+
+No `auth` at all is still the default, and it is not a stopgap: the in-window login path
+is not removed. A Cloudflare Access PIN, a plain password form or an OTP all complete fine
+inside the window today, and regressing them to force every instance through a native flow
+would be worse than the bug this fixes.
+
+**Both kinds produce request headers, and that is the whole of how the credential reaches
+the app.** `armAuthHeaders()` in `desktop/main.js` installs `session.webRequest.onBeforeSendHeaders`
+on the instance's own partition and stamps the headers on every request that partition
+makes — a page load, the `/api/events` stream, the `/pty` WebSocket upgrade — because all
+three are ordinary HTTP as far as that listener is concerned. Nothing in the web app knows
+or changes. The listener is scoped to the instance's own origin (`authOriginFor()`, reusing
+the same `subscriberOrigin` an `ssh` instance's forward already resolves to), so a
+third-party fetch the page makes — an avatar, a font — never receives the token. And it is
+synchronous on purpose: `onBeforeSendHeaders` can wait on an async callback, but stalling
+every page load on a possible token renewal turns one expiring credential into a hung
+window. An expired token contributes nothing instead, the request 401s, and the user lands
+on the sign-in screen either way.
+
+**The flow, on an attach.** `probeVersion()` reads the instance's `/api/version`; a 401,
+403, or a 200 that is not Calandria's JSON, both mean "this wants a sign-in." If the
+instance has one configured, `resolveSignIn()` tries silently first — renewing from a
+stored refresh token — and only shows the sign-in screen when that is not possible: no
+credential yet, a revoked refresh token, or a first run. Running the OAuth flow
+(`signInToInstance()` in `main.js`, backed by `desktop/oauth.js`) goes: discovery at
+`/.well-known/openid-configuration`, with the returned `issuer` checked against the one
+that was asked for (RFC 8414 §3.3, so a typo'd host can't hand back somebody else's
+authorization endpoint); a PKCE verifier and S256 challenge; a one-shot HTTP server on
+`127.0.0.1` port 0 (`LoopbackReceiver`); `shell.openExternal()` to the authorization URL;
+the callback's `state` compared constant-time against the one that was sent; and the code
+exchange. Register `http://127.0.0.1/callback` as the redirect URI — RFC 8252 §7.3 requires
+the authorization server to accept any port on a loopback redirect, since a fixed port is
+one the app may not be able to bind and one another process can squat first. The
+**Redirect port** field in the sign-in dialog is the escape hatch for a provider that
+insists on an exact URI rather than a pattern.
+
+**Renewal and sign-out.** A refresh is single-flight (`refreshNow()`): the timer, an
+attach and a failed probe can all notice an expiring credential within the same second, and
+a provider that rotates refresh tokens treats the second concurrent request as a replay and
+revokes the whole grant rather than failing loudly. `scheduleRefresh()` arms the next
+renewal at the token's expiry minus sixty seconds, clamped to at most six hours out, so a
+credential minted with a long lifetime — or under a wrong clock — is still re-examined the
+same afternoon. Sign-out (`signOutOfInstance()`) now clears the stored credential as well
+as the partition: emptying the cookie jar and leaving the token behind would
+re-authenticate on the very next request, which is a sign-out button that visibly does
+nothing.
+
+**Where the secrets live.** `~/.config/calandria/credentials.json`, beside
+`instances.json` and resolved the same way, keyed by instance id. Not in
+`instances.json` itself, since that file is documented as hand-editable and written in the
+clear on every change — a refresh token in it would be a credential sitting in a config
+file the user is invited to open. Entries are encrypted with Electron's `safeStorage` when
+the platform has a keyring to back it; where it does not, the file is still written 0600,
+but each entry carries a `plain` marker and the app logs a line saying so, since a
+safeStorage fallback that looked identical to the encrypted path would leave a refresh
+token readable by anything running as the user with nothing said about it.
+`CALANDRIA_CREDENTIALS_FILE` overrides the path, the same way `CALANDRIA_INSTANCES_FILE`
+does for the file beside it.
+
+**A worked example, against authentik**, the provider that motivated this: create an
+OAuth2/OpenID provider whose client type is **public** (no client secret), and set its
+redirect-URI matching to whatever mode matches by pattern rather than an exact string, with
+a pattern matching `http://127.0.0.1:[0-9]+/callback` — the port changes on every sign-in,
+so an exact match refuses every one of them. Note the issuer authentik prints for that
+provider's application (`https://<host>/application/o/<slug>/`) and the client ID it
+generated, then fill both into **Manage instances → Sign-in…** for the instance, as `oauth`.
+Leave the redirect port field blank; authentik does not need an exact one.
+
+**What this does not do.** No device-code flow, and no client-credentials grant — both are
+for something other than a person sitting at this window. The app never becomes an OAuth
+resource server itself: Calandria's own two auth modes (`lib/auth/`) are untouched, and
+this is purely a client talking to whatever sits in front of them.
+
 ## 9. Next steps
 
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
