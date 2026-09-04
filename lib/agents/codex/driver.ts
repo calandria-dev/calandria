@@ -28,7 +28,7 @@ import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
-import { inheritedServerOverrides } from "./mcp";
+import { inheritedServerOverrides, type DisabledMcpServer } from "./mcp";
 import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
@@ -45,15 +45,15 @@ import { getCodexPlanUsage } from "./planUsage";
 // depend on PATH being present in the MCP subprocess env. The Codex SDK flattens
 // this `config` object into `--config mcp_servers.…` overrides (TOML) for the CLI.
 //
-// `inherited` is the set of the user's OWN configured servers, disabled so the
-// bridge is the only MCP server a Codex run mounts — the codex half of the
+// `inherited` is the disable override for each of the user's OWN configured
+// servers, non-empty only when CODEX_INHERIT_MCP is off — the codex half of the
 // agent MCP-inheritance policy, explained in full in ./mcp.ts. It's a parameter
 // rather than an await in here so this stays a pure function the tests can read.
 // Exported for tests (tests/codexMcpBridge.test.ts).
 export function calandriaMcpConfig(
   project: Project,
   task: Task,
-  inherited: Record<string, { enabled: false }> = {},
+  inherited: Record<string, DisabledMcpServer> = {},
   // Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
   // driver") the caller has already decided to mount — a param, not a call in
   // here, for the same pure-function reason `inherited` is: the decision needs
@@ -143,8 +143,7 @@ function runControls(mode: string | null): RunControls {
 // to ask instead. That's only safe to offer under the same bypass-equivalent
 // mode runControls above treats as workspace-write — "plan" runs read-only,
 // and dangling a set of pre-approved write/network-capable tools there would
-// contradict it, the same reason codex/mcp.ts unmounts the user's own
-// inherited servers rather than leave them uncallable. Exported for tests
+// contradict it. Exported for tests
 // (tests/codexMcpBridge.test.ts). BerriAI/litellm#14846 recorded silent empty
 // completions for gpt-5-codex plus a mounted MCP server — verify against the
 // pinned LiteLLM and codex versions before relying on this in production.
@@ -348,9 +347,9 @@ async function oneShot(
   opts?: OneShotOptions,
   mode: SandboxMode = "read-only",
 ): Promise<OneShotResult> {
-  // Same MCP policy as a turn, and it bites harder here: a one-shot mounts no
-  // Calandria bridge at all, so every inherited server is a subprocess
-  // spawned purely to offer a recap or summary run tools it could never call.
+  // Same MCP policy as a turn: the user's servers stay mounted by default, and
+  // a CODEX_INHERIT_MCP=0 opt-out unmounts them here too, since a one-shot
+  // mounts no Calandria bridge at all.
   const inherited = await inheritedServerOverrides();
   const codex = new Codex({
     codexPathOverride: CODEX_CLI_PATH || undefined,

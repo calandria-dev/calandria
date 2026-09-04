@@ -207,14 +207,12 @@ Three upstream differences are visible:
   cards have no Codex equivalent yet: the MCP bridge that carries `ask_user` could carry
   approvals the same way, but the CLI would first need to route an approval request to a
   tool call instead of a terminal prompt.
-- Codex tasks get Calandria's own tools but not the MCP servers from your
-  `~/.codex/config.toml`, where a Claude task does get yours. Same missing approver as
-  above: an inherited server's tools are offered to the model, and every call returns
-  `user cancelled MCP tool call`. Calandria unmounts them rather than leave tools that can't
-  work. Set `CODEX_INHERIT_MCP=1` to mount them anyway, worthwhile if you've set
-  `default_tools_approval_mode = "approve"` on your own servers. Each agent's card in
-  **Settings → Agents** states which side of this it's on, so you can check before picking
-  an agent for a task.
+- Codex tasks get Calandria's own tools and, like Claude tasks, the MCP servers from your
+  `~/.codex/config.toml`. Set `CODEX_INHERIT_MCP=0` to keep your servers off task sessions.
+  Calandria then overrides each one with `enabled = false` plus an inert transport, since
+  Codex validates every override before merging plugin-provided servers and rejects one with
+  no transport. Each agent's card in **Settings → Agents** states whether your servers are
+  mounted, so you can check before picking an agent for a task.
 
 ## Antigravity (Gemini)
 
