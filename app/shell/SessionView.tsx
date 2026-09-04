@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Status, Priority, AskQuestion, AskAnswers, PermissionDecision } from "@/lib/types";
+import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown } from "../Markdown";
@@ -505,10 +505,16 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // queue-at-reset offers (the hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
   // …but only when this task's turns actually draw on that plan. Behind a
-  // LiteLLM gateway they usually don't (`planWindowApplies`), and offering to
-  // resume when a window rolls that the turn never touched would strand the
-  // task until a reset that changes nothing for it.
-  const resetAt = planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
+  // LiteLLM gateway a vendor window usually doesn't apply (`planWindowApplies`)
+  // — the turn bills the gateway key, not the agent's own subscription — so
+  // offering to resume when a window rolls that the turn never touched would
+  // strand the task until a reset that changes nothing for it. There the KEY's
+  // own budget is what actually gates the next turn, so read the synthetic
+  // "gateway" snapshot instead (app/api/plan-usage/route.ts) rather than
+  // reading nothing at all.
+  const resetAt = provider.kind === "gateway"
+    ? usageResetAt(planUsage[GATEWAY_PLAN_ID] ?? null)
+    : planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(

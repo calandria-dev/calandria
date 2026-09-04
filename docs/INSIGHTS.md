@@ -52,6 +52,36 @@ floor, and the figures that omit a price say so.
 Before this, a turn Stopped mid-work recorded nothing at all. A model can run for half an hour
 of tool calls inside one turn, so half-hour stops were reported as zero tokens and $0.
 
+## Through a LiteLLM gateway
+
+A project routed through the Gateway provider preset bills a LiteLLM virtual key instead of a
+vendor subscription or API key. Its turns show up in Insights the same way any custom-endpoint
+turn does, marked so the figure reads as an estimate rather than a bill:
+
+- The dollar figure carries a `≈` rather than the `~` a token-counted estimate (Codex) carries.
+  It's computed from the gateway's own price table (`GET /model/info`), which is closer to the
+  truth than a vendor's list price but still short of LiteLLM's own billing ledger.
+- The "By provider" table's **cache hit** column, shown only when the period has gateway usage,
+  is cache-read tokens over input tokens for turns run through the gateway. Prompt caching can
+  fail silently when a proxy's translation layer drops `cache_control`, and a rate stuck near 0%
+  despite real input tokens is the only signal Calandria has that this happened — LiteLLM never
+  reports the failure itself.
+- Settings → Agents shows the gateway key's own spend, budget and reset time (`GET /key/info`),
+  which needs LiteLLM's database; a proxy running without one shows liveness and a model count
+  only. A turn that exceeds the key's budget is a recoverable failure with its own Retry button,
+  the same way a dead login or a spent usage limit is.
+
+**Joining a task to LiteLLM's own spend logs.** Every gateway request carries `x-litellm-tags`
+naming the project, task and agent, which is enough to filter LiteLLM's spend views to one task
+by hand. For a Claude task there's a second, exact join with no configuration on either side:
+Claude Code sends `x-claude-code-session-id` on every request, LiteLLM records that value as the
+spend log's session id, and Calandria already stores the same id in `sessions.claude_session_id`
+(one row per task generation). So `sessions.claude_session_id` for a given task's generation is
+the value to filter LiteLLM's `/spend/logs` or its UI by for that generation's exact per-call
+cost, cache breakdown and any upstream errors — the ledger Calandria's own `≈` estimate above is
+standing in for. `/spend/logs` has no tag filter of its own (docs; BerriAI/litellm#14218), which
+is why the tags exist for coarser filtering and the session id for an exact one.
+
 ## Plan usage meter
 
 On a Claude Pro/Max or ChatGPT subscription login, the titlebar shows a compact meter with

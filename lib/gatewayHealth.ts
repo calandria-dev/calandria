@@ -15,7 +15,10 @@ import { normalizeBaseUrl } from "./agentEnv";
  * - `GET /key/info` answers 500 `Database not connected` on a proxy with no
  *   Postgres behind it. That is not a failure to report as one: it is the
  *   whole answer to "why are there no budgets here", and the card says so
- *   instead of showing blanks where spend would go.
+ *   instead of showing blanks where spend would go. When it DOES answer, its
+ *   body is the budget readout (docs/design/litellm.md, "Attribution, budgets
+ *   and failures") — spend, max_budget and budget_reset_at for the instance
+ *   key, read here rather than a second call.
  *
  * Never throws. Every caller exists to SHOW the unreachable state, the same
  * contract lib/modelEndpoint.ts keeps for a local model server, and the two are
@@ -37,10 +40,30 @@ export interface GatewayHealth {
   /** Whether this instance has a key to send at all. */
   has_key: boolean;
   error: string | null;
+  /** The instance key's budget readout — all four null together whenever
+   *  `database` isn't `true` (no Postgres, no key, or the read failed), never
+   *  a mix, so the card can gate on one field. `max_budget` is null for a key
+   *  with no budget set at all (unlimited), which is distinct from a spent
+   *  one. `budget_reset_at` is LiteLLM's own ISO timestamp, unparsed. */
+  spend: number | null;
+  max_budget: number | null;
+  budget_reset_at: string | null;
+  /** The key's own model allowlist, for the same readout — null alongside the
+   *  three above, `[]` for a key allowed every model LiteLLM knows about. */
+  key_models: string[] | null;
+  /** `agy models` diffed against this catalog (lib/agents/gemini/gatewayCheck.ts)
+   *  — the models the CLI needs that this gateway doesn't serve. Null when
+   *  nothing has been checked yet or agy isn't signed in; not set by
+   *  probeGateway itself, since that stays agy-unaware, but filled in by
+   *  GET /api/agents before this reaches the client. */
+  gemini_missing_models?: string[] | null;
 }
 
 function unreachable(base: string, error: string): GatewayHealth {
-  return { base_url: base, reachable: false, version: null, model_count: null, database: null, has_key: false, error };
+  return {
+    base_url: base, reachable: false, version: null, model_count: null, database: null, has_key: false, error,
+    spend: null, max_budget: null, budget_reset_at: null, key_models: null,
+  };
 }
 
 function reason(e: unknown): string {
@@ -73,7 +96,10 @@ export async function probeGateway(
     return unreachable(base, "not a URL");
   }
 
-  const out: GatewayHealth = { base_url: base, reachable: false, version: null, model_count: null, database: null, has_key: !!key, error: null };
+  const out: GatewayHealth = {
+    base_url: base, reachable: false, version: null, model_count: null, database: null, has_key: !!key, error: null,
+    spend: null, max_budget: null, budget_reset_at: null, key_models: null,
+  };
   // One round trip each, in parallel: three serial probes would multiply the
   // budget by three inside a route every tab loads.
   const [ready, models, keyInfo] = await Promise.allSettled([
@@ -105,8 +131,27 @@ export async function probeGateway(
   // else (401, 400) means the key is wrong or absent and says nothing about
   // the database, so it stays null rather than claiming one way or the other.
   if (keyInfo.status === "fulfilled") {
-    if (keyInfo.value.ok) out.database = true;
-    else if (keyInfo.value.status >= 500) {
+    if (keyInfo.value.ok) {
+      out.database = true;
+      // The budget readout rides the same call: {key, info: {spend, max_budget,
+      // budget_reset_at, models}} (docs/design/litellm.md's appendix). An
+      // unrecognised shape leaves the four fields null rather than throwing —
+      // this is still a reachable, database-backed gateway either way.
+      try {
+        const body = (await keyInfo.value.json()) as {
+          info?: { spend?: unknown; max_budget?: unknown; budget_reset_at?: unknown; models?: unknown };
+        };
+        const info = body?.info;
+        if (info) {
+          out.spend = typeof info.spend === "number" ? info.spend : null;
+          out.max_budget = typeof info.max_budget === "number" ? info.max_budget : null;
+          out.budget_reset_at = typeof info.budget_reset_at === "string" ? info.budget_reset_at : null;
+          out.key_models = Array.isArray(info.models) ? info.models.filter((m): m is string => typeof m === "string") : null;
+        }
+      } catch {
+        /* a shape we don't recognise leaves the budget fields null */
+      }
+    } else if (keyInfo.value.status >= 500) {
       const text = await keyInfo.value.text().catch(() => "");
       if (/database not connected|db not connected/i.test(text)) out.database = false;
     }

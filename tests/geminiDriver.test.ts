@@ -6,8 +6,9 @@
 // argv construction, the real stream parsing, the real usage-baseline
 // persistence and the real abort path without needing a binary or a login.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
@@ -18,10 +19,11 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, spawn: spawnMock };
 });
 
-import { createProject, createTask, updateTask, getThreadUsageCum, recordSession } from "@/lib/store";
+import { createProject, createTask, updateTask, getThreadUsageCum, recordSession, setSetting } from "@/lib/store";
 import { geminiDriver, turnArgs, permissionFlags } from "@/lib/agents/gemini/driver";
-import { bridgeConfig, BRIDGE_SERVER_NAME } from "@/lib/agents/gemini/mcp";
+import { bridgeConfig, BRIDGE_SERVER_NAME, type GeminiMcpServer } from "@/lib/agents/gemini/mcp";
 import { prepareTaskHome } from "@/lib/agents/gemini/home";
+import { gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import type { GeminiCum } from "@/lib/agents/gemini/events";
 import type { StreamEvent, Project, Task } from "@/lib/types";
 
@@ -238,7 +240,7 @@ describe("per-task MCP bridge", () => {
   it("carries this task's identity, which is what makes parallel tasks safe", () => {
     const { project, task } = rows();
     const cfg = bridgeConfig(project, task);
-    const server = cfg.mcpServers[BRIDGE_SERVER_NAME];
+    const server = cfg.mcpServers[BRIDGE_SERVER_NAME] as GeminiMcpServer;
     expect(server.env.CALANDRIA_TASK_ID).toBe(task.id);
     expect(server.env.CALANDRIA_PROJECT_ID).toBe(project.id);
     // Absolute node binary, so the spawn doesn't depend on PATH surviving.
@@ -277,6 +279,45 @@ describe("per-task MCP bridge", () => {
   });
 });
 
+// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+// driver"): merged into the same per-task mcp_config.json as the bridge, keyed
+// by the alias slugified to hyphens — Gemini CLI's policy engine splits a tool
+// name on the first underscore after `mcp_`, so an alias with one would break
+// a wildcard permission rule for it. Unlike Codex there's no permission-mode
+// gate: `agy` decides tool approval from its own settings, not per-server
+// config, so bridgeConfig mounts the selection unconditionally.
+describe("hosted gateway MCP mount", () => {
+  const GW = "http://gw.example.com:4000";
+  beforeEach(() => {
+    process.env.CALANDRIA_LITELLM_BASE_URL = GW;
+  });
+  afterEach(() => {
+    delete process.env.CALANDRIA_LITELLM_BASE_URL;
+  });
+
+  it("mounts the resolved selection alongside the bridge, slugified to hyphens", () => {
+    const { project, task } = rows();
+    const gwProject = { ...project, gateway_mcp: JSON.stringify(["ticket_system"]) } as Project;
+    const cfg = bridgeConfig(gwProject, task);
+    expect(cfg.mcpServers["ticket-system"]).toEqual({ httpUrl: `${GW}/ticket_system/mcp` });
+    expect(cfg.mcpServers[BRIDGE_SERVER_NAME]).toBeTruthy();
+  });
+
+  it("never lets a gateway alias shadow the bridge's own name", () => {
+    const { project, task } = rows();
+    const gwProject = { ...project, gateway_mcp: JSON.stringify(["calandria"]) } as Project;
+    const cfg = bridgeConfig(gwProject, task);
+    expect(Object.keys(cfg.mcpServers)).toEqual([BRIDGE_SERVER_NAME]);
+    expect((cfg.mcpServers[BRIDGE_SERVER_NAME] as { command: string }).command).toBe(process.execPath);
+  });
+
+  it("mounts nothing extra without a selection", () => {
+    const { project, task } = rows();
+    const cfg = bridgeConfig(project, task);
+    expect(Object.keys(cfg.mcpServers)).toEqual([BRIDGE_SERVER_NAME]);
+  });
+});
+
 describe("capabilities", () => {
   it("offers no reasoning picker, because the model slug already carries effort", () => {
     expect(geminiDriver.capabilities.reasoningOptions).toEqual([]);
@@ -296,7 +337,106 @@ describe("capabilities", () => {
     expect(geminiDriver.capabilities.inheritsUserMcpServers).toBe(false);
   });
 
+  it("names the alias-slugging caveat for hosted gateway MCP servers", () => {
+    expect(geminiDriver.capabilities.gatewayMcpNote).toContain("hyphens");
+    expect(geminiDriver.capabilities.gatewayMcpNote).toContain("mcp_");
+  });
+
   it("watches the worktree hooks file, which executes shell commands", () => {
     expect(geminiDriver.watchedSettingsFiles).toContain(".agents/hooks.json");
+  });
+});
+
+// The LiteLLM gateway (docs/design/litellm.md, "Antigravity driver"): a
+// gateway-kind turn carries GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY, and
+// prepareTaskHome() writes {"modelProvider":"gemini"} into the CLI's own
+// settings — the one thing that makes it read GEMINI_API_KEY at all. That
+// file is shared process-wide (see lib/agents/gemini/home.ts and auth.ts's
+// writeModelProviderSetting), so every case here redirects HOME to a throwaway
+// directory rather than touching the real one running this suite.
+describe("gateway routing", () => {
+  const GW = "http://gw.example.com:4000";
+  let realHome: string | undefined;
+  let realUserProfile: string | undefined;
+  let tmpHome: string;
+
+  beforeEach(() => {
+    realHome = process.env.HOME;
+    realUserProfile = process.env.USERPROFILE;
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-gemini-gw-"));
+    process.env.HOME = tmpHome;
+    // os.homedir() reads USERPROFILE on Windows, not HOME.
+    process.env.USERPROFILE = tmpHome;
+    process.env.CALANDRIA_LITELLM_BASE_URL = GW;
+    process.env.CALANDRIA_LITELLM_KEY = "sk-litellm";
+  });
+
+  afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
+    delete process.env.CALANDRIA_LITELLM_BASE_URL;
+    delete process.env.CALANDRIA_LITELLM_KEY;
+    setSetting("gemini_api_key", "");
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  function gatewayRows(): { project: Project; task: Task } {
+    const project = createProject({ name: `Gem-gw-${Math.random().toString(36).slice(2, 8)}`, repo_path: "/tmp" });
+    const task = createTask({
+      project_id: project.id,
+      title: "T",
+      description: "",
+      agent: "gemini",
+      agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: GW, billing: "key" })),
+    });
+    return { project, task };
+  }
+
+  it("carries the gateway address and the instance key into the spawned CLI's env", async () => {
+    const { project, task } = gatewayRows();
+    spawnMock.mockReturnValue(fakeChild({ stdout: fixtureText("mcp-tool-call.jsonl") }));
+
+    await drain(geminiDriver.runTurn(task, project, "go"));
+
+    const [, , opts] = spawnMock.mock.calls[0];
+    expect(opts.env.GOOGLE_GEMINI_BASE_URL).toBe(GW);
+    expect(opts.env.GEMINI_API_KEY).toBe("sk-litellm");
+  });
+
+  it("does not let a stored personal API key overwrite the gateway's", async () => {
+    setSetting("gemini_api_key", "personal-key-should-not-win");
+    const { project, task } = gatewayRows();
+    spawnMock.mockReturnValue(fakeChild({ stdout: fixtureText("mcp-tool-call.jsonl") }));
+
+    await drain(geminiDriver.runTurn(task, project, "go"));
+
+    const [, , opts] = spawnMock.mock.calls[0];
+    expect(opts.env.GEMINI_API_KEY).toBe("sk-litellm");
+  });
+
+  it("leaves GEMINI_API_KEY unset for a non-gateway turn with no personal key", async () => {
+    const { project, task } = rows();
+    spawnMock.mockReturnValue(fakeChild({ stdout: fixtureText("mcp-tool-call.jsonl") }));
+
+    await drain(geminiDriver.runTurn(task, project, "go"));
+
+    const [, , opts] = spawnMock.mock.calls[0];
+    expect("GEMINI_API_KEY" in opts.env).toBe(false);
+  });
+
+  it("writes modelProvider: gemini into the CLI's settings for a gateway task", () => {
+    const { project, task } = gatewayRows();
+    prepareTaskHome(project, task);
+    const file = path.join(tmpHome, ".gemini", "antigravity-cli", "settings.json");
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ modelProvider: "gemini" });
+  });
+
+  it("does not write the settings file for a non-gateway task", () => {
+    const { project, task } = rows();
+    prepareTaskHome(project, task);
+    const file = path.join(tmpHome, ".gemini", "antigravity-cli", "settings.json");
+    expect(fs.existsSync(file)).toBe(false);
   });
 });

@@ -285,9 +285,10 @@ of.
 
 A project, or a single task, can run its turns against a local model server instead of the
 agent's cloud login. There is no separate driver: the Claude and Codex CLIs both accept a
-different endpoint, and Calandria sets it per turn. **Antigravity does not take part** — its
-CLI exposes no endpoint override, so a local-model project runs an Antigravity task against
-Google as usual; point such a task at Claude or Codex instead.
+different endpoint, and Calandria sets it per turn. **Antigravity does not take part in the
+Local model preset** — its CLI exposes no endpoint override, so a local-model project runs an
+Antigravity task against Google as usual; point such a task at Claude or Codex instead. It does
+take part in the **Gateway** preset below, which is a different endpoint knob the CLI does honour.
 
 Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from its environment. Codex
 reads its provider from `~/.codex/config.toml`, so Calandria passes a provider entry of its
@@ -401,9 +402,7 @@ Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as 
 What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
 attribute per key and tag, and budgets it enforces.
 
-**Scope today: Claude Code and Codex.** The preset writes the Gemini base URL too, because the
-Antigravity half builds on it, but that driver still ignores the address. Point Antigravity tasks
-at another agent until its gateway support lands.
+**Scope today: Claude Code, Codex and Antigravity.**
 
 **Setup.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin. Unset is the off switch: with
 no address the preset is absent from the settings form and Settings → Agents shows no card. Then
@@ -485,6 +484,98 @@ not a plan window in any case, so a gateway Codex task offers no "resume when yo
 The titlebar meter still reports the ChatGPT login for whatever cloud Codex tasks the instance runs.
 Codex also prints `Model metadata for gpt-5-codex not found. Defaulting to fallback metadata` for
 any custom provider; it is noise, not a failure.
+
+### Antigravity through the gateway
+
+`agy` speaks the Gemini-native API, not the OpenAI or Anthropic shape, so the gateway reaches it
+through `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY` rather than a config override like Codex's.
+Measured on `agy` 1.1.24 against LiteLLM 1.101.0: with `{"modelProvider":"gemini"}` in
+`~/.gemini/antigravity-cli/settings.json` and those two variables set, `agy` sends
+`POST /v1beta/models/<model>:streamGenerateContent?alt=sse` with `x-goog-api-key`, which LiteLLM
+serves at its root — a `model_list` entry (or a `gemini/*` wildcard) has to exist for every model
+name the CLI uses. Calandria writes that settings file itself for a gateway task; there is nothing
+to set up beyond picking the Gateway preset.
+
+**Always billed to the gateway's key.** `agy` has no equivalent of Claude Code's own-plan
+forwarding, so the *Billed to your own plan* choice above has no effect on Antigravity tasks —
+they draw on the key either way.
+
+**The gateway address must be HTTPS unless it is loopback.** This is `agy`'s own rule (the Gemini
+CLI source enforces it, and Antigravity's docs describe the same), not a Calandria restriction, so
+an `http://` gateway on any other address would fail every Antigravity turn deep inside the CLI.
+Calandria refuses the combination in the task dialog instead — "Start session immediately" is
+disabled and the reason is stated, rather than letting the turn fail with an opaque error.
+
+**The health card names a missing side model.** `agy` calls a flash-lite model on every turn as
+well as whichever model the task picked — measured making one call each to
+`gemini-3.1-flash-lite-preview` and `gemini-3.1-pro-preview` in a single turn — and a turn whose
+side model is absent from the gateway's catalog fails with an unhelpful `Agent execution
+terminated due to error`. Settings → Agents runs `agy models` against the gateway's `/model/info`
+catalog and names anything the CLI would ask for that the catalog doesn't serve, so the gap shows
+up before a task hits it.
+
+**No plan meter.** `agy -p "/usage"` reports Google's own plan windows, which a gateway turn never
+spends, so a gateway Antigravity task offers no "resume when your window resets". The titlebar
+meter still reports the Google account for whatever cloud Antigravity tasks the instance runs. The
+gateway key's own spend is what to watch instead for a gateway one.
+
+### Hosted MCP servers
+
+**Claude Code only for now.** A project's settings picker lists the gateway's own hosted MCP
+servers (`GET <gateway>/v1/mcp/server`, with a tool-name preview from `GET
+<gateway>/mcp-rest/tools/list`) and lets you check off which ones every task mounts. The picker
+needs no database: LiteLLM answers both routes off the calling key's own `object_permission`.
+Turn the feature off entirely with `CALANDRIA_LITELLM_MCP=0`.
+
+Mounting is independent of the *Model provider* choice above — a project on the *Cloud* preset can
+still mount hosted MCP servers, since the mount is a separate HTTP call to `<gateway>/<alias>/mcp`
+and never touches `ANTHROPIC_BASE_URL`. A selected alias becomes `mcpServers[alias]` in the
+session, next to Calandria's own tools:
+
+```json
+{ "type": "http", "url": "<gateway>/<alias>/mcp", "headers": { "x-litellm-api-key": "Bearer <key>" } }
+```
+
+The credential goes on `x-litellm-api-key`, never `Authorization` — LiteLLM reserves that header
+for the upstream server's own OAuth, and sending the gateway key there is the single most common
+mistake on LiteLLM's own troubleshooting page. A task with a per-task virtual key
+(`docs/design/litellm.md`, "Per-task virtual keys") uses that key here too, so its
+`object_permission.mcp_servers` scopes exactly which of the project's selected servers the task can
+actually reach; without one, every mount shares the instance key.
+
+**Tool names and permissions.** LiteLLM returns tools prefixed `<alias>-<tool>`, so Claude sees
+`mcp__<alias>__<alias>-<tool>` — an ordinary MCP tool as far as `canUseTool` is concerned: a card
+under the default permission mode, classifier-screened under `auto`, auto-approved under
+`bypassPermissions`. Nothing about the read-only allowlist changes. The picker's **Trust this
+server** button mints a remembered rule covering the whole alias (`mcp__<alias>__*`) through the
+same `permission_rules` table a Bash "Always allow" uses, so it shows up — and can be revoked — in
+Settings → Run defaults next to your remembered commands. It only ever mints: revoking a trust is
+Settings' job, the same way undoing a card's "Always allow" is.
+
+**Auth types.** A server whose `auth_type` needs no browser (no auth, an API key, a bearer token,
+basic auth, OAuth2 client-credentials or token-exchange, or AWS SigV4) mounts silently. One using
+OAuth2 authorization-code needs a human to sign in at the gateway's own UI first — a detached task
+has no browser to do it in — so the picker marks it **sign in at the gateway first** and mounts it
+anyway, since LiteLLM holds the token for every later call once that's done. A wrong key against
+the mount endpoint itself answers **HTTP 400, not 401** (measured), so the picker's connection
+check reads the response body for the real reason rather than trusting the status code.
+
+**Codex and Antigravity mount the same selection too**, each with a driver-specific wrinkle
+(`docs/design/litellm.md`, "Hosted MCP servers").
+
+Codex has no approver at all — `codex exec` cannot service an interactive approval — so every
+mounted server also carries `default_tools_approval_mode: "approve"`, which auto-approves every one
+of its tools for the task the moment it mounts. That is only offered under the bypass-equivalent
+permission mode; a task set to `plan` mounts none of them, the same reason `codex/mcp.ts` unmounts
+the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
+the gate on Codex's card. Before relying on this in production, test `gpt-5-codex` plus a mounted
+MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
+completions for exactly that combination.
+
+Antigravity mounts every selected alias into the task's own `mcp_config.json`, slugified to
+hyphens: the CLI's policy engine splits a tool name on the first underscore after `mcp_`, so an
+alias with one would break a wildcard permission rule for it. The URL still addresses the real
+(unslugged) alias LiteLLM hosts.
 
 ### Two caveats from the spike
 

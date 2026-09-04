@@ -839,3 +839,16 @@ models — a small one for the short summarizing jobs, a stronger one for the dr
 your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.
+
+### Routing through a LiteLLM gateway
+
+An instance can point Claude Code at a self-hosted [LiteLLM](https://docs.litellm.ai) proxy
+instead of the agent's own cloud login — a fourth "Model provider" preset alongside a local
+model server and a custom base URL. The gateway adds a real model catalog with context windows
+and prices, per-task spend attribution, and budgets, so a project's turns can be billed to a
+shared key or metered without leaving your own login. A project's settings can also mount the
+gateway's own **hosted MCP servers** on every task: pick which of the gateway's servers a
+project uses, optionally trust one to skip its permission prompts, and Calandria mounts it
+alongside its own tools with no extra configuration in the task's checkout.
+
+See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.

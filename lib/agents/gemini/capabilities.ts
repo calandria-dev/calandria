@@ -91,6 +91,15 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
     "Antigravity reads MCP config from that one global file, so each task is given its own copy " +
     "containing only Calandria's bridge — that is what lets tasks run in parallel without " +
     "stealing each other's identity.",
+  // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
+  // from the note above, with its own caveat: the CLI's policy engine splits a
+  // tool name on the first underscore after `mcp_`, so an alias with an
+  // underscore would break a wildcard rule for it (lib/gatewayMcp.ts,
+  // slugifyGatewayAliasForGemini).
+  gatewayMcpNote:
+    "Hosted LiteLLM-gateway MCP server aliases are mounted with underscores turned to hyphens: " +
+    "Antigravity's policy engine splits a tool name on the first underscore after \"mcp_\", so an " +
+    "alias with one would break a wildcard permission rule for it.",
   // Each turn is one `agy -p` process with no held-open input channel and no
   // task-notification wake, so backgrounded shell commands die with it.
   backgroundTasksLinger: false,

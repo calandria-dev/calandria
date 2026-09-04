@@ -68,7 +68,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             __GATEWAY_BASE_URL is the LiteLLM address `describeProvider` compares
             a stored override against (lib/agentEnv.ts): the client has to
             classify an override the same way the server does, and the address is
-            not a secret — the key that goes with it never leaves the server. */}
+            not a secret — the key that goes with it never leaves the server.
+            Whether per-task keys are available (CALANDRIA_LITELLM_ADMIN_KEY set)
+            rides GET /api/agents' gateway_keys_enabled instead of a window
+            global — it's a project-settings-form concern, not an early-paint one,
+            and describeProvider() has no need of it. */}
         <script
           dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};window.__GATEWAY_BASE_URL=${JSON.stringify(LITELLM_BASE_URL ?? "")};` }}
         />

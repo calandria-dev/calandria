@@ -233,6 +233,22 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
       {gateway.database === false && (
         <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
       )}
+      {gateway.database === true && (
+        <div className="hlp">
+          {gateway.max_budget == null
+            ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
+            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? " — exhausted" : ""}.`}
+          {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
+          {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
+        </div>
+      )}
+      {!!gateway.gemini_missing_models?.length && (
+        <div className="hlp wiz-warn">
+          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, not in this gateway&apos;s catalog.
+          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or an Antigravity turn
+          against this gateway fails with an unhelpful error the moment it makes its side call.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
           placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}
@@ -259,13 +275,14 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
 // (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
 // agent states its own position here with no edit to this file.
 function McpInheritance({ agent }: { agent: AgentInfoT }) {
-  const { inheritsUserMcpServers: inherits, userMcpServersNote: note } = agent.capabilities;
+  const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
   return (
     <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
       <strong style={{ color: "var(--ink-2)" }}>
         {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
       </strong>
       {note ? ` ${note}` : ""}
+      {gatewayMcpNote && <div style={{ marginTop: 4 }}>{gatewayMcpNote}</div>}
     </div>
   );
 }
@@ -402,7 +419,8 @@ function PermissionRules() {
         <div className="perm-rules">
           {rules.map((r) => (
             <div className="perm-rule" key={r.id}>
-              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.value}</code>
+              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.match_kind === "mcp_server" ? `mcp__${r.value}__*` : r.value}</code>
+              {r.match_kind === "mcp_server" && <span className="opt">hosted MCP server, trusted from project settings</span>}
               <span className="opt">{r.project_name}</span>
               <button className="btn btn-sm" onClick={() => void revoke(r.id)} title="Stop allowing this">Revoke</button>
             </div>

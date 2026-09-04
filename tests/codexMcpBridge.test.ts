@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, expect, vi } from "vitest";
-import { calandriaMcpConfig } from "@/lib/agents/codex/driver";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { calandriaMcpConfig, gatewayMcpForPermission } from "@/lib/agents/codex/driver";
 import { disableInheritedServers, CALANDRIA_SERVER } from "@/lib/agents/codex/mcp";
 import { getCapabilities } from "@/lib/agents/capabilities";
 import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
@@ -95,6 +95,14 @@ describe("codex does not inherit the user's MCP servers", () => {
     expect(getCapabilities("claude").userMcpServersNote).toContain("~/.claude");
   });
 
+  it("states the hosted-gateway mount's own caveat separately from the flag above", () => {
+    // A different mount from projects.gateway_mcp, with its own per-driver
+    // note — Claude has nothing special to say, Codex's is the approval gate.
+    expect(getCapabilities("codex").gatewayMcpNote).toContain("workspace-write");
+    expect(getCapabilities("codex").gatewayMcpNote).toContain("auto-approved");
+    expect(getCapabilities("claude").gatewayMcpNote).toBeNull();
+  });
+
   it("tracks CODEX_INHERIT_MCP rather than claiming a flat no", async () => {
     // With the opt-in set the driver really does mount the user's servers
     // (inheritedServerOverrides above returns nothing to disable), and the
@@ -111,6 +119,45 @@ describe("codex does not inherit the user's MCP servers", () => {
       vi.unstubAllEnvs();
       vi.resetModules();
     }
+  });
+});
+
+// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+// driver"): mounted with the whole server pre-approved (codex exec has no
+// approver), and ONLY under the bypass-equivalent permission mode —
+// gatewayMcpForPermission is the gate lib/agents/codex/driver.ts's runTurn
+// applies before calandriaMcpConfig ever sees a gateway server.
+describe("codex hosted gateway MCP mount", () => {
+  const gatewayProject = { ...project, gateway_mcp: JSON.stringify(["demo"]) } as Project;
+
+  beforeEach(() => {
+    process.env.CALANDRIA_LITELLM_BASE_URL = "http://gw.example";
+  });
+  afterEach(() => {
+    delete process.env.CALANDRIA_LITELLM_BASE_URL;
+  });
+
+  it("mounts the resolved gateway selection, pre-approved, under the default (bypass-equivalent) permission", () => {
+    const out = gatewayMcpForPermission(gatewayProject, task, null);
+    expect(out.demo).toEqual({ url: "http://gw.example/demo/mcp", default_tools_approval_mode: "approve" });
+  });
+
+  it("mounts nothing under plan — codex exec has no approver, and plan runs read-only anyway", () => {
+    expect(gatewayMcpForPermission(gatewayProject, task, "plan")).toEqual({});
+  });
+
+  it("mounts nothing under plan even with bypassPermissions written explicitly for a different check", () => {
+    // Every other value falls to the bypass-equivalent branch, "plan" is the
+    // one exception — pin both ends so a future permission mode can't silently
+    // fall the wrong way.
+    expect(gatewayMcpForPermission(gatewayProject, task, "bypassPermissions").demo).toBeTruthy();
+  });
+
+  it("merges into mcp_servers alongside the bridge, which still wins any name collision", () => {
+    const gatewayServers = gatewayMcpForPermission(gatewayProject, task, null);
+    const cfg = calandriaMcpConfig(project, task, {}, gatewayServers) as Record<string, any>;
+    expect(cfg.mcp_servers.demo).toEqual({ url: "http://gw.example/demo/mcp", default_tools_approval_mode: "approve" });
+    expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
   });
 });
 

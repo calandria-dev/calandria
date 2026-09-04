@@ -110,7 +110,7 @@ async function* runTurn(
 
   const { home, cwd } = prepareTaskHome(project, task);
   const env = applyStoredApiKey({
-    ...agentTurnEnv(project),
+    ...agentTurnEnv(project, task),
     // Per-task MCP config lives here; see ./home.ts for why HOME is the lever.
     HOME: home,
     // A background self-update would swap the binary mid-turn.

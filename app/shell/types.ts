@@ -27,6 +27,9 @@ export interface ProjectRow {
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
   agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
+  gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
+  gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
+  gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -339,6 +342,10 @@ export type AgentCapabilitiesT = {
   // agents when picking one for a task, so the Agents section states it.
   inheritsUserMcpServers: boolean;
   userMcpServersNote: string | null;
+  // The per-driver caveat for mounting the project's hosted LiteLLM-gateway
+  // MCP selection — a separate mount from the two fields above. null = mounts
+  // with no special behavior for this driver.
+  gatewayMcpNote: string | null;
 };
 export type AgentInfoT = {
   id: string;
@@ -351,7 +358,7 @@ export type AgentInfoT = {
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway?: GatewayHealthT | null };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
 // `id: null` = nothing connected; `fallback` = the configured agent isn't
@@ -411,7 +418,10 @@ export interface AgentInfo { id: string; label: string; capabilities: AgentCapab
 // when none is configured — which is what hides the Gateway preset from the
 // project settings form. `gateway` is what that address answered just now. The
 // KEY is never on this wire; `gateway.has_key` says only whether one is set.
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway?: GatewayHealthT | null }
+// `gateway_keys_enabled` is whether CALANDRIA_LITELLM_ADMIN_KEY is set — again
+// not the key, just whether per-task keys (docs/design/litellm.md) are possible
+// at all, which is what shows the max_budget/duration fields in that preset.
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null }
 
 // ---------- local model endpoints ----------
 
@@ -432,8 +442,14 @@ export interface EndpointModelsT { base_url: string; reachable: boolean; api: En
 // Mirrors lib/gatewayHealth.ts. `model_count` and `database` are null when the
 // gateway didn't say — a proxy with no Postgres reports `database: false` and
 // has no keys, budgets or spend to show, which the card states rather than
-// leaving those rows blank.
-export interface GatewayHealthT { base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null; has_key: boolean; error: string | null }
+// leaving those rows blank. `spend`/`max_budget`/`budget_reset_at`/`key_models`
+// are the budget readout, all null together whenever `database` isn't `true`.
+export interface GatewayHealthT {
+  base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null;
+  has_key: boolean; error: string | null;
+  spend: number | null; max_budget: number | null; budget_reset_at: string | null; key_models: string[] | null;
+  gemini_missing_models?: string[] | null;
+}
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
 // A picker option list. `value: null` is the synthetic inherit head — it

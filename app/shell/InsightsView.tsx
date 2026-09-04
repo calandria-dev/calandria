@@ -40,6 +40,9 @@ interface Payload {
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
   models: { a: string; m: string }[];
+  /** Cache-read vs. input tokens per agent, for gateway-routed turns only —
+   *  see the matching field on InsightsData in lib/store.ts. */
+  gatewayCache: { a: string; inp: number; cr: number }[];
 }
 
 type Range = "7d" | "30d" | "90d";
@@ -409,6 +412,13 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     const overheadEstimated = data.internal.some((u) => matchP(u.p) && matchA(u.a) && rows.some((r) => r.key === u.d) && capsFor(agents, u.a)?.costIsEstimated);
 
     // ---- provider panel ----
+    // Cache-read share for turns run through the gateway specifically, keyed
+    // by agent (lib/store.ts's separate gatewayCache query — a provider-host
+    // dimension the day series above doesn't carry). Absent entirely when no
+    // gateway is configured, which is also what makes an agent's presence
+    // here double as "this agent has run gateway turns in range" — the ~ label
+    // and the cache-hit column both gate on it.
+    const gatewayCacheByAgent = new Map(data.gatewayCache.map((g) => [g.a, g]));
     const providers = chartAgents.map((a) => {
       let spend = 0, tokens = 0, tasks = 0, unpriced = 0;
       for (const r of rows) {
@@ -418,9 +428,15 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
       const models = data.models
         .filter((m) => m.a === a)
         .map((m) => modelLabel(m.m, capsFor(agents, a)) || m.m);
-      return { id: a, spend, tokens, tasks, unpriced, models: [...new Set(models)] };
+      const gw = gatewayCacheByAgent.get(a);
+      // "cache_read_tokens over input", per docs/design/litellm.md — a rate
+      // near zero despite real input tokens is prompt caching failing
+      // silently in translation, the one thing this column exists to surface.
+      const cacheHit = gw && gw.inp > 0 ? gw.cr / gw.inp : null;
+      return { id: a, spend, tokens, tasks, unpriced, models: [...new Set(models)], gateway: !!gw, cacheHit };
     });
     const provSpendSum = providers.reduce((s, p) => s + p.spend, 0);
+    const hasGatewayCache = providers.some((p) => p.cacheHit != null);
 
     // ---- projects leaderboard (agent filter applies; project filter doesn't —
     // clicking a row IS the project filter) ----
@@ -518,7 +534,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
 
     const isEmpty = data.usage.length === 0 && data.internal.length === 0 && data.shipped.length === 0 && data.merges.length === 0;
 
-    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, tagRows, jobRows, isEmpty };
+    return { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, hasGatewayCache, projectRows, tagRows, jobRows, isEmpty };
   }, [data, N, project, agent, agents]);
 
   const projName = (id: string) => data?.projects.find((p) => p.id === id)?.name ?? id;
@@ -531,7 +547,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     );
   if (!data || !model) return <div className="col col-session insights" />;
 
-  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, projectRows, tagRows, jobRows, isEmpty } = model;
+  const { rows, cur, prev, activeDays, hues, chartAgents, estIds, overheadEstimated, providers, provSpendSum, hasGatewayCache, projectRows, tagRows, jobRows, isEmpty } = model;
   // Spend framing when estimated-cost agents are in view: all-estimated vs a
   // mix of billed + estimated figures.
   const spendSub = estIds.size === 0 ? "API-equivalent cost"
@@ -844,9 +860,10 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   <div key={p.id} title={label(p.id)} style={{ width: `${provSpendSum > 0 ? (p.spend / provSpendSum) * 100 : 100 / providers.length}%`, background: hues[p.id] }} />
                 ))}
               </div>
-              <div className="in-provtable">
+              <div className={`in-provtable${hasGatewayCache ? " with-cache-hit" : ""}`}>
                 <div className="in-provhead mono">
                   <span>PROVIDER</span><span>SPEND</span><span>TOKENS</span><span>TASKS</span>
+                  {hasGatewayCache && <span title="Cache reads over input tokens, for turns run through the LiteLLM gateway. Stuck near 0% is prompt caching failing silently in translation.">CACHE HIT</span>}
                 </div>
                 {providers.map((p) => (
                   <div key={p.id} className="in-provrow">
@@ -857,9 +874,16 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                         <span className="mono in-provmodels">{p.models.length ? p.models.join(" · ") : "—"}</span>
                       </span>
                     </span>
-                    <span className="mono" title={estIds.has(p.id) ? "Estimated from token counts × published API prices" : undefined}>{estIds.has(p.id) && "~"}{fmtMoney(p.spend)}{p.unpriced > 0 && <span title={unprTitle(p.unpriced)}>+</span>}</span>
+                    <span className="mono" title={p.gateway ? "Estimated from the gateway's own price table" : estIds.has(p.id) ? "Estimated from token counts × published API prices" : undefined}>
+                      {(estIds.has(p.id) || p.gateway) && (p.gateway ? "≈" : "~")}{fmtMoney(p.spend)}{p.unpriced > 0 && <span title={unprTitle(p.unpriced)}>+</span>}
+                    </span>
                     <span className="mono dim">{fmtCompact(p.tokens)}</span>
                     <span className="mono dim">{String(Math.round(p.tasks))}</span>
+                    {hasGatewayCache && (
+                      <span className={`mono dim${p.cacheHit != null && p.cacheHit < 0.01 ? " warn" : ""}`}>
+                        {p.cacheHit == null ? "—" : `${Math.round(p.cacheHit * 100)}%`}
+                      </span>
+                    )}
                   </div>
                 ))}
                 {providers.length === 0 && <div className="in-provrow"><span className="in-card-s">No usage in this period.</span></div>}

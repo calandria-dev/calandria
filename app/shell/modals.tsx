@@ -13,7 +13,7 @@ import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPick
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
-import { describeProvider, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
+import { describeProvider, gatewayInsecureForGemini, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
 import { useEndpointModels } from "./modelEndpoint";
 
 // Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
@@ -178,10 +178,6 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  const canStart = !blocked && agentReady;
-  const willAutoStart = autoStart && deps.length > 0;
-  const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   // Which SHAPE the model field takes. A cloud project picks from the driver's
   // catalog; a project pointed at a local server types an id, because the ids
   // on that machine are whatever was pulled and no catalog can know them
@@ -189,6 +185,15 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // server-side — the browser generally can't reach a loopback model server.
   const provider = useMemo(() => taskProvider(project), [project]);
   const localModel = provider.kind !== "cloud";
+  // Gemini CLI source refuses a plain-http endpoint unless it's loopback
+  // (docs/design/litellm.md, "Antigravity CLI"); a gateway is reachable from
+  // anywhere the app is deployed, so this would fail every turn inside `agy`
+  // rather than at launch. Refused here instead.
+  const gatewayInsecure = agent === "gemini" && gatewayInsecureForGemini(provider);
+  const canStart = !blocked && agentReady && !gatewayInsecure;
+  const willAutoStart = autoStart && deps.length > 0;
+  const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
+  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   const endpoint = useEndpointModels(project.id, "", localModel);
   // Permission modes and models are both provider-specific (each driver labels
   // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
@@ -215,7 +220,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
-          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
+          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session`
+            : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address — use an https:// gateway, or pick a different agent" : undefined}>
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
@@ -238,6 +244,12 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
         </label>
       </div>
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
+          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+        </div>
+      )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
         freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help=" (changeable later from the session rail)." />
@@ -931,9 +943,13 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     if (!modelOpts.some((m) => m.value === model)) setModel(null);
   }, [agent, task.agent, modelOpts, model]);
   const agentReady = selAgent ? selAgent.authenticated : true;
+  // Same refusal as the New-task dialog (lib/agentEnv.ts): a gateway that's
+  // http:// and not loopback fails every Antigravity turn inside `agy`.
+  const gatewayInsecure = (canChangeAgent ? agent : task.agent) === "gemini" && gatewayInsecureForGemini(provider);
   const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks. Clear them or drop the dependency first"
-    : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
-  const canStartNow = can && !blocked && agentReady;
+    : !agentReady ? `Connect ${selAgent?.label} to start a session`
+    : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address" : undefined;
+  const canStartNow = can && !blocked && agentReady && !gatewayInsecure;
   return (
     <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
       footer={<>
@@ -984,6 +1000,12 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         )}
       </div>
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
+          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+        </div>
+      )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
         freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
         help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />
@@ -1052,7 +1074,109 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+// One row of GET /api/projects/[id]/mcp-servers' catalog — the gateway's
+// hosted MCP servers, with a tool-name preview and whether this project has
+// already minted a "trust this server" rule for it.
+interface GatewayMcpServerT {
+  alias: string;
+  server_name: string;
+  description: string;
+  transport: string;
+  auth_type: string;
+  needs_browser_signin: boolean;
+  tools: string[];
+  trusted: boolean;
+}
+
+// The project settings picker for hosted LiteLLM gateway MCP servers
+// (docs/design/litellm.md, "Hosted MCP servers"): fetched once when the
+// dialog opens (mirroring useEndpointModels' one-probe-per-open shape, but
+// with no per-keystroke re-probe — there's no URL field driving this one),
+// a checkbox per alias for `value` (the project's projects.gateway_mcp
+// selection), and a "Trust" button that mints a remembered permission rule
+// through POST rather than waiting on a live card — there is no per-call MCP
+// prompt to approve one from. Trust is one-way here: revoking a rule already
+// minted is Settings → Run defaults' job, not this dialog's, matching the
+// permission card's own "Always allow" being un-doable only from there.
+function GatewayMcpField({ projectId, value, onChange }: { projectId: string; value: string[]; onChange: (aliases: string[]) => void }) {
+  const [servers, setServers] = useState<GatewayMcpServerT[] | null>(null);
+  const [reachable, setReachable] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [trusting, setTrusting] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    jget<{ enabled: boolean; reachable: boolean; servers: GatewayMcpServerT[]; error: string | null }>(`/api/projects/${projectId}/mcp-servers`)
+      .then((d) => {
+        if (cancelled) return;
+        setServers(d.servers);
+        setReachable(d.reachable);
+        setError(d.error);
+      })
+      .catch((e) => { if (!cancelled) { setServers([]); setReachable(false); setError(e instanceof Error ? e.message : String(e)); } });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const toggle = (alias: string) => {
+    onChange(value.includes(alias) ? value.filter((a) => a !== alias) : [...value, alias]);
+  };
+  const trust = async (alias: string) => {
+    setTrusting(alias);
+    try {
+      await jsend(`/api/projects/${projectId}/mcp-servers`, "POST", { alias });
+      setServers((prev) => (prev ?? []).map((s) => (s.alias === alias ? { ...s, trusted: true } : s)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrusting(null);
+    }
+  };
+
+  return (
+    <div className="field" style={{ marginTop: 14 }}>
+      <div className="lab">{Icon.sliders()} Hosted MCP servers</div>
+      <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
+        Tools the gateway hosts on the key&apos;s behalf, mounted alongside Calandria&apos;s own on every task&apos;s
+        turns — <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary
+        permission prompt unless you trust the server below. Docs: docs/design/litellm.md.
+      </div>
+      {servers === null ? (
+        <div className="hlp">Loading…</div>
+      ) : !reachable ? (
+        <ErrNote>{error || "The gateway didn't answer."}</ErrNote>
+      ) : servers.length === 0 ? (
+        <div className="hlp">The gateway&apos;s key has no MCP servers to offer.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {servers.map((s) => (
+            <label key={s.alias} className="svc-cfg-row" style={{ alignItems: "flex-start" }}>
+              <input type="checkbox" checked={value.includes(s.alias)} onChange={() => toggle(s.alias)} style={{ marginTop: 3 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <code className="ctx-mono">{s.alias}</code>
+                  <span className="opt">{s.transport}{s.tools.length ? ` · ${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}` : ""}</span>
+                  {s.needs_browser_signin && <span className="opt">sign in at the gateway first</span>}
+                  {value.includes(s.alias) && (
+                    <button
+                      type="button" className="btn btn-line btn-sm" disabled={s.trusted || trusting === s.alias}
+                      onClick={() => void trust(s.alias)}
+                      title={s.trusted ? "Revoke in Settings → Run defaults" : `Always allow mcp__${s.alias}__* without a prompt`}
+                    >
+                      {Icon.check()} {s.trusted ? "Trusted" : trusting === s.alias ? "Trusting…" : "Trust this server"}
+                    </button>
+                  )}
+                </div>
+                {s.description && <div className="opt">{s.description}</div>}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1079,6 +1203,22 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // Who a Gateway-preset project bills. Stored rather than derived because both
   // modes are legitimate against the same address (lib/agentEnv.ts).
   const [providerBilling, setProviderBilling] = useState<GatewayBilling>(savedProvider.gateway_billing ?? "key");
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md) — advanced, opt-in,
+  // and only meaningful when the instance has an admin key configured.
+  const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
+  const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
+  // Hosted MCP servers (docs/design/litellm.md, "Hosted MCP servers") —
+  // independent of providerKind above: a Cloud-login task can still reach the
+  // gateway's hosted tools, so this is its own field rather than nested under
+  // the Gateway provider option.
+  const [gatewayMcp, setGatewayMcp] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(project.gateway_mcp || "[]");
+      return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
   // The instance's LiteLLM address, or "" — which is what hides the option.
   // The gateway's URL is not typed: it is the one the instance is configured
@@ -1219,7 +1359,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut() })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut(), gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null, gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp })}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1393,6 +1533,18 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                     ? "The CLI keeps its own login and the gateway forwards it, so these turns draw on your Claude plan. The gateway still routes, tags and meters them."
                     : "The instance's LiteLLM key authenticates and pays, so these turns draw on that key's account rather than your plan. Set the key in Settings → Agents."}
                 </div>
+                {agents.gateway_keys_enabled && (
+                  <>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
+                        onChange={(e) => setGatewayMaxBudget(e.target.value)} />
+                      <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
+                        title="A LiteLLM duration string, e.g. 30d. Blank means the key never auto-expires on LiteLLM's own clock."
+                        onChange={(e) => setGatewayKeyDuration(e.target.value)} />
+                    </div>
+                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys — leave blank for unlimited budget / a key that never auto-expires. Docs: docs/design/litellm.md.</div>
+                  </>
+                )}
               </>
             )}
             {providerKind === "custom" && (
@@ -1414,6 +1566,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </>
         )}
       </div>
+      {agents.gateway_mcp_enabled && <GatewayMcpField projectId={project.id} value={gatewayMcp} onChange={setGatewayMcp} />}
       {showServices && (
         <div className="field" style={{ marginTop: 14 }}>
           <div className="lab ctx-lab">

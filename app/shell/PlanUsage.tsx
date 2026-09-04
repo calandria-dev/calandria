@@ -6,7 +6,7 @@ import { jget } from "./api";
 import { AgentMark } from "../icons";
 import { agentLabel } from "./agents";
 import type { AgentsBundle } from "./types";
-import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
+import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@/lib/types";
 
 // The titlebar subscription-usage meter — "how much of my plan have my
 // parallel sessions burned" at a glance, which matters here more than in a
@@ -164,7 +164,7 @@ export function PlanUsagePill({ agents, appDefaults }: { agents: AgentsBundle; a
   return (
     <>
       {metered.map(([id, snap]) => (
-        <AgentPlanPill key={id} agentId={id} label={agentLabel(agents, id)} snap={snap} />
+        <AgentPlanPill key={id} agentId={id} label={id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id)} snap={snap} />
       ))}
     </>
   );
@@ -198,7 +198,8 @@ function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: strin
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         title={`${who} plan usage: click for the breakdown`}
       >
-        {mark && <span className="pp-mark" aria-hidden>{mark()}</span>}
+        {/* The gateway plan has no brand mark, so its pill wears its name instead. */}
+        {mark ? <span className="pp-mark" aria-hidden>{mark()}</span> : <span className="pp-seg">{label}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%

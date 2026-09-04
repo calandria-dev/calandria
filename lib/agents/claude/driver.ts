@@ -107,6 +107,7 @@ import {
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
+import { gatewayMcpServersFor } from "../../gatewayMcp";
 
 const log = createLogger("claude");
 
@@ -1114,6 +1115,11 @@ async function* runTurn(
       // logic; what differs is the three seams the in-process server has and
       // the bridge answers for itself — ./mcp.ts and ../CLAUDE.md say which.
       mcpServers: {
+        // Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Hosted
+        // MCP servers"), the project's selection (or this task's override) —
+        // spread FIRST so `calandria:` below always wins the key even if a
+        // badly-named alias collided with it.
+        ...gatewayMcpServersFor(project, task),
         calandria:
           CLAUDE_TOOL_TRANSPORT === "stdio"
             ? calandriaBridgeServer(project, task)

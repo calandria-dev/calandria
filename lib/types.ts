@@ -52,6 +52,17 @@ export interface Project {
   position: number; // manual sidebar order (ascending)
   deprecated: number; // 1 = hidden in the sidebar's "deprecated" area, not built on
   seeded: number; // 1 = the built-in "Welcome" tutorial project (see lib/db.ts seedIfEmpty)
+  // Per-task LiteLLM virtual keys (docs/design/litellm.md, "Per-task virtual
+  // keys"), only meaningful once CALANDRIA_LITELLM_ADMIN_KEY is set. What a
+  // minted key's /key/generate call is told to cap it at.
+  gateway_max_budget: number | null; // dollars; null = no max_budget sent (unlimited)
+  gateway_key_duration: string; // a LiteLLM duration string ("30d"); "" = no duration sent (never auto-expires on LiteLLM's clock)
+  // Hosted MCP servers this project mounts on every task's turns
+  // (docs/design/litellm.md, "Hosted MCP servers") — a JSON array of gateway
+  // aliases (lib/gatewayMcp.ts), independent of agent_env's model-provider
+  // kind: a Cloud-login task can still reach the gateway's hosted tools. "[]"
+  // = none selected, the default for every project.
+  gateway_mcp: string;
   created_at: number;
 }
 
@@ -134,6 +145,21 @@ export interface Task {
   // report it (Codex), or a task that predates the column — and the gauge
   // falls back to a per-turn usage heuristic and says so (see getTaskContext).
   context_measured: number | null;
+  // The task's minted LiteLLM virtual key (docs/design/litellm.md, "Per-task
+  // virtual keys"), or "" for "use the instance key" / not a gateway task /
+  // per-task keys off. getTask()/listTasks() ALWAYS return "" here — the real
+  // value never leaves lib/store.ts's narrow accessors (taskGatewayKeyState,
+  // setTaskGatewayKey), which only lib/runner.ts and lib/gatewayKeys.ts call.
+  // lib/runner.ts populates this field on its own in-memory `task` object
+  // (never a value returned by getTask/listTasks) just before the driver
+  // call, the same way it self-heals worktree_path in place — so a route
+  // spreading a task into JSON can never carry a live key even by accident.
+  gateway_key: string;
+  // Per-task override of the project's hosted-MCP selection (lib/gatewayMcp.ts)
+  // — null = inherit the project's `gateway_mcp`; a JSON array (including
+  // "[]") replaces it outright, so a task can mount none of the project's
+  // servers without touching the project row.
+  gateway_mcp: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -373,11 +399,15 @@ export type PermissionDecision = "allow_once" | "allow_always" | "deny";
 // How a remembered rule matches a later call:
 //   bash_prefix — Bash commands whose leading tokens match (`npm test …`)
 //   bash_exact  — one literal command line, for anything not safely generalizable
-// Bash-only on purpose: a command is the one tool input a user can read in full
-// and generalize honestly. "Always allow WebFetch here" would grant every URL,
-// so non-Bash tools get allow-once plus a session-scoped don't-ask-again
-// instead — see the note in lib/permissions.ts.
-export type PermissionMatchKind = "bash_prefix" | "bash_exact";
+//   mcp_server  — every tool call from one hosted MCP server (`mcp__<alias>__*`)
+// Bash-only was the rule until hosted gateway MCP servers (docs/design/litellm.md,
+// "Hosted MCP servers"): "always allow WebFetch here" would grant every URL, but
+// "always allow <alias>'s tools" names a whole SERVER the user picked in project
+// settings, which is exactly as readable and generalizable as a command line —
+// the alias, not a wildcard the user never saw. Every other non-Bash tool still
+// gets allow-once plus a session-scoped don't-ask-again instead — see the note
+// in lib/permissions.ts.
+export type PermissionMatchKind = "bash_prefix" | "bash_exact" | "mcp_server";
 
 // One watched setting file as this task last ran under it
 // (task_settings_snapshots — see lib/settingsDrift.ts). `file` is
@@ -532,9 +562,24 @@ export interface PlanUsageWindow {
    * can say. The ids are the PROVIDER's ("five_hour", "gemini-5h"), so this is
    * what the pill and lib/usageReset.ts pick the session/week rows by; absent
    * on a window that is neither (Claude's per-model weeks) and on older rows.
+   *
+   * `gateway_budget` is not a subscription window at all — it's the LiteLLM
+   * instance key's own budget (GET /key/info), synthesized by
+   * GET /api/plan-usage under the `"gateway"` map key rather than reported by
+   * an agent driver. A gateway task's turns don't draw on any agent's
+   * session/week window (lib/agentEnv.ts planWindowApplies), so the session
+   * header reads this one instead where a vendor window would be shown but
+   * doesn't apply.
    */
-  kind?: "session" | "week" | null;
+  kind?: "session" | "week" | "gateway_budget" | null;
 }
+
+/** Not a real agent id — the key the LiteLLM gateway's own budget snapshot
+ *  rides under in GET /api/plan-usage's map (app/api/plan-usage/route.ts),
+ *  since the budget is one instance key's, not any agent's. Shared between
+ *  that route, app/shell/PlanUsage.tsx and app/shell/SessionView.tsx so the
+ *  writer and both readers can't drift onto different strings. */
+export const GATEWAY_PLAN_ID = "gateway";
 
 // Instance-wide snapshot of one agent's subscription-plan usage — what the
 // titlebar meter renders. Two sources merged server-side (see

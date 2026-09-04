@@ -400,6 +400,40 @@ export const LITELLM_MCP = !["0", "off", "false", "no"].includes(
 );
 
 /**
+ * A LiteLLM key allowed to call `/key/generate` and `/key/delete` — a master
+ * key, or a key granted just that route (docs/design/litellm.md, "Per-task
+ * virtual keys"). UNSET IS THE OFF SWITCH for the whole step: with no admin
+ * key, tasks keep running on the shared instance key (`CALANDRIA_LITELLM_KEY`)
+ * and get tags + estimates but no per-task key, no exact spend reconciliation,
+ * and nothing for lib/gatewayKeys.ts to mint or delete.
+ *
+ * Never sent to the client and never stored on a project/task row — see
+ * lib/gatewayKeys.ts, which is the only module that reads this constant.
+ * `/key/generate` and `/key/delete` are LiteLLM's own admin surface and take
+ * this as `Authorization: Bearer …`, distinct from the `x-litellm-api-key`
+ * header every other gateway call in this codebase sends a virtual key on.
+ */
+export const LITELLM_ADMIN_KEY = String(readEnv("CALANDRIA_LITELLM_ADMIN_KEY") || "").trim();
+
+/** Whether the admin key is set, WITHOUT the key itself — this is the one
+ *  that's safe to hand to the client (app/layout.tsx's window.__GATEWAY_KEYS_ENABLED),
+ *  so the project settings form can show the max_budget/duration fields only
+ *  when minting a per-task key is actually possible. */
+export const LITELLM_ADMIN_KEY_SET = !!LITELLM_ADMIN_KEY;
+
+/**
+ * Bound on one call to LiteLLM's key-management surface
+ * (`/key/generate`, `/key/delete`, `/key/info` — lib/gatewayKeys.ts). Longer
+ * than MODEL_PROBE_MS's 2.5s: minting and deleting touch LiteLLM's own
+ * Postgres, not just an in-memory catalog, but this still runs on a task's
+ * first-turn launch path and a turn's own settle, so it must never wait
+ * indefinitely on a stalled proxy. A timeout falls back to the instance key
+ * (mint) or leaves the key for the retention backstop to retry (delete) —
+ * never blocks the turn.
+ */
+export const LITELLM_KEY_TIMEOUT_MS = ms(readEnv("CALANDRIA_LITELLM_KEY_TIMEOUT_MS"), 8000);
+
+/**
  * How long Calandria will wait for a local model server to say which models it
  * has (lib/modelEndpoint.ts) before calling it unreachable. Short on purpose:
  * this probe runs inside GET /api/agents, which every tab loads, and the answer

@@ -15,6 +15,7 @@ import {
   isAlwaysAllowed,
   parseDecision,
   promptDeadline,
+  ruleForGatewayMcpServer,
   ruleFromTypedCommand,
   ruleMatches,
   scopeOfferFor,
@@ -213,6 +214,53 @@ describe("what a remembered rule covers", () => {
     expect(allowedByRules(rules, "Bash", bash("make deploy"))).toBe(true);
     expect(allowedByRules(rules, "Bash", bash("make deploy --now"))).toBe(false);
     expect(allowedByRules([], "Bash", bash("git status"))).toBe(false);
+  });
+});
+
+// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Hosted MCP
+// servers"): "trust this server" mints a whole-namespace rule from project
+// settings, matched by NAMESPACE rather than by rule.tool — LiteLLM names
+// every tool under an alias `mcp__<alias>__<alias>-<tool>`, and trusting the
+// server means trusting all of them, including ones the catalog never listed.
+describe("mcp_server rules — trusting a whole hosted MCP server", () => {
+  it("matches every tool call under the alias's namespace", () => {
+    const r = rule("mcp_server", "demo", "mcp__demo__*");
+    expect(ruleMatches(r, "mcp__demo__demo-lookup_ticket", {})).toBe(true);
+    expect(ruleMatches(r, "mcp__demo__demo-close_ticket", {})).toBe(true);
+    // A tool the catalog never listed at mint time — trusting the alias
+    // covers it too, since the rule is the server, not one call.
+    expect(ruleMatches(r, "mcp__demo__demo-brand-new-tool", {})).toBe(true);
+  });
+
+  it("never matches a different alias, even one sharing a prefix", () => {
+    const r = rule("mcp_server", "demo", "mcp__demo__*");
+    expect(ruleMatches(r, "mcp__demo2__demo2-lookup", {})).toBe(false);
+    expect(ruleMatches(r, "mcp__search__search-run", {})).toBe(false);
+  });
+
+  it("never matches Calandria's own in-process server or an unrelated tool", () => {
+    const r = rule("mcp_server", "demo", "mcp__demo__*");
+    expect(ruleMatches(r, "mcp__calandria__suggest_task", {})).toBe(false);
+    expect(ruleMatches(r, "Bash", bash("npm test"))).toBe(false);
+  });
+
+  it("allowedByRules folds an mcp_server rule in with ordinary Bash rules", () => {
+    const rules = [rule("bash_prefix", "npm test"), rule("mcp_server", "demo", "mcp__demo__*")];
+    expect(allowedByRules(rules, "mcp__demo__demo-lookup_ticket", {})).toBe(true);
+    expect(allowedByRules(rules, "mcp__search__search-run", {})).toBe(false);
+  });
+});
+
+describe("ruleForGatewayMcpServer — minting a whole-server rule", () => {
+  it("mints mcp__<alias>__* keyed on the bare alias, never what the card would name a single call", () => {
+    const drafted = ruleForGatewayMcpServer("demo");
+    expect(drafted).toEqual({ ok: true, tool: "mcp__demo__*", match_kind: "mcp_server", value: "demo" });
+  });
+
+  it("trims whitespace and refuses an empty or control-character alias", () => {
+    expect(ruleForGatewayMcpServer("  demo  ")).toEqual({ ok: true, tool: "mcp__demo__*", match_kind: "mcp_server", value: "demo" });
+    expect(ruleForGatewayMcpServer("")).toEqual({ ok: false, error: expect.any(String) });
+    expect(ruleForGatewayMcpServer("bad\nalias")).toEqual({ ok: false, error: expect.any(String) });
   });
 });
 
