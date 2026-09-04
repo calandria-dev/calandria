@@ -1,14 +1,16 @@
 // The wizard's "Connect Codex" flow, built on the `codex` CLI's ChatGPT device
 // authorization (`codex login --device-auth`): it prints an auth URL plus a
 // short one-time code, then polls OpenAI until the user enters that code in a
-// browser — no code is pasted back into the terminal (unlike Claude's login).
-// We spawn it, surface the URL + code so the UI can show them instead of
-// burying them in scrollback, and confirm with `codex login status`. All
-// credential state lives under $HOME (~/.codex/auth.json) — the user's
-// persistent volume — so the login survives restarts with no extra plumbing.
+// browser. No code is pasted back into the terminal, unlike Claude's login.
+// This spawns the CLI, surfaces the URL and code so the UI can show them
+// instead of burying them in scrollback, and confirms with `codex login
+// status`. All credential state lives under $HOME (~/.codex/auth.json), the
+// user's persistent volume, so the login survives restarts with no extra
+// plumbing.
 //
-// Unlike Claude's login (lib/claude-auth.ts) codex device-auth needs no pty:
-// it writes to a plain pipe even without a TTY, so we use child_process.spawn.
+// Unlike Claude's login (lib/claude-auth.ts), codex device-auth needs no pty:
+// it writes to a plain pipe even without a TTY, so this uses
+// child_process.spawn.
 //
 // The concrete binary to shell out to is resolved per call by ./bin.ts: the
 // CODEX_CLI_PATH pin, else `codex` found on PATH (the Docker image installs it
@@ -29,7 +31,7 @@ import { codexUsage, type CodexTokenUsage } from "./usage";
 
 const run = promisify(execFile);
 
-// Strip ANSI colour/escape sequences so our regexes see plain text.
+// Strip ANSI colour/escape sequences so the regexes below see plain text.
 const stripAnsi = (s: string) =>
   s
     .replace(/\[[0-9;?]*[a-zA-Z]/g, "")
@@ -41,17 +43,17 @@ const stripAnsi = (s: string) =>
 const planOf = (text: string): string | null =>
   /chatgpt/i.test(text) ? "ChatGPT" : /api key|api-key/i.test(text) ? "API" : null;
 
-// The API-key path reports connected off the env/file the codex children read,
-// even when `codex login status` is terse about it.
+// The API-key path reports connected off the env/file the codex children
+// read, even when `codex login status` is terse about it.
 const apiKeyStatus = (): AgentAuthStatus =>
   ({ authenticated: true, method: "OpenAI API key", email: null, plan: "API", error: null });
 
 export async function codexStatus(): Promise<AgentAuthStatus> {
-  // Key check BEFORE the CLI's own view: `codex login status` is keyed on
+  // Key check before the CLI's own view: `codex login status` is keyed on
   // ~/.codex/auth.json and can report a ChatGPT login while an OPENAI_API_KEY
-  // in the env is what the codex children actually bill (issue #4). After the
-  // boot strip (lib/env-keys.mjs) a key here is always deliberate, so when one
-  // is present the honest status is API-key billing, whatever the CLI says.
+  // in the env is what the codex children actually bill. After the boot strip
+  // (lib/env-keys.mjs) a key here is always intentional, so when one is
+  // present the honest status is API-key billing, whatever the CLI says.
   if (hasOpenAiKey()) return apiKeyStatus();
   try {
     const status = codexSpawn(["login", "status"]);
@@ -71,15 +73,15 @@ export async function codexStatus(): Promise<AgentAuthStatus> {
     const err = e as { code?: string; stdout?: string; stderr?: string };
     if (err.code === "ENOENT")
       return { authenticated: false, method: null, email: null, plan: null, error: "the codex CLI isn't installed in this workspace" };
-    // A "not logged in" exit (nonzero) lands here.
+    // A "not logged in" exit (nonzero) lands here too.
     const out = stripAnsi(`${err.stdout ?? ""}${err.stderr ?? ""}`);
     return { authenticated: false, method: null, email: null, plan: null, error: out.trim() || "not logged in" };
   }
 }
 
-// The Codex "I have an API key instead" path (OpenAI mirror of the Claude one).
-// Persisted + applied by lib/openai-key.ts; the `codex` children read
-// OPENAI_API_KEY from the env we set.
+// The Codex "I have an API key instead" path (OpenAI mirror of the Claude
+// one). Persisted and applied by lib/openai-key.ts; the `codex` children read
+// OPENAI_API_KEY from the env this sets.
 export const codexApiKey: AgentApiKeyAuth = {
   hint: "sk-…",
   looksValid: looksLikeOpenAiKey,
@@ -108,11 +110,11 @@ export async function verifyCodexTurn(): Promise<AgentVerifyResult> {
     });
     // `codex exec` treats a non-TTY stdin as pending input ("Reading additional
     // input from stdin...") and blocks on the read before running the turn.
-    // execFile always gives the child a stdin pipe, so without this EOF it waits
-    // out the full timeout and verify reports no output. From a terminal the
-    // TTY stdin isn't treated as pending, which is why this only bit the app.
-    // (promisify(execFile) exposes the ChildProcess as `.child`; note that the
-    // `input` option is spawnSync-only and is silently ignored here.)
+    // execFile always gives the child a stdin pipe, so without this EOF it
+    // waits out the full timeout and verify reports no output. A TTY stdin
+    // isn't treated as pending, which is why a terminal run doesn't hit this.
+    // (promisify(execFile) exposes the ChildProcess as `.child`; the `input`
+    // option is spawnSync-only and is ignored here.)
     pending.child.stdin?.end();
     const { stdout } = await pending;
     const { output, usage } = parseVerifyEvents(stdout);
@@ -193,9 +195,10 @@ export function cancelCodexLogin(): void {
 }
 
 /**
- * Start (or rejoin) the device-code login. Resolves once the auth URL + code
- * are parsed — or earlier on error — so the UI can render them immediately; the
- * CLI keeps running, polling OpenAI, until the user authorizes in a browser.
+ * Start (or rejoin) the device-code login. Resolves once the auth URL and
+ * code are parsed, or earlier on error, so the UI can render them
+ * immediately; the CLI keeps running, polling OpenAI, until the user
+ * authorizes in a browser.
  */
 export async function startCodexLogin(): Promise<AgentLoginSession> {
   const cur = g.__calandriaCodexLogin;
@@ -255,14 +258,14 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
     }
     if (!st.code) {
       // The one-time code, e.g. "TURL-7HQVR": groups of letters/digits joined by
-      // a dash. Anchor on the "code" wording so we don't grab a stray token.
+      // a dash. Anchored on the "code" wording so it can't grab a stray token.
       const m = st.buf.match(/one-?time code[^\n]*\n\s*([A-Z0-9]{3,6}-[A-Z0-9]{3,6})/i) || st.buf.match(/\b([A-Z0-9]{3,6}-[A-Z0-9]{3,6})\b/);
       if (m) st.code = m[1];
     }
     if (/(login|logged) ?in|success|authenticated|you are now/i.test(st.buf)) {
       void finishSuccess(st);
     } else if (/expired|denied/i.test(st.buf)) {
-      // Don't hard-fail on a stray "error"/"invalid" word mid-stream — only on
+      // Don't hard-fail on a stray "error"/"invalid" word mid-stream, only on
       // exit; but capture an explicit expiry/denial immediately.
       st.status = "error";
       st.error = "the device code was denied or expired. Start again";
@@ -276,9 +279,9 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
       if (st.timer) clearTimeout(st.timer);
       return;
     }
-    // Keep the reaper armed until settleAfterExit resolves — clearing it here
-    // used to leave a session that never settled pinned at "awaiting" forever,
-    // locking the onboarding wizard's Continue button on fresh machines.
+    // Keep the reaper armed until settleAfterExit resolves: clearing it here
+    // would leave a session that never settles pinned at "awaiting" forever,
+    // locking the onboarding wizard's Continue button.
     void settleAfterExit(st, exitCode);
   });
 
@@ -287,7 +290,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
 
 /**
  * Device-code login needs no code paste-back (the user enters the code in the
- * browser), so this is a no-op that just returns the current view — kept for
+ * browser), so this is a no-op that just returns the current view, kept for
  * interface parity with the Claude login. The UI polls getCodexLogin() until
  * the flow completes on its own.
  */
@@ -309,11 +312,11 @@ async function finishSuccess(st: LoginState) {
       st.proc?.kill();
     } catch {}
   } else if (st.status === "awaiting" || st.status === "submitting") {
-    // Not done yet — keep waiting (the CLI is still polling); leave status as-is.
+    // Not done yet: keep waiting, since the CLI is still polling; leave status as-is.
   }
 }
 
-// The child exited — the session MUST settle to success or error from here.
+// The child exited: the session must settle to success or error from here.
 // codex login exits 0 once the browser authorization completes, but the
 // auth.json write can land a beat after exit, and `codex login status` can
 // hiccup (enterprise-managed configs prepend warnings and sometimes exit
@@ -322,7 +325,7 @@ async function settleAfterExit(st: LoginState, exitCode: number | null) {
   const expectSuccess = exitCode === 0 || st.status === "awaiting" || st.status === "submitting";
   let lastErr: string | null = null;
   for (let i = 0; i < (expectSuccess ? 5 : 1); i++) {
-    // The reaper (or a stdout-driven finishSuccess) may settle us mid-loop.
+    // The reaper (or a stdout-driven finishSuccess) may settle the session mid-loop.
     if (st.status === "success" || st.status === "error") return;
     const s = await codexStatus();
     if (s.authenticated) {

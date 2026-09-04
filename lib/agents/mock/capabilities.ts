@@ -1,6 +1,6 @@
 // The mock agent's capability descriptor, split out from driver.ts for the same
 // reason claude/ and codex/ split theirs: lib/agents/capabilities.ts must be
-// able to enumerate this agent's id WITHOUT importing a driver module (see the
+// able to enumerate this agent's id without importing a driver module (see the
 // header there and tests/importGraph.test.ts). The driver imports this back, so
 // there is still exactly one definition.
 //

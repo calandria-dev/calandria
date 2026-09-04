@@ -1,37 +1,37 @@
-// Proving the provider override in ./provider.ts actually TOOK, before a turn
+// Proving the provider override in ./provider.ts actually took, before a turn
 // spends anything.
 //
 // The mapping reaches into another tool's configuration schema: three keys
 // (`model_provider`, `model_providers.<name>`, `wire_api = "responses"`), none
 // of them a public contract, against a `codex` CLI that autoupdates on the
 // user's machine independently of Calandria. The SDK spawns whatever `codex` is
-// on PATH, so there is no version we control.
+// on PATH, so there is no version this app controls.
 //
 // The failure mode is what makes this worth a subprocess. If a codex release
-// renames a key or drops the `responses` wire API, the CLI does NOT error — an
+// renames a key or drops the `responses` wire API, the CLI does not error: an
 // unknown `-c` override is inert and `model_provider` falls back to the built-in
 // `openai` provider, i.e. the user's real ChatGPT login. A project configured
-// for a free local endpoint would silently start spending paid quota, at cloud
+// for a free local endpoint would start spending paid quota, at cloud
 // latency, with the session header still showing the `local` chip. Nothing
 // surfaces. That is the silent-wrong-backend class lib/agents/connections.ts
 // guards on the auth side, and the answer is the same: refuse, loudly.
 //
 // `codex doctor --json` is the CLI's own account of the configuration it just
 // loaded, and it accepts the same `-c` overrides the SDK passes. Its
-// `config.load` check reports the RESOLVED `model provider`, which is exactly
-// the fact in question: our own id ("calandria-local", or "calandria-gateway"
-// for the LiteLLM entry) means the mapping took, "openai" means the turn was
-// about to be billed to the ChatGPT login. Measured on
-// codex-cli 0.146.0, ~1.1s, so the verdict is cached per endpoint against the
-// CLI version that produced it and re-earned whenever that version moves.
+// `config.load` check reports the resolved `model provider`, which is exactly
+// the fact in question: this app's own id ("calandria-local", or
+// "calandria-gateway" for the LiteLLM entry) means the mapping took, "openai"
+// means the turn was about to be billed to the ChatGPT login. The probe costs
+// roughly a second, so the verdict is cached per endpoint against the CLI
+// version that produced it and re-earned whenever that version moves.
 //
-// Deliberately fail-CLOSED: an unparseable or missing doctor is "cannot prove
-// it", not "probably fine". A refused turn costs the user a message; a silent
+// Fails closed: an unparseable or missing doctor report is "cannot prove it",
+// not "probably fine". A refused turn costs the user a message; a silent
 // fallback costs them money they did not agree to spend. The escape hatch is
 // CALANDRIA_CODEX_PROVIDER_CHECK=off, named in the error text.
 //
 // SDK-free (config + bin.ts + store), so it can be tested without spawning the
-// agent SDK — but it mirrors the SDK's own `--config` flattening, which
+// agent SDK, but it mirrors the SDK's own `--config` flattening, which
 // tests/codexProviderCheck.test.ts pins against the real SDK's emitted argv.
 
 import { execFile } from "node:child_process";
@@ -46,16 +46,17 @@ const run = promisify(execFile);
 
 /**
  * The codex release this mapping is known good against, and the floor for the
- * verification below: `codex doctor --json` and its `config.load` check are what
- * make the assertion possible at all. Stated in docs/AGENTS.md ("Local models")
- * beside the setup steps, and named in the error when the probe can't run.
+ * verification below: `codex doctor --json` and its `config.load` check are
+ * what make the assertion possible at all. Stated in docs/AGENTS.md ("Local
+ * models") beside the setup steps, and named in the error when the probe
+ * can't run.
  */
 export const CODEX_PROVIDER_MIN_VERSION = "0.146.0";
 
 /** Where a proven endpoint is remembered: the CLI version that proved it. Keyed
  *  by the endpoint's own base URL, which is what keeps a gateway verdict and a
- *  local-endpoint verdict apart — same instance, different URLs, and a URL that
- *  matched the gateway's origin would BE the gateway. */
+ *  local-endpoint verdict apart: same instance, different URLs, and a URL that
+ *  matched the gateway's origin would be the gateway. */
 const okKey = (baseUrl: string) => `codex_provider_ok:${baseUrl}`;
 
 export type CodexProviderVerdict =
@@ -65,9 +66,9 @@ export type CodexProviderVerdict =
 /**
  * The SDK's `serializeConfigOverrides`, restated. The SDK flattens its `config`
  * option to repeated `--config <dotted.path>=<toml>` arguments; the probe has to
- * send the IDENTICAL arguments or it verifies a shape the turn never uses.
+ * send identical arguments or it verifies a shape the turn never uses.
  * Only the subset provider.ts emits is exercised, but the whole value grammar is
- * mirrored so the two can't drift silently — tests/codexProviderCheck.test.ts
+ * mirrored so the two can't drift silently: tests/codexProviderCheck.test.ts
  * asserts this output against the argv the real SDK spawns.
  */
 export function serializeCodexConfigOverrides(config: Record<string, CodexConfigValue>): string[] {
@@ -110,10 +111,10 @@ function toToml(value: CodexConfigValue): string {
 }
 
 /** How the probe spawns codex. `bin` is a test seam; production resolves it. */
-// `env` is widened from NodeJS.ProcessEnv because the caller hands us the merged
-// TURN env (lib/agentEnv.ts), a plain Record without the NODE_ENV the augmented
-// type demands — the whole point being that the probe runs in the turn's
-// environment rather than the server's.
+// `env` is widened from NodeJS.ProcessEnv because the caller hands over the
+// merged turn env (lib/agentEnv.ts), a plain Record without the NODE_ENV the
+// augmented type demands, since the probe must run in the turn's environment
+// rather than the server's.
 export type CodexProbeOpts = {
   cwd?: string;
   env?: Record<string, string | undefined>;
@@ -124,7 +125,7 @@ export type CodexProbeOpts = {
 
 const spec = (args: string[], opts: CodexProbeOpts) => spawnSpec(resolveCodexBin(opts.bin), args, { platform: opts.platform });
 
-/** `codex-cli 0.146.0` → `0.146.0`. Null when the binary is missing or mute. */
+/** `codex-cli 0.146.0` -> `0.146.0`. Null when the binary is missing or mute. */
 export async function codexCliVersion(opts: CodexProbeOpts = {}): Promise<string | null> {
   try {
     const spec_ = spec(["--version"], opts);
@@ -158,11 +159,11 @@ export async function readCodexProvider(overrides: string[], opts: CodexProbeOpt
   for (const o of overrides) args.push("--config", o);
   const spec_ = spec(args, opts);
   // A win32 batch shim has to be run through `cmd.exe /d /s /c`, whose quoting
-  // rules are not the C-runtime ones every other caller here relies on — and
-  // every override we send carries embedded quotes (`model_provider="…"`),
+  // rules are not the C-runtime ones every other caller here relies on, and
+  // every override sent here carries embedded quotes (`model_provider="…"`),
   // unlike the fixed tokens bin.ts was written for. So on that one path the argv
-  // the CLI receives may not be the argv we composed, and a "wrong provider"
-  // answer would be evidence about our quoting rather than about the mapping.
+  // the CLI receives may not be the argv composed here, and a "wrong provider"
+  // answer would be evidence about the quoting rather than about the mapping.
   // Report it as its own thing instead of refusing on it.
   if (spec_.windowsVerbatimArguments) return { kind: "unquotable" };
   let stdout = "";
@@ -170,7 +171,7 @@ export async function readCodexProvider(overrides: string[], opts: CodexProbeOpt
     ({ stdout } = await run(spec_.command, spec_.args, {
       timeout: CODEX_PROVIDER_CHECK_MS,
       // doctor exits nonzero when any check fails (an unreachable local server
-      // is the common one), and still prints the whole report — read the body,
+      // is the common one), and still prints the whole report; read the body,
       // not the exit code.
       cwd: opts.cwd,
       env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
@@ -210,18 +211,19 @@ export async function verifyCodexProvider(local: CodexProviderConfig, opts: Code
   const baseUrl = baseUrlOf(local) ?? "";
   if (!CODEX_PROVIDER_CHECK) return { ok: true, cliVersion: null };
 
-  // The CLI moves under us, so the remembered verdict is only as good as the
-  // version that earned it. `codex --version` is ~30ms warm; the doctor probe it
-  // guards is ~1.1s, and both are skipped entirely on the cloud path above.
+  // The CLI moves independently of this app, so the remembered verdict is only
+  // as good as the version that earned it. `codex --version` is ~30ms warm; the
+  // doctor probe it guards is ~1s, and both are skipped entirely on the cloud
+  // path above.
   const version = await codexCliVersion(opts);
   if (version && getSetting(okKey(baseUrl)) === version) return { ok: true, cliVersion: version };
 
   const reading = await readCodexProvider(serializeCodexConfigOverrides(local.config), opts);
-  // The one case that passes WITHOUT proof, and the only one. Refusing here
-  // would break every Windows instance whose codex is an npm `.cmd` shim on a
-  // suspicion about our own quoting, so it degrades to the pre-check behaviour
-  // and says so out loud once per turn. Pinning CODEX_CLI_PATH at the real
-  // `codex.exe` spawns it directly and restores the check.
+  // The one case that passes without proof. Refusing here would break every
+  // Windows instance whose codex is an npm `.cmd` shim on a suspicion about
+  // the quoting, so it degrades to the pre-check behaviour and says so out
+  // loud once per turn. Pinning CODEX_CLI_PATH at the real `codex.exe` spawns
+  // it directly and restores the check.
   if (reading.kind === "unquotable") {
     console.warn(
       `[codex] running a local-endpoint turn UNVERIFIED: the resolved codex is a batch shim, whose command line ` +
@@ -239,12 +241,12 @@ export async function verifyCodexProvider(local: CodexProviderConfig, opts: Code
   return { ok: true, cliVersion: reading.cliVersion ?? version };
 }
 
-/** Forget every remembered verdict — for a test, or a deliberate re-probe. */
+/** Forget every remembered verdict: for a test, or a deliberate re-probe. */
 export function clearCodexProviderChecks(baseUrl: string): void {
   setSetting(okKey(baseUrl), null);
 }
 
-/** The entry's own id — `calandria-local` or `calandria-gateway`. Read back off
+/** The entry's own id: `calandria-local` or `calandria-gateway`. Read back off
  *  the config rather than assumed, so the probe checks the provider the turn
  *  will actually select. */
 function providerIdOf(local: CodexProviderConfig): string {

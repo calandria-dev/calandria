@@ -1,34 +1,18 @@
 // A single `codex app-server` JSON-RPC request, spawned and torn down again.
 //
 // The app-server is the codex CLI's long-lived IDE protocol (stdio JSON-RPC:
-// `initialize` → `initialized` → requests). We do not hold a connection open —
-// the one thing we ask it for is the account's rate-limit snapshot, behind the
-// plan-usage fetch floor, so a process per answer is cheaper than a supervised
-// child that outlives every turn. Separated from ./planUsage.ts so the cache
-// and merge policy there can be tested without spawning anything.
+// `initialize` -> `initialized` -> requests). The only thing we ask it for is
+// the account's rate-limit snapshot, so a process per answer is cheaper than
+// a supervised child that outlives every turn. Kept separate from
+// ./planUsage.ts so the cache and merge policy there can be tested without
+// spawning anything.
 //
-// Handshake VERIFIED live against codex-cli 0.146.0 on this machine. The exact
-// exchange, transcribed:
-//
-//   → {"jsonrpc":"2.0","id":1,"method":"initialize",
-//      "params":{"clientInfo":{"name":"calandria","title":"Calandria","version":"1"}}}
-//   ← {"id":1,"result":{"userAgent":"…","codexHome":"/home/u/.codex",
-//      "platformFamily":"unix","platformOs":"linux"}}
-//   → {"jsonrpc":"2.0","method":"initialized","params":{}}
-//   → {"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}
-//   ← {"id":2,"result":{"rateLimits":{…}}}          (logged in)
-//   ← {"id":2,"error":{"code":-32600,
-//      "message":"codex account authentication required to read rate limits"}}
-//
-// Three things that exchange settles, each of which would otherwise be a bug:
-//
-//   * Responses carry NO `jsonrpc` field, so correlation is by `id` alone.
-//   * The server pushes UNSOLICITED notifications on the same stream before and
-//     between the responses (`configWarning`, `remoteControl/status/changed`),
-//     so anything without our id is skipped rather than treated as an answer.
-//   * Not being logged in is an ordinary JSON-RPC error on the read, not a
-//     failure to start — which is what makes it a usable "no subscription"
-//     signal instead of a crash to classify.
+// Responses carry no `jsonrpc` field, so correlation is by `id` alone. The
+// server also pushes unsolicited notifications on the same stream before and
+// between responses, so anything without our id is skipped. Not being logged
+// in is an ordinary JSON-RPC error on the read rather than a failure to
+// start, which makes it a usable "no subscription" signal instead of a crash
+// to classify.
 
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -47,7 +31,7 @@ const TIMEOUT_MS = 10_000;
 export interface AppServerResult {
   /** The JSON-RPC `result`, when the call succeeded. */
   data?: unknown;
-  /** Why there is no result — an RPC error message, or a process failure. */
+  /** Why there is no result: an RPC error message, or a process failure. */
   error?: string;
 }
 
@@ -55,9 +39,9 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-// The app-server logs to stderr even on a healthy run (this host's bubblewrap
-// sandbox warning, for one), so stderr is only used to explain a process that
-// died without answering — and only its tail, which is where the cause is.
+// The app-server can log to stderr on a healthy run (a sandbox warning, for
+// one), so stderr is only used to explain a process that died without
+// answering, and only its tail, which is where the cause is.
 function stderrTail(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter(Boolean);
   return lines.slice(-2).join(" ").slice(0, 300);
@@ -74,8 +58,8 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
     let child;
     try {
       child = spawn(spec.command, spec.args, {
-        // Home rather than a task worktree: this asks about the ACCOUNT, and a
-        // repo-local config.toml has no business steering it.
+        // Home rather than a task worktree: this asks about the account, and a
+        // repo-local config.toml must not steer it.
         cwd: os.homedir(),
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -94,8 +78,9 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      // Nothing to drain and no shutdown RPC worth waiting on — we have the one
-      // answer we came for, and a lingering app-server would outlive the poll.
+      // Nothing to drain and no shutdown RPC worth waiting on: the one answer
+      // we came for is already in hand, and a lingering app-server would
+      // outlive the poll.
       try {
         child.kill("SIGKILL");
       } catch {
@@ -133,7 +118,7 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
         try {
           msg = JSON.parse(line);
         } catch {
-          continue; // a log line on the wrong stream — not our business
+          continue; // a log line on the wrong stream, unrelated to this protocol
         }
         if (msg.id === INIT_ID) {
           if (msg.error) {
@@ -147,7 +132,7 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
           else finish({ data: msg.result });
           return;
         }
-        // Anything else is an unsolicited notification — ignored.
+        // Anything else is an unsolicited notification, and is ignored.
       }
     });
 

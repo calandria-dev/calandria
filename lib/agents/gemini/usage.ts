@@ -6,11 +6,11 @@ import { estimateCostUsd } from "./pricing";
  * Every counter is optional: the app drives a CLI binary the user installed,
  * which may be older or newer than this driver.
  *
- * Measured verbatim from a real (failed-auth) run under `--output-format json`:
+ * Shape:
  *   "usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,
  *            "cache_read_tokens":0,"total_tokens":0}
- * Note what is ABSENT and what the app therefore cannot report: no
- * cache-write/creation counter, and no cost field of any kind — hence
+ * What is absent, and what the app therefore cannot report: no
+ * cache-write/creation counter, and no cost field of any kind. Hence
  * capabilities.reportsCostUsd = false and the estimate in ./pricing.ts.
  */
 export interface GeminiTokenUsage {
@@ -24,21 +24,21 @@ export interface GeminiTokenUsage {
 /**
  * Normalize and price the token-only usage an `agy` turn reports.
  *
- * The app's contract keeps the input buckets DISJOINT (matching Claude's), so
- * cached reads must not also be counted inside `input_tokens` — otherwise they
- * are double-charged in the task total and inflate the context gauge.
+ * The app's contract keeps the input buckets disjoint (matching Claude's), so
+ * cached reads must not also be counted inside `input_tokens`, or they are
+ * double-charged in the task total and inflate the context gauge.
  *
- * Whether the CLI's `input_tokens` INCLUDES `cache_read_tokens` is decided
- * per-report rather than assumed, because the two conventions are
- * indistinguishable from the field names and getting it wrong is silent: if
- * netting them out would go negative, the counters were already disjoint and
- * are taken at face value. Codex reports the inclusive form, which is why that
- * is the branch tried first.
+ * Whether the CLI's `input_tokens` includes `cache_read_tokens` is decided
+ * per-report instead of assumed, because the two conventions are
+ * indistinguishable from the field names and getting it wrong produces no
+ * visible error: if netting them out would go negative, the counters were
+ * already disjoint and are taken at face value. Codex reports the inclusive
+ * form, which is why that is the branch tried first.
  *
- * `thinking_tokens` folds into output — reasoning bills as output, the same
- * treatment `reasoning_output_tokens` gets on the Codex side. `total_tokens` is
- * the CLI's own sum and is deliberately ignored: the app derives its total from
- * the disjoint buckets, and trusting a sum computed under the other convention
+ * `thinking_tokens` folds into output: reasoning bills as output, the same
+ * treatment `reasoning_output_tokens` gets on the Codex side. `total_tokens`
+ * is the CLI's own sum and is ignored: the app derives its total from the
+ * disjoint buckets, and trusting a sum computed under the other convention
  * would reintroduce the double-count this function exists to remove.
  */
 export function geminiUsage(u: GeminiTokenUsage, model: string, atMs?: number): TurnUsage {
@@ -49,7 +49,7 @@ export function geminiUsage(u: GeminiTokenUsage, model: string, atMs?: number): 
     input_tokens: rawInput >= cacheRead ? rawInput - cacheRead : rawInput,
     output_tokens: Math.max(0, u.output_tokens ?? 0) + Math.max(0, u.thinking_tokens ?? 0),
     cache_read_tokens: cacheRead,
-    // The CLI reports no cache-write counter, so this stays zero rather than
+    // The CLI reports no cache-write counter, so this stays zero instead of
     // guessing. It is priced at the plain input rate if a future CLI adds one.
     cache_creation_tokens: 0,
   };

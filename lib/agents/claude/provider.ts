@@ -1,11 +1,11 @@
 // Which backend Claude Code is configured to talk to, read from the same places
 // Claude Code itself reads. SDK-free by construction (node fs/os/path only), so
-// lib/agents/capabilities.ts can import it without dragging the Agent SDK into
-// the graph — see the poisoning note in that file.
+// lib/agents/capabilities.ts can import it without pulling the Agent SDK into
+// the graph; see the async-propagation note in that file.
 //
-// Calandria never invents provider config of its own: it reads what the CLI will
-// use, so the app and the agent can't disagree about which backend a turn runs
-// on or which model an alias resolves to.
+// Calandria never invents provider config of its own: it reads what the CLI
+// will use, so the app and the agent can't disagree about which backend a turn
+// runs on or which model an alias resolves to.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -24,7 +24,7 @@ function readClaudeSettings(env: Env): { env?: Record<string, unknown> } | null 
   }
 }
 
-/** The env block from ~/.claude/settings.json, stringified — the variables
+/** The env block from ~/.claude/settings.json, stringified: the variables
  *  Claude Code injects into its own session (provider selection, project/region,
  *  model mappings). */
 export function claudeSettingsEnv(env: Env = process.env): Record<string, string> {
@@ -37,12 +37,12 @@ export function claudeSettingsEnv(env: Env = process.env): Record<string, string
 }
 
 // A config value Claude Code would see. The settings.json env block wins over
-// the inherited process env — that ordering is MEASURED, not assumed: exporting
-// ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8 into the process while
-// settings.json said claude-opus-5[1m] still ran claude-opus-5[1m] (CLI
-// 2.1.228). Reading them the other way round would make the picker claim a
-// model the turn won't use. The process env is still the fallback, because
-// container deployments set these in the environment and ship no settings.json.
+// the inherited process env: verified by exporting a different
+// ANTHROPIC_DEFAULT_OPUS_MODEL into the process while settings.json named a
+// different model, and the CLI ran settings.json's choice. Reading them the
+// other way round would make the picker claim a model the turn won't use. The
+// process env is still the fallback, because container deployments set these
+// in the environment and ship no settings.json.
 const effective = (name: string, env: Env): string | null => {
   const v = claudeSettingsEnv(env)[name] ?? env[name];
   return v && v.trim() ? v.trim() : null;
