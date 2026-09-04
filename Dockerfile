@@ -124,7 +124,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # (.github/workflows/pin-drift.yml) watches both npm pins and files an issue at
 # three weeks old or three newer minors, carrying the bump checklist — including
 # the one step no job can take, exercising the agent against a real login.
-ARG CLAUDE_CODE_VERSION=2.1.228
+ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
 ARG AGY_VERSION=1.1.25
 
