@@ -60,7 +60,12 @@ session window resets. Running many parallel sessions burns a plan faster than o
 so check the remaining headroom before dispatching more work. Click it for the full
 breakdown: every window the provider reports (for Claude, including per-model weeks), reset
 times, and data freshness. The pill tints amber at 80% and red at 95% or when a limit is
-reached. Connect both agents and you get a pill each, labelled with the agent it meters.
+reached. Connect both agents and you get a pill each, marked with the agent it meters; the
+mark is the only label, and the tooltip and breakdown name the agent in full.
+
+Settings → Agents carries a switch per metered agent to hide or show its pill. Hiding one
+changes nothing about what the server reads or records, so a second login you only use for
+utility jobs need not spend titlebar space.
 
 Percentages are read conservatively in both cases: only while a tab is open, at most once per
 five minutes (`CALANDRIA_PLAN_USAGE_MIN_FETCH_MS`), backing off on failure and serving the
