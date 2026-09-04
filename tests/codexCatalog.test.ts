@@ -199,3 +199,35 @@ describe("codex catalog: the default model", () => {
     expect(cat.windowOverride).toBeNull();
   });
 });
+
+describe("codex capabilities: the picker's default marker", () => {
+  // The word used to be typed into gpt-5.6-sol's `sub`, so an account whose
+  // catalog ranks something else first was told Sol was the default while every
+  // model-less turn ran the other model, at a different price.
+  const marked = () =>
+    codexCapabilities()
+      .models.filter((m) => m.sub.includes("(default)"))
+      .map((m) => m.value);
+
+  it("marks the entry the catalog's ranking resolves to, not Sol", () => {
+    writeCache([entry("gpt-5.6-sol", { priority: 6 }), entry("gpt-6-astra", { priority: 1 })]);
+    expect(marked()).toEqual(["gpt-6-astra"]);
+  });
+
+  it("follows config.toml's model over the catalog's ranking", () => {
+    writeCache([entry("gpt-6-astra", { priority: 1 })]);
+    writeConfig('model = "gpt-5.4-mini"\n');
+    expect(marked()).toEqual(["gpt-5.4-mini"]);
+  });
+
+  it("marks nothing when the resolved default isn't a model this picker offers", () => {
+    // config.toml can name anything, and a catalog can rank a model that isn't
+    // in the list. Marking a listed entry anyway is the bug this replaced.
+    writeConfig('model = "gpt-6-astra-preview-internal"\n');
+    expect(marked()).toEqual([]);
+  });
+
+  it("marks the constant when ~/.codex says nothing at all", () => {
+    expect(marked()).toEqual([DEFAULT_CODEX_MODEL]);
+  });
+});
