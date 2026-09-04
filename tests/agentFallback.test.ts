@@ -249,6 +249,29 @@ describe("defaultAgentFor (client, connected-first)", () => {
       expect(ids(bundle({ claude: false, codex: false, gemini: false }), "claude")).toEqual(["claude", "codex", "gemini"]);
     });
 
+    // The schedule and runbook agent pickers (app/shell/Schedules.tsx,
+    // app/shell/Runbooks.tsx) render this same list rather than a second
+    // filter, since both mint a task and preflight on "agent connected" — an
+    // unconnected choice there is a schedule that settles every occurrence
+    // `failed`, or a runbook button that fails on press. This is that
+    // contract, named for those two callers so a future edit to pickerAgents
+    // can't forget who else depends on it.
+    it("keeps a saved schedule/runbook agent selected even when it was since signed out", () => {
+      // Editing a schedule or runbook whose saved agent is no longer connected
+      // must still show that agent as the selected <option>, flagged, rather
+      // than silently re-pointing saved automation at a different driver.
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "codex")).toContain("codex");
+    });
+
+    it("excludes an unconnected agent nobody has selected, unlike a raw driver list", () => {
+      // What the old Schedules/Runbooks <select> did: list every registered
+      // driver and suffix "(not connected)" on the dead ones. pickerAgents
+      // drops them instead of merely flagging them.
+      const b = bundle({ claude: true, codex: false, gemini: true });
+      expect(ids(b, "claude")).toEqual(["claude", "gemini"]);
+      expect(ids(b, "claude")).not.toContain("codex");
+    });
+
     it("agrees with agentPickerNeeded about there being a choice", () => {
       // The picker must never render a single button that is already selected,
       // and must never hide while it still had a second entry to offer.
