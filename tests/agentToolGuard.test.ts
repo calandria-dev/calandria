@@ -255,7 +255,11 @@ describe("guardToolHandler's onStart / onSettle hooks", () => {
     expect(started).toBe(4);
     expect(seen.map((s) => s.outcome)).toEqual(["ok", "error", "blank", "timeout"]);
     for (const s of seen) expect(s.ms).toBeGreaterThanOrEqual(0);
-    expect(seen[3].ms).toBeGreaterThanOrEqual(20);
+    // The timeout branch reports how long it waited, not zero. One millisecond
+    // of slack: a Node timer fires on the event loop's millisecond clock while
+    // the guard measures with Date.now(), and the two can disagree by a tick,
+    // so an exact `>= 20` read 19 on CI three times in one night (issue #209).
+    expect(seen[3].ms).toBeGreaterThanOrEqual(19);
   });
 
   it("never lets a throwing observer change the answer", async () => {
