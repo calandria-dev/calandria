@@ -10,6 +10,22 @@ in README's "Name and lineage" section; this changelog only covers Calandria.
 
 ## [0.8.0](https://github.com/calandria-dev/calandria/compare/v0.7.1...v0.8.0) (2026-09-04)
 
+Calandria 0.8.0 puts a LiteLLM gateway on the model-provider seam. Set one base URL and a
+project can route its Claude Code, Codex or Antigravity turns through the proxy, billed to a
+gateway key or forwarded to the CLI's own login, with every turn tagged by project, task and
+agent so LiteLLM's spend views break down by task on their own. The gateway's model catalog
+feeds the pickers, context gauges and price estimates. Opt in to per-task virtual keys and each
+task mints its own budget-capped key, deleted when the task finishes, with the proxy's ledger
+replacing the spend estimate. The gateway's hosted MCP servers mount on any task through the
+permission gate, and a turn that exceeds its budget parks its queue and offers Retry the way a
+dead login does. The desktop shell attaches to a remote instance by URL or through an SSH port
+forward, sums its badge across instances and gains a right-click menu. Claude Code can take
+Calandria's tools over the stdio bridge, every tool call is journaled with a named message when
+the CLI cuts one off, and a PR a session opened by hand is linked back to its task. Codex reads
+its context window and default model from `~/.codex` and offers GPT-6 Astra; the pickers show
+what a Claude alias resolves to, hide agents nobody is signed in to, and each titlebar usage
+tracker can be switched off.
+
 
 ### Features
 
