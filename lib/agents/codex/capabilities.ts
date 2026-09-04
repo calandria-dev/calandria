@@ -142,22 +142,16 @@ export function codexCapabilities(): AgentCapabilities {
     // the portable stdio MCP bridge (scripts/calandria-mcp.mjs), registered per turn
     // by the driver — the same tools the Claude driver mounts in-process.
     supportsMcpTools: true,
-    // …but ONLY those. Unlike a Claude task, a Codex task does not get the MCP
-    // servers from the user's own ~/.codex/config.toml: `codex exec` has no
-    // approver, so their tools are offered to the model and every call comes
-    // straight back as "user cancelled MCP tool call". The driver unmounts them
-    // rather than dangle tools that can't work (lib/agents/codex/mcp.ts, and
-    // CODEX_INHERIT_MCP in lib/config.ts to opt back in). This flag exists so the
-    // asymmetry is visible as data instead of buried in a driver.
-    //
-    // It tracks the escape hatch rather than being a flat `false`: with the env
-    // var set the driver really does mount the user's servers, and Settings
-    // renders this flag verbatim — a hardcoded false would tell that user the
-    // opposite of what their own turns do.
+    // …and, by default, the MCP servers from the user's own ~/.codex/config.toml
+    // as well, the way a Claude task gets ~/.claude's. CODEX_INHERIT_MCP=0
+    // unmounts them per-server (lib/agents/codex/mcp.ts). This flag tracks the
+    // env rather than being a flat `true`: Settings renders it verbatim, and a
+    // hardcoded yes would tell the user who opted out the opposite of what
+    // their own turns do.
     inheritsUserMcpServers: CODEX_INHERIT_MCP,
     userMcpServersNote: CODEX_INHERIT_MCP
-      ? "Mounted because CODEX_INHERIT_MCP is set. Their tools only work on servers where you've set default_tools_approval_mode = \"approve\". codex exec has nobody to ask."
-      : "The MCP servers in your ~/.codex/config.toml are unmounted: codex exec can't approve their tool calls, so every one comes back cancelled. Set CODEX_INHERIT_MCP=1 to mount them anyway.",
+      ? "The MCP servers in your ~/.codex/config.toml are mounted alongside Calandria's bridge. Set CODEX_INHERIT_MCP=0 to keep them off task sessions."
+      : "Unmounted because CODEX_INHERIT_MCP is off: each server in your ~/.codex/config.toml is overridden with enabled = false for task sessions.",
     // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
     // from the flag above, and needs its own caveat for the same reason: codex
     // exec has no approver. It's mounted, with every one of its tools

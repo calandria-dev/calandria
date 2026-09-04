@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { calandriaMcpConfig, gatewayMcpForPermission } from "@/lib/agents/codex/driver";
-import { disableInheritedServers, CALANDRIA_SERVER } from "@/lib/agents/codex/mcp";
+import {
+  disableInheritedServers,
+  inheritedServerOverrides,
+  CALANDRIA_SERVER,
+  DISABLED_STDIO_COMMAND,
+  DISABLED_HTTP_URL,
+} from "@/lib/agents/codex/mcp";
+import { CODEX_INHERIT_MCP } from "@/lib/config";
 import { getCapabilities } from "@/lib/agents/capabilities";
 import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
 import type { Project, Task } from "@/lib/types";
@@ -55,23 +62,35 @@ describe("codex calandria MCP bridge config", () => {
   });
 });
 
-// The agents differ here, on purpose, and the difference is invisible unless
-// something pins it: a Claude task gets the user's own MCP servers, a Codex task
-// gets only the bridge. See lib/agents/codex/mcp.ts for the why (codex exec has
-// no approver, so inherited tools are offered but every call is cancelled —
-// verified live on codex-cli 0.146.0).
-describe("codex does not inherit the user's MCP servers", () => {
-  it("unmounts each of the user's servers alongside the bridge", () => {
-    const cfg = calandriaMcpConfig(project, task, disableInheritedServers(["userthing", "another"])) as Record<string, any>;
-    expect(cfg.mcp_servers.userthing).toEqual({ enabled: false });
-    expect(cfg.mcp_servers.another).toEqual({ enabled: false });
+// The user's own MCP servers are mounted by default (CODEX_INHERIT_MCP on, the
+// same as a Claude task). CODEX_INHERIT_MCP=0 unmounts them per-server, and
+// the override has to carry an inert transport: Codex validates every entry
+// before merging plugin-provided servers and a bare { enabled: false } failed
+// that validation (lib/agents/codex/mcp.ts). tests/codexMcpDisable.test.ts
+// covers the enumeration against a fixture of `codex mcp list --json`.
+describe("codex inherits the user's MCP servers unless opted out", () => {
+  it("overrides each of the user's servers alongside the bridge, with an inert transport", () => {
+    const cfg = calandriaMcpConfig(
+      project,
+      task,
+      disableInheritedServers([
+        { name: "userthing", transport: "stdio" },
+        { name: "another", transport: "streamable_http" },
+      ]),
+    ) as Record<string, any>;
+    expect(cfg.mcp_servers.userthing).toEqual({ enabled: false, command: DISABLED_STDIO_COMMAND });
+    expect(cfg.mcp_servers.another).toEqual({ enabled: false, url: DISABLED_HTTP_URL });
     // …without touching the bridge, which is the whole point of the exercise.
     expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
     expect(cfg.mcp_servers.calandria.default_tools_approval_mode).toBe("approve");
   });
 
   it("never disables the bridge, even if the user has a server by that name", () => {
-    const cfg = calandriaMcpConfig(project, task, disableInheritedServers([CALANDRIA_SERVER])) as Record<string, any>;
+    const cfg = calandriaMcpConfig(
+      project,
+      task,
+      disableInheritedServers([{ name: CALANDRIA_SERVER, transport: "stdio" }]),
+    ) as Record<string, any>;
     expect(cfg.mcp_servers.calandria.enabled).toBeUndefined();
     expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
   });
@@ -79,17 +98,26 @@ describe("codex does not inherit the user's MCP servers", () => {
   it("skips names that aren't safe as a --config dotted-path segment", () => {
     // The SDK builds `mcp_servers.<name>.enabled` by string concatenation with
     // no quoting, so a dotted or spaced name would address the wrong table.
-    // Skipping leaves that server mounted (the pre-existing behavior) instead of
-    // emitting an override that silently means something else.
-    expect(disableInheritedServers(["ok-1", "has.dot", "has space", 'has"quote'])).toEqual({ "ok-1": { enabled: false } });
+    // Skipping leaves that server mounted (the default) instead of emitting an
+    // override that silently means something else.
+    const servers = ["ok-1", "has.dot", "has space", 'has"quote'].map((name) => ({ name, transport: "stdio" as const }));
+    expect(disableInheritedServers(servers)).toEqual({ "ok-1": { enabled: false, command: DISABLED_STDIO_COMMAND } });
   });
 
-  it("is declared in the capability descriptors, both ways", () => {
-    // app/api/agents hands these to the client, so the asymmetry is data rather
+  it("mounts the user's servers by default: no overrides, no subprocess", async () => {
+    // The default is the flag ON, so inheritedServerOverrides returns before
+    // it would enumerate anything. Pinned because this default was once off,
+    // on the wrong belief that codex exec could never call an inherited tool.
+    expect(CODEX_INHERIT_MCP).toBe(true);
+    expect(await inheritedServerOverrides()).toEqual({});
+  });
+
+  it("is declared in the capability descriptors, both agents", () => {
+    // app/api/agents hands these to the client, so the answer is data rather
     // than per-agent knowledge hardcoded in a driver or the UI. Settings →
     // Agents renders both halves verbatim (McpInheritance in SettingsView.tsx),
     // so every driver owes the note as well as the verdict.
-    expect(getCapabilities("codex").inheritsUserMcpServers).toBe(false);
+    expect(getCapabilities("codex").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("claude").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("codex").userMcpServersNote).toContain("CODEX_INHERIT_MCP");
     expect(getCapabilities("claude").userMcpServersNote).toContain("~/.claude");
@@ -103,18 +131,17 @@ describe("codex does not inherit the user's MCP servers", () => {
     expect(getCapabilities("claude").gatewayMcpNote).toBeNull();
   });
 
-  it("tracks CODEX_INHERIT_MCP rather than claiming a flat no", async () => {
-    // With the opt-in set the driver really does mount the user's servers
-    // (inheritedServerOverrides above returns nothing to disable), and the
-    // Settings line is rendered straight from this flag — so a hardcoded false
-    // would tell that user the opposite of what their own turns do. Read at
-    // import time via lib/config, hence the module reset.
-    vi.stubEnv("CODEX_INHERIT_MCP", "1");
+  it("tracks CODEX_INHERIT_MCP rather than claiming a flat yes", async () => {
+    // With the opt-out set the driver really does unmount the user's servers,
+    // and the Settings line is rendered straight from this flag — so a
+    // hardcoded true would tell that user the opposite of what their own turns
+    // do. Read at import time via lib/config, hence the module reset.
+    vi.stubEnv("CODEX_INHERIT_MCP", "0");
     vi.resetModules();
     try {
       const caps = (await import("@/lib/agents/capabilities")).getCapabilities("codex");
-      expect(caps.inheritsUserMcpServers).toBe(true);
-      expect(caps.userMcpServersNote).toContain("default_tools_approval_mode");
+      expect(caps.inheritsUserMcpServers).toBe(false);
+      expect(caps.userMcpServersNote).toContain("Unmounted");
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();

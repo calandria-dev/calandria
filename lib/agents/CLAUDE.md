@@ -514,7 +514,7 @@ carries rate-limit telemetry), so `status` stays null and the data is only as fr
 poll. Each poll is a process spawn, hence the same `PLAN_USAGE_MIN_FETCH_MS` floor and
 single-flight the Claude reader uses, for CPU rather than for a provider's rate limit.
 
-## Agent MCP inheritance is asymmetric
+## Agent MCP inheritance
 
 A **Claude** task session is meant to feel like the user's own `claude` terminal.
 `SETTING_SOURCES` in `claude/driver.ts` is `["user", "project"]`, which gives a session their
@@ -534,27 +534,31 @@ under a name nothing is watching. `tests/claudeSettingSources.test.ts` pins all 
 
 Inheritance grants nothing on its own. Those servers' tools go through `canUseTool` like any
 other call: auto-approved under `bypassPermissions`, classifier-screened under `auto`, a
-permission card otherwise. They're reachable in every mode, which is the substantive difference
-from Codex.
+permission card otherwise.
 
-A **Codex** task gets the Calandria bridge and nothing else, and that isn't free to change. The
+A **Codex** task gets the Calandria bridge plus the user's own servers, by a different route. The
 SDK flattens our `config` into leaf-level `--config mcp_servers.calandria.…` overrides, which
-the CLI merges into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not.
-But `codex exec` has no approver, so their tools are offered to the model and every call returns
-`user cancelled MCP tool call` (verified live on codex-cli 0.146.0). Dangling uncallable tools
-cost context and turns, so `codex/mcp.ts` enumerates them (`codex mcp list --json`, ~30ms,
-best-effort) and unmounts each with `enabled = false`. `default_tools_approval_mode: "approve"`
-stays scoped to our own first-party bridge instead of becoming a global. `CODEX_INHERIT_MCP=1`
-opts back in.
+the CLI merges into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not,
+and `CODEX_INHERIT_MCP` (default on) leaves them mounted. The driver used to unmount them by
+default, on the belief that `codex exec` had no approver and every inherited tool call returned
+`user cancelled MCP tool call` (observed once on codex-cli 0.146.0); Codex tasks do call inherited
+tools, so that default was wrong. `CODEX_INHERIT_MCP=0` is the opt-out: `codex/mcp.ts`
+enumerates the servers (`codex mcp list --json`, ~30ms, best-effort), keeping only each one's
+name and transport TYPE, and overrides each with `enabled = false` plus an inert transport of the
+same kind (`command = "calandria-disabled-mcp-server"` for stdio, `url =
+"https://mcp-disabled.invalid"` for streamable HTTP). The transport is not decoration: Codex
+validates every `mcp_servers` entry before merging plugin-provided definitions, and a bare
+`{ enabled = false }` failed that validation and broke startup for anyone with a plugin server
+(`cua_repl`). The real command, args, env, URL, headers and bearer-token variable are dropped at
+parse time and never reach an override. `default_tools_approval_mode: "approve"` stays scoped to
+our own first-party bridge instead of becoming a global.
 
 Both halves are declared as data on the capability descriptor (`inheritsUserMcpServers`, plus
-the driver's one-line `userMcpServersNote`), so `GET /api/agents` carries the difference instead
-of the UI hardcoding it, and **Settings → Agents states it on each agent's card**
-(`McpInheritance` in `SettingsView.tsx`). "Can this task call my MCP tools" is a reason to pick
-one agent over the other, and it used to be visible only in the API response. Codex's flag is
-`CODEX_INHERIT_MCP` rather than a literal `false` for the same reason: the card renders the
-descriptor verbatim, so a hardcoded no would tell anyone who set the escape hatch the opposite
-of what their turns do.
+the driver's one-line `userMcpServersNote`), so `GET /api/agents` carries the answer instead of
+the UI hardcoding it, and **Settings → Agents states it on each agent's card**
+(`McpInheritance` in `SettingsView.tsx`). Codex's flag is `CODEX_INHERIT_MCP` rather than a
+literal `true` for the same reason: the card renders the descriptor verbatim, so a hardcoded yes
+would tell anyone who opted out the opposite of what their turns do.
 
 ## One-shots isolate capability and inherit config
 

@@ -347,19 +347,18 @@ export const CODEX_APPROVAL_POLICY = (() => {
 
 /**
  * Whether Codex tasks inherit the MCP servers configured in the user's
- * ~/.codex/config.toml, alongside Calandria's own bridge. Off by default,
- * and deliberately asymmetric with the Claude driver (which inherits ~/.claude
- * MCP servers) — see "Agent MCP inheritance is asymmetric" in lib/agents/CLAUDE.md.
+ * ~/.codex/config.toml, alongside Calandria's own bridge. On by default, the
+ * same as the Claude driver (which inherits ~/.claude MCP servers) — see
+ * "Agent MCP inheritance" in lib/agents/CLAUDE.md.
  *
- * The short version: `codex exec` has no approver, so an inherited server's
- * tools are visible to the model but every call comes straight back as
- * `user cancelled MCP tool call` (verified on codex-cli 0.146.0). Mounting them
- * only spends context and turns on tools that cannot work, so the driver
- * disables them per-server. Set to 1/true/on to mount them anyway — the escape
- * hatch for a future CLI that can auto-approve them, or for a user who has set
- * `default_tools_approval_mode = "approve"` on their own servers.
+ * This used to default off, on the belief that `codex exec` had no approver
+ * and every inherited tool call came back as `user cancelled MCP tool call`
+ * (observed once on codex-cli 0.146.0). Codex tasks do call inherited tools,
+ * so the servers stay mounted. Set to 0/false/off to unmount them per-server
+ * instead (lib/agents/codex/mcp.ts), for a user whose own servers should stay
+ * off task sessions.
  */
-export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
+export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
   String(process.env.CODEX_INHERIT_MCP || "").toLowerCase(),
 );
 

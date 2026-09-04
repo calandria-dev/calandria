@@ -108,8 +108,9 @@ delete process.env.CALANDRIA_TURN_IDLE_NUDGE;
 
 // Hermetic agent config: CODEX_INHERIT_MCP is read at import time by
 // lib/config.ts and flips whether the Codex driver unmounts the user's own MCP
-// servers, so a developer who set it in their shell would otherwise invert
-// tests/codexMcpBridge.test.ts. Same reasoning as the credential strip above.
+// servers (default: mounted), so a developer who set it to 0 in their shell
+// would otherwise invert tests/codexMcpBridge.test.ts. Same reasoning as the
+// credential strip above.
 delete process.env.CODEX_INHERIT_MCP;
 
 // Hermetic git: pin all config to a file we control so the suite never depends
