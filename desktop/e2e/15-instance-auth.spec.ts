@@ -177,7 +177,18 @@ test("signing out clears the stored credential", async () => {
   const dialog = await dialogOpened;
   const signOut = dialog.getByRole("button", { name: "Sign out" });
   await signOut.waitFor({ timeout: 15_000 });
-  await signOut.click();
+  // THIS CLICK DESTROYS THE PAGE IT IS ISSUED IN. Resolving the dialog's
+  // injected promise is what closes the modal (`openInstanceDialog` answers
+  // from `closed`, not from the click), so Playwright's post-click wait races
+  // the window teardown and loses on a slow runner — measured green on the dev
+  // pass and red on the packaged one, in the same job, with
+  // "Target page, context or browser has been closed".
+  //
+  // The click is therefore fire-and-forget, and what the test asserts on is the
+  // OUTCOME below: the credential is gone and the window is back on the
+  // sign-in screen. A click that silently failed to land still fails the test,
+  // it just fails on the thing that matters rather than on the teardown.
+  await signOut.click({ noWaitAfter: true }).catch(() => {});
 
   // Sign-out re-attaches the (still active) instance, which finds no
   // credential and lands back on signin.html.
@@ -192,8 +203,21 @@ test("signing out clears the stored credential", async () => {
     .toBe(true);
   shell.win = shell.app.windows().find((p) => p.url().endsWith("/signin.html"))!;
 
-  const creds = JSON.parse(fs.readFileSync(credentialsFile, "utf8"));
-  expect(creds.credentials?.[INSTANCE_ID], "the credential was removed on sign-out").toBeFalsy();
+  // Polled rather than read once: clearing the credential and re-attaching are
+  // two steps of one handler, and the window reaching signin.html does not
+  // promise the file has been rewritten yet.
+  await expect
+    .poll(
+      () => {
+        try {
+          return !!JSON.parse(fs.readFileSync(credentialsFile, "utf8")).credentials?.[INSTANCE_ID];
+        } catch {
+          return false;
+        }
+      },
+      { message: "the credential was removed on sign-out", timeout: 15_000 },
+    )
+    .toBe(false);
 });
 
 /* ---- A `header`-kind instance: no sign-in screen at all ------------------ */
