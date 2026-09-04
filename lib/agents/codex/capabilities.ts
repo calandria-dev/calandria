@@ -11,6 +11,19 @@ import { codexApiKey } from "./auth";
 // Every current preset runs the same 272k window, so unlike Claude there's no
 // per-model variation here — but keep it per-entry anyway: this descriptor is
 // what drives the context gauge, and a future preset may differ.
+//
+// 272k is the SERVED default, not a ceiling, and the distinction is the whole
+// reason this stays a constant. `~/.codex/models_cache.json` (the catalog the
+// CLI fetches per account) carries both numbers per slug: `context_window`,
+// which is what a turn actually gets, and `max_context_window`, the most the
+// account may raise it to via `model_context_window` in ~/.codex/config.toml.
+// Checked against a 0.153.0 cache: `context_window` is 272000 for all nine
+// entries — Astra included — while `max_context_window` varies (872k for
+// Astra/Sol/Terra/Luna, 272k for 5.5 and 5.4-mini, 1M for 5.4). So the gauge is
+// right by default and would stay 272k even if we parsed the file; reading
+// `max_context_window` instead would over-report every task that never raised
+// the override. Parsing it only starts paying when we also read config.toml, at
+// which point the gauge tracks a per-user knob — worth doing, not done here.
 const CTX = 272_000;
 
 export const CODEX_CAPABILITIES: AgentCapabilities = {
@@ -34,7 +47,26 @@ export const CODEX_CAPABILITIES: AgentCapabilities = {
   // 400 with "not supported when using Codex with a ChatGPT account" (both were
   // listed here before), while gpt-5.4 / gpt-5.4-mini still run despite the
   // embedded catalog flagging them for migration to Terra / Luna.
+  //
+  // gpt-6-astra (released 2026-09-03) was verified that way on codex-cli
+  // 0.153.0 before being listed here: it answers on a ChatGPT-plan login, while
+  // the bare `gpt-6` alias 400s with the familiar "not supported when using
+  // Codex with a ChatGPT account" — so only the full slug belongs in this list.
+  // Astra also sets a CLI FLOOR, which is why the @openai/codex-sdk pin moved
+  // with this entry. The reasonable-sounding guess — that the embedded catalog
+  // is only a stale fallback, so an older CLI would still fetch Astra's real
+  // metadata per account — was tested and is wrong. On 0.146.0 an Astra turn
+  // warns "Defaulting to fallback metadata; this can degrade performance and
+  // cause issues" AND then fails outright with "model requires a newer version
+  // of codex". So the model line is not purely server-side: a new model can
+  // need CLI support, and offering one the pinned binary can't run is the
+  // stale-entry failure from the other direction. When adding a model here,
+  // verify on the version this repo PINS, not just on whatever is installed
+  // locally — and if it needs a newer one, move `@openai/codex-sdk` in
+  // package.json and CODEX_VERSION in the Dockerfile together, since the SDK
+  // exact-pins the CLI it speaks JSONL to.
   models: [
+    { value: "gpt-6-astra", label: "GPT-6 Astra", sub: "most capable model for complex, demanding work", contextWindow: CTX, group: "Latest" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "latest frontier agentic coding model (default)", contextWindow: CTX, group: "Latest" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", sub: "balanced agentic coding for everyday work", contextWindow: CTX, group: "Latest" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", sub: "fast and affordable agentic coding", contextWindow: CTX, group: "Latest" },

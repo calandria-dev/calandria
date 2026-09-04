@@ -125,7 +125,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # three weeks old or three newer minors, carrying the bump checklist — including
 # the one step no job can take, exercising the agent against a real login.
 ARG CLAUDE_CODE_VERSION=2.1.228
-ARG CODEX_VERSION=0.146.0
+ARG CODEX_VERSION=0.153.0
 ARG AGY_VERSION=1.1.25
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
@@ -147,6 +147,12 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claud
 # compares this ARG against package.json and the lockfile, which is also why
 # @openai/codex-sdk is pinned exactly there: a caret let `npm install` float the
 # SDK a patch and desynchronize it from this line with nothing to notice.
+#
+# One consequence for the model catalog, since the floor above is easy to miss
+# from a dev machine: verify a new entry in lib/agents/codex/capabilities.ts
+# against THIS pin, not against whatever codex a developer happens to have
+# installed locally. Astra was confirmed working on 0.153.0 and listed while
+# this ARG still read 0.146.0 — the same skew, arriving through the catalog.
 RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 
 # The `agy` CLI (Antigravity — the Gemini agent driver spawns it directly; there

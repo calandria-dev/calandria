@@ -181,6 +181,15 @@ describe("codex cost estimation", () => {
     expect(estimateCostUsd("gpt-5.6", usage)).toBeCloseTo(estimateCostUsd("gpt-5.6-sol", usage), 10);
   });
 
+  it("prices gpt-6-astra off its own row, not the default-family fallback", () => {
+    // Astra $10/$1/$50 per 1M. It shares no prefix with any gpt-5 row, so with
+    // no row of its own it would take the unknown-model fallback and read as
+    // Sol — 6.2 against a true 11.4, i.e. half price. Standard rates: Fast mode
+    // doubles them and the usage payload doesn't say which one served the turn.
+    expect(estimateCostUsd("gpt-6-astra", usage)).toBeCloseTo(11.4, 10); // 6.0 + 0.4 + 5.0
+    expect(estimateCostUsd("gpt-6-astra", usage)).not.toBeCloseTo(estimateCostUsd(DEFAULT_CODEX_MODEL, usage), 10);
+  });
+
   it("has a real price row for every model the picker offers", () => {
     // Guards the drift that makes an estimate silently wrong: a new picker entry
     // with no row of its own falls through to the bare "gpt-5" catch-all and
