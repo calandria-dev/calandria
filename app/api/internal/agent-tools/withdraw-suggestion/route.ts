@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { withdrawSuggestionForAgent } from "@/lib/agentTools";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("withdraw_suggestion", "bridge", body.taskId);
 
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });

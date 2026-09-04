@@ -70,10 +70,14 @@ import {
   BACKGROUND_LINGER_ENABLED,
   BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
+  CLAUDE_DEBUG_DIR,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
-import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolInterruptedMessage } from "../../agentToolGuard.mjs";
+import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolCutoffNotice, toolInterruptedMessage } from "../../agentToolGuard.mjs";
+import { logAgentToolArrival, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
+import fs from "node:fs";
+import path from "node:path";
 import { createLogger } from "../../log.mjs";
 import { interactionDenied, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { isUsageLimit } from "../../usageLimit";
@@ -289,8 +293,38 @@ const TEXT_ONE_SHOT = {
  * assignable from any handler's, so this constraint accepts the heterogeneous
  * array without widening any tool to `any`.
  */
-function guardTools<T extends { name: string; handler: (args: never, extra: never) => Promise<unknown> }>(tools: T[]): T[] {
-  return tools.map((t) => ({ ...t, handler: guardToolHandler(t.name, t.handler, { timeoutMs: AGENT_TOOL_TIMEOUT_MS }) }) as T);
+// Where this turn's CLI debug log goes when CALANDRIA_CLAUDE_DEBUG_DIR is set:
+// one file per turn, named so the journal's `turn start` line finds it. The
+// failure lib/agentToolGuard.mjs describes happens ABOVE Calandria's seam, so
+// the CLI's debug log — its MCP traffic included — is the only record of what
+// it did with a call Calandria never received. Off (undefined) by default.
+function claudeDebugFile(task: Task): string | undefined {
+  if (!CLAUDE_DEBUG_DIR) return undefined;
+  try {
+    fs.mkdirSync(CLAUDE_DEBUG_DIR, { recursive: true });
+  } catch (e) {
+    log.warn("claude debug dir unavailable; not writing a CLI debug log", { task: task.id, dir: CLAUDE_DEBUG_DIR, error: String(e) });
+    return undefined;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return path.join(CLAUDE_DEBUG_DIR, `${task.id}-g${task.generation}-${stamp}.log`);
+}
+
+function guardTools<T extends { name: string; handler: (args: never, extra: never) => Promise<unknown> }>(taskId: string, tools: T[]): T[] {
+  return tools.map(
+    (t) =>
+      ({
+        ...t,
+        handler: guardToolHandler(t.name, t.handler, {
+          timeoutMs: AGENT_TOOL_TIMEOUT_MS,
+          // The server-side record that the call ARRIVED, and how it settled.
+          // A call the CLI cut off never gets here, which is the point: the
+          // stream pump's warning without this line is the whole diagnosis.
+          onStart: () => logAgentToolArrival(t.name, "in-process", taskId),
+          onSettle: (outcome: AgentToolOutcome, ms: number) => logAgentToolOutcome(t.name, "in-process", outcome, ms, taskId),
+        }),
+      }) as T,
+  );
 }
 
 function calandriaServer(
@@ -312,7 +346,7 @@ function calandriaServer(
   return createSdkMcpServer({
     name: "calandria",
     version: "1.0.0",
-    tools: guardTools([
+    tools: guardTools(task.id, [
       tool(
         EXPOSE_SERVICE.name,
         EXPOSE_SERVICE.description,
@@ -681,6 +715,10 @@ async function* runTurn(
   // answer one of these itself without the call ever reaching a handler, and
   // this is the only place that is visible (see lib/agentToolGuard.mjs).
   const calandriaCalls = new Map<string, string>();
+  // How many of those the CLI answered itself this turn. The runner puts it
+  // on the `turn ok` line, so a turn whose Calandria calls all failed is
+  // findable by one field instead of by the per-call warnings above it.
+  let toolCutoffs = 0;
   // tool_use ids whose tool_result has streamed. A task_notification for a
   // call NOT yet in here is a foreground completion — the CLI announces
   // every Bash/Agent task it registers (measured on 2.1.240: task_started +
@@ -1038,6 +1076,7 @@ async function* runTurn(
   // commands against it, and the menu's cache is keyed by exactly this cwd.
   const cwd = sessionCwd(task, project);
 
+  const debugFile = claudeDebugFile(task);
   const response = query({
     prompt: promptStream(),
     options: {
@@ -1058,6 +1097,16 @@ async function* runTurn(
       // Permission mode (default bypassPermissions; "plan" proposes without editing).
       permissionMode,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
+      // The CLI's own stderr, labelled with the task. Headless it is quiet
+      // except for what went wrong (a server that failed to connect, a hook
+      // that died), which is exactly what a turn's journal is missing today.
+      stderr: (data: string) => {
+        const text = data.trim();
+        if (text) log.warn("claude cli stderr", { task: task.id, text: text.slice(0, 2000) });
+      },
+      // Opt-in per-turn CLI debug log (its MCP traffic included) — the record
+      // of what the CLI did with a call Calandria never received.
+      ...(debugFile ? { debugFile } : {}),
       mcpServers: {
         calandria: calandriaServer(
           project,
@@ -1345,13 +1394,21 @@ async function* runTurn(
                 // otherwise a turn whose Calandria calls all failed still
                 // reports `turn ok` with nothing in the journal to find it by.
                 const cut = calandriaCalls.get(b.tool_use_id);
-                if (cut && isCliInterruptedToolResult(raw)) {
+                const cutOff = !!cut && isCliInterruptedToolResult(raw);
+                if (cut && cutOff) {
+                  toolCutoffs++;
                   log.warn("agent tool call cut off before Calandria answered", {
                     task: task.id,
                     tool: cut,
                     tool_use_id: b.tool_use_id,
+                    count: toolCutoffs,
                   });
                   raw = toolInterruptedMessage(cut);
+                  // Tell the person watching, once per turn: the model is
+                  // holding the CLI's sentence and can't be corrected from
+                  // here, but the user can start the fresh session that is
+                  // measured to work (lib/agentToolGuard.mjs, toolCutoffNotice).
+                  if (toolCutoffs === 1) queue.push({ type: "notice", content: toolCutoffNotice(cut) });
                 }
                 const kind = resultKinds.get(b.tool_use_id);
                 // Summarize from the raw (pre-clip) output so counts are exact.
@@ -1362,7 +1419,7 @@ async function* runTurn(
                 // under a red ✗ with nothing to explain the ✗.
                 const peek = b.is_error ? summarizeFailure(raw) : kind ? summarizeResult(kind, raw) : undefined;
                 const content = b.is_error ? clipKeepTail(raw, 6000) : clip(raw, 6000);
-                queue.push({ type: "tool_result", id: b.tool_use_id, content, isError: !!b.is_error, peek });
+                queue.push({ type: "tool_result", id: b.tool_use_id, content, isError: !!b.is_error, peek, ...(cutOff ? { cutOff: true } : {}) });
               }
             }
           }

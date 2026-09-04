@@ -3,6 +3,7 @@ import { getProject } from "@/lib/store";
 import { createSuggestedTask, resolveTargetProject } from "@/lib/agentTools";
 import { publish } from "@/lib/events";
 import { attachSuggestionToCall } from "@/lib/suggestionCard";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 import type { Priority } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("suggest_task", "bridge", body.taskId);
 
   const callingProject = body.projectId ? getProject(body.projectId) : undefined;
   if (!callingProject) return NextResponse.json({ error: "unknown project" }, { status: 404 });

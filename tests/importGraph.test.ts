@@ -40,6 +40,7 @@ const PINNED = [
   "lib/modelEndpoint.ts",
   "lib/gatewayHealth.ts", //     what models a local endpoint reports; fetch + agentEnv + config, and GET /api/agents probes it on every load
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
+  "lib/agentToolLog.ts", //      the arrival/settle log line every agent-tool call gets; log.mjs only, no driving
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving

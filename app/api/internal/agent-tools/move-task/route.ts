@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { moveTasksForAgent } from "@/lib/agentTools";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("move_task", "bridge", body.taskId);
 
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });

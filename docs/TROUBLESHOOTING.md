@@ -72,6 +72,17 @@ docker logs calandria-alice 2>&1 | jq -rc 'select(.msg=="turn ok") | [.task,.cos
 docker logs calandria-alice 2>&1 | jq -c 'select(.level=="error")'
 ```
 
+Calandria's own agent tools (`suggest_task`, `create_pr` and the rest) log too, under
+`[agent-tools]`: `agent tool call received` the moment a call reaches the server, and
+`agent tool call settled` with `outcome=` (`ok`, `error`, `timeout`, `blank`) and `ms=` when it
+answers, each carrying `tool=`, `task=` and `transport=` (`in-process` for a Claude session,
+`bridge` for the stdio bridge Codex uses). A call the Claude CLI answered itself, which never
+reaches Calandria, shows instead as `[claude] agent tool call cut off before Calandria answered`,
+and the turn's `ok` line then carries `tool_cutoffs=N`. So "did the session's `create_pr` land?"
+is: a `received` line means it did reach the server, a `cut off` line with no `received` line
+means it never did. `CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for the
+latter case.
+
 ## Common boot failures
 
 **Numeric env var warnings.** A handful of env vars (ports, buffer sizes) are parsed as plain

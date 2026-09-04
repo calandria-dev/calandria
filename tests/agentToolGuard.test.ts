@@ -19,6 +19,7 @@ import {
   isCliInterruptedToolResult,
   isCalandriaToolName,
   toolInterruptedMessage,
+  toolCutoffNotice,
 } from "@/lib/agentToolGuard.mjs";
 
 /** The shape every guarded answer has to have, whatever went wrong. */
@@ -217,5 +218,60 @@ describe("the CLI's own interrupted tool result", () => {
     // not ours to say — the instruction is to go and look.
     expect(msg).toMatch(/may or may not/);
     expect(msg).not.toMatch(/nothing was done/);
+  });
+
+  it("tells the user what is measured to help, and names the tool", () => {
+    const msg = toolCutoffNotice("mcp__calandria__suggest_task");
+    expect(msg).toContain("mcp__calandria__suggest_task");
+    // The recovery a person can actually perform: a fresh session.
+    expect(msg).toContain("/clear");
+    // And the user-facing line must not be mistaken for the CLI's own.
+    expect(isCliInterruptedToolResult(msg)).toBe(false);
+  });
+});
+
+/* The observation hooks: where the server-side record of a call is written
+ * (lib/agentToolLog.ts). They observe, and can never become a fourth way for
+ * a call to fail. */
+describe("guardToolHandler's onStart / onSettle hooks", () => {
+  it("reports arrival, then each of the four outcomes with a duration", async () => {
+    const seen: { outcome: string; ms: number }[] = [];
+    let started = 0;
+    const opts = (timeoutMs?: number) => ({
+      timeoutMs,
+      onStart: () => {
+        started++;
+      },
+      onSettle: (outcome: string, ms: number) => {
+        seen.push({ outcome, ms });
+      },
+    });
+    await guardToolHandler("t", async () => ok("fine"), opts())({});
+    await guardToolHandler("t", async () => {
+      throw new Error("boom");
+    }, opts())({});
+    await guardToolHandler("t", async () => ({ content: [] }), opts())({});
+    await guardToolHandler("t", () => new Promise(() => {}), opts(20))({});
+    expect(started).toBe(4);
+    expect(seen.map((s) => s.outcome)).toEqual(["ok", "error", "blank", "timeout"]);
+    for (const s of seen) expect(s.ms).toBeGreaterThanOrEqual(0);
+    expect(seen[3].ms).toBeGreaterThanOrEqual(20);
+  });
+
+  it("never lets a throwing observer change the answer", async () => {
+    const guarded = guardToolHandler("t", async () => ok("fine"), {
+      onStart: () => {
+        throw new Error("observer down");
+      },
+      onSettle: () => {
+        throw new Error("observer down");
+      },
+    });
+    expect(await guarded({})).toEqual(ok("fine"));
+  });
+
+  it("is optional: a handler guarded without hooks is guarded as before", async () => {
+    expect(await guardToolHandler("t", async () => ok("fine"))({})).toEqual(ok("fine"));
+    expectLoudFailure(await guardToolHandler("t", async () => ({ content: [] }))({}), "t");
   });
 });

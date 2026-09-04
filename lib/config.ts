@@ -195,6 +195,17 @@ export const PERMISSION_UNATTENDED_MS = ms(readEnv("CALANDRIA_PERMISSION_UNATTEN
 export const AGENT_TOOL_TIMEOUT_MS = ms(readEnv("CALANDRIA_AGENT_TOOL_TIMEOUT_MS"), DEFAULT_AGENT_TOOL_TIMEOUT_MS);
 
 /**
+ * Directory for per-turn Claude CLI debug logs (the CLI's `--debug-file`), one
+ * file per turn named `<task>-g<generation>-<timestamp>.log`. Empty (the
+ * default) writes none. The one diagnostic for a Calandria tool call the CLI
+ * answers itself (lib/agentToolGuard.mjs): that failure happens above the seam
+ * every server-side record sits on, so only the CLI's own log says what it
+ * did. Verbose and never pruned; turn it on to catch the next occurrence, off
+ * once caught.
+ */
+export const CLAUDE_DEBUG_DIR = (readEnv("CALANDRIA_CLAUDE_DEBUG_DIR") || "").trim();
+
+/**
  * Master switch for background linger. Each Claude turn is one SDK query
  * whose CLI process owns both the run_in_background children and the
  * in-memory task registry that promises "you'll be notified when it
