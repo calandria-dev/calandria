@@ -1,10 +1,11 @@
-// Claude Code's capability descriptor — what the agent can do, as data
-// (rendered into the UI's pickers via GET /api/agents). Split out of driver.ts
-// so it can be read without importing the Agent SDK: serverExternalPackages
-// make the SDK an async external under Turbopack, and that async-ness poisons
-// every transitive importer (see lib/agents/capabilities.ts). A task row's
-// null model/reasoning/permission means "inherit the driver default", so the
-// lists carry only explicit choices.
+// Claude Code's capability descriptor: what the agent can do, as data,
+// rendered into the UI's pickers via GET /api/agents. It is split out of
+// driver.ts so it can be read without importing the Agent SDK.
+// serverExternalPackages makes the SDK an async external under Turbopack, and
+// that async-ness propagates to every transitive importer (see
+// lib/agents/capabilities.ts). A task row's null model/reasoning/permission
+// means "inherit the driver default", so the lists carry only explicit
+// choices.
 
 import type { AgentCapabilities, AgentModelOption } from "../types";
 import { BACKGROUND_LINGER_ENABLED } from "../../config";
@@ -14,52 +15,44 @@ import { gatewayBaseUrl, isGatewayEndpoint } from "../../agentEnv";
 import { gatewayModelOptions, lastGatewayModelCatalog } from "../../gatewayModels";
 
 // Every value below is a string `claude --model` accepts: a family alias
-// ("opus" → the current Opus), a `[1m]` variant (the 1M-context beta of that
-// family), or a full model id for a pinned older version. The internal picker
-// ids the CLI's own /model menu uses ("opus48", "sonnet46") are NOT accepted by
-// --model — it 404s on them — so pins are spelled as full ids.
+// ("opus" resolves to the current Opus), a `[1m]` variant (the 1M-context beta
+// of that family), or a full model id for a pinned older version. The internal
+// picker ids the CLI's own /model menu uses ("opus48", "sonnet46") are not
+// accepted by --model, so pins are spelled as full ids.
 //
-// A PIN'S label names its version, because it pins one. An ALIAS's must not,
-// for the same reason `vertexModels()` below strips it (f82f66d): an alias is
-// resolved by the INSTALLED CLI at turn time, so any version in the label is a
-// guess about what that CLI will pick. The guess was measurably wrong — on CLI
-// 2.1.257 `fable` resolves to `claude-fable-5-1` while this row read "Fable 5",
-// and every alias breaks the same way the next time a family moves. So aliases
-// read "(latest)" and the version is reported where it is KNOWN rather than
-// guessed: `modelLabel()` parses it out of the id a turn actually billed, so
-// the picker offers "Fable (latest)" and the badge says "Fable 5.1".
+// A pin's label names its version, because it pins one. An alias's label must
+// not: an alias is resolved by the installed CLI at turn time, so a version in
+// the label would be a guess about what that CLI picks, and the guess goes
+// stale the next time a family moves. Aliases read "(latest)" instead, and
+// `modelLabel()` parses the actual version out of the id a turn billed, so the
+// picker offers "Fable (latest)" and the badge reports "Fable 5.1".
 //
-// The resolution IS readable locally, and `subscriptionModels()` below now
-// reports it: ./modelProbe.ts asks the installed CLI once per CLI version, out
-// of band, and leaves the answer in ./modelIds.ts for this synchronous
-// descriptor to read. Until it does — no probe yet, no `claude` on PATH, the
-// probe turned off — the rows below stand exactly as written, which is why the
-// static subtitles are still worth having.
+// The resolution is readable locally: ./modelProbe.ts asks the installed CLI
+// once per CLI version, out of band, and leaves the answer in ./modelIds.ts for
+// this synchronous descriptor to read via `subscriptionModels()` below. Until a
+// probe has run, or when there is no `claude` on PATH or the probe is off, the
+// rows below stand exactly as written, which is why the static subtitles are
+// worth keeping.
 //
 // contextWindow is the window Claude Code actually runs, not the model's API
 // maximum: a bare family alias runs the standard 200k window and the `[1m]`
-// variant opts into the 1M beta. It is the same kind of guess as the label was,
-// and the probe is what settles it — on a resolution, windowFor() reads the
-// window off the id rather than off this row. Fable is the exception — it's 1M
-// natively (measured: a `fable` turn reports contextWindow 1000000), so there's
-// no variant to list; `fable[1m]` is accepted and resolves to the `[1m]`
-// spelling of the same model, but buys nothing.
+// variant opts into the 1M beta. windowFor() reads the window off a resolved id
+// rather than off this row once a resolution exists. Fable is the exception: it
+// is 1M natively, so there is no variant to list. `fable[1m]` is accepted and
+// resolves to the `[1m]` spelling of the same model, but changes nothing.
 const K200 = 200_000;
 const M1 = 1_000_000;
 
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   models: [
-    // Pinned ahead of the alias because the alias MAY not reach it, and you
-    // can't tell by looking: `fable` resolves through the installed CLI's own
-    // catalog, so a CLI that predates 5.1 resolves it to `claude-fable-5`
-    // (measured: `--model fable` billed `claude-fable-5` on 2.1.252) while a
-    // newer one resolves it to `claude-fable-5-1` (measured on 2.1.257). The
-    // pin is the way to say which you meant either way — and it is the reason
-    // the alias row below can't be labelled with a version. Such an id makes
-    // the CLI log `[claude-code:unrecognized_model]` and then pass it through
-    // unchanged, so the turn runs and bills as `claude-fable-5-1`; a genuinely
-    // bogus id (probed `claude-fable-6`) errors instead, which is what makes
-    // that a pass-through rather than a fallback.
+    // Pinned ahead of the alias because the alias may not reach it: `fable`
+    // resolves through the installed CLI's own catalog, so an older CLI can
+    // resolve it to an earlier Fable version than this pin names. The pin says
+    // which version you meant regardless of what the installed CLI knows. An id
+    // the CLI doesn't recognize logs `[claude-code:unrecognized_model]` and
+    // passes through unchanged, so the turn still runs and bills under that id;
+    // a genuinely bogus id errors instead, which is what makes an unrecognized
+    // pin a pass-through rather than a silent fallback.
     { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "opus", label: "Opus (latest)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
@@ -76,57 +69,50 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "claude-opus-4-7", label: "Opus 4.7", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-4-6", label: "Opus 4.6", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
   ],
-  // Claude's own extended-thinking vocabulary — the think / think hard /
-  // ultrathink keywords the CLI honors in a prompt — so these labels are already
+  // Claude's own extended-thinking vocabulary: the think / think hard /
+  // ultrathink keywords the CLI honors in a prompt, so these labels are already
   // provider-native. The values double as the cross-agent preset keys other
-  // drivers map from (codex: EFFORT in codex/driver.ts), which is why they stay
-  // spelled this way even where a driver's labels differ.
+  // drivers map from (codex: EFFORT in codex/driver.ts), so they stay spelled
+  // this way even where a driver's labels differ.
   reasoningOptions: [
     { value: "off", label: "Off", sub: "no extended thinking" },
     { value: "think", label: "Think", sub: "light reasoning" },
     { value: "think_hard", label: "Think hard", sub: "deeper reasoning" },
     { value: "ultrathink", label: "Ultrathink", sub: "maximum reasoning" },
   ],
-  // Ordered most autonomous → least. Each value is passed through to the CLI's
+  // Ordered most autonomous to least. Each value is passed through to the CLI's
   // `--permission-mode` verbatim (the SDK forwards the string unchanged), and
-  // all five are accepted by CLI 2.1.x. The list is the single source of truth
-  // for what the driver honors — permissionModeFor() in driver.ts is pinned
+  // all five are accepted by CLI 2.1.x. This list is the single source of truth
+  // for what the driver honors: permissionModeFor() in driver.ts is pinned
   // against it by tests/claudePermissionMode.test.ts, so a mode can never be
-  // offered here and silently coerced to something else at run time.
+  // offered here and coerced to something else at run time.
   //
-  // The subs describe what actually happens now that canUseTool is a real gate
+  // The subs describe what happens now that canUseTool is a real gate
   // (lib/permissions.ts): anything a mode doesn't auto-approve parks the turn on
-  // a permission card. bypassPermissions is the one mode that never consults the
+  // a permission card. bypassPermissions is the one mode that never reaches the
   // gate.
   //
-  // Labels are Anthropic's own spellings — the exact strings `--permission-mode`
-  // takes and the docs use — rather than an app-invented vocabulary, so a Claude
+  // Labels are Anthropic's own spellings, the exact strings `--permission-mode`
+  // takes and the docs use, rather than an app-invented vocabulary, so a Claude
   // Code user sees the modes they already know. The plain-English behavior lives
-  // in the sub. (Codex's descriptor does the same with OpenAI's sandbox/approval
-  // terms; each driver speaks its provider's language, which is the point of the
-  // labels living on the descriptor at all.) "auto" is the one entry Anthropic's
-  // docs don't list — it's the CLI's classifier mode, spelled the way the CLI
-  // accepts it.
+  // in the sub. Codex's descriptor does the same with OpenAI's sandbox/approval
+  // terms; each driver speaks its provider's language. "auto" is the one entry
+  // Anthropic's docs don't list: it's the CLI's classifier mode, spelled the way
+  // the CLI accepts it.
   //
   // The SDK also defines "dontAsk" (deny anything not pre-approved, without
-  // prompting). It stays OFF — decided again, against the live CLI, once
-  // denials started rendering as real settled cards and the old objection
-  // ("it denies without raising a card") stopped applying.
+  // prompting). It stays off: dontAsk never calls canUseTool at all. Verified
+  // against claude-cli 2.1.x: under dontAsk, `echo hello` ran and `rm -f …` was
+  // refused with decision_reason_type "mode", and the callback was not invoked
+  // either time. So the entire gate in lib/permissions.ts is inert under it: the
+  // read-only allowlist, the project's remembered `permission_rules`, the card.
+  // "Pre-approved" means the CLI's own allow rules in the user's ~/.claude
+  // settings, which Calandria does not write.
   //
-  // The reason it stays off is bigger than the rendering: **dontAsk never calls
-  // canUseTool at all.** Verified against claude-cli 2.1.x — under dontAsk,
-  // `echo hello` ran and `rm -f …` was refused with decision_reason_type
-  // "mode", and the callback was not invoked once either time. So the entire
-  // gate in lib/permissions.ts is inert: the read-only allowlist, the project's
-  // remembered `permission_rules`, the card. "Pre-approved" means the CLI's own
-  // allow rules in the user's ~/.claude settings, which Calandria does
-  // not write and should not start writing behind their back.
-  //
-  // Which leaves nothing for it to be. "Deny unless I have already allowed it"
-  // is already "default" plus remembered rules — and that one can also
-  // ask, records what it grants where Settings can revoke it, and auto-denies
-  // when nobody is watching. dontAsk would offer strictly less control while
-  // reading like more, which is the worst thing a permission mode can do.
+  // "Deny unless I have already allowed it" is already what "default" plus
+  // remembered rules does, and that combination can also ask, records what it
+  // grants where Settings can revoke it, and auto-denies when nobody is
+  // watching. dontAsk offers strictly less control while reading like more.
   permissionModes: [
     { value: "bypassPermissions", label: "bypassPermissions", sub: "never asks, bypasses every permission check" },
     { value: "auto", label: "auto", sub: "a model screens each call; risky ones ask you (the app's default)" },
@@ -136,25 +122,25 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   ],
   supportsAsks: true,
   supportsMcpTools: true,
-  // A task session loads the user's own ~/.claude configuration — settings, MCP
-  // servers, plugins, skills, CLAUDE.md — because the driver pins settingSources
-  // to ["user", "project"] (see SETTING_SOURCES in ./driver.ts; 'local' is
-  // deliberately excluded — it's worktree-writable and gitignored, so it never
-  // surfaces in the diff a task's changes get reviewed through).
-  // Their tools are then gated like any other: auto-approved under
+  // A task session loads the user's own ~/.claude configuration: settings, MCP
+  // servers, plugins, skills, CLAUDE.md, because the driver pins settingSources
+  // to ["user", "project"] (see SETTING_SOURCES in ./driver.ts). 'local' is
+  // excluded because it's worktree-writable and gitignored, so it never surfaces
+  // in the diff a task's changes get reviewed through.
+  // Inherited tools are gated like any other: auto-approved under
   // bypassPermissions, classifier-screened under the "auto" default, a
-  // permission card otherwise —
-  // reachable in every mode, which is what makes this differ from Codex, where
-  // an inherited tool call can never succeed. lib/agents/CLAUDE.md compares them.
+  // permission card otherwise. They're reachable in every mode, which is what
+  // differs from Codex, where an inherited tool call can never succeed.
+  // lib/agents/CLAUDE.md compares them.
   inheritsUserMcpServers: true,
   userMcpServersNote: "A task can call the tools from your ~/.claude MCP servers, alongside Calandria's own.",
   // Mounted the same way Calandria's own MCP server is: no per-driver caveat.
   gatewayMcpNote: null,
   // The driver holds the session open past the result while run_in_background
-  // work runs (streaming-input linger — see driver.ts). Off when the operator
-  // disabled the feature (CALANDRIA_BACKGROUND_LINGER=off), and then
-  // buildProjectContext re-warns the model that backgrounded commands die at
-  // turn end.
+  // work runs (streaming-input linger, see driver.ts). Off when the operator
+  // disabled the feature (CALANDRIA_BACKGROUND_LINGER=off), in which case
+  // buildProjectContext warns the model that backgrounded commands die at turn
+  // end.
   backgroundTasksLinger: BACKGROUND_LINGER_ENABLED,
   // The Agent tool, with the user's own subagent types on top of the built-in
   // ones (settingSources pulls ~/.claude/agents in). buildProjectContext tells
@@ -174,41 +160,27 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
 
 // ---------- Vertex ----------
 //
-// Unlike the Bedrock case, the catalog above is very nearly RIGHT on Vertex, so
-// this is a set of corrections rather than a replacement list. That's a finding,
-// not an assumption: every entry was probed with a one-shot `claude -p --model
-// <value>` against Vertex project example-vertex-project (region global,
-// CLI 2.1.228), reading the resolved id back out of the run's `modelUsage`.
-// 13 of the 14 ran. Two things came out of it, and only two things change here.
+// The catalog above is nearly correct on Vertex, so this is a set of
+// corrections rather than a replacement list. Two things differ:
 //
-// 1. THE "PINNED VERSIONS" GROUP IS FINE. The suspicion going in was that
-//    Vertex needs an `@version` suffix (ANTHROPIC_DEFAULT_HAIKU_MODEL on this
-//    machine is `claude-haiku-4-5@20251001`), so bare ids like
-//    `claude-opus-4-8` would 404. They don't. All four bare pins and both
-//    `[1m]` pins ran, and a direct rawPredict to the Vertex REST endpoint
-//    returns 200 for bare `claude-opus-4-8`/`claude-sonnet-4-6`/
-//    `claude-opus-4-7`/`claude-opus-4-6`. `@version` is an optional pin on
-//    Vertex, not the required spelling — so the pinned group is left alone.
+// 1. The "Pinned versions" group is unchanged. Bare ids like `claude-opus-4-8`
+//    resolve fine on Vertex; `@version` is an optional pin there, not a
+//    required spelling.
+// 2. The family aliases carry the wrong context window. A bare alias resolves
+//    through ANTHROPIC_DEFAULT_*_MODEL, and a mapping can carry `[1m]` (a 1M
+//    window where the static catalog says 200k). contextWindow feeds the
+//    context gauge and the overflow notice, so the aliases below take their
+//    window and subtitle from the id the mapping actually resolves to.
 //
-// 2. THE FAMILY ALIASES CARRY THE WRONG CONTEXT WINDOW. A bare alias resolves
-//    through ANTHROPIC_DEFAULT_*_MODEL, and on this instance those mappings
-//    carry `[1m]`: `opus` → `claude-opus-5[1m]`, a 1M window where the catalog
-//    says 200k. contextWindow is not cosmetic — modelContextWindow() feeds the
-//    context gauge and the overflow notice, so a task on plain `opus` was being
-//    measured against a fifth of its real window. The aliases below take their
-//    window and their subtitle from the id the mapping actually resolves to.
-//
-// The entries that do NOT run are the Fable rows: HTTP 403, "Access to this
-// model requires data sharing to be enabled for publisher 'anthropic'". They're
-// dropped rather than labeled with that reason, because on this fork the answer
-// isn't "flip a GCP setting" — Fable arrives when the direct-platform
-// arrangement with Anthropic is finalized, and until then an entry that 403s
-// every turn is just a trap. The filter matches the family rather than the one
-// value `fable`, so a pinned Fable id is dropped for the same reason the alias
-// is; that gate is per publisher, so it doesn't need probing per version.
-// Restoring them all is deleting one line from the filter below.
+// Fable rows are dropped rather than corrected: the Fable family 403s on
+// Vertex ("data sharing... for publisher 'anthropic'") until the direct
+// platform arrangement with Anthropic is in place, and an entry that 403s
+// every turn is a trap. The filter matches the whole family rather than the
+// single value `fable`, since the gate is per publisher and any pinned Fable
+// id fails the same way. Restoring them is deleting one line from the filter
+// below.
 
-/** Whether a picker value or resolved id names the Fable family — the alias
+/** Whether a picker value or resolved id names the Fable family: the alias
  *  `fable` or any pinned `claude-fable-*`, with or without a `[1m]` suffix. */
 const isFable = (id: string): boolean => /fable/i.test(id);
 
@@ -219,9 +191,8 @@ const windowFor = (id: string): number => (/\[1m\]/i.test(id) || isFable(id) ? M
 function vertexModels(env: Record<string, string | undefined>): AgentModelOption[] {
   const mapped = claudeDefaultModels(env);
   // Which family mapping each alias reads. opusplan plans on Opus and runs on
-  // Sonnet afterwards, so the mapping that governs the session — and its window
-  // — is Sonnet's: probing `opusplan` resolved `claude-sonnet-5[1m]`, not the
-  // opus mapping.
+  // Sonnet afterwards, so the mapping that governs the session, and its window,
+  // is Sonnet's.
   const family: Record<string, string | null> = {
     opus: mapped.opus,
     "opus[1m]": mapped.opus,
@@ -231,15 +202,15 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     opusplan: mapped.sonnet,
     "opusplan[1m]": mapped.sonnet,
   };
-  // An alias's label must not claim a version — the rule f82f66d introduced
-  // here, now applied to the default catalog above as well, since a
-  // subscription alias is resolved by the installed CLI for the same reason a
-  // Vertex one is resolved by ANTHROPIC_DEFAULT_*_MODEL. What's different HERE
-  // is that we can NAME the resolution: it's an env mapping we can read, so
-  // "(provider default)" replaces "(latest)" and the measured id goes in the
-  // subtitle. Only the rows Vertex spells differently are listed; the `[1m]`
-  // ones already read "Opus (1M)" / "Sonnet (1M)" in the default catalog, and
-  // restating them here would be a second copy free to drift.
+  // An alias's label must not claim a version, the same rule the default
+  // catalog above follows, since a subscription alias is resolved by the
+  // installed CLI for the same reason a Vertex one is resolved by
+  // ANTHROPIC_DEFAULT_*_MODEL. Here the resolution can be named directly: it's
+  // an env mapping this process can read, so "(provider default)" replaces
+  // "(latest)" and the resolved id goes in the subtitle. Only the rows Vertex
+  // spells differently are listed; the `[1m]` ones already read "Opus (1M)" /
+  // "Sonnet (1M)" in the default catalog, and restating them here would be a
+  // second copy free to drift.
   const alias: Record<string, string> = {
     opus: "Opus (provider default)",
     sonnet: "Sonnet (provider default)",
@@ -249,16 +220,16 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     const base = family[m.value];
     if (!base) return m; // a pinned id, or a family this instance doesn't map
 
-    // A `[1m]` picker value asks for the 1M variant OF the mapped id, so it
-    // stays 1M whatever the mapping is — `opus[1m]` against a plain
-    // `claude-opus-4-8` mapping is `claude-opus-4-8[1m]`, which is a real
-    // Vertex model (probed, 1M). Only the BARE alias inherits the mapping's own
-    // window, which is the case that was wrong: a mapping carrying `[1m]` makes
-    // plain `opus` a 1M session while the catalog called it 200k.
+    // A `[1m]` picker value asks for the 1M variant of the mapped id, so it
+    // stays 1M whatever the mapping is: `opus[1m]` against a plain
+    // `claude-opus-4-8` mapping resolves to `claude-opus-4-8[1m]`, a real
+    // Vertex model. Only the bare alias inherits the mapping's own window: a
+    // mapping carrying `[1m]` makes plain `opus` a 1M session even though the
+    // static catalog calls it 200k.
     const wants1m = /\[1m\]$/i.test(m.value);
     const resolved = wants1m && !/\[1m\]/i.test(base) ? `${base}[1m]` : base;
-    // When the mapping ALREADY carries `[1m]`, the variant and the bare alias
-    // are the same model string — say so rather than presenting the same thing
+    // When the mapping already carries `[1m]`, the variant and the bare alias
+    // are the same model string. Say so rather than presenting the same thing
     // twice under a group heading that implies they differ.
     const duplicate = wants1m && resolved === base;
     return {
@@ -273,21 +244,22 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
 // ---------- Subscription ----------
 //
 // The same correction as the Vertex one above, from a different source. Vertex
-// resolves an alias through an env mapping this process can just read; the
-// subscription path resolves it inside the CLI's own catalog, so ./modelProbe.ts
-// has to ask — one `claude -p --bare --model <alias>` per family, killed at the
-// `init` line, out of band and cached against the CLI version that answered.
+// resolves an alias through an env mapping this process can read directly; the
+// subscription path resolves it inside the CLI's own catalog, so
+// ./modelProbe.ts has to ask: one `claude -p --bare --model <alias>` per
+// family, killed at the `init` line, out of band, cached against the CLI
+// version that answered.
 //
-// What lands here is only ever an overlay. A row whose family was not probed, or
-// was probed and did not answer, is returned untouched, so a machine with no
-// CLI, a probe that timed out and a Codex-only instance all render today's
-// catalog. The LABEL is left alone in every case: "(latest)" stays correct
-// however the alias resolves, and it is the ID that is news.
+// What lands here is only ever an overlay. A row whose family was not probed,
+// or was probed and did not answer, is returned untouched, so a machine with no
+// CLI, a probe that timed out, and a Codex-only instance all render today's
+// static catalog. The label is left alone in every case: "(latest)" stays
+// correct however the alias resolves, and it is the id that changes.
 //
-// Which family mapping each row reads — the same table vertexModels() keeps,
+// Which family mapping each row reads is the same table vertexModels() keeps,
 // for the same reasons. `opusplan` plans on Opus and runs on Sonnet, and the
 // probe reports the session model, so it is its own entry rather than an alias
-// of `opus` (measured: `opusplan` → claude-sonnet-5).
+// of `opus`.
 const PROBED_FAMILY: Record<string, string> = {
   fable: "fable",
   opus: "opus",
@@ -299,8 +271,8 @@ const PROBED_FAMILY: Record<string, string> = {
   "opusplan[1m]": "opusplan",
 };
 
-/** The catalog with each probed alias's resolved id in its subtitle — the same
- *  place, and the same spelling, vertexModels() puts it, so the two paths render
+/** The catalog with each probed alias's resolved id in its subtitle, the same
+ *  place and the same spelling vertexModels() uses, so the two paths render
  *  identically. Exported for the suite, which supplies the map directly rather
  *  than spawning five CLIs. */
 export function subscriptionModels(ids: Record<string, string>): AgentModelOption[] {
@@ -309,18 +281,16 @@ export function subscriptionModels(ids: Record<string, string>): AgentModelOptio
     const base = family ? ids[family] : undefined;
     if (!base) return m; // a pinned id, or a family that didn't answer
 
-    // A `[1m]` picker value asks for the 1M variant OF the resolved id, exactly
-    // as on Vertex — measured through the probe too: `opus[1m]` resolves to
-    // `claude-opus-5[1m]`, which is why only the five bare aliases are spawned
-    // and the variants are derived from them.
+    // A `[1m]` picker value asks for the 1M variant of the resolved id, exactly
+    // as on Vertex, which is why only the five bare aliases are spawned and the
+    // variants are derived from them.
     const wants1m = /\[1m\]$/i.test(m.value);
     const resolved = wants1m && !/\[1m\]/i.test(base) ? `${base}[1m]` : base;
-    // The window comes off the resolved id rather than staying the row's static
-    // guess. On today's subscription resolutions that changes nothing (every
-    // bare alias resolves to a bare id, and Fable is 1M either way) — it matters
-    // the day a family alias starts resolving to a `[1m]` spelling, which is
-    // precisely what already happened on Vertex and left plain `opus` measured
-    // against a fifth of its real window.
+    // The window comes off the resolved id rather than the row's static guess.
+    // On today's subscription resolutions that changes nothing, since every
+    // bare alias resolves to a bare id and Fable is 1M either way, but it
+    // matters the day a family alias starts resolving to a `[1m]` spelling, as
+    // already happened on Vertex.
     return { ...m, sub: resolved, contextWindow: wants1m ? M1 : windowFor(resolved) };
   });
 }
@@ -328,7 +298,7 @@ export function subscriptionModels(ids: Record<string, string>): AgentModelOptio
 /** The live capability descriptor: the Anthropic-hosted catalog normally, and a
  *  corrected one when the instance routes Claude through Vertex. Computed per
  *  read because the provider and its model mappings are instance config, not
- *  code — and, on the subscription path, because the alias resolution is a
+ *  code, and because on the subscription path the alias resolution is a
  *  background probe's answer that may land at any point after boot. */
 export function claudeCapabilities(env: Record<string, string | undefined> = process.env): AgentCapabilities {
   // The gateway check comes first and reads ANTHROPIC_BASE_URL directly rather
@@ -344,12 +314,12 @@ export function claudeCapabilities(env: Record<string, string | undefined> = pro
     if (catalog && catalog.length) return { ...CLAUDE_CAPABILITIES, models: gatewayModelOptions(catalog, "claude") };
     return CLAUDE_CAPABILITIES;
   }
-  // Bedrock deliberately gets no special-casing here: this fork runs Vertex and
-  // has no Bedrock instance to measure against, and upstream's Bedrock list
-  // (b5d995f) drops the `[1m]` variants — which demonstrably DO work on Vertex,
-  // so it is not a list to rename and reuse. It gets no probe overlay either:
-  // ensureClaudeModelIds() only asks on the subscription path, so the cache a
-  // Bedrock instance reads here is empty by construction.
+  // Bedrock gets no special-casing here: this fork runs Vertex and has no
+  // Bedrock instance to measure against, and upstream's Bedrock list drops the
+  // `[1m]` variants, which do work on Vertex, so it is not a list to rename and
+  // reuse. It gets no probe overlay either: ensureClaudeModelIds() only asks on
+  // the subscription path, so the cache a Bedrock instance reads here is empty
+  // by construction.
   const provider = configuredProvider(env);
   if (provider === "vertex") return { ...CLAUDE_CAPABILITIES, models: vertexModels(env) };
   if (provider !== "anthropic") return CLAUDE_CAPABILITIES;

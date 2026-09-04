@@ -1,16 +1,16 @@
-// The driver registry — the seam's single selector, following the pattern of
+// The driver registry: the seam's single selector, following the pattern of
 // lib/billing/ and lib/control-plane/provisioner/. Every call site resolves
 // its driver with `getDriver(task.agent)` (never imports a driver module
-// directly), so adding an agent is one driver module + one entry here, with
+// directly), so adding an agent is one driver module plus one entry here, with
 // no edits to the runner, routes, or recap/refresh jobs.
 //
 // Unlike those seams the selector isn't an env var: the agent id is data,
 // persisted per task (tasks.agent) / per project (projects.default_agent).
 
-// NOTE: importing this registry pulls the agent SDKs (serverExternalPackages →
-// async externals under Turbopack) into your module graph. Low-level modules
+// Importing this registry pulls the agent SDKs (serverExternalPackages →
+// async externals under Turbopack) into the module graph. Low-level modules
 // that only need capability data (context windows, model lists) must import
-// lib/agents/capabilities.ts instead — see the poisoning note there.
+// lib/agents/capabilities.ts instead; see the poisoning note there.
 
 import type { AgentDriver } from "./types";
 import { claudeDriver } from "./claude/driver";
@@ -21,24 +21,24 @@ import { mockDriver } from "./mock/driver";
 export { DEFAULT_AGENT } from "./capabilities";
 import { DEFAULT_AGENT } from "./capabilities";
 
-// Built lazily (on first resolve, not at module load) so importing this registry
-// can't dereference a driver mid-load (drivers import store and other app
-// modules; a top-level map literal would crash on an import cycle).
+// Built lazily (on first resolve, not at module load) so importing this
+// registry can't dereference a driver mid-load: drivers import store and other
+// app modules, and a top-level map literal would crash on an import cycle.
 let DRIVERS: Record<string, AgentDriver> | null = null;
 function drivers(): Record<string, AgentDriver> {
   if (!DRIVERS) {
     // Three first-class agents. Antigravity is registered unconditionally like
-    // the other two now that it is proven: an instance with no `agy` binary
-    // sees the same thing it sees for a missing `codex` — an agent it can pick
-    // in the picker and cannot connect, which is a legible state, where an
-    // agent hidden behind an env var is not.
+    // the other two: an instance with no `agy` binary sees the same thing it
+    // sees for a missing `codex`, an agent it can pick in the picker and cannot
+    // connect, which is a legible state, where an agent hidden behind an env
+    // var is not.
     DRIVERS = {
       [claudeDriver.id]: claudeDriver,
       [codexDriver.id]: codexDriver,
       [geminiDriver.id]: geminiDriver,
     };
-    // The deterministic e2e driver (lib/agents/mock/) — registered only when the
-    // Playwright suite's env flag is set, so it can never appear in a real
+    // The deterministic e2e driver (lib/agents/mock/) is registered only when
+    // the Playwright suite's env flag is set, so it can never appear in a real
     // instance's agent picker. The import above is unconditional but harmless:
     // the mock has no SDK dependency.
     if (process.env.CALANDRIA_E2E_MOCK_AGENT === "1") DRIVERS[mockDriver.id] = mockDriver;
@@ -47,9 +47,9 @@ function drivers(): Record<string, AgentDriver> {
 }
 
 /**
- * Resolve a driver by id. Unknown / null / empty ids fall back to the Claude
- * driver rather than throwing — a task row can only carry a bad agent id via
- * hand-edited data, and a broken row should still run rather than brick the
+ * Resolve a driver by id. Unknown, null or empty ids fall back to the Claude
+ * driver instead of throwing: a task row can only carry a bad agent id via
+ * hand-edited data, and a broken row should still run instead of bricking the
  * task (mirrors permission_mode's forgiving resolution).
  */
 export function getDriver(id: string | null | undefined): AgentDriver {
@@ -61,7 +61,7 @@ export function getDriver(id: string | null | undefined): AgentDriver {
  * Strict lookup for the auth routes: returns null for an unknown id instead of
  * falling back to Claude. `getDriver` is forgiving because a bad tasks.agent row
  * should still run *something*; the /api/agents/[id]/* connect routes, by
- * contrast, must 404 rather than silently drive the wrong agent's login.
+ * contrast, must 404 instead of silently driving the wrong agent's login.
  */
 export function getDriverStrict(id: string): AgentDriver | null {
   return drivers()[id] ?? null;

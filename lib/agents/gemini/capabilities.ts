@@ -1,19 +1,19 @@
-// The Antigravity (Gemini) capability descriptor — what the agent can do, as
+// The Antigravity (Gemini) capability descriptor: what the agent can do, as
 // data, rendered into the UI's pickers via GET /api/agents. Split out of
 // driver.ts so it can be read without importing anything that spawns a CLI,
 // the same separation lib/agents/capabilities.ts requires of every driver.
 
 import type { AgentCapabilities } from "../types";
 
-// The key-shape placeholder, owned HERE rather than read off ./auth, so this
+// The key-shape placeholder is owned here instead of read off ./auth, so this
 // module stays a leaf. auth.ts pulls in lib/store, which reaches back to
 // lib/agents/capabilities.ts, so a descriptor that imported auth could only be
-// evaluated in one import order — and any module that reached auth.ts first
+// evaluated in one import order, and any module that reached auth.ts first
 // (the plan-usage reader, a test) got `undefined` off a half-built module.
 export const GEMINI_API_KEY_HINT = "AIza…";
 
 // Gemini's published limits: 1,048,576 input tokens, 65,536 output, uniform
-// across every 3.x and 2.5 model in Google's catalog (ai.google.dev, 2026-09-01).
+// across every 3.x and 2.5 model in Google's catalog (ai.google.dev).
 const GEMINI_CTX = 1_048_576;
 // The non-Gemini models the Antigravity catalog also serves. These are their
 // vendors' published windows, not something measured through `agy`, and they
@@ -22,19 +22,19 @@ const CLAUDE_CTX = 200_000;
 const OSS_CTX = 128_000;
 
 /**
- * The model list, taken verbatim from `agy models` on a signed-in host
- * (2026-09-02). Two things about it drive the rest of this file:
+ * The model list, taken verbatim from `agy models` on a signed-in host. Two
+ * things about it drive the rest of this file:
  *
- *  - REASONING EFFORT IS PART OF THE SLUG. There is no bare `gemini-3.8-flash`;
+ *  - Reasoning effort is part of the slug. There is no bare `gemini-3.8-flash`;
  *    the catalog ships `-high` / `-medium` / `-low` variants, and `gemini-3.1-pro`
- *    has only `-high` and `-low` (no medium). So this driver offers no separate
- *    reasoning picker — see reasoningOptions below.
- *  - THE CATALOG IS NOT GEMINI-ONLY. An Antigravity subscription also serves
+ *    has only `-high` and `-low` (no medium). This driver offers no separate
+ *    reasoning picker; see reasoningOptions below.
+ *  - The catalog is not Gemini-only. An Antigravity subscription also serves
  *    Anthropic and open-weights models. They are listed because they genuinely
  *    run; their cost is estimated the same way everything else here is.
  *
- * Re-check with `agy models` when bumping the pinned CLI; a slug that has been
- * retired upstream fails the whole turn.
+ * Re-check with `agy models` when bumping the pinned CLI; a slug retired
+ * upstream fails the whole turn.
  */
 const MODELS: AgentCapabilities["models"] = [
   { value: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)", sub: "newest flash model, deepest reasoning (default)", contextWindow: GEMINI_CTX, group: "Gemini 3.8" },
@@ -55,20 +55,18 @@ const MODELS: AgentCapabilities["models"] = [
 
 export const GEMINI_CAPABILITIES: AgentCapabilities = {
   models: MODELS,
-  // Empty on purpose, and not an oversight. `agy` does have an `--effort` flag,
-  // but its catalog already sells effort as part of the model id
-  // ("gemini-3.8-flash-high"), so a second picker would either contradict the
-  // model the user chose or silently do nothing. Choosing the model IS choosing
-  // the effort on this agent.
+  // Empty on purpose. `agy` does have an `--effort` flag, but its catalog
+  // already sells effort as part of the model id ("gemini-3.8-flash-high"),
+  // so a second picker would either contradict the model the user chose or do
+  // nothing. Choosing the model is choosing the effort on this agent.
   reasoningOptions: [],
   // Only the modes with a real `agy` analog, and only the ones that can actually
-  // complete work. In the CLI's DEFAULT mode ("request-review") a headless run
+  // complete work. In the CLI's default mode ("request-review") a headless run
   // has nobody to prompt, so every tool is auto-denied and the turn ends having
-  // done nothing — measured: a run asking for one shell command produced
-  // "no output produced — a tool required the "command" permission that headless
-  // mode cannot prompt for, so it was auto-denied". That mode is therefore not
-  // offered rather than offered-and-broken; the same judgement the Codex
-  // descriptor makes about its unreachable approval policies.
+  // done nothing: a run asking for one shell command produced "no output
+  // produced" because a tool required the "command" permission that headless
+  // mode cannot prompt for. That mode is not offered, the same judgement the
+  // Codex descriptor makes about its unreachable approval policies.
   permissionModes: [
     { value: "bypassPermissions", label: "skip permissions", sub: "auto-approve every tool: runs without asking (default)" },
     { value: "acceptEdits", label: "accept-edits", sub: "auto-approve file edits, still ask for other tools" },
@@ -79,7 +77,7 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
   supportsAsks: true,
   // Calandria's suggest_task / expose_service tools reach the agent through the
   // portable stdio MCP bridge (scripts/calandria-mcp.mjs), mounted per task via
-  // a private HOME — see lib/agents/gemini/home.ts.
+  // a private HOME; see lib/agents/gemini/home.ts.
   supportsMcpTools: true,
   // ...and ONLY those. The CLI reads MCP servers from exactly one user-global
   // file, and the driver replaces that file per task to give the bridge its own
@@ -106,27 +104,27 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
   // The CLI ships invoke_subagent / define_subagent and reports delegated work
   // as subagent_info with its own conversation_id (./events.ts renders it).
   dispatchesSubagents: true,
-  // `result.usage` reports token counts only — no dollar figure of any kind —
+  // `result.usage` reports token counts only, no dollar figure of any kind,
   // so the cost the driver emits is an estimate (tokens × Google's published
   // API prices for the resolved model, ./pricing.ts) and the UI labels it ~.
   reportsCostUsd: false,
   costIsEstimated: true,
   // The CLI emits no per-request context figure, so the gauge is the usage
   // heuristic, labelled as such. (`result.usage` accumulates over the whole
-  // conversation, which is spend, not occupancy — see ./events.ts.)
+  // conversation, which is spend, not occupancy; see ./events.ts.)
   reportsContext: false,
   supportsResume: true,
   apiKeyHint: GEMINI_API_KEY_HINT,
   loginStyle: "paste_code",
-  // Google's redirect lands on antigravity.google/oauth-callback rather than a
+  // Google's redirect lands on antigravity.google/oauth-callback instead of a
   // localhost port, and that page completes the sign-in for the CLI waiting on
   // it. So the code box is one of two ways this login can finish, and the card
   // has to watch for the other (see AgentCapabilities.loginCompletesOutOfBand).
   loginCompletesOutOfBand: true,
-  // The container caveat, stated where the sign-in is offered rather than only
-  // in the docs: `agy` stores its OAuth token in the OS keyring over D-Bus and
-  // has no file fallback, and the published image ships no D-Bus session, so
-  // this button cannot work there.
+  // The container caveat, stated where the sign-in is offered and not only in
+  // the docs: `agy` stores its OAuth token in the OS keyring over D-Bus and has
+  // no file fallback, and the published image ships no D-Bus session, so this
+  // button cannot work there.
   connectHint:
     "In a container, the subscription sign-in can't complete: the Antigravity CLI keeps its " +
     "token in the OS keyring (D-Bus Secret Service) and the published image runs no keyring " +

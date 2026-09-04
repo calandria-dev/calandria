@@ -1,27 +1,25 @@
 /**
  * Session-scoped cron wakeups (ScheduleWakeup / CronCreate / /loop) as the
- * linger state machine in claude/driver.ts sees them — pure, SDK-free math
- * over the Stop hook's `session_crons` payload.
+ * linger state machine in claude/driver.ts sees them: pure, SDK-free math over
+ * the Stop hook's `session_crons` payload.
  *
- * Measured against claude CLI 2.1.240 / SDK 0.3.159 (the spike record is in
- * this feature's commit message):
+ * Facts about how the CLI handles these, from claude CLI 2.1.240 / SDK 0.3.159:
  *
  * - A cron fires only while the CLI process is alive. Closing the held-open
- *   prompt iterable exits the CLI within ~300ms with no grace and no
- *   notification, and the wake is simply gone — the same broken promise
- *   linger-until-quiet fixed for run_in_background, in the class it excluded.
- * - With the input held open the cron DOES fire, and the wake arrives as a
+ *   prompt iterable exits the CLI quickly with no grace and no notification,
+ *   and the wake is simply gone.
+ * - With the input held open the cron does fire, and the wake arrives as a
  *   second `init` system message (same session id) followed by a fresh
- *   assistant turn. There is NO user message on the wire (the prompt is
- *   submitted internally) and NO task_notification — the init is the only
+ *   assistant turn. There is no user message on the wire (the prompt is
+ *   submitted internally) and no task_notification; the init is the only
  *   signal, so cron wakes need their own accounting beside the notification
  *   path background tasks use.
- * - A one-shot wakeup's cron field encodes ONLY its wall-clock minute —
- *   "58 11 * * *" for 11:58 — in the CLI process's LOCAL time zone (the
- *   server shares it: the CLI is our child), at minute granularity
- *   (ScheduleWakeup's delaySeconds rounds up to the next minute boundary; the
- *   tool result says so). Day/month are wildcards, so "when does it fire" is
- *   "the next occurrence of HH:MM", at most 24h out.
+ * - A one-shot wakeup's cron field encodes only its wall-clock minute
+ *   ("58 11 * * *" for 11:58) in the CLI process's local time zone (the server
+ *   shares it, since the CLI is our child), at minute granularity
+ *   (ScheduleWakeup's delaySeconds rounds up to the next minute boundary). Day
+ *   and month are wildcards, so "when does it fire" is "the next occurrence of
+ *   HH:MM", at most 24h out.
  * - After a one-shot fires, the wake turn's Stop hook reports `session_crons:
  *   []`. A recurring cron survives its wakes: every Stop hook reports it
  *   again, so a lingering driver re-enters the linger after each wake turn.
@@ -44,7 +42,7 @@ export type PlannedCron = SessionCron & {
 export type CronPlan = {
   /** Crons the driver will hold the session open for. */
   linger: PlannedCron[];
-  /** Crons that will NOT be waited for — they die when the session closes. */
+  /** Crons that will not be waited for: they die when the session closes. */
   cancelled: PlannedCron[];
 };
 
@@ -72,7 +70,7 @@ function parseField(raw: string, lo: number, hi: number): Field | null {
   return out.size ? out : null;
 }
 
-/** Five-field Vixie cron (numeric only — names never appear in the CLI's payload). */
+/** Five-field Vixie cron (numeric only; names never appear in the CLI's payload). */
 export function parseCron(schedule: string): CronSpec | null {
   const fields = schedule.trim().split(/\s+/);
   if (fields.length !== 5) return null;
@@ -88,9 +86,9 @@ export function parseCron(schedule: string): CronSpec | null {
 
 /**
  * The next minute boundary at or after `now` (ms epoch) that matches the
- * expression, in the process's local time — which is the CLI's, since it is
- * our child. Vixie's day rule: when BOTH day-of-month and day-of-week are
- * restricted, a day matches if EITHER does. Null if the expression doesn't
+ * expression, in the process's local time, which is the CLI's, since it is our
+ * child. Vixie's day rule: when both day-of-month and day-of-week are
+ * restricted, a day matches if either does. Null if the expression doesn't
  * parse or nothing matches within 400 days (an impossible date such as
  * "0 0 31 2 *").
  */
@@ -127,18 +125,18 @@ export function nextCronFire(schedule: string, now: number = Date.now()): number
 /**
  * Which pending crons the linger will honor. `deadline` is the linger phase's
  * absolute cut-off (ms epoch) on a bounded instance, or null when the linger is
- * unbounded (the default — see BACKGROUND_LINGER_MS).
+ * unbounded (the default; see BACKGROUND_LINGER_MS).
  *
  * Policy, stated so it's a visible decision rather than an accident:
- * - Linger disabled → nothing is honored; every cron is reported cancelled.
- * - Unbounded → EVERYTHING lingers, recurring crons included. A /loop's whole
+ * - Linger disabled: nothing is honored, every cron is reported cancelled.
+ * - Unbounded: everything lingers, recurring crons included. A /loop's
  *   contract is "keep waking me until I'm stopped", and under no deadline the
- *   session stays open exactly that long — visibly ("wakes on schedule …" on
- *   the row, with its age), so it's the user's to Stop, the same call the
- *   unbounded default already makes for a backgrounded dev server. An
+ *   session stays open exactly that long, visibly ("wakes on schedule..." on
+ *   the row, with its age), so it's the user's call to Stop it, the same call
+ *   the unbounded default already makes for a backgrounded dev server. An
  *   expression the parser can't read still lingers here: the CLI accepted it
- *   and will fire it; only its label is unknown.
- * - Bounded → only a cron whose next fire fits inside the window lingers; a
+ *   and will fire it, only its label is unknown.
+ * - Bounded: only a cron whose next fire fits inside the window lingers; a
  *   recurring cron that fits lingers for its next fire and is then cut by the
  *   deadline like any other work. An unparsable expression can't be shown to
  *   fit, so it's cancelled (and named) rather than gambled on.
@@ -168,7 +166,7 @@ export function cronThatWoke(crons: PlannedCron[], now: number = Date.now()): Pl
   return due.length ? due[due.length - 1] : sorted[0];
 }
 
-/** "12:00" today, "Tue 09:00" within a week, else "Sep 3 09:00" — server-local time, like the CLI's own tool result. */
+/** "12:00" today, "Tue 09:00" within a week, else "Sep 3 09:00": server-local time, like the CLI's own tool result. */
 export function wakeTimeLabel(fireAt: number | null, now: number = Date.now()): string {
   if (fireAt === null) return "an unparsed schedule";
   const d = new Date(fireAt);

@@ -1,14 +1,14 @@
 // Whether the LiteLLM gateway's catalog covers every model `agy` needs
-// (docs/design/litellm.md, "Antigravity driver") — including the flash-lite
-// side call it makes on every turn, which `agy models` lists as an ordinary
-// selectable entry rather than something hidden. A model missing from the
-// gateway's /model/info list fails the turn deep inside `agy`, with an
-// opaque "Agent execution terminated due to error" and no clue which model
-// was the problem — so the health card names the gap up front instead.
+// (docs/AGENTS.md), including the flash-lite side call it makes on every
+// turn, which `agy models` lists as an ordinary selectable entry instead of
+// something hidden. A model missing from the gateway's /model/info list
+// fails the turn deep inside `agy`, with an opaque "Agent execution
+// terminated due to error" and no clue which model was the problem, so the
+// health card names the gap up front instead.
 //
 // A real CLI spawn (agyModelSlugs), so this is polled far less often than the
 // gateway probe itself and, like GET /api/agents' other gateway reads, fired
-// without blocking the response: the answer lands in time for the NEXT read
+// without blocking the response: the answer lands in time for the next read
 // of the same route.
 
 import { agyModelSlugs } from "./auth";
@@ -24,14 +24,14 @@ export interface GeminiGatewayModelCheck {
 
 const CHECK_CACHE_MS = 60_000;
 
-// On globalThis so an HMR reload doesn't reset it — see lib/gatewayHealth.ts.
+// On globalThis so an HMR reload doesn't reset it; see lib/gatewayHealth.ts.
 const store = globalThis as { __calandriaGeminiGatewayCheck?: Map<string, { at: number; value: GeminiGatewayModelCheck | null }> };
 const cache = (store.__calandriaGeminiGatewayCheck ??= new Map());
 
 /**
  * Run the check (or return the cached answer). Null when there is nothing to
  * report: `agy` isn't signed in, isn't installed, or the gateway's own
- * catalog didn't answer — any of which means the comparison can't be made,
+ * catalog didn't answer. Any of those means the comparison can't be made,
  * not that every model is missing.
  */
 export async function geminiGatewayModelCheck(baseUrl: string, key: string): Promise<GeminiGatewayModelCheck | null> {
@@ -48,7 +48,7 @@ export async function geminiGatewayModelCheck(baseUrl: string, key: string): Pro
   return value;
 }
 
-/** The last computed check for this base URL, synchronously — what the
+/** The last computed check for this base URL, synchronously. What the
  *  GET /api/agents route reads for whichever tab's request triggered the
  *  fire-and-forget probe above. */
 export function lastGeminiGatewayModelCheck(baseUrl: string): GeminiGatewayModelCheck | null {
@@ -56,7 +56,7 @@ export function lastGeminiGatewayModelCheck(baseUrl: string): GeminiGatewayModel
   return (base && cache.get(base)?.value) ?? null;
 }
 
-/** Drop every cached check — the suite's between-tests reset. */
+/** Drop every cached check, the suite's between-tests reset. */
 export function clearGeminiGatewayModelCheckCache(): void {
   cache.clear();
 }

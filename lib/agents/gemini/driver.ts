@@ -1,4 +1,4 @@
-// The Google / Antigravity driver — the `agy` CLI behind the AgentDriver seam
+// The Google / Antigravity driver: the `agy` CLI behind the AgentDriver seam
 // (lib/agents/types.ts), alongside lib/agents/claude/driver.ts and
 // lib/agents/codex/driver.ts.
 //
@@ -6,15 +6,15 @@
 // the process itself: spawn `agy -p <prompt> --output-format stream-json`, read
 // NDJSON off stdout, and normalize it through ./events.ts. The conversation id
 // is emitted as the `session` StreamEvent, so the existing lineage/resume
-// machinery (sessions table, /clear generations) works unchanged — an `agy`
+// machinery (sessions table, /clear generations) works unchanged: an `agy`
 // conversation id is just another opaque id in tasks.session_id.
 //
 // Two things are unusual enough to state up front:
 //
-//  - EACH TASK RUNS UNDER ITS OWN HOME (./home.ts). The CLI reads MCP servers
+//  - Each task runs under its own HOME (./home.ts). The CLI reads MCP servers
 //    from one user-global file, so that is the only way parallel tasks each get
 //    a bridge entry carrying their own CALANDRIA_TASK_ID.
-//  - `result.usage` IS CUMULATIVE over the conversation, so the per-turn figure
+//  - `result.usage` is cumulative over the conversation, so the per-turn figure
 //    is a subtraction against a persisted baseline, exactly as for Codex.
 
 import { spawn } from "node:child_process";
@@ -43,14 +43,14 @@ import { agentTurnEnv } from "../../agentEnv";
 const AGY = () => AGY_CLI_PATH || "agy";
 
 /**
- * The task's run permission → `agy` flags.
+ * The task's run permission mapped to `agy` flags.
  *
- * The CLI's own default ("request-review") is NOT reachable here, and that is
- * deliberate: headless mode has nobody to prompt, so it auto-denies every tool
- * and the turn ends having done nothing (measured — see ./capabilities.ts).
- * bypassPermissions is therefore the floor rather than an escalation, exactly
- * as it is for Codex, and it is safe for the same reason: tasks run in isolated
- * worktrees, and in the container behind a hardened image.
+ * The CLI's own default ("request-review") is not reachable here: headless
+ * mode has nobody to prompt, so it auto-denies every tool and the turn ends
+ * having done nothing (see ./capabilities.ts). bypassPermissions is the floor,
+ * not an escalation, exactly as it is for Codex, and it is safe for the same
+ * reason: tasks run in isolated worktrees, and in the container behind a
+ * hardened image.
  */
 export function permissionFlags(mode: string | null): string[] {
   if (mode === "plan") return ["--mode", "plan"];
@@ -76,10 +76,10 @@ export function turnArgs(opts: {
 }
 
 /**
- * A tool the CLI refused because headless mode cannot prompt. It does NOT change
- * the exit code and does not always change `result.status` (both SUCCESS and
- * CANCELED were measured), so this stderr line is the only reliable signal that
- * the turn stopped short of doing the work.
+ * A tool the CLI refused because headless mode cannot prompt. It does not
+ * change the exit code and does not always change `result.status` (both
+ * SUCCESS and CANCELED occur), so this stderr line is the only reliable
+ * signal that the turn stopped short of doing the work.
  */
 const SOFT_DENIAL = /no output produced|auto-denied|cannot prompt for/i;
 
@@ -117,8 +117,8 @@ async function* runTurn(
     AGY_CLI_DISABLE_AUTO_UPDATE: "true",
   });
 
-  // The CLI emits no model event of its own, so this resolved value is the best
-  // truth available — and it prices the estimate.
+  // The CLI emits no model event of its own, so this resolved value is the
+  // best truth available, and it prices the estimate.
   yield { type: "model", model };
 
   const args = turnArgs({ prompt, conversationId: task.session_id, model: chosen, permission });
@@ -148,9 +148,9 @@ async function* runTurn(
       for (const ev of mapAgyEvent(line, state, killedByUs)) yield ev;
       // Advance the conversation's cumulative baseline the moment usage is
       // mapped, not at the end: a crash or a Stop between here and turn end
-      // would otherwise make the NEXT turn re-bill everything this one did.
-      // The session row exists by now — the runner persists it when it consumes
-      // the `session` event.
+      // would otherwise make the next turn re-bill everything this one did.
+      // The session row exists by now: the runner persists it when it
+      // consumes the `session` event.
       if (state.cumDirty) {
         state.cumDirty = false;
         const id = state.conversationId ?? task.session_id;
@@ -165,7 +165,7 @@ async function* runTurn(
     if (!killedByUs && !state.saidSomething && SOFT_DENIAL.test(stderr)) {
       yield { type: "error", content: firstMeaningfulLine(stderr) };
     } else if (!killedByUs && code !== 0 && !state.conversationId) {
-      // Died before saying anything at all — a missing binary, a bad flag.
+      // Died before saying anything at all: a missing binary, a bad flag.
       yield { type: "error", content: firstMeaningfulLine(stderr) || `${AGY()} exited with code ${code}` };
     }
   } catch (err) {
@@ -180,7 +180,7 @@ async function* runTurn(
 }
 
 /** Yield each parsed NDJSON object from the child's stdout. Unparseable lines
- *  are skipped rather than fatal — the CLI interleaves plain-text chatter. */
+ *  are skipped, not fatal: the CLI interleaves plain-text chatter. */
 async function* ndjson(child: import("node:child_process").ChildProcess): AsyncGenerator<unknown> {
   if (!child.stdout) return;
   child.stdout.setEncoding("utf8");
@@ -227,11 +227,11 @@ function firstMeaningfulLine(text: string): string {
 /**
  * A minimal read-only run, shared by the summarize/draft/recap helpers. Any
  * failure degrades to empty text (callers add their own "(no … produced)"
- * fallback) so a failed helper turn never rejects into the recap/refresh jobs —
- * mirrors both other drivers.
+ * fallback) so a failed helper turn never rejects into the recap/refresh jobs,
+ * mirroring both other drivers.
  *
  * `plan` mode is the read-only one: it lets the agent explore and propose
- * without editing, which is exactly a one-shot's remit.
+ * without editing, which is what a one-shot needs.
  */
 async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 1000): Promise<OneShotResult> {
   const env = applyStoredApiKey({ ...agentTurnEnv(project), AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
@@ -250,7 +250,7 @@ async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 10
   }, timeoutMs);
 
   // No tier override reaches these helpers, so what runs is the driver's own
-  // default — name it rather than recording nothing.
+  // default; name it instead of recording nothing.
   const model = resolveGeminiModel(null);
   const state: GeminiMapState = newState(model);
   let text = "";
@@ -330,12 +330,12 @@ export const geminiDriver: AgentDriver = {
   draftProjectContext,
   summarizeProjectRecap,
   // The CLI runs command hooks from `hooks.json` in a workspace customization
-  // root, and hooks execute shell commands outside any permission gate. Whether
-  // this build actually loads it from the worktree is unproven — MCP config
-  // demonstrably is NOT read from there (./home.ts) — but the asymmetry of the
-  // bet decides it: watching a file the CLI ignores costs one hash per turn,
-  // while not watching one it obeys is arbitrary code execution the user never
-  // approved. See lib/settingsDrift.ts.
+  // root, and hooks execute shell commands outside any permission gate.
+  // Whether this build actually loads it from the worktree is unproven (MCP
+  // config demonstrably is not read from there, ./home.ts), but the asymmetry
+  // of the bet decides it: watching a file the CLI ignores costs one hash per
+  // turn, while not watching one it obeys is arbitrary code execution the user
+  // never approved. See lib/settingsDrift.ts.
   watchedSettingsFiles: [".agents/hooks.json"],
   authStatus: geminiStatus,
   startLogin: startGeminiLogin,
@@ -344,9 +344,9 @@ export const geminiDriver: AgentDriver = {
   cancelLogin: cancelGeminiLogin,
   verify: verifyGeminiTurn,
   apiKey: geminiApiKey,
-  // `agy -p "/usage"` is a real quota read that spends no quota (measured:
-  // num_turns 0, zero tokens), so the titlebar meter works on this agent the
-  // way it does on Claude — see ./planUsage.ts.
+  // `agy -p "/usage"` is a real quota read that spends no quota (num_turns 0,
+  // zero tokens), so the titlebar meter works on this agent the way it does
+  // on Claude; see ./planUsage.ts.
   planUsage: getGeminiPlanUsage,
 };
 
