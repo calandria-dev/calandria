@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { EFFORT } from "@/lib/agents/codex/driver";
-import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
 // Pins the reasoning-preset → model_reasoning_effort mapping. Every current
 // codex model supports exactly low|medium|high|xhigh; "minimal" still exists
@@ -19,7 +19,7 @@ describe("codex reasoning-effort mapping", () => {
   });
 
   it("declares a mapping for every reasoning option the picker offers", () => {
-    for (const opt of CODEX_CAPABILITIES.reasoningOptions) {
+    for (const opt of codexCapabilities().reasoningOptions) {
       expect(EFFORT[opt.value], opt.value).toBeDefined();
     }
   });
@@ -28,7 +28,7 @@ describe("codex reasoning-effort mapping", () => {
     // Provider-native labels: a Codex task's picker reads low/medium/high/xhigh,
     // exactly the model_reasoning_effort the preset resolves to, so the picker
     // can never claim an effort the turn doesn't run.
-    for (const opt of CODEX_CAPABILITIES.reasoningOptions) {
+    for (const opt of codexCapabilities().reasoningOptions) {
       expect(opt.label, opt.value).toBe(EFFORT[opt.value]);
     }
   });

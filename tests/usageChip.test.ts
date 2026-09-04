@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/shell/format";
 import type { AgentInfo, TaskRow } from "@/app/shell/types";
 import { CLAUDE_CAPABILITIES } from "@/lib/agents/claude/capabilities";
-import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import { providerPricing } from "@/lib/agentEnv";
 import { addUsage, createProject, createTask, listTasks } from "@/lib/store";
 import { tmpDir } from "./helpers";
@@ -105,7 +105,7 @@ describe("costDisplay", () => {
 
   it("labels a tokens-only driver estimated, and doubly so on a subscription", () => {
     const codex = (over: Partial<AgentInfo>) =>
-      costDisplay(agent({ id: "codex", label: "Codex", capabilities: CODEX_CAPABILITIES, ...over }));
+      costDisplay(agent({ id: "codex", label: "Codex", capabilities: codexCapabilities(), ...over }));
     expect(codex({}).note).toBe("estimated from token counts × published API prices");
     expect(codex({}).approx).toBe(true);
     const sub = codex({ account: { email: null, plan: null, method: "subscription" } });
