@@ -135,6 +135,71 @@ existing locally, so the ordinary task costs no subprocess, and adopting only a 
 `headRefName` is exactly the task branch. Everything downstream — the header chip,
 `lib/prState.ts`'s polling, auto-reclaim — then works as if `create_pr` had run.
 
+### …and the escape hatch from them: serving Claude's tools over the stdio bridge
+
+`CALANDRIA_CLAUDE_TOOL_TRANSPORT` picks which transport carries Calandria's tools into a Claude
+turn. `in-process` (the default) is `createSdkMcpServer`, above. `stdio` mounts
+`scripts/calandria-mcp.mjs` instead — the same bridge the Codex and Antigravity drivers spawn, whose
+calls POST to `/api/internal/agent-tools/*` and run the same `lib/agentTools.ts` logic the
+in-process handlers call directly. `./mcp.ts` is the entry, built to be the Codex driver's env block
+field for field. The knob exists because every cut-off measured above is on the in-process
+transport, and upstream `anthropics/claude-agent-sdk-typescript#436` reports stdio and HTTP servers
+unaffected.
+
+Four seams the in-process server has and the bridge answers for itself, all pre-existing (Codex has
+run on them since the bridge shipped) but worth naming, since switching Claude over is where a
+divergence would first be noticed:
+
+- The **`suggested` queue callback** is a `StreamEvent` on the turn's own stream, so the runner
+  settles the suggestion card by tool_use id. The bridge's endpoint is reached out of band with no
+  such id, so it publishes the event itself and patches the newest unclaimed `suggest_task` row
+  instead (`lib/suggestionCard.ts`). Same card, different correlation.
+- The **`notice` queue callback** has no counterpart, and this one is a real (small) loss:
+  `expose_service` in-process posts a transcript line saying the service is live at its URL, while
+  the bridged call returns the same sentence only as the tool's own result. The URL still reaches
+  the model and the Services panel; what's missing is the standalone transcript line.
+- The **`TurnHooks` auto-start callback** hands a cleared blocker back to the runner because this
+  file must not import `lib/autoStart.ts`. The endpoint has no such constraint and calls
+  `maybeAutoStartDependents()` directly. Same sweep, one hop shorter. `onPrOpened` is the same
+  story with `lib/prState.ts`.
+- **`ask_user` is withheld** (`CALANDRIA_MCP_ASK_USER=0`, the one env field ./mcp.ts adds to the
+  Codex block). AskUserQuestion stays the CLI's own, routed to the same card by the `PreToolUse`
+  hook; a second asking tool would mean two kinds of card for one question. It is the only tool
+  whose presence depends on the AGENT rather than on the project.
+
+**Measured 2026-09-03, and it did not settle the question.** A hermetic instance on this repo's
+prod build, the host's real Claude login, CLI 2.1.257 (the version every cut-off above is on), haiku
+in `bypassPermissions`, one Calandria tool call asked for per turn:
+
+| transport | turns | resumed | `turn ok` | tool calls arrived | `tool_cutoffs` |
+|-|-|-|-|-|-|
+| in-process | 32 | 28 | 32 | 21 | **0** |
+| stdio | 17 | 14 | 16 | 16 | **0** |
+
+Zero on both, so the run says nothing about whether the bridge fixes anything: the BASELINE didn't
+reproduce either. At the 25% per-resumed-call rate measured on real sessions, 21 in-process calls
+should have produced five or six. It joins the seven SDK spikes above as another synthetic probe
+that stays green — the failure wants a real session's shape (long turns, big context, many tools),
+not a loop of one-tool turns. Note also that in-process made 21 calls across 32 turns while stdio
+made 16 across 17: haiku often answered a repeated prompt from context instead of re-calling the
+tool, which is why the arms aren't matched call for call.
+
+What the run DOES establish is that the hatch works and costs nothing visible. Every bridged call
+arrived and settled, every turn ended `ok`, and `[agent-tools] agent tool call received` reports
+`transport: "bridge"` on a Claude task. **So the default stays `in-process`.** Flipping it would
+trade a failure we can't reproduce on demand for a subprocess per turn and the four seams above, on
+evidence that is currently one upstream report. The knob is here so an instance actually suffering
+the cut-off has somewhere to go, and so the next measurement — on a real workload, where the bug
+lives — has both arms available.
+
+Two more differences are visible in the logs rather than in behaviour. `[agent-tools] agent tool
+call received` says `transport: "bridge"` for a Claude task now, which is how you tell which
+transport a turn actually ran on. And `timeout` / `alwaysLoad` are set on the stdio entry: the
+CLI's per-server cap, which the in-process transport gives no way to set (the reason
+`AGENT_TOOL_TIMEOUT_MS` exists), is placed 30s ABOVE the bridge's own guard deadline so the guard
+is always the one that answers; `alwaysLoad` keeps the tools out of tool-search deferral, which the
+in-process server is never subject to.
+
 ### Model catalog and Vertex corrections
 
 The model half of the capability descriptor is computed per read rather than held constant,

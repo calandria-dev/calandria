@@ -497,6 +497,25 @@ export const INTERNAL_BASE_URL =
 export const CALANDRIA_MCP_SCRIPT = path.join(process.cwd(), "scripts", "calandria-mcp.mjs");
 
 /**
+ * Which transport carries Calandria's own tools into a Claude turn.
+ *
+ * `in-process` (the default) registers them as the Agent SDK's `type: "sdk"`
+ * MCP server: no subprocess, and the tool handlers close over the turn's own
+ * scope. `stdio` mounts scripts/calandria-mcp.mjs instead — the same bridge the
+ * Codex and Antigravity drivers spawn — and the calls come back over loopback
+ * HTTP to /api/internal/agent-tools/*, running the same lib/agentTools.ts logic.
+ *
+ * It is an escape hatch, not a preference. The in-process server is the
+ * transport the CLI cuts calls off on in RESUMED sessions (31 of 123
+ * resumed-turn calls over 14 days on 2.1.257; the measurement is in
+ * lib/agents/CLAUDE.md), and upstream anthropics/claude-agent-sdk-typescript#436
+ * reports stdio and HTTP servers unaffected. Anything unrecognized falls back
+ * to in-process: a typo here must not fail a turn.
+ */
+export const CLAUDE_TOOL_TRANSPORT: "in-process" | "stdio" =
+  String(readEnv("CALANDRIA_CLAUDE_TOOL_TRANSPORT") || "").toLowerCase() === "stdio" ? "stdio" : "in-process";
+
+/**
  * Whether the app may talk to a project's git remote at all. On by default: a
  * best-effort `git fetch` of the base branch is what keeps new task worktrees
  * from branching off a tip that went stale the moment a PR merged on GitHub.

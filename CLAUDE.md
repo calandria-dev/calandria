@@ -164,7 +164,9 @@ Two drivers ship: `lib/agents/claude/` (Claude Code, via `@anthropic-ai/claude-a
 Calandria tools, plus `ask_user`, through the stdio MCP bridge `scripts/calandria-mcp.mjs` →
 `/api/internal/agent-tools/*`. `ask_user` restores interactive asks: the card is persisted and
 published by `lib/agentTools.startAskUser`, and the bridge polls the `wait` endpoint for the
-answer.
+answer. Claude can be put on that same bridge —
+`CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio`, the escape hatch from the resumed-session cut-off — and
+is then the one agent it withholds `ask_user` from, having its own.
 
 **`lib/agents/CLAUDE.md` holds the per-driver detail** — permission modes, model catalog and
 Vertex corrections, MCP inheritance, one-shot isolation, slash-command discovery, and how to add a
