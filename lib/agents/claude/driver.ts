@@ -71,11 +71,13 @@ import {
   BACKGROUND_LINGER_MS,
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   CLAUDE_DEBUG_DIR,
+  CLAUDE_TOOL_TRANSPORT,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PERMISSION_UNATTENDED_MS,
 } from "../../config";
 import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolCutoffNotice, toolInterruptedMessage } from "../../agentToolGuard.mjs";
 import { logAgentToolArrival, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
+import { calandriaBridgeServer } from "./mcp";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger } from "../../log.mjs";
@@ -1107,18 +1109,25 @@ async function* runTurn(
       // Opt-in per-turn CLI debug log (its MCP traffic included) — the record
       // of what the CLI did with a call Calandria never received.
       ...(debugFile ? { debugFile } : {}),
+      // Calandria's own tools, on whichever transport the instance is set to
+      // (CALANDRIA_CLAUDE_TOOL_TRANSPORT). Same tools, same lib/agentTools.ts
+      // logic; what differs is the three seams the in-process server has and
+      // the bridge answers for itself — ./mcp.ts and ../CLAUDE.md say which.
       mcpServers: {
-        calandria: calandriaServer(
-          project,
-          task,
-          // Straight onto the queue, like expose_service's notice below: the
-          // suggestion is already committed, and holding it until the turn ends
-          // would keep the receiving tray stale for as long as the turn runs —
-          // hours, if it parks on a question.
-          ({ title, projectId, taskId }) => queue.push({ type: "suggested", title, projectId, taskId }),
-          ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
-          hooks
-        ),
+        calandria:
+          CLAUDE_TOOL_TRANSPORT === "stdio"
+            ? calandriaBridgeServer(project, task)
+            : calandriaServer(
+                project,
+                task,
+                // Straight onto the queue, like expose_service's notice below: the
+                // suggestion is already committed, and holding it until the turn ends
+                // would keep the receiving tray stale for as long as the turn runs —
+                // hours, if it parks on a question.
+                ({ title, projectId, taskId }) => queue.push({ type: "suggested", title, projectId, taskId }),
+                ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
+                hooks
+              ),
       },
       // Lets the Stop button interrupt the stream mid-turn (see lib/abort.ts).
       abortController,

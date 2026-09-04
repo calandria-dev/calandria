@@ -151,6 +151,37 @@ describe("calandria-mcp stdio bridge", () => {
     }
   });
 
+  it("withholds ask_user from an agent that has one of its own", async () => {
+    // CALANDRIA_MCP_ASK_USER=0 is what the Claude driver sets when it mounts
+    // this bridge (lib/agents/claude/mcp.ts): the CLI's AskUserQuestion already
+    // reaches the same card through the same registry, so a second asking tool
+    // would give one session two ways to ask. Nothing else may go missing with
+    // it, which is why the rest of the set is asserted too.
+    const { client, close } = await connectBridge({ CALANDRIA_MCP_ASK_USER: "0" });
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).not.toContain("ask_user");
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "create_runbook",
+        "expose_service",
+        "get_task",
+        "list_projects",
+        "list_runbooks",
+        "list_tags",
+        "list_tasks",
+        "move_task",
+        "set_base_branch",
+        "suggest_task",
+        "update_runbook",
+        "update_tag",
+        "update_task",
+        "withdraw_suggestion",
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
   it("lets the model name update_task's target, but never offers it the caller's identity", async () => {
     const { client, close } = await connectBridge();
     try {
