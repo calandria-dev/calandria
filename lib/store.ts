@@ -3,10 +3,10 @@ import { gatewayContextWindow } from "./gatewayModels";
 import { serializeGatewayMcp } from "./gatewayMcp";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
-// Capability data comes from the SDK-free lib/agents/capabilities.ts, NOT the
-// driver registry — importing the registry here would drag the agent SDKs
-// (async Turbopack externals) into every module that touches the store and
-// break sync route entries at runtime (see the note in that file).
+// Capability data comes from the SDK-free lib/agents/capabilities.ts. Importing the
+// driver registry here would drag the agent SDKs (async Turbopack externals) into
+// every module that touches the store and break sync route entries at runtime (see
+// the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
 import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
@@ -15,47 +15,38 @@ export { addInternalUsage, type InternalJob } from "./internalUsage";
 
 // ---------- projects ----------
 
-// The single "needs you" predicate (over tasks aliased `t`), which a real task
-// satisfies two ways.
+// The single "needs you" predicate (over tasks aliased `t`). A task satisfies it
+// two ways:
 //
-// PARKED: in progress, flagged awaiting_input. Deliberately NO running
-// condition — a turn parked mid-stream on an AskUserQuestion has running=1 AND
-// awaiting_input=1 and needs the user exactly as much as a settled one (the
-// client-side isAwaiting in app/shell/format.ts makes the same call).
+// PARKED: status in_progress and awaiting_input=1. No running condition: a turn
+// parked mid-stream on an AskUserQuestion has running=1 and awaiting_input=1 and
+// needs the user the same as a settled one (app/shell/format.ts's isAwaiting makes
+// the same call on the client).
 //
-// RED PR: an open PR whose check rollup is failing. Nothing is parked here —
-// the turn ended, often successfully, and the task may already be marked done —
-// but a broken PR is work only a human can route, and .github/CLAUDE.md's "a
-// push isn't done until its CI runs conclude" was pure policy until this line:
-// it asked every session to remember to watch Actions, and main once sat red
-// for nine hours because they all verified locally instead. Riding THIS
-// predicate rather than inventing a second notifier is the point — one pill,
-// one dropdown, one project badge, one snooze.
+// RED PR: an open PR whose check rollup is failing, for a task with status
+// in_progress or done. The turn itself may have ended cleanly; a broken PR still
+// needs a human to route it. This predicate is the single surface for that: one
+// pill, one dropdown, one project badge, one snooze.
 //
-// `done` counts, `on_hold` and `cancelled` don't. A finished task with a red PR
-// is the exact case that went unnoticed, so excluding it would leave the hole
-// this closes; a held or cancelled one has already been answered by a human
-// deciding not to pursue it.
+// `on_hold` and `cancelled` never count: those statuses mean a human already
+// decided not to pursue the task.
 //
 // Shared by listProjects' awaiting_count subquery, listNeedsYou, and
 // countAwaiting so the project badges, the titlebar "N need you" pill, and its
-// dropdown can never disagree.
-// A snooze deadline still ahead of us hides the task from every attention
-// surface — a task you parked until Tuesday must stop asking until Tuesday, or
-// snoozing the thing that keeps nagging you achieves nothing. Evaluated against
-// SQLITE'S OWN CLOCK rather than a bound Date.now(), so all three callers share
-// one `now` no matter how their parameters are ordered; second precision is
-// ample for a feature whose shortest offered deadline is an hour.
+// dropdown agree.
 //
-// The consequence to know about: a deadline passing writes nothing, so a count
-// taken before it and not recomputed will under-report until the next event on
-// the bus. The client closes that by refetching when its own wake timer fires
-// (app/shell/snooze.ts nextWake) — the same refetch a task_edited does.
+// A snooze deadline still ahead hides the task from every attention surface,
+// evaluated against SQLite's own clock rather than a bound Date.now() so all
+// three callers share one `now`; second precision is enough given the shortest
+// offered snooze is an hour. A deadline passing writes nothing, so a count taken
+// before it and not recomputed under-reports until the next event on the bus;
+// the client refetches when its own wake timer fires (app/shell/snooze.ts
+// nextWake), the same refetch a task_edited does.
 const NOT_SNOOZED = "(t.snoozed_until = 0 OR t.snoozed_until <= CAST(strftime('%s','now') AS INTEGER) * 1000)";
 const AWAITING_ARM = "(t.status = 'in_progress' AND t.awaiting_input = 1)";
-// pr_state = 'open' is load-bearing, not decoration: a merged or closed PR is
-// never re-polled (stalePrTasks), so its last-seen 'failing' would otherwise sit
-// in the pill forever with nothing left that could ever clear it.
+// pr_state = 'open' matters: a merged or closed PR is never re-polled
+// (stalePrTasks), so its last-seen 'failing' would otherwise sit in the pill
+// forever with nothing left that could clear it.
 const PR_RED_ARM = "(t.pr_state = 'open' AND t.pr_checks = 'failing' AND t.status IN ('in_progress', 'done'))";
 const NEEDS_YOU = `t.suggested = 0 AND (${AWAITING_ARM} OR ${PR_RED_ARM}) AND ${NOT_SNOOZED}`;
 
@@ -79,11 +70,11 @@ export function listProjects(): (Project & { task_count: number; last_activity: 
     .all() as (Project & { task_count: number; last_activity: number; awaiting_count: number; cost_usd: number; unpriced_turns: number })[];
 }
 
-// Every project row in sidebar order, WITHOUT listProjects' per-project
+// Every project row in sidebar order, without listProjects' per-project
 // aggregate subqueries. The agent-facing project tools (lib/agentTools.ts) only
-// need id/name/repo_path to let a session name a target project, and they run
-// on the turn's hot path — counting tasks and summing usage for each project to
-// answer "which project is called X" is pure waste.
+// need id/name/repo_path to let a session name a target project, and run on the
+// turn's hot path, so counting tasks and summing usage per project is unneeded
+// work there.
 export function listProjectsPlain(): Project[] {
   return getDb().prepare("SELECT * FROM projects ORDER BY position ASC, created_at ASC").all() as Project[];
 }
@@ -95,10 +86,10 @@ export function getProject(id: string): Project | undefined {
 // The ids of every task with a live turn streaming right now, fleet-wide. The
 // client only holds the selected project's tasks, so a turn finishing in a
 // project the user has navigated away from is never learned through that
-// project's event stream (none is open) nor its task fetch (never refetched) —
-// its spinner would stick forever, pinning the client's 10s running-poll on. The
-// running-set poller reconciles against this authoritative list so stale
-// spinners clear and the poll backs off once nothing is actually running.
+// project's event stream (none is open) or its task fetch (never refetched),
+// and its spinner would stick without this list to reconcile against. The
+// running-set poller uses it to clear stale spinners and back off once nothing
+// is actually running.
 export function listRunningTaskIds(): string[] {
   return (
     getDb().prepare("SELECT id FROM tasks WHERE suggested = 0 AND running = 1").all() as { id: string }[]
@@ -106,17 +97,16 @@ export function listRunningTaskIds(): string[] {
 }
 
 // Every task across all active projects that's waiting on the user (the shared
-// NEEDS_YOU predicate, both arms) — the rows behind the titlebar "N need you"
-// dropdown. `waiting_since` is when Claude last spoke (its final message of the
-// paused turn), falling back to the task's updated_at when a task is awaiting
-// with no messages yet. Longest-waiting first, so the most-stale task sits at
-// the top of the list.
+// NEEDS_YOU predicate, both arms), the rows behind the titlebar "N need you"
+// dropdown. `waiting_since` is when the agent last spoke (its final message of
+// the paused turn), falling back to the task's updated_at when a task is
+// awaiting with no messages yet. Longest-waiting first.
 //
-// `reason` says WHICH arm put the row here, because the two need different
-// sublines: "waiting for 3 hours" is true of a parked turn and a lie about a
-// red PR, whose age we don't store (only when we last ASKED GitHub). A CI row
-// names its PR instead. Derived from the same expression the predicate uses, so
-// a row can't claim an arm it didn't match.
+// `reason` says which arm matched, since the two need different sublines: a
+// waiting duration is meaningful for a parked turn but not for a red PR (its
+// age isn't stored, only when it was last polled). A CI row names its PR
+// instead. Derived from the same expression the predicate uses, so a row can't
+// claim an arm it didn't match.
 export function listNeedsYou(): {
   id: string;
   project_id: string;
@@ -144,10 +134,10 @@ export function listNeedsYou(): {
     .all() as ReturnType<typeof listNeedsYou>;
 }
 
-// One project's awaiting count (the shared NEEDS_YOU predicate, same as
-// listProjects' awaiting_count subquery and listNeedsYou's rows) — recomputed
-// per lifecycle event for the global /api/events stream so clients can patch
-// the project badge without refetching the project list.
+// One project's awaiting count, the shared NEEDS_YOU predicate used by
+// listProjects' awaiting_count subquery and listNeedsYou's rows. Recomputed per
+// lifecycle event for the global /api/events stream so clients can patch the
+// project badge without refetching the project list.
 export function countAwaiting(projectId: string): number {
   const row = getDb()
     .prepare(`SELECT COUNT(*) AS n FROM tasks t WHERE t.project_id = ? AND ${NEEDS_YOU}`)
@@ -155,24 +145,22 @@ export function countAwaiting(projectId: string): number {
   return row.n;
 }
 
-// Is this ONE task parked on the user's input right now? The AWAITING arm of
-// the pill's predicate asked of a single row, plus the deprecated-project join
-// listNeedsYou applies, since a project the user has archived should not buzz
-// their phone.
+// Is this one task parked on the user's input right now? Applies the AWAITING
+// arm of the pill's predicate to a single row, plus the deprecated-project join
+// listNeedsYou applies, since an archived project should not trigger a
+// notification.
 //
-// The notification emitter screens through this rather than trusting the event
-// that woke it: a snoozed task, an unreviewed suggestion, and an ask that
+// The notification emitter checks this rather than trusting the event that
+// woke it: a snoozed task, an unreviewed suggestion, and an ask that
 // auto-denied on an unattended turn all publish the same "your turn" event,
 // and none of them is a reason to interrupt anybody.
 //
-// Deliberately the ARM, not the whole NEEDS_YOU predicate. The emitter behind
-// it delivers a toast that says "Waiting for input", and the dispatcher calls
-// it on EVERY turn end and lets this row-read decide — so under the full
-// predicate a turn that ended cleanly on a task whose PR happens to be red
-// would announce a question nobody asked. A red PR belongs in the pill, the
-// dropdown and the board (which all use NEEDS_YOU); whether it should also
-// push a notification is a separate decision with its own wording, and this is
-// not the place to make it by accident.
+// This checks only the AWAITING arm, not the full NEEDS_YOU predicate: the
+// emitter delivers a "Waiting for input" toast on every turn end, and the full
+// predicate would fire that toast for a turn that ended cleanly on a task whose
+// PR happens to be red. A red PR belongs in the pill, dropdown and board (which
+// use NEEDS_YOU); whether it should also push a notification is a separate
+// decision.
 export function taskAwaitingInput(id: string): boolean {
   const row = getDb()
     .prepare(
@@ -183,10 +171,10 @@ export function taskAwaitingInput(id: string): boolean {
   return !!row;
 }
 
-// Lightweight rows for the ⌘K command palette's session search: every real task
+// Lightweight rows for the command palette's session search: every real task
 // across all active projects, plus just enough of its project to label it. The
 // client only holds the selected project's tasks, so the palette fetches this
-// fresh each open. Recency order so the empty-query state surfaces what you
+// fresh each open. Recency order, so the empty-query state surfaces what was
 // touched last.
 export function listAllTasksLite(): {
   id: string;
@@ -199,7 +187,7 @@ export function listAllTasksLite(): {
   project_name: string;
   project_color: string;
   project_icon: string;
-  /** The tags it carries, for the palette's badges — name + tint, in tag order. */
+  /** The tags it carries, for the palette's badges: name and tint, in tag order. */
   tags: { name: string; color: string | null }[];
 }[] {
   const db = getDb();
@@ -213,10 +201,10 @@ export function listAllTasksLite(): {
        ORDER BY t.updated_at DESC`
     )
     .all() as Omit<ReturnType<typeof listAllTasksLite>[number], "tags">[];
-  // The badges in one more query rather than a correlated one per row — the
-  // same shape listTasks attaches `depends_on` with, and for the same reason:
-  // GROUP_CONCAT would have to guess at ordering, and this keeps tag order
-  // (task_tags.position) exactly as the task carries it.
+  // The badges in one extra query rather than a correlated one per row, the
+  // same shape listTasks attaches `depends_on` with. GROUP_CONCAT would have to
+  // guess at ordering; this keeps tag order (task_tags.position) exactly as the
+  // task carries it.
   const pairs = db
     .prepare(
       `SELECT tt.task_id, g.name, g.color FROM task_tags tt
@@ -253,12 +241,12 @@ export function createProject(input: {
   // New projects inherit the app-level default agent (Settings → Run defaults);
   // per-project it can then be changed in the Context editor.
   const defaultAgent = getSetting("default_agent") || "claude";
-  // The branch default is `|| "main"` rather than `?? "main"` for updateProject's
-  // reason: a blank projects.branch is where resolveBaseBranch's last leg lands,
-  // and branchExists answers false for it before running any git, so every task
-  // in the project shows the sync banner naming no branch at all. `??` defaults
-  // null and undefined and nothing else, so a create body that spells the field
-  // out as "" wrote exactly the blank the update path now refuses.
+  // `|| "main"` rather than `?? "main"`, matching updateProject: a blank
+  // projects.branch is where resolveBaseBranch's last leg lands, and
+  // branchExists answers false for it before running any git, so every task in
+  // the project would show the sync banner naming no branch at all. `??` only
+  // defaults null and undefined, so a create body that spells the field out as
+  // "" would still write the blank.
   getDb()
     .prepare(
       `INSERT INTO projects (id, name, icon, sub, color, context, repo_path, branch, landing_mode, default_agent, port, position, created_at)
@@ -268,9 +256,10 @@ export function createProject(input: {
   return getProject(id)!;
 }
 
-// The next deterministic per-project port: one past the current max (never
-// reusing a freed slot, so a project's port is stable for its lifetime), floored
-// at SERVICE_PORT_BASE. Injected as PORT into the project's services + PTY.
+// The next deterministic per-project port: one past the current max, never
+// reusing a freed slot, so a project's port stays stable for its lifetime,
+// floored at SERVICE_PORT_BASE. Injected as PORT into the project's services
+// and PTY.
 export function nextServicePort(): number {
   const maxRow = getDb().prepare("SELECT COALESCE(MAX(port), 0) AS n FROM projects").get() as { n: number };
   return Math.max(maxRow.n, SERVICE_PORT_BASE - 1) + 1;
@@ -295,9 +284,9 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   const n = { ...cur, ...patch };
   // branch is normalized like landing_mode below: a blank patch (missing base
   // branch field, or one cleared to "" / whitespace in Settings) keeps the
-  // CURRENT branch rather than saving emptiness. An empty projects.branch
-  // makes resolveBaseBranch fall through to "", and every task then shows
-  // "isn't a branch in this repository" with a blank name.
+  // current branch instead of saving emptiness. An empty projects.branch makes
+  // resolveBaseBranch fall through to "", and every task then shows "isn't a
+  // branch in this repository" with a blank name.
   const branch = n.branch.trim() || cur.branch;
   getDb()
     .prepare(
@@ -305,25 +294,25 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
         auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ?,
         gateway_max_budget = ?, gateway_key_duration = ?, gateway_mcp = ? WHERE id = ?`
     )
-    // landing_mode is normalized rather than trusted: the column has no CHECK
-    // behind it and this is reached straight from PATCH /api/projects/[id].
+    // landing_mode is normalized, not trusted as given: the column has no CHECK
+    // constraint and this is reached straight from PATCH /api/projects/[id].
     .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
-      // agent_env is normalized, not trusted, for the same reason: the allowlist
-      // in lib/agentEnv.ts is enforced HERE, so nothing unlisted reaches the DB
-      // whatever a PATCH body (object or JSON text) carried.
+      // agent_env is normalized, not trusted: the allowlist in lib/agentEnv.ts is
+      // enforced here, so nothing unlisted reaches the DB regardless of what a
+      // PATCH body (object or JSON text) carried.
       serializeAgentEnv(n.agent_env),
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
-      // clear it — matching gateway_max_budget's own null-is-unlimited contract.
+      // clear it, matching gateway_max_budget's own null-is-unlimited contract.
       n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",
-      // Same normalize-don't-trust treatment as agent_env, for the same reason
-      // (docs/design/litellm.md, "Hosted MCP servers").
+      // Same normalize-don't-trust treatment as agent_env (docs/AGENTS.md, LiteLLM
+      // section, "Hosted MCP servers").
       serializeGatewayMcp(n.gateway_mcp), id);
   return getProject(id);
 }
 
-// Persist "Refresh with AI" job state in isolation. Deliberately separate from
-// updateProject (whose fixed column list must NOT touch refresh_* state) so a
-// background draft and a concurrent project edit can't clobber each other.
+// Persist "Refresh with AI" job state in isolation, separate from updateProject
+// (whose fixed column list must not touch refresh_* state), so a background
+// draft and a concurrent project edit can't clobber each other.
 export function setProjectRefresh(
   id: string,
   fields: Partial<Pick<Project, "refresh_status" | "refresh_draft" | "refresh_error" | "refresh_started_at">>,
@@ -343,20 +332,21 @@ export function setProjectRefresh(
 
 // Tasks carry their cumulative spend (cost_usd + total_tokens, summed across all
 // turns of every generation) so the chat header can show it without an extra
-// call. The two cache buckets ride along because `total_tokens` on its own is
-// misleading: in real sessions most of it is prompt-cache READS (context re-sent
-// every turn, billed at ~10% of the input rate), so the UI splits the total into
-// fresh work vs cached re-reads rather than showing one scary number.
-// `context_tokens`/`context_pct` are the LIVE context-window gauge — the
-// agent's own report of the latest request's context size, NOT a cumulative
-// sum, with `context_estimated` flagging the rows where it's only derived from
-// a usage report (see getTaskContext for both).
-// `depends_on` lists the task ids this task is blocked by (see task_dependencies);
-// `tag_ids` the tags it carries, in tag order (see task_tags).
+// call. The two cache buckets ride along because `total_tokens` alone is
+// misleading: in real sessions most of it is prompt-cache reads (context
+// re-sent every turn, billed at a fraction of the input rate), so the UI splits
+// the total into fresh work versus cached re-reads.
+// `context_tokens`/`context_pct` are the live context-window gauge: the agent's
+// own report of the latest request's context size, not a cumulative sum, with
+// `context_estimated` flagging rows where it's only derived from a usage report
+// (see getTaskContext for both).
+// `depends_on` lists the task ids this task is blocked by (see
+// task_dependencies); `tag_ids` the tags it carries, in tag order (see
+// task_tags).
 export type TaskWithUsage = Task & {
   cost_usd: number;
   /** Turns whose endpoint had no price to record, so `cost_usd` is the sum over
-   *  the others — a floor, not the whole figure. See LedgerUsage. */
+   *  the others: a floor, not the whole figure. See LedgerUsage. */
   unpriced_turns: number;
   total_tokens: number;
   cache_read_tokens: number;
@@ -372,9 +362,9 @@ export type TaskWithUsage = Task & {
 
 // The two halves of the context gauge as SQL, shared by listTasks (aliased on
 // `t`) and getTaskContext. The measured column wins; the fallback is the
-// CURRENT generation's latest usage row, input side only — a row from a
-// previous generation describes a window /clear already threw away, which is
-// why the gauge reads 0 right after a clear rather than the old figure.
+// current generation's latest usage row, input side only, since a row from a
+// previous generation describes a window /clear already discarded (the gauge
+// reads 0 right after a clear rather than the old figure).
 // `context_estimated` is 1 only when that fallback actually produced a number:
 // a task that has never run has an exact 0, nothing to hedge.
 const CONTEXT_FALLBACK_SQL = (t: string) =>
@@ -386,24 +376,22 @@ const CONTEXT_ESTIMATED_SQL = (t: string) =>
   `CASE WHEN ${t}.context_measured IS NULL AND ${CONTEXT_FALLBACK_SQL(t)} IS NOT NULL THEN 1 ELSE 0 END`;
 
 /**
- * One project's tasks, MOST RECENTLY ACTIVE FIRST — `updated_at DESC`, with
- * `created_at` then `rowid` breaking the ties two writes in the same
- * millisecond produce (so a fresh task still lands above its same-tick
- * siblings). Every bucket the UI partitions this into inherits that order, the
- * Suggested tray included: the top card is always the newest thing that
- * happened, which is what makes a long backlog readable without scrolling.
+ * One project's tasks, most recently active first: `updated_at DESC`, with
+ * `created_at` then `rowid` breaking ties two writes in the same millisecond
+ * produce, so a fresh task still lands above its same-tick siblings. Every
+ * bucket the UI partitions this into inherits that order, the Suggested tray
+ * included: the top card is always the newest thing that happened.
  *
- * Deliberately NOT `position` — the manual board order that used to lead this
- * sort. The two can't both be the default, and recency won: a task you just
- * worked on has to come back to the top on its own, without being dragged
- * there. `tasks.position` survives as a stable creation sequence (moveTasks
- * renumbers it per destination) but nothing renders it any more.
+ * Sorted by recency, not `tasks.position` (the manual board order). A task
+ * just worked on returns to the top on its own, without being dragged there.
+ * `tasks.position` survives as a stable creation sequence (moveTasks renumbers
+ * it per destination) but nothing renders it.
  */
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
   // One read for the whole list: the provider override a row inherits is the
   // project's, with only the task's own agent_env laid over it per row. Rows
-  // where NEITHER carries one skip the describe entirely — that is almost every
+  // where neither carries one skip the describe entirely, which is almost every
   // row on almost every instance, and this runs on every task-list load.
   const project = getProject(projectId);
   const anyOverride = !!project?.agent_env;
@@ -432,7 +420,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     context_tokens: number;
     context_estimated: number;
   })[];
-  // Attach each task's dependency edges in one query (project-scoped via join).
+  // Attach each task's dependency edges in one query, project-scoped via join.
   const edges = db
     .prepare(
       `SELECT td.task_id, td.depends_on_id FROM task_dependencies td
@@ -445,7 +433,7 @@ export function listTasks(projectId: string): TaskWithUsage[] {
     if (list) list.push(e.depends_on_id);
     else byTask.set(e.task_id, [e.depends_on_id]);
   }
-  // Tag membership the same way, in tag order — one query for the project, not
+  // Tag membership the same way, in tag order: one query for the project, not
   // one per row. This is what the chips filter on and what every badge renders.
   const memberships = db
     .prepare(
@@ -486,9 +474,9 @@ export function getTaskDeps(taskId: string): string[] {
 
 // Tasks that opted into auto-start and are blocked by the given task: the
 // candidates to launch when it's marked done (lib/autoStart.ts re-checks each
-// one's OTHER blockers before starting it). Deliberately narrow — only a
-// never-started, non-suggested, plain not_started task may auto-start; on_hold
-// means the user parked it, and a suggestion hasn't been reviewed yet.
+// one's other blockers before starting it). Only a never-started, non-suggested
+// task with status not_started may auto-start; on_hold means the user parked
+// it, and a suggestion hasn't been reviewed yet.
 export function listAutoStartCandidates(dependsOnId: string): Task[] {
   return getDb()
     .prepare(
@@ -501,12 +489,12 @@ export function listAutoStartCandidates(dependsOnId: string): Task[] {
 
 // Tasks whose queued start has come due (lib/deferredStart.ts sweeps this on a
 // timer). Oldest deadline first, so tasks queued for the same reset launch in
-// the order they were queued. Deliberately does NOT read `running`: turn
-// liveness belongs to the abort registry (the row's flag can be stale after a
-// crash), so the sweep asks hasTurn() itself. Terminal and tray rows are out —
-// a done or cancelled task has nothing to start, and a suggestion hasn't been
-// accepted yet — while every other status is in: the user queued it, so
-// on_hold (which auto-start refuses) is theirs to override here.
+// the order they were queued. Does not read `running`: turn liveness belongs to
+// the abort registry, since the row's flag can be stale after a crash, so the
+// sweep asks hasTurn() itself. Terminal and tray rows are excluded, since a
+// done or cancelled task has nothing to start and a suggestion hasn't been
+// accepted yet; every other status is included, since the user queued it
+// themselves, so on_hold (which auto-start refuses) is theirs to override here.
 export function listDueDeferredStarts(now: number): Task[] {
   return getDb()
     .prepare(
@@ -519,11 +507,11 @@ export function listDueDeferredStarts(now: number): Task[] {
 }
 
 /**
- * Same dependency set, order-insensitively — edges have no order, so a caller
+ * Same dependency set, order-insensitively: edges have no order, so a caller
  * that resubmits the stored list in a different order hasn't changed anything.
  * Shared by the two writers that have to tell a real edit from a resubmission:
  * PATCH /api/tasks/[id] (the edit dialog posts every field, touched or not) and
- * update_task (which must not report a change it didn't make).
+ * update_task, which must not report a change it didn't make.
  */
 export function sameDepSet(a: string[], b: string[]): boolean {
   return a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
@@ -574,11 +562,11 @@ export function setTaskDeps(taskId: string, dependsOn: string[]): void {
 // ---------- agent-edit audit trail (task_agent_edits) ----------
 //
 // The record behind the "changed since you accepted it" chip: one row per
-// update_task write that used to be refused by the old ownership gate and now
-// goes through instead (lib/agentTools.ts updateTaskForAgent). The chip is
-// `tasks.agent_edited_at` — reverting the LAST outstanding edit clears it,
-// acknowledging (POST .../agent-edits { action: "ack" }) clears it WITHOUT
-// touching history, so the audit trail always outlives the chip.
+// update_task write made by another task's agent (lib/agentTools.ts
+// updateTaskForAgent). The chip is `tasks.agent_edited_at`. Reverting the
+// LAST outstanding edit clears it, acknowledging (POST .../agent-edits
+// { action: "ack" }) clears it without touching history, so the audit trail
+// always outlives the chip.
 
 /** Record one agent edit and (re-)raise the target task's chip. One transaction. */
 export function recordAgentEdit(input: {
@@ -607,13 +595,13 @@ function parseAgentEdit(r: Omit<TaskAgentEdit, "changes"> & { changes: string })
   try {
     changes = JSON.parse(r.changes);
   } catch {
-    // Tolerate a corrupt row rather than throwing the whole list/panel away —
-    // an edit with no readable diff is still worth flagging as having happened.
+    // Tolerate a corrupt row: an edit with no readable diff is still worth
+    // flagging as having happened.
   }
   return { ...r, changes };
 }
 
-/** An edit's history, newest first — what the diff panel renders. */
+/** An edit's history, newest first. What the diff panel renders. */
 export function listAgentEdits(taskId: string): TaskAgentEdit[] {
   return (
     getDb().prepare("SELECT * FROM task_agent_edits WHERE task_id = ? ORDER BY created_at DESC, rowid DESC").all(taskId) as (Omit<
@@ -632,22 +620,20 @@ export function markAgentEditReverted(id: string): void {
   getDb().prepare("UPDATE task_agent_edits SET reverted_at = ? WHERE id = ?").run(Date.now(), id);
 }
 
-/** Any edit on this task still applied (not reverted) — what Revert re-checks before clearing the chip. */
-/** True while some edit is neither reverted nor acknowledged — what keeps the chip up. */
+/** True while some edit is neither reverted nor acknowledged. This is what keeps the chip up, and what Revert re-checks before clearing it. */
 export function hasOutstandingAgentEdits(taskId: string): boolean {
   return !!getDb().prepare("SELECT 1 FROM task_agent_edits WHERE task_id = ? AND reverted_at = 0 AND acknowledged_at = 0 LIMIT 1").get(taskId);
 }
 
-/** Clear the chip without touching history — Ack, or the last outstanding edit reverted. */
+/** Clear the chip without touching history: used by Ack, or when the last outstanding edit is reverted. */
 export function clearAgentEditFlag(taskId: string): void {
   getDb().prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
 }
 
 /**
  * "Keep changes": stamp every outstanding edit acknowledged and drop the chip,
- * in one transaction. Stamping the ROWS is what lets a later Revert decide
- * whether anything is still outstanding — clearing only the task flag left
- * acked rows counting as outstanding forever.
+ * in one transaction. Stamping the rows, not just the task flag, is what lets
+ * a later Revert decide whether anything is still outstanding.
  */
 export function acknowledgeAgentEdits(taskId: string): void {
   const db = getDb();
@@ -664,12 +650,12 @@ export function getTask(id: string): Task | undefined {
   return row && redactGatewayKey(row);
 }
 
-// Never let a task's minted LiteLLM key (or its spend baseline, an internal
-// bookkeeping field with no reader outside lib/gatewayKeys.ts) leave this
-// module through the general read path — every route that spreads a Task or
-// TaskWithUsage into JSON goes through getTask() or listTasks(). The real
-// value lives only where taskGatewayKeyState()/setTaskGatewayKey() read and
-// write it (lib/runner.ts, lib/gatewayKeys.ts).
+// Strips a task's minted LiteLLM key and its spend baseline (an internal
+// bookkeeping field with no reader outside lib/gatewayKeys.ts) before the row
+// leaves this module through the general read path. Every route that spreads
+// a Task or TaskWithUsage into JSON goes through getTask() or listTasks(); the
+// real values are read and written only by taskGatewayKeyState() and
+// setTaskGatewayKey() (lib/runner.ts, lib/gatewayKeys.ts).
 function redactGatewayKey<T extends { gateway_key: string; gateway_key_spend?: number }>(row: T): T {
   row.gateway_key = "";
   delete row.gateway_key_spend;
@@ -677,11 +663,11 @@ function redactGatewayKey<T extends { gateway_key: string; gateway_key_spend?: n
 }
 
 /** Internal-only: a task's minted LiteLLM virtual key and the cumulative spend
- *  last reconciled against it (docs/design/litellm.md, "Per-task virtual
- *  keys"). `key` is "" when no key has been minted (per-task keys off, not a
- *  gateway task, or the mint failed and the turn fell back to the instance
- *  key). Never call this from a route that returns its result to the client —
- *  use getTask()/listTasks(), which always redact it. */
+ *  last reconciled against it (docs/AGENTS.md, LiteLLM section). `key` is ""
+ *  when no key has been minted (per-task keys off, not a gateway task, or the
+ *  mint failed and the turn fell back to the instance key). Do not call this
+ *  from a route that returns its result to the client; use getTask() or
+ *  listTasks(), which always redact it. */
 export function taskGatewayKeyState(id: string): { key: string; spend: number } | undefined {
   return getDb().prepare("SELECT gateway_key AS key, gateway_key_spend AS spend FROM tasks WHERE id = ?").get(id) as
     | { key: string; spend: number }
@@ -689,15 +675,15 @@ export function taskGatewayKeyState(id: string): { key: string; spend: number } 
 }
 
 /** Store a newly minted key (or "" to clear one on delete), resetting the
- *  spend baseline — a fresh key has spent nothing yet. No `updated_at` stamp,
- *  same reason as clearTaskWorktreePath: internal bookkeeping, not a
- *  user-visible edit that should reorder the board. */
+ *  spend baseline since a fresh key has spent nothing yet. No `updated_at`
+ *  stamp: this is internal bookkeeping, not a user-visible edit that should
+ *  reorder the board (same reasoning as clearTaskWorktreePath). */
 export function setTaskGatewayKey(id: string, key: string): void {
   getDb().prepare("UPDATE tasks SET gateway_key = ?, gateway_key_spend = 0 WHERE id = ?").run(key, id);
 }
 
-/** Advance the spend baseline after a reconciliation (lib/gatewayKeys.ts) —
- *  the next one diffs against this. No `updated_at` stamp, same reason as
+/** Advance the spend baseline after a reconciliation (lib/gatewayKeys.ts); the
+ *  next one diffs against this. No `updated_at` stamp, same reason as
  *  setTaskGatewayKey. */
 export function setTaskGatewayKeySpend(id: string, spend: number): void {
   getDb().prepare("UPDATE tasks SET gateway_key_spend = ? WHERE id = ?").run(spend, id);
@@ -713,9 +699,9 @@ export function createTask(input: {
   send_context?: boolean;
   /**
    * The task's run permission, settable at creation so a task that will run
-   * UNATTENDED (auto-start, and later a schedule) can be pinned to a mode that
-   * won't stop to ask. null/undefined keeps the inherit-the-default behavior
-   * every other creation path relies on.
+   * unattended (auto-start, or a schedule) can be pinned to a mode that won't
+   * stop to ask. null/undefined keeps the inherit-the-default behavior every
+   * other creation path relies on.
    */
   permission_mode?: string | null;
   /**
@@ -733,9 +719,9 @@ export function createTask(input: {
   tag_ids?: string[];
   /**
    * A provider override laid over the project's (lib/agentEnv.ts), settable at
-   * creation because `suggest_task` is the path a frontier-model session uses
-   * to delegate work to a local model, and the task's first turn may be an
-   * auto-start with no PATCH in between. Object or JSON text; normalized here.
+   * creation because `suggest_task` can delegate work to a different agent and
+   * the task's first turn may be an auto-start with no PATCH in between.
+   * Object or JSON text; normalized here.
    */
   agent_env?: string | Record<string, string> | null;
 }): Task {
@@ -746,12 +732,12 @@ export function createTask(input: {
   // project's default (see lib/agents/registry.ts for resolution).
   const agent = input.agent || project?.default_agent || "claude";
   // Whether sessions get the saved project context: explicit choice, else the
-  // project's send_context setting (missing project ⇒ 1, the historic behavior).
+  // project's send_context setting (defaults to on when there is no project).
   const sendContext = input.send_context ?? (project ? project.send_context !== 0 : true);
-  // Next in the project's creation sequence. Not a render order any more —
-  // listTasks sorts by recency — but a monotonic per-project counter the move
-  // paths still renumber, and the only durable record of the order rows were
-  // added in beyond `created_at`'s millisecond resolution.
+  // Next in the project's creation sequence. listTasks sorts by recency, so
+  // this is no longer a render order, but it is a monotonic per-project
+  // counter the move paths still renumber, and the only durable record of
+  // creation order beyond `created_at`'s millisecond resolution.
   const position = (
     getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(input.project_id) as { n: number }
   ).n;
@@ -767,26 +753,26 @@ export function createTask(input: {
     );
   // Tags are a second write because they are a second table. setTaskTags does
   // the project check for us, so a caller that got the tags wrong fails here
-  // with the row already created — deliberate: every creation path validates
-  // its tags first (the routes and lib/agentTools.ts resolve them before the
-  // insert), and a tag that vanished in between must not lose the task.
+  // with the row already created. Every creation path validates its tags
+  // first (the routes and lib/agentTools.ts resolve them before the insert),
+  // and a tag that vanished in between must not lose the task.
   if (input.tag_ids?.length) setTaskTags([id], input.tag_ids);
   return getTask(id)!;
 }
 
-// Why a task may not change projects right now — null when it may. A task with
-// a worktree holds a checkout cut from its CURRENT project's repo: re-parenting
-// the row would leave it diffing against one repository and merging into
-// another. So a plain move is refused for started work.
-// (`started`, `running` and the worktree columns are checked together — a task
+// Why a task may not change projects right now, or null when it may. A task
+// with a worktree holds a checkout cut from its current project's repo:
+// re-parenting the row would leave it diffing against one repository and
+// merging into another, so a plain move is refused for started work.
+// (`started`, `running` and the worktree columns are checked together: a task
 // can be flagged started before its worktree exists, and a merged task keeps
 // `started` after its worktree is reclaimed.)
 //
-// `resetCheckout` is the caller saying that checkout is being thrown away —
-// lib/taskMove.ts tears the worktree down and this write clears the columns, so
-// the next turn cuts a fresh one from the DESTINATION repo. The started-task
-// reason then no longer applies; a LIVE turn still refuses either way, because
-// nothing may delete a worktree an agent is writing into.
+// `resetCheckout` means the caller is throwing that checkout away:
+// lib/taskMove.ts tears the worktree down and this write clears the columns,
+// so the next turn cuts a fresh one from the destination repo, and the
+// started-task reason no longer applies. A live turn still refuses either
+// way, because a worktree an agent is writing into must not be deleted.
 export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolean } = {}): string | null {
   if (task.running === 1) return "a task with a running turn can't be moved";
   if (opts.resetCheckout) return null;
@@ -795,8 +781,9 @@ export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolea
   return null;
 }
 
-// What a move left behind, so the caller can tell the user (an edge whose other
-// end stayed behind would span projects — see setTaskDeps — so it goes).
+// What a move left behind, so the caller can tell the user. An edge whose
+// other end stayed behind would span projects (see setTaskDeps), so it is
+// dropped.
 export interface TaskMove {
   task: Task;
   /** Tasks this one was blocked by. */
@@ -811,14 +798,14 @@ export interface TaskEdge {
   depends_on_id: string;
 }
 
-/** The outcome of moving a selection of tasks — see moveTasks. */
+/** The outcome of moving a selection of tasks. See moveTasks. */
 export interface TaskMoveBatch {
   /** Rows that changed project, in the order they were appended. */
   moved: Task[];
   /**
-   * The distinct projects that LOST rows. Captured before the write — the moved
-   * rows themselves only remember where they landed, and a tray that lost a task
-   * has to hear about it too.
+   * The distinct projects that lost rows, captured before the write. The
+   * moved rows themselves only remember where they landed, and a tray that
+   * lost a task needs to hear about it too.
    */
   from_project_ids: string[];
   /** Ids already filed in the destination: nothing to do, and nothing to refuse. */
@@ -830,10 +817,10 @@ export interface TaskMoveBatch {
   /** Edges that survived because both of their ends moved together. */
   kept: TaskEdge[];
   /**
-   * Tags a moved row LOST, because some of that tag's members weren't coming.
+   * Tags a moved row lost, because some of that tag's members weren't coming.
    * One entry per (task, tag): a task carrying three tags can leave one behind
-   * and keep two. The name travels with the report so the caller can say WHICH
-   * label the task just lost rather than "a tag".
+   * and keep two. The name travels with the report so the caller can name the
+   * label the task lost rather than saying "a tag".
    */
   untagged: { id: string; tag_id: string; tag_name: string }[];
   /** Tags whose every member was in the selection, so the tag row moved too. */
@@ -843,56 +830,54 @@ export interface TaskMoveBatch {
 /** A tag re-keyed to the destination project along with its whole membership. */
 export interface MovedTag {
   id: string;
-  /** Its name in the destination — suffixed when a tag there already had that name. */
+  /** Its name in the destination, suffixed when a tag there already had that name. */
   name: string;
   /** The name it arrived with, when the collision above renamed it; null otherwise. */
   renamed_from: string | null;
 }
 
 /**
- * Re-parent unstarted tasks to another project — the one path that changes
- * `project_id` after creation (a misfiled task used to mean delete + recreate,
- * losing its transcript). One transaction for the whole selection, so eleven
- * misfiled tasks are one write and one event rather than eleven of each.
+ * Re-parent unstarted tasks to another project: the one path that changes
+ * `project_id` after creation. One transaction for the whole selection, so
+ * eleven misfiled tasks are one write and one event rather than eleven of
+ * each.
  *
- * Throws only on the caller's own mistake (an unknown destination). A task that
- * can't move — missing, or past the point of no return per moveTaskBlockedReason
- * — is REPORTED in `skipped` rather than failing its eleven innocent neighbours;
- * one already in the destination is `unchanged`, which is not a refusal either.
+ * Throws only on the caller's own mistake (an unknown destination). A task
+ * that can't move (missing, or past the point of no return per
+ * moveTaskBlockedReason) is reported in `skipped` rather than failing its
+ * neighbors; one already in the destination is `unchanged`, which is not a
+ * refusal either.
  *
- * Dependency edges: an edge survives iff BOTH its ends are in the moving set.
- * Those land in the destination together, so they stay intra-project and the
- * invariant setTaskDeps enforces still holds — a whole chain moving together
- * keeps its shape. Every other edge touching a mover would end up spanning
- * projects, and nothing else revalidates them, so it goes. Locally decided per
- * edge on purpose: one skipped task mid-chain costs its own two edges, not the
- * whole component's.
+ * Dependency edges: an edge survives iff both its ends are in the moving set,
+ * so it stays intra-project and the invariant setTaskDeps enforces still
+ * holds; a whole chain moving together keeps its shape. Every other edge
+ * touching a mover would end up spanning projects, and nothing else
+ * revalidates them, so it is dropped. This is decided per edge, so one
+ * skipped task mid-chain costs its own two edges, not the whole component's.
  *
  * The tasks' own child rows (messages, summaries, uploads) are task-keyed, so
- * they simply come along. The project-keyed ones — sessions, task_usage,
- * task_merges — are re-pointed at the destination, unconditionally: a task's
- * sessions and its spend are the task's, and leaving them behind would bill the
- * old project for work its new owner did. (For an unstarted task there are no
- * such rows at all, which is why this used to be skipped — a started task
- * couldn't move. `resetCheckout` is what ended that.)
+ * they come along automatically. The project-keyed ones (sessions,
+ * task_usage, task_merges) are re-pointed at the destination unconditionally:
+ * a task's sessions and its spend are the task's, and leaving them behind
+ * would bill the old project for work its new owner did.
  *
- * `resetCheckout` moves a STARTED task by throwing its checkout away: the
- * caller (lib/taskMove.ts) has already removed the worktree and branch from the
- * old repo, and this clears every column that described them so the next turn
- * cuts a fresh worktree from the destination — see the `clearCheckout` statement
- * below for exactly what that covers and why.
+ * `resetCheckout` moves a started task by throwing its checkout away: the
+ * caller (lib/taskMove.ts) has already removed the worktree and branch from
+ * the old repo, and this clears every column that described them so the next
+ * turn cuts a fresh worktree from the destination. See the `clearCheckout`
+ * statement below for exactly what that covers.
  *
- * It's a SET of ids rather than a flag on the batch, because a checkout is
+ * It is a set of ids rather than a flag on the batch, because a checkout is
  * thrown away one at a time: each is a separate irreversible answer the user
- * gave about that task's worktree, and the two things the option does — waive
- * the started-task refusal, and clear the columns — must apply to exactly the
+ * gave about that task's worktree, and the two things the option does (waive
+ * the started-task refusal, and clear the columns) must apply to exactly the
  * tasks that were answered for. As one flag over the batch, an unanswered
  * started task would move with its columns cleared and its worktree left
  * orphaned in the repo it came from, with nothing pointing at it.
  *
- * Liveness is NOT checked here: a turn can be in flight with the row still
- * reading running=0 (POST /messages claims the abort slot before it locks), so
- * the caller screens for that under the task locks — see lib/taskMove.ts.
+ * Liveness is not checked here: a turn can be in flight with the row still
+ * reading running=0 (POST /messages claims the abort slot before it locks),
+ * so the caller screens for that under the task locks; see lib/taskMove.ts.
  */
 export function moveTasks(
   ids: string[],
@@ -906,8 +891,8 @@ export function moveTasks(
   const unchanged: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
   const movers: (Task & { picked: number })[] = [];
-  // Input order is the click order; classify in it so the skip report reads the
-  // way the user's selection did.
+  // Classify in input order (the click order) so the skip report reads in the
+  // order the user selected tasks.
   [...new Set(ids)].forEach((id, picked) => {
     const task = getTask(id);
     if (!task) skipped.push({ id, reason: "task not found" });
@@ -920,34 +905,29 @@ export function moveTasks(
   });
   if (movers.length === 0) return { moved: [], from_project_ids: [], unchanged, skipped, dropped: [], kept: [], untagged: [], carried: [] };
 
-  // Append in SOURCE order, not click order, so a selection keeps the shape it
-  // had in the tray it left. Positions only mean something WITHIN a project — a
-  // task at 2 in one tray is not "after" a task at 0 in another — so a selection
-  // spanning several sources keeps each source's run whole, ordered by when the
-  // caller first named that source. Arbitrary across trays, but deterministic,
-  // which sorting two unrelated orderings together isn't.
+  // Append in source order, not click order, so a selection keeps the shape it
+  // had in the tray it left. Position only means something within a project, so
+  // a selection spanning several sources keeps each source's run whole, ordered
+  // by when the caller first named that source.
   const sourceRank = new Map<string, number>();
   for (const t of movers) if (!sourceRank.has(t.project_id)) sourceRank.set(t.project_id, sourceRank.size);
   movers.sort((a, b) =>
     sourceRank.get(a.project_id)! - sourceRank.get(b.project_id)! || a.position - b.position || a.picked - b.picked);
   const moving = new Set(movers.map((t) => t.id));
 
-  // Whole-table read, as setTaskDeps' cycle guard already does: task_dependencies
-  // is small, and partitioning in JS is clearer than an IN-list built twice.
+  // Reads the whole table, as setTaskDeps' cycle guard does: task_dependencies
+  // is small, and partitioning in JS is clearer than building an IN-list twice.
   const edges = db.prepare("SELECT task_id, depends_on_id FROM task_dependencies").all() as TaskEdge[];
   const touching = edges.filter((e) => moving.has(e.task_id) || moving.has(e.depends_on_id));
   const kept = touching.filter((e) => moving.has(e.task_id) && moving.has(e.depends_on_id));
   const dropped = touching.filter((e) => !(moving.has(e.task_id) && moving.has(e.depends_on_id)));
 
-  // Tags get the same both-ends-moving rule the edges above do. A tag is
-  // project-scoped, so a moved row can't keep carrying one from the project it
-  // left — UNLESS the whole tag is leaving with it, which is what "both ends
-  // are moving" means for a label: it follows its members. A feature selected
-  // whole therefore arrives whole, badges intact; a feature selected in part
-  // leaves that tag (and its remaining members) behind. Decided PER TAG, not
-  // per task: a task in the auth migration and in "flaky-tests" can carry one
-  // across and drop the other, and telling it which is the whole point of
-  // making these many-to-many.
+  // Tags follow the same both-ends-moving rule as the edges above. A tag is
+  // project-scoped, so a moved task keeps one only if the tag's whole
+  // membership is moving with it; otherwise the task leaves that tag (and its
+  // remaining members) behind. This is decided per tag, not per task: a task in
+  // both "auth migration" and "flaky-tests" can carry one across and drop the
+  // other.
   const carried: MovedTag[] = [];
   const untagged: { id: string; tag_id: string; tag_name: string }[] = [];
   const carriedTags: Tag[] = [];
@@ -956,7 +936,7 @@ export function moveTasks(
   const membersOf = db.prepare("SELECT task_id FROM task_tags WHERE tag_id = ?");
   for (const tagId of new Set([...tagsOfMovers.values()].flat())) {
     const tag = getTag(tagId);
-    // The FK says a membership's tag exists; a missing one just means nothing to carry.
+    // The FK guarantees a membership's tag exists; a missing one means nothing to carry.
     if (!tag) continue;
     const members = (membersOf.all(tagId) as { task_id: string }[]).map((m) => m.task_id);
     if (members.every((id) => moving.has(id))) carriedTags.push(tag);
@@ -964,17 +944,17 @@ export function moveTasks(
   }
 
   // Position is per-project (createTask appends at MAX+1 within the project), so
-  // the movers need fresh ones or they collide with the destination's order.
+  // movers need fresh positions or they collide with the destination's order.
   let position = (
     db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tasks WHERE project_id = ?").get(projectId) as { n: number }
   ).n;
   const rows = movers.map((task) => ({ ...deriveMoved(task, dest), id: task.id, position: position++ }));
-  // Whose blocker list just got shorter: the movers, and the DEPENDENT end of
-  // every severed edge. Not the blocker end — a task that something else was
-  // waiting on lost nothing when that edge went, and reaping its (already dead)
-  // auto_start would bump an updated_at on a row this move never touched.
+  // Tasks whose blocker list just got shorter: the movers, and the dependent
+  // end of every severed edge. The blocker end is excluded: a task that
+  // something else was waiting on lost nothing when that edge went, so reaping
+  // its auto_start would bump updated_at on a row this move never touched.
   const touched = new Set([...moving, ...dropped.map((e) => e.task_id)]);
-  // Which memberships to sever, keyed by task: only the tags that stayed.
+  // Memberships to sever, keyed by task: only the tags that stayed.
   const leftBehind = new Map<string, string[]>();
   for (const u of untagged) leftBehind.set(u.id, [...(leftBehind.get(u.id) ?? []), u.tag_id]);
   const now = Date.now();
@@ -982,92 +962,89 @@ export function moveTasks(
   db.transaction(() => {
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
-    // Re-key the carried tags FIRST, so nothing in between ever reads a
-    // member in one project and its tag in another.
+    // Re-key the carried tags first, so nothing in between reads a member in
+    // one project and its tag in another.
     let tagPos = (
       db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM tags WHERE project_id = ?").get(projectId) as { n: number }
     ).n;
     const nameTaken = db.prepare("SELECT 1 AS x FROM tags WHERE project_id = ? AND name = ?");
-    // base_branch is cleared on the way across for exactly the reason it is
-    // cleared on every mover below: a branch name means nothing in another
-    // repository, and a carried tag still naming `feature/auth` would hand that
-    // default to every task filed under it in a repo that has no such branch.
+    // base_branch is cleared on the way across, same as on every mover below: a
+    // branch name means nothing in another repository, and a carried tag
+    // naming `feature/auth` would hand that default to every task filed under
+    // it in a repo with no such branch.
     const rekey = db.prepare(
       "UPDATE tags SET project_id = ?, name = ?, position = ?, origin_task_id = ?, base_branch = '', updated_at = ? WHERE id = ?"
     );
     for (const g of carriedTags) {
       // UNIQUE(project_id, name), and a same-named tag in the destination is
-      // NOT this feature: suffix rather than merge, because merging two plans
-      // is a decision and this is a move. The report names what happened.
+      // not the same feature, so a collision is suffixed rather than merged.
+      // The report names what happened.
       let name = g.name;
       for (let n = 1; nameTaken.get(projectId, name); n++) name = n === 1 ? `${g.name} (moved)` : `${g.name} (moved ${n})`;
-      // Provenance can't span projects either — the planning session stays put
+      // Provenance can't span projects either: the planning session stays put
       // unless it was selected too, in which case the link survives intact.
       const origin = g.origin_task_id && moving.has(g.origin_task_id) ? g.origin_task_id : null;
       rekey.run(projectId, name, tagPos++, origin, now, g.id);
       carried.push({ id: g.id, name, renamed_from: name === g.name ? null : g.name });
     }
-    // base_branch is cleared for EVERY mover, started or not, and unlike the
-    // checkout columns below it isn't an exception: a branch name means nothing
-    // in a different repository, and a task carrying `feature/auth` into a repo
-    // that has no such branch would silently fall back to HEAD at its next cut.
-    // Empty is the honest answer — inherit the destination project's default.
+    // base_branch is cleared for every mover, started or not: a branch name
+    // means nothing in a different repository, and a task carrying
+    // `feature/auth` into a repo with no such branch would fall back to HEAD
+    // at its next cut. Empty inherits the destination project's default.
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
         reasoning = ?, permission_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
     );
-    // The tags a row leaves behind, when the rest of their members stayed. Not
-    // folded into the reparent above: a whole selection now KEEPS its tags, so
-    // severing one is the exception — the way the checkout reset below is.
+    // Tags a row leaves behind, when the rest of their members stayed. Kept
+    // out of the reparent above because a whole selection keeps its tags, so
+    // severing one is the exception, the same way the checkout reset below is.
     const untag = db.prepare("DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?");
-    // Everything that described the checkout being thrown away. Its own
-    // statement, run AFTER the reparent: it's the exception rather than part of
-    // every move, so the ordinary unstarted move still writes exactly the
-    // columns it always has.
+    // Clears everything that described the checkout being discarded. Runs as
+    // its own statement after the reparent, since it applies only when
+    // resetCheckout is set; an ordinary unstarted move still writes exactly
+    // the columns it always has.
     //
-    // The worktree/branch/base triple is the obvious part — they name a
-    // directory and a branch in the OLD repo, both gone by the time this runs,
-    // and emptying them is what makes the next turn cut a fresh worktree from
-    // the destination (POST /messages and lib/autoStart both read a missing
-    // worktree_path as "create one").
+    // worktree_path, work_branch and base_sha name a directory and branch in
+    // the old repo that no longer apply; emptying them is what makes the next
+    // turn cut a fresh worktree from the destination (POST /messages and
+    // lib/autoStart both read a missing worktree_path as "create one").
     //
-    // The other three are current-state fields about that same checkout, and
-    // only clearing them keeps the row honest in its new home:
-    //   - session_id resumes an agent thread whose entire context — files read,
-    //     commands run, the repo it believes it's in — is the old project's.
-    //     Worse, worktrees are keyed by TASK id, so the fresh one lands at the
-    //     very path that session remembers, with different contents. The next
-    //     turn opens a new session instead. (deriveMoved already nulls this on
-    //     an agent switch, for the same "what it was attached to is gone"
-    //     reason.) The transcript, summaries and usage are task-keyed and all
-    //     survive — losing them is what the move exists to avoid.
+    // The remaining columns describe current state tied to that same checkout:
+    //   - session_id resumes an agent thread whose entire context (files read,
+    //     commands run, the repo it believes it's in) belongs to the old
+    //     project. Worktrees are keyed by task id, so the fresh one would land
+    //     at the same path that session remembers, with different contents;
+    //     clearing session_id makes the next turn open a new session instead.
+    //     (deriveMoved already nulls this on an agent switch, for the same
+    //     reason.) The transcript, summaries and usage are task-keyed and
+    //     survive the move.
     //   - merged_at / pr_url claim this task's work sits in the base branch,
-    //     and under review, of a repo it has just left. The merge itself isn't
-    //     forgotten: task_merges keeps the event, its line counts and its date,
-    //     and is re-pointed at the destination below.
-    // `started` and `generation` are deliberately untouched — the task really
-    // did start and its transcript is still here, so it stays a resume.
-    // context_measured goes with session_id: it described the session being
-    // thrown away, and the next turn opens a fresh one that reports its own.
+    //     and under review, of a repo it has just left. The merge event itself
+    //     isn't lost: task_merges keeps it, with its line counts and date, and
+    //     is re-pointed at the destination below.
+    // `started` and `generation` are untouched: the task did start and its
+    // transcript is still here, so it stays a resume. context_measured is
+    // cleared with session_id, since it described the discarded session, and
+    // the next turn's fresh session reports its own.
     const clearCheckout = db.prepare(
       `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
         pr_number = 0, pr_state = '', pr_checks = '', pr_review = '', pr_merged_at = 0, pr_synced_at = 0,
         session_id = NULL, context_measured = NULL WHERE id = ?`
     );
-    // Project-keyed child rows follow their task. These are the tables that
-    // denormalize project ownership for per-project rollups (spend, session
-    // counts, the merged-per-day charts) — left behind, they'd keep billing the
-    // source project for a task it no longer owns.
+    // Project-keyed child rows follow their task. These tables denormalize
+    // project ownership for per-project rollups (spend, session counts, the
+    // merged-per-day charts); left behind, they'd keep billing the source
+    // project for a task it no longer owns.
     const repoint = ["sessions", "task_usage", "task_merges"].map((t) =>
       db.prepare(`UPDATE ${t} SET project_id = ? WHERE task_id = ?`)
     );
-    // The acknowledged copy of a watched setting file (lib/settingsDrift.ts) is
-    // about a file in the repo this task has just LEFT. The next turn cuts a
+    // The acknowledged copy of a watched setting file (lib/settingsDrift.ts)
+    // describes a file in the repo this task just left. The next turn cuts a
     // fresh worktree from the destination's base, so keeping the old baseline
-    // would raise a settings card on the first turn after every move — a
-    // warning that the file "changed in this task's worktree" when what changed
-    // is the repo. Dropped instead, so the destination's settings are taken as
-    // the baseline the same way a brand-new task takes its repo's.
+    // would raise a settings card on the first turn after every move, warning
+    // that the file "changed" when what changed is the repo. Dropping it makes
+    // the destination's settings the baseline, the same way a brand-new task
+    // takes its repo's.
     const dropSettings = db.prepare("DELETE FROM task_settings_snapshots WHERE task_id = ?");
     for (const r of rows) {
       reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
@@ -1076,10 +1053,10 @@ export function moveTasks(
       for (const tagId of leftBehind.get(r.id) ?? []) untag.run(r.id, tagId);
       for (const stmt of repoint) stmt.run(projectId, r.id);
     }
-    // A blocker-less task can never auto-start (lib/autoStart.ts selects through
-    // task_dependencies), so the opt-in would be a dead flag — clear it. Read
-    // off the FINAL graph, which is what makes the batch worth having: a task
-    // whose blocker came along still has an edge here, so its opt-in survives.
+    // A task with no blocker can never auto-start (lib/autoStart.ts selects
+    // through task_dependencies), so its opt-in is cleared. This reads off the
+    // final graph: a task whose blocker moved along with it still has an edge
+    // here, so its opt-in survives.
     const clearAutoStart = db.prepare(
       `UPDATE tasks SET auto_start = 0, updated_at = ? WHERE id = ? AND auto_start = 1
          AND NOT EXISTS (SELECT 1 FROM task_dependencies WHERE task_id = ?)`
@@ -1100,12 +1077,12 @@ export function moveTasks(
 }
 
 /**
- * The columns a task carries INTO `dest`. `agent` and `send_context` are both
- * DERIVED from the owning project at creation (see createTask) but stored as
- * plain columns, so nothing records whether a value was the user's explicit pick
- * or the project's default. A value that still matches the SOURCE project's
- * default is treated as inherited and re-derived from the destination; anything
- * else is an explicit choice and travels with the task.
+ * The columns a task carries into `dest`. `agent` and `send_context` are both
+ * derived from the owning project at creation (see createTask) but stored as
+ * plain columns, so nothing records whether a value was an explicit user pick
+ * or the project's default. A value that still matches the source project's
+ * default is treated as inherited and re-derived from the destination;
+ * anything else is an explicit choice and travels with the task.
  */
 function deriveMoved(task: Task, dest: Project) {
   const src = getProject(task.project_id);
@@ -1115,7 +1092,7 @@ function deriveMoved(task: Task, dest: Project) {
   const send_context = task.send_context === srcSend ? (dest.send_context !== 0 ? 1 : 0) : task.send_context;
   // Re-deriving the agent switches drivers, so the same rule the PATCH route
   // applies to a manual switch holds here: run controls are provider-specific,
-  // and only an inherited/default choice is safe for the new driver.
+  // so only an inherited/default choice carries over safely to the new driver.
   const switched = agent !== task.agent;
   return {
     agent,
@@ -1129,16 +1106,16 @@ function deriveMoved(task: Task, dest: Project) {
 }
 
 /**
- * Move one task, the strict way: what the single-task route needs. Throws the
- * reason instead of reporting it, and reports the severed edges as the two id
- * lists that route has always returned. A task moving alone can never have both
- * ends of an edge in its set, so every edge touching it still drops.
+ * Move one task, for the single-task route. Throws the refusal reason instead
+ * of reporting it, and reports severed edges as the two id lists that route
+ * returns. A task moving alone can never have both ends of an edge in its
+ * set, so every edge touching it drops.
  */
 export function moveTask(taskId: string, projectId: string): TaskMove {
   const result = moveTasks([taskId], projectId);
   const refused = result.skipped[0];
   if (refused) throw new Error(refused.reason);
-  // Already in the destination — a no-op, not a move.
+  // Already in the destination: a no-op, not a move.
   if (result.unchanged.length) return { task: getTask(taskId)!, dropped_blockers: [], dropped_dependents: [] };
   return {
     task: result.moved[0],
@@ -1157,32 +1134,31 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
         session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, gateway_mcp=?, updated_at=? WHERE id=?`
     )
     .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env),
-      // null = inherit the project's selection; anything else is normalized,
-      // not trusted, the same reason agent_env is (docs/design/litellm.md).
+      // null means inherit the project's selection; anything else is
+      // normalized, not trusted, same as agent_env (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
       n.updated_at, id);
   return getTask(id);
 }
 
 /**
- * Drop a task's worktree column, and NOTHING else — not even `updated_at`.
+ * Drop a task's worktree column, and nothing else, not even `updated_at`.
  *
  * updateTask() stamps `updated_at = Date.now()` on every write, which is right
  * for a change somebody made and wrong for a reclaim nobody asked for. That
  * column is the board's sort key (listTasks orders by it, so the top card in
- * each bucket is the most recently active task) AND retention's clock, so
- * stamping it here would float a six-month-old finished task to the top of
- * Done and push its transcript prune out by the width of the worktree window.
- * Used by the scheduled worktree sweep (lib/worktreeSweep.ts) and by
- * lib/reclaim.ts; the interactive paths go through updateTask, where the stamp
- * is the truth.
+ * each bucket is the most recently active task) and retention's clock, so
+ * stamping it here would float a finished task to the top of Done and push
+ * its transcript prune out by the width of the worktree window. Used by the
+ * scheduled worktree sweep (lib/worktreeSweep.ts) and by lib/reclaim.ts; the
+ * interactive paths go through updateTask, where the stamp is correct.
  *
- * `branch: true` clears the branch columns in the same statement, for the
- * caller that deleted the local branch as well as the checkout (a landed task,
- * whose diff now lives in the base branch rather than on a branch of its own).
- * Leaving `work_branch` pointing at a ref that no longer exists would make the
- * DIFF tab, the reclaim list and worktreePruneSafety all reason about a branch
- * git cannot resolve.
+ * `branch: true` clears the branch columns in the same statement, for a
+ * caller that deleted the local branch along with the checkout (a landed
+ * task, whose diff now lives in the base branch rather than on a branch of
+ * its own). Leaving `work_branch` pointing at a ref that no longer exists
+ * would make the DIFF tab, the reclaim list and worktreePruneSafety all
+ * reason about a branch git cannot resolve.
  */
 export function clearTaskWorktreePath(id: string, opts: { branch?: boolean } = {}): void {
   getDb()
@@ -1195,12 +1171,12 @@ export function clearTaskWorktreePath(id: string, opts: { branch?: boolean } = {
 }
 
 /**
- * Write back what GitHub just said about a task's PR — and NOTHING else, not
- * even `updated_at`, for exactly the reason clearTaskWorktreePath gives.
+ * Write back what GitHub just said about a task's PR, and nothing else, not
+ * even `updated_at`, for the reason clearTaskWorktreePath gives.
  *
- * A refresh is a poll nobody asked for: it runs on a timer, on opening a task,
- * and after a PR is created. updateTask() would stamp `updated_at`, which is
- * the board's sort key AND retention's clock, so a five-minute CI poll would
+ * A refresh is a poll nobody asked for: it runs on a timer, on opening a
+ * task, and after a PR is created. updateTask() would stamp `updated_at`,
+ * which is the board's sort key and retention's clock, so a CI poll would
  * float every open-PR task to the top of its column and push its transcript
  * prune out indefinitely. The chip's freshness must not reorder the board.
  *
@@ -1235,13 +1211,13 @@ export function setTaskPrState(
 }
 
 /**
- * Tasks whose PR is worth asking GitHub about again: one exists, and the last
- * answer wasn't terminal. A merged or closed PR is never polled again — its
- * state cannot change back — which is what keeps the ticker's cost bounded by
- * open work rather than by how many PRs the instance has ever opened.
+ * Tasks whose PR is worth asking GitHub about again: one exists, and the
+ * last answer wasn't terminal. A merged or closed PR is never polled again,
+ * since its state cannot change back, which bounds the ticker's cost by open
+ * work rather than by how many PRs the instance has ever opened.
  *
  * `staleBefore` is the pr_synced_at cutoff, so a task refreshed by a click a
- * moment ago isn't re-fetched by the tick that follows. Oldest sync first, so a
+ * moment ago isn't re-fetched by the next tick. Oldest sync first, so a
  * capped batch always makes progress rather than re-serving the same rows.
  */
 export function stalePrTasks(staleBefore: number, limit: number): Task[] {
@@ -1255,7 +1231,7 @@ export function stalePrTasks(staleBefore: number, limit: number): Task[] {
     .all(staleBefore, limit) as Task[];
 }
 
-/** How many tasks still have a PR that could change — the ticker's stop condition. */
+/** How many tasks still have a PR that could change: the ticker's stop condition. */
 export function openPrTaskCount(): number {
   const row = getDb()
     .prepare(
@@ -1273,23 +1249,23 @@ export function setTaskStatus(id: string, status: Status) {
   return updateTask(id, { status });
 }
 
-// Merged tasks and completed tasks that still hold an on-record worktree — the
+// Merged tasks and completed tasks that still hold an on-record worktree: the
 // candidates for Settings → Storage cleanup. A completed task is included even
-// when its work was never merged, because the user may explicitly discard it.
+// when its work was never merged, since the user may explicitly discard it.
 // Joined with the owning project so the API can resolve each worktree's repo
-// (for git ops) and label it for the user.
-// Whether the directory actually exists on disk is checked by the caller.
+// (for git ops) and label it for the user. Whether the directory actually
+// exists on disk is checked by the caller.
 export interface ReclaimableWorktree {
   id: string;
   title: string;
   project_id: string;
   project_name: string;
   repo_path: string;
-  // The task's RESOLVED base — its own when it has one, else the first of its
-  // tags that sets one (in tag order), else the project's default. Expressed as
-  // SQL because this sweep has no Task in hand; the order must stay the twin of
+  // The task's resolved base: its own when it has one, else the first of its
+  // tags that sets one (in tag order), else the project's default. Expressed
+  // as SQL because this sweep has no Task in hand; the order must match
   // resolveBaseBranch() in lib/baseBranch.ts, and tests/baseBranch.test.ts
-  // asserts that all three legs agree.
+  // asserts that all three resolution paths agree.
   base_branch: string;
   worktree_path: string;
   work_branch: string;
@@ -1300,10 +1276,10 @@ export interface ReclaimableWorktree {
 export function listReclaimableWorktrees(): ReclaimableWorktree[] {
   return getDb()
     .prepare(
-      // The tag leg is no longer a plain COALESCE column: it is a lookup
-      // through task_tags, ordered by the same position getTaskTags() reads in,
-      // taking the FIRST tag that actually sets a base. A task carrying three
-      // tags where two name a branch resolves to the one its badges lead with.
+      // The tag leg is a lookup through task_tags, ordered by the same
+      // position getTaskTags() reads in, taking the first tag that actually
+      // sets a base. A task carrying three tags where two name a branch
+      // resolves to the one its badges lead with.
       `SELECT t.id, t.title, t.project_id, p.name AS project_name, p.repo_path,
               COALESCE(
                 NULLIF(t.base_branch, ''),
@@ -1322,17 +1298,16 @@ export function listReclaimableWorktrees(): ReclaimableWorktree[] {
 
 // ---------- permission rules (remembered "always allow" answers) ----------
 //
-// The durable half of the tool-permission gate (lib/permissions.ts): what the
-// user chose to stop being asked about, scoped to one project. Matching logic
-// lives in lib/permissions.ts; this is storage only.
+// Storage for the tool-permission gate's durable half: what the user chose to
+// stop being asked about, scoped to one project. Matching logic lives in
+// lib/permissions.ts.
 
 // ---------- tags ----------
-// A named, project-scoped label a task can carry (lib/types Tag; design in
-// docs/superpowers/specs/2026-08-27-tags-design.md). Membership is a row in
-// task_tags, not a column on tasks: a task belongs to as many tags as it has
-// reasons to, and takes context from every one of them. Everything about a
-// tag's PROGRESS is derived here at read time from its members — no cached
-// column, nothing to go stale when a task is deleted or moved.
+// A named, project-scoped label a task can carry (lib/types Tag; see
+// docs/FEATURES.md). Membership is a row in task_tags, not a column on tasks:
+// a task can belong to any number of tags and takes context from each one.
+// A tag's progress counts are derived at read time from its members, with no
+// cached column to go stale when a task is deleted or moved.
 
 /** The derived member counts, as correlated subqueries over the join table. */
 const TAG_COUNTS_SQL = `
@@ -1365,8 +1340,8 @@ export function listTags(projectId: string): Tag[] {
 }
 
 /**
- * Every tag in every active project, with its project's identity — the ⌘K
- * palette's jump targets.
+ * Every tag in every active project, with its project's identity. Used for
+ * the ⌘K palette's jump targets.
  */
 export function listAllTagsLite(): (Tag & { project_name: string; project_color: string; project_icon: string })[] {
   const rows = getDb()
@@ -1386,9 +1361,9 @@ export function getTag(id: string): Tag | undefined {
 }
 
 /**
- * The tags one task carries, in the order it carries them — `position`, which
- * is the order the badges render and the order lib/tagContext.ts injects their
- * blocks in, so the first tag on a card is the first thing its session reads.
+ * The tags one task carries, in `position` order: the order the badges
+ * render and the order lib/tagContext.ts injects their blocks in, so the
+ * first tag on a card is the first thing its session reads.
  */
 export function getTaskTags(taskId: string): Tag[] {
   return (
@@ -1401,7 +1376,7 @@ export function getTaskTags(taskId: string): Tag[] {
   ).map(tagFromRow);
 }
 
-/** Just the ids, in the same order — what the client rows carry. */
+/** Just the ids, in the same order. This is what the client rows carry. */
 export function getTaskTagIds(taskId: string): string[] {
   return (
     getDb()
@@ -1409,9 +1384,9 @@ export function getTaskTagIds(taskId: string): string[] {
   ).map((r) => r.tag_id);
 }
 
-// Exact match, case-sensitive, like the UNIQUE constraint it mirrors. A near
-// miss creating a second tag is bounded by that constraint plus the tool
-// result naming what happened (resolveTag's `created`).
+// Exact match, case-sensitive, matching the UNIQUE constraint it mirrors. A
+// near-miss creating a second tag is bounded by that constraint plus the
+// tool result naming what happened (resolveTag's `created`).
 function tagByName(projectId: string, name: string): Tag | undefined {
   const r = getDb().prepare(`${SELECT_TAG} WHERE g.project_id = ? AND g.name = ?`).get(projectId, name) as TagRow | undefined;
   return r ? tagFromRow(r) : undefined;
@@ -1429,8 +1404,8 @@ export function createTag(input: {
 }): Tag {
   const name = input.name.trim();
   if (!name) throw new Error("tag name required");
-  // Checked rather than left to the constraint so the error names the tag,
-  // and so the throw is the same class whether it came from create or rename.
+  // Checked explicitly, so the error names the tag and the throw is the
+  // same class whether it came from create or rename.
   if (tagByName(input.project_id, name)) throw new TagNameConflictError(name);
   const now = Date.now();
   const id = nanoid();
@@ -1465,9 +1440,9 @@ export function updateTag(
   }
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.color !== undefined) patch.color = fields.color;
-  // "" clears the default back to "follow the project". Only members that
-  // haven't been cut yet ever see the change — tasks.base_branch is pinned at
-  // the worktree cut, which is what makes editing this mid-plan safe.
+  // "" clears the default back to "follow the project". Only members not yet
+  // cut see the change: tasks.base_branch is pinned at the worktree cut, so
+  // editing this mid-plan is safe.
   if (fields.base_branch !== undefined) patch.base_branch = fields.base_branch.trim();
   if (fields.position !== undefined) patch.position = fields.position;
   const keys = Object.keys(patch);
@@ -1479,14 +1454,14 @@ export function updateTag(
 }
 
 /**
- * Persist "Refresh tag with AI" job state in isolation — the tag analogue of
- * setProjectRefresh, and separate from updateTag for the same reason: a
- * background run and a concurrent rename must not clobber each other, and
- * updateTag's fixed column list must never carry refresh_* state.
+ * Persist "Refresh tag with AI" job state in isolation, the tag analogue of
+ * setProjectRefresh. Kept separate from updateTag so a background run and a
+ * concurrent rename can't clobber each other, and so updateTag's fixed
+ * column list never carries refresh_* state.
  *
- * It deliberately does NOT stamp `updated_at`. That column is the tag's own
- * edit clock; a job ticking through three stages would otherwise report the
- * tag as freshly edited three times for work the user didn't do.
+ * Does not stamp `updated_at`: that column is the tag's own edit clock, and
+ * a job ticking through three stages should not report the tag as edited
+ * three times for work the user didn't do.
  */
 export function setTagRefresh(
   id: string,
@@ -1505,24 +1480,24 @@ export function setTagRefresh(
 }
 
 /**
- * Hard delete, like everything else. Members are UNTAGGED, never deleted —
- * task_tags is ON DELETE CASCADE from this side, and that is the whole policy:
- * a tag is a label over work, not the work. A member carrying other tags keeps
- * them. Returns whether a row was removed.
+ * Hard delete, like everything else. Members are untagged, never deleted:
+ * task_tags is ON DELETE CASCADE from this side, since a tag is a label over
+ * work, not the work itself. A member carrying other tags keeps them.
+ * Returns whether a row was removed.
  */
 export function deleteTag(id: string): boolean {
   return getDb().prepare("DELETE FROM tags WHERE id = ?").run(id).changes > 0;
 }
 
 /**
- * Resolve an agent's or a form's reference — an id or an exact name — inside
- * ONE project. Two policies behind one flag, because the two callers mean
+ * Resolve an agent's or a form's reference (an id or an exact name) inside
+ * one project. Two policies behind one flag, since the two callers mean
  * different things by a miss:
- *   - `create: true` is the planning verb (suggest_task): the common case IS
+ *   - `create: true` is the planning verb (suggest_task): the common case is
  *     "this tag doesn't exist yet", so a miss creates it, tagged with the
  *     session that filed it, and `created` says so in the tool result.
  *   - strict (the default) is for update_task and the PATCH routes, where a
- *     typo must fail the call rather than mint a near-duplicate.
+ *     typo must fail the call instead of minting a near-duplicate.
  * Returns null on a strict miss or an empty ref.
  */
 export function resolveTag(
@@ -1541,11 +1516,11 @@ export function resolveTag(
 }
 
 /**
- * Replace the tag set on a batch of tasks, in one transaction — the write
- * behind the edit dialog's field, the selection bar's Tag…, and update_task.
- * Refuses the WHOLE batch when any tag lives outside a task's project: a tag
- * never spans repositories, and a batch that silently skipped the strays would
- * report success for a half-applied selection.
+ * Replace the tag set on a batch of tasks, in one transaction. Backs the
+ * edit dialog's field, the selection bar's Tag…, and update_task. Refuses
+ * the whole batch when any tag lives outside a task's project: a tag never
+ * spans repositories, and skipping the strays would report success for a
+ * half-applied selection.
  *
  * Returns the ids actually rewritten (a task already carrying exactly these
  * tags is skipped), so callers can tell "nothing changed" from "changed".
@@ -1555,16 +1530,16 @@ export function setTaskTags(ids: string[], tagIds: string[]): string[] {
   return writeTaskTags(ids, () => wanted);
 }
 
-/** Dedupe preserving order — the tag order a caller passes is the order it means. */
+/** Dedupe preserving order: the tag order a caller passes is the order it means. */
 function dedupe(ids: string[]): string[] {
   return [...new Set(ids)];
 }
 
 /**
- * The one write every membership change goes through: `next` names the tag set
- * each task should end up with, given the set it has now. Bulk add and bulk
- * remove are that function, which is why they are not three near-copies of one
- * transaction with three chances to skip the project check.
+ * The one write every membership change goes through: `next` names the tag
+ * set each task should end up with, given the set it has now. Bulk add and
+ * bulk remove call this function instead of duplicating the transaction, so
+ * there is only one place the project check can be skipped.
  */
 function writeTaskTags(ids: string[], next: (current: string[]) => string[]): string[] {
   const db = getDb();
@@ -1579,8 +1554,8 @@ function writeTaskTags(ids: string[], next: (current: string[]) => string[]): st
     for (const tagId of wanted) {
       const tag = getTag(tagId);
       if (!tag) throw new Error("no such tag");
-      // A tag never spans repositories, so this is checked per task rather
-      // than once per batch: a selection may legitimately span trays.
+      // A tag never spans repositories, so this is checked per task instead
+      // of once per batch: a selection can legitimately span trays.
       if (tag.project_id !== t.project_id) throw new Error(`task "${t.title}" is in another project. A tag can't span projects`);
     }
     return { task: t, current, wanted };
@@ -1591,8 +1566,8 @@ function writeTaskTags(ids: string[], next: (current: string[]) => string[]): st
     const touch = db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?");
     for (const { task, current, wanted } of plans) {
       if (current.length === wanted.length && current.every((id, i) => id === wanted[i])) continue;
-      // Rewritten wholesale rather than diffed: `position` is the order the
-      // caller passed, so a reorder with the same membership is still a real
+      // Rewritten wholesale, not diffed: `position` is the order the caller
+      // passed, so a reorder with the same membership is still a real
       // change, and a diff would have to renumber the survivors anyway.
       del.run(task.id);
       wanted.forEach((tagId, i) => ins.run(task.id, tagId, i, now));
@@ -1621,14 +1596,14 @@ export function listPermissionRules(projectId: string): PermissionRule[] {
     .all(projectId) as PermissionRule[];
 }
 
-/** Every rule across every project, newest first — the Settings revoke list. */
+/** Every rule across every project, newest first. Backs the Settings revoke list. */
 export function listAllPermissionRules(): PermissionRule[] {
   return getDb().prepare("SELECT * FROM permission_rules ORDER BY created_at DESC").all() as PermissionRule[];
 }
 
 /**
  * Remember an "always allow" answer. Idempotent: re-approving the same rule
- * keeps the original row (and its created_at) rather than stacking duplicates.
+ * keeps the original row (and its created_at) instead of stacking duplicates.
  */
 export function addPermissionRule(input: {
   project_id: string;
@@ -1654,9 +1629,8 @@ export function deletePermissionRule(id: string): void {
 
 /**
  * What this task's watched setting file looked like the last time a turn was
- * allowed to run under it. null = never recorded, which the gate reads as "no
- * turn has run under any version of this file yet" and takes as its baseline
- * rather than as a change.
+ * allowed to run under it. Returns null when nothing has been recorded yet;
+ * the gate treats that as the baseline, not as a change.
  */
 export function getSettingsSnapshot(taskId: string, file: string): SettingsSnapshot | null {
   return (getDb()
@@ -1666,9 +1640,9 @@ export function getSettingsSnapshot(taskId: string, file: string): SettingsSnaps
 
 /**
  * Adopt what is on disk now as what this task runs under. Called for a file
- * nobody has seen before (silently, at the first turn) and when the user
- * approves a change — the two moments a new version becomes the baseline the
- * NEXT turn is compared against.
+ * seen for the first time, and when the user approves a change; both are
+ * moments the new version becomes the baseline the next turn is compared
+ * against.
  */
 export function recordSettingsSnapshot(taskId: string, file: string, hash: string, content: string): void {
   getDb()
@@ -1692,7 +1666,7 @@ export function getSettings(): Record<string, string> {
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
 }
 
-// A null/empty value clears the key, so it falls back to the built-in default.
+// A null or empty value clears the key, which falls back to the built-in default.
 export function setSetting(key: string, value: string | null) {
   if (value == null || value === "") {
     getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
@@ -1703,11 +1677,11 @@ export function setSetting(key: string, value: string | null) {
 
 /**
  * Point the seeded Welcome tutorial at a different agent. The tutorial is
- * created at first boot — before onboarding — so its project/tasks carry the
- * 'claude' column defaults; when setup finishes with a different agent connected
- * (a Codex-only first run), the not-yet-started tutorial tasks must follow the
- * agent that actually works. Started tasks keep their agent: a session lineage
- * can't switch CLIs mid-flight.
+ * created at first boot, before onboarding, so its project and tasks carry
+ * the 'claude' column defaults; if setup finishes with a different agent
+ * connected, the not-yet-started tutorial tasks must switch to the agent
+ * that is actually connected. Started tasks keep their agent, since a
+ * session lineage can't switch CLIs mid-flight.
  */
 export function retargetSeededAgent(agent: string): void {
   const db = getDb();
@@ -1733,15 +1707,14 @@ export function addMessage(taskId: string, generation: number, role: MsgRole, co
 }
 
 /**
- * The task's most recent `tool` messages, NEWEST FIRST.
+ * The task's most recent `tool` messages, newest first.
  *
- * The seam for a card that has to settle onto the call that produced it without
- * holding that call's tool_use id. The runner never needs this — it keeps the
- * live turn's tool rows in memory — but the stdio bridge's suggest_task
- * endpoint does: it is invoked out-of-band by a Codex session's MCP client, so
- * the only thing it knows about the call in flight is which task it belongs to.
- * Capped because only the tail can be that call; a full transcript read to find
- * the last few rows would grow with the session.
+ * Lets a card settle onto the call that produced it without holding that
+ * call's tool_use id. The runner keeps the live turn's tool rows in memory
+ * and never needs this, but the stdio bridge's suggest_task endpoint is
+ * invoked out of band by a Codex session's MCP client, so the only thing it
+ * knows about the call in flight is which task it belongs to. The limit
+ * keeps the read small since only the tail can be that call.
  */
 export function recentToolMessages(taskId: string, limit = 10): Message[] {
   return getDb()
@@ -1759,7 +1732,7 @@ export function updateMessage(id: string, content: string) {
 
 // ---------- pending (queued) messages ----------
 
-// The follow-ups parked behind a running turn for a task, oldest first.
+// Follow-ups parked behind a running turn for a task, oldest first.
 export function listPendingMessages(taskId: string): PendingMessage[] {
   return getDb()
     .prepare("SELECT * FROM pending_messages WHERE task_id = ? ORDER BY created_at ASC, rowid ASC")
@@ -1776,8 +1749,8 @@ export function addPendingMessage(taskId: string, generation: number, content: s
   return { id, task_id: taskId, generation, content, created_at: now };
 }
 
-// Atomically claim + remove the oldest parked follow-up for a task (FIFO).
-// Returns undefined if the queue is empty. The select+delete run in one
+// Claim and remove the oldest parked follow-up for a task (FIFO). Returns
+// undefined if the queue is empty. The select and delete run in one
 // transaction so two concurrent drains can't pop the same row.
 export function popPendingMessage(taskId: string): PendingMessage | undefined {
   const db = getDb();
@@ -1790,10 +1763,11 @@ export function popPendingMessage(taskId: string): PendingMessage | undefined {
   })();
 }
 
-// Remove one parked follow-up by id (the user cancelled it). Scoped by task_id
-// so a request against one task can't drop another task's queued message.
-// Returns the removed row (so the caller can publish a dequeued event), or
-// undefined — including when the id exists but belongs to a different task.
+// Remove one parked follow-up by id (the user cancelled it). Scoped by
+// task_id so a request against one task can't drop another task's queued
+// message. Returns the removed row, so the caller can publish a dequeued
+// event, or undefined, including when the id exists but belongs to a
+// different task.
 export function deletePendingMessage(id: string, taskId: string): PendingMessage | undefined {
   const db = getDb();
   return db.transaction(() => {
@@ -1805,8 +1779,9 @@ export function deletePendingMessage(id: string, taskId: string): PendingMessage
   })();
 }
 
-// Drop the whole parked queue for a task (e.g. the turn was Stopped). Returns
-// the removed rows so the caller can clear their bubbles from the transcript.
+// Drop the whole parked queue for a task, e.g. when the turn was stopped.
+// Returns the removed rows so the caller can clear their bubbles from the
+// transcript.
 export function clearPendingMessages(taskId: string): PendingMessage[] {
   const db = getDb();
   return db.transaction(() => {
@@ -1878,11 +1853,11 @@ export function addTaskDocComment(
   return { id, task_id: taskId, file, quote, heading, body, sent_to_agent: 0, anchor_sha: anchorSha, created_at: now };
 }
 
-// Flip the given comments to sent, in one transaction — Send is one action
-// over the whole draft list, so it lands whole or not at all. Scoped to the
-// task and to unsent rows: returns how many actually changed, so a caller
-// naming another task's comment (or one already sent) sees fewer than it
-// asked for rather than a silent success.
+// Flip the given comments to sent, in one transaction, so Send over the
+// whole draft list lands whole or not at all. Scoped to the task and to
+// unsent rows: returns how many actually changed, so a caller naming
+// another task's comment, or one already sent, sees fewer than it asked
+// for instead of a silent success.
 export function markTaskDocCommentsSent(taskId: string, ids: string[]): number {
   if (!ids.length) return 0;
   const db = getDb();
@@ -1890,8 +1865,8 @@ export function markTaskDocCommentsSent(taskId: string, ids: string[]): number {
   return db.transaction(() => ids.reduce((n, id) => n + stmt.run(taskId, id).changes, 0))();
 }
 
-// Delete an UNSENT comment. A sent one is part of the record of what the agent
-// was told and is refused rather than removed — the caller reports "sent".
+// Delete an unsent comment. A sent one is part of the record of what the
+// agent was told, so deletion is refused; the caller reports "sent".
 export function deleteTaskDocComment(taskId: string, id: string): "deleted" | "sent" | "missing" {
   const db = getDb();
   const row = db.prepare("SELECT sent_to_agent FROM task_doc_comments WHERE task_id = ? AND id = ?").get(taskId, id) as
@@ -1926,7 +1901,7 @@ export type ProjectSession = Session & { task_title: string; task_status: Status
 
 // Upsert the session row for a task generation, stamping the live Claude
 // session id. Called when a turn opens a session; safe to call on every turn
-// of the same generation (resume) — started_at is preserved.
+// of the same generation (resume), since started_at is preserved.
 export function recordSession(input: {
   project_id: string;
   task_id: string;
@@ -1950,13 +1925,14 @@ export function endSession(taskId: string, generation: number): void {
     .run(Date.now(), taskId, generation);
 }
 
-// The agent thread's last reported CUMULATIVE token counters (sessions.usage_cum,
-// stored as JSON, keyed by the driver's opaque thread/session id). Codex reports
-// the WHOLE thread's totals on every turn.completed, so a turn's own usage is the
-// delta against this baseline — which has to survive a server restart, hence the
-// DB rather than a process-local map. Claude reports per-turn usage and never
-// touches this. Returns null when the thread has no baseline yet (fresh thread,
-// or a session row that predates the column).
+// The agent thread's last reported cumulative token counters
+// (sessions.usage_cum, stored as JSON, keyed by the driver's opaque
+// thread/session id). Codex reports the whole thread's totals on every
+// turn.completed, so a turn's own usage is the delta against this baseline.
+// The baseline is stored in the DB rather than a process-local map so it
+// survives a server restart. Claude reports per-turn usage and never
+// touches this. Returns null when the thread has no baseline yet, whether a
+// fresh thread or a session row that predates the column.
 export function getThreadUsageCum<T>(threadId: string): T | null {
   if (!threadId) return null;
   const row = getDb()
@@ -1970,9 +1946,10 @@ export function getThreadUsageCum<T>(threadId: string): T | null {
   }
 }
 
-// Store the new cumulative baseline for a thread. Written mid-turn (as soon as
-// the driver maps the turn's usage) so a crash before turn end can't make the
-// NEXT turn re-count the whole thread. No-op if no session row carries the id.
+// Store the new cumulative baseline for a thread. Written mid-turn, as soon
+// as the driver maps the turn's usage, so a crash before turn end can't
+// make the next turn re-count the whole thread. No-op if no session row
+// carries the id.
 export function setThreadUsageCum(threadId: string, cum: unknown): void {
   if (!threadId) return;
   getDb()
@@ -1996,18 +1973,18 @@ export function listProjectSessions(projectId: string): ProjectSession[] {
 
 // ---------- usage ----------
 
-// Persist one turn's token usage + cost. Called once per completed Claude turn
-// from the result message. One row per turn keyed (implicitly) by task+generation.
+// Persists one turn's token usage and cost. Called once per completed turn
+// from the result message. One row per turn, keyed by task and generation.
 export function addUsage(input: {
   project_id: string;
   task_id: string;
   generation: number;
   agent?: string;
-  /** The endpoint host the turn ran against, "" (default) for the agent's own
-   *  cloud — `AgentProvider.host` from lib/agentEnv.ts. The runner decides what
-   *  the turn is worth from that provider's `pricing` before calling this: the
+  /** The endpoint host the turn ran against: "" (default) for the agent's own
+   *  cloud, `AgentProvider.host` from lib/agentEnv.ts otherwise. The runner
+   *  prices the turn from that provider's `pricing` before calling this: the
    *  driver's figure for cloud, 0 for a local model server, null for a custom
-   *  base URL nobody has priced. */
+   *  base URL with no price. */
   provider?: string;
   usage: LedgerUsage;
 }): void {
@@ -2021,13 +1998,13 @@ export function addUsage(input: {
     .run(
       nanoid(), input.project_id, input.task_id, input.generation, input.agent || "claude", input.provider || "",
       u.cost_usd, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens,
-      // NULL, not 0, for a driver that doesn't report it — see TurnUsage.
+      // NULL, not 0, for a driver that doesn't report it. See TurnUsage.
       u.subagent_tokens ?? null,
       Date.now()
     );
 }
 
-// One row per merge that landed commits — see the task_merges schema comment.
+// One row per merge that landed commits. See the task_merges schema comment.
 export function recordTaskMerge(input: {
   project_id: string;
   task_id: string;
@@ -2047,7 +2024,7 @@ const ZERO_USAGE: UsageTotals = {
   cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, subagent_tokens: 0, total_tokens: 0, turns: 0, unpriced_turns: 0,
 };
 
-// Sum a usage query into cumulative totals (NULLs → 0 when no rows exist yet).
+// Sums a usage query into cumulative totals. NULLs become 0 when no rows exist yet.
 function sumUsage(where: string, param: string): UsageTotals {
   const row = getDb()
     .prepare(
@@ -2076,23 +2053,23 @@ export function getTaskUsage(taskId: string): UsageTotals {
 
 // ---------- context-window occupancy ----------
 
-// The window this task's turns actually run in, or 0 for "we don't know".
+// The window this task's turns actually run in, or 0 for "unknown".
 //
-// The catalog is the agent VENDOR's line-up, so it can only size a model the
-// vendor ships. Point a project at a local server (lib/agentEnv.ts) and every
-// id becomes one the catalog has never heard of — and worse, the override
-// rewrites ANTHROPIC_MODEL and the opus/sonnet/haiku aliases, so a task whose
-// picker still reads `sonnet` is not running Sonnet and must not be sized like
-// it. contextWindowFor's narrowest-on-miss guess is the right answer for an
-// unrecognised CLOUD id (see lib/contextWindow.ts) and the wrong one here: it
-// would report a 32K local model as 200K and draw a 4% gauge on a window about
-// to overflow. So an override reports nothing and the gauge says so.
+// The catalog is the agent vendor's line-up, so it can only size a model the
+// vendor ships. Pointing a project at a local server (lib/agentEnv.ts) makes
+// every id one the catalog has never heard of, and the override also rewrites
+// ANTHROPIC_MODEL and the opus/sonnet/haiku aliases, so a task whose picker
+// still reads `sonnet` is not running Sonnet and must not be sized like it.
+// contextWindowFor's narrowest-on-miss guess is correct for an unrecognized
+// cloud id (see lib/contextWindow.ts) but wrong here, since it would report a
+// 32K local model as 200K and draw a 4% gauge on a window about to overflow.
+// An override therefore reports nothing and the gauge shows unknown.
 //
-// The gateway is the one override kind that gets an answer anyway: unlike a
-// local server or a custom URL, it STATES its models' windows (GET
-// <gateway>/model/info, lib/gatewayModels.ts), so a task pointed there is
-// sized from that catalog instead of reported unknown. A model missing from
-// the catalog (a stale pick, or nothing probed yet) still falls back to 0.
+// A gateway override gets an answer anyway: unlike a local server or a custom
+// URL, it states its models' windows (GET <gateway>/model/info,
+// lib/gatewayModels.ts), so a task pointed there is sized from that catalog
+// instead of reported unknown. A model missing from the catalog (a stale
+// pick, or nothing probed yet) falls back to 0.
 function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, kind: ProviderKind): number {
   if (kind === "cloud") return modelContextWindow(agent, model);
   if (kind === "gateway") {
@@ -2102,41 +2079,40 @@ function taskContextWindow(agent: string | null | undefined, model: string | nul
   return 0;
 }
 
-// Percent (0–100, one decimal) of that window `tokens` occupies. 0 when the
-// window is unknown — the UI reads context_window === 0 and shows the token
-// count without a percentage rather than an authoritative-looking 0%.
+// Percent (0-100, one decimal) of that window `tokens` occupies. 0 when the
+// window is unknown; the UI reads context_window === 0 and shows the token
+// count without a percentage instead of an authoritative-looking 0%.
 function contextPct(tokens: number, window: number): number {
   return window > 0 ? Math.round((tokens / window) * 1000) / 10 : 0;
 }
 
 export interface TaskContext {
-  context_tokens: number; // input-side tokens of the latest main-session request ≈ context sent to the model
+  context_tokens: number; // input-side tokens of the latest main-session request, approximately the context sent to the model
   context_window: number; // the model's window (tokens); 0 = unknown (see taskContextWindow)
-  context_pct: number; // context_tokens as a percent (0–100) of the window
-  context_estimated: boolean; // true when derived from a usage report rather than measured (see below)
+  context_pct: number; // context_tokens as a percent (0-100) of the window
+  context_estimated: boolean; // true when derived from a usage report instead of measured (see below)
 }
 
 // The live "how full is the context window" gauge for a task. Two sources, in
 // order:
 //
-//   1. tasks.context_measured — what the agent's own stream reported for the
+//   1. tasks.context_measured: what the agent's own stream reported for the
 //      latest main-session model request (input + cache_read + cache_creation).
 //      The Claude driver emits it from each assistant message's usage, skipping
 //      subagent sidechains; the runner persists it as `context` events arrive,
 //      so it moves mid-turn and survives a Stop.
-//   2. The current generation's latest task_usage row, same three buckets. This
-//      was the whole gauge before context_measured existed and is kept for
-//      rows that predate it and for drivers that don't report occupancy (Codex:
-//      its exec stream carries only the thread's running totals, though the
-//      binary does compute a `last_token_usage` for its app-server protocol).
-//      It is an ESTIMATE, and an inflated one on tool-heavy turns: a turn is
-//      one query spanning many API requests plus any subagents, and a usage
-//      report SUMS them — every tool round-trip re-reads the whole context, so
-//      a long turn's sum is a multiple of the real window ("7.6M tokens" on a
-//      200k model). `context_estimated` tells the UI to say so.
+//   2. The current generation's latest task_usage row, same three buckets. Kept
+//      for rows that predate context_measured and for drivers that don't report
+//      occupancy (Codex's exec stream carries only the thread's running totals,
+//      though the binary does compute a `last_token_usage` for its app-server
+//      protocol). This is an estimate, and an inflated one on tool-heavy turns:
+//      a turn is one query spanning many API requests plus any subagents, and a
+//      usage report sums them, so every tool round-trip re-reads the whole
+//      context and a long turn's sum can be a large multiple of the real
+//      window. `context_estimated` tells the UI to say so.
 //
-// Distinct from cumulative spend either way — it reflects CURRENT occupancy and
-// drops back to 0 after a /clear (the measurement is reset, and the fallback
+// Distinct from cumulative spend either way: it reflects current occupancy and
+// drops back to 0 after a /clear (the measurement resets, and the fallback
 // only reads the new generation). 0 when the task has never run a turn.
 export function getTaskContext(taskId: string): TaskContext {
   const task = getTask(taskId);
@@ -2176,9 +2152,9 @@ export interface InstanceUsage extends UsageTotals {
 
 /**
  * A single-row summary of everything this instance has done, for a fleet
- * dashboard to poll and roll up (no per-project fan-out). Cost/tokens are the
- * cumulative sum over task_usage; counts exclude suggested-tray tasks so they
- * match what the user actually sees. Cheap: three aggregate queries, no joins.
+ * dashboard to poll and roll up with no per-project fan-out. Cost and tokens
+ * are the cumulative sum over task_usage; counts exclude suggested-tray tasks
+ * so they match what the user actually sees. Three aggregate queries, no joins.
  */
 export function getInstanceUsage(): InstanceUsage {
   const db = getDb();
@@ -2234,27 +2210,28 @@ export function getInstanceUsage(): InstanceUsage {
 
 /**
  * Everything the Insights dashboard charts, as per-day facts grouped by
- * (day, project, agent), with Calandria jobs additionally grouped by job — the client slices/filters/aggregates locally so
- * switching range/project/agent filters never refetches. Days are local-time
- * `YYYY-MM-DD` strings (this is a single-user, local-first surface; the server's
- * clock IS the user's clock). One fetch covers the widest range plus the same
- * width again for prior-period deltas.
+ * (day, project, agent), with Calandria jobs additionally grouped by job. The
+ * client slices, filters and aggregates locally, so switching range, project
+ * or agent filters never refetches. Days are local-time `YYYY-MM-DD` strings:
+ * this is a single-user, local-first surface, so the server's clock is the
+ * user's clock. One fetch covers the widest range plus the same width again
+ * for prior-period deltas.
  */
 export interface InsightsData {
   projects: { id: string; name: string; color: string; deprecated: number }[];
   /** Per-day token/cost usage, one row per (day, project, agent). `unp` counts
-   *  the turns in the bucket that had no price to record — a custom base URL,
-   *  whose cost nobody has stated (see LedgerUsage). `cost` sums the OTHERS, so
-   *  a bucket with `unp > 0` is showing a floor, and the dashboard has to say
-   *  so rather than present it as the period's spend. */
+   *  the turns in the bucket that had no price to record: a custom base URL
+   *  whose cost nobody has stated (see LedgerUsage). `cost` sums the rest, so
+   *  a bucket with `unp > 0` is showing a floor, and the dashboard must say so
+   *  instead of presenting it as the period's spend. */
   usage: { d: string; p: string; a: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /**
-   * The same spend attributed to TAGS — `g` is the tag id, "" for usage by a
+   * The same spend attributed to tags: `g` is the tag id, "" for usage by a
    * task carrying none (or by a task since deleted). A task with three tags
-   * appears under all three, so these rows deliberately do NOT sum to `usage`:
-   * "what did the auth migration cost" is a question about a label, and a task
-   * that is part of two features really did cost both of them its time. The
-   * leaderboard says so rather than dividing spend it has no basis to divide.
+   * appears under all three, so these rows do not sum to `usage`: "what did
+   * the auth migration cost" is a question about a label, and a task that is
+   * part of two features really did cost both of them its time. The
+   * leaderboard shows that instead of dividing spend it has no basis to divide.
    */
   tagUsage: { d: string; p: string; a: string; g: string; cost: number; unp: number; inp: number; out: number; cr: number; cw: number }[];
   /** The tags those `g` keys name, for the leaderboard's labels. */
@@ -2269,16 +2246,16 @@ export interface InsightsData {
   models: { a: string; m: string }[];
   /**
    * Cache-read vs. input tokens per agent, for turns run against the LiteLLM
-   * gateway specifically (`u.provider` matching the gateway's own host) — the
-   * only signal Calandria has that prompt caching survived translation
-   * through the gateway (docs/design/litellm.md, "What Calandria cannot
-   * fix"): `cache_read_tokens` stuck at zero across a task's turns despite
-   * real `inp` is the failure. A separate query rather than a finer GROUP BY
-   * on `usage` above, same reason `models` is: it isn't a per-day series, and
-   * folding a provider dimension into the one every other chart draws from
-   * would change what every other chart on the page means. Empty when no
-   * gateway is configured (the route passes an empty host and this matches
-   * nothing, `task_usage.provider` never being "").
+   * gateway specifically (`u.provider` matching the gateway's own host). This
+   * is the only signal Calandria has that prompt caching survived translation
+   * through the gateway (docs/AGENTS.md, LiteLLM section): `cache_read_tokens`
+   * stuck at zero across a task's turns despite real `inp` is the failure.
+   * A separate query rather than a finer GROUP BY on `usage` above, for the
+   * same reason as `models`: it isn't a per-day series, and folding a provider
+   * dimension into the one every other chart draws from would change what
+   * every other chart on the page means. Empty when no gateway is configured,
+   * since the route then passes an empty host and this matches nothing,
+   * `task_usage.provider` never being "".
    */
   gatewayCache: { a: string; inp: number; cr: number }[];
 }
@@ -2300,13 +2277,13 @@ export function getInsightsData(sinceMs: number, gatewayHost = ""): InsightsData
        WHERE u.created_at >= ? GROUP BY d, p, a`
     )
     .all(sinceMs) as InsightsData["usage"];
-  // The tag attribution is its OWN read rather than a finer GROUP BY on the one
+  // The tag attribution is its own read instead of a finer GROUP BY on the one
   // above, because tags are many-to-many: a task with three of them joins to
   // three rows, and folding that into `usage` would triple its spend on every
   // chart in the dashboard. Kept apart, the charts stay exact and the tag
-  // leaderboard gets the overlapping answer it wants.
+  // leaderboard gets the overlapping answer it needs.
   // LEFT JOIN twice, so usage whose task has since been deleted (or which
-  // carries no tag) still lands somewhere — the "" bucket the leaderboard shows
+  // carries no tag) still lands somewhere: the "" bucket the leaderboard shows
   // as untagged.
   const tagUsage = db
     .prepare(
@@ -2323,9 +2300,9 @@ export function getInsightsData(sinceMs: number, gatewayHost = ""): InsightsData
        WHERE u.created_at >= ? GROUP BY d, p, a, g`
     )
     .all(sinceMs) as InsightsData["tagUsage"];
-  // Every tag, not just the ones with spend: the leaderboard says "no spend
-  // yet" for a feature that's been planned and not run, which is a different
-  // fact from a feature that isn't there.
+  // Every tag, not just the ones with spend, so the leaderboard can say "no
+  // spend yet" for a feature that's been planned and not run, which is a
+  // different fact from a feature that isn't there.
   const tags = db
     .prepare("SELECT id, name, color, project_id FROM tags ORDER BY position ASC, created_at ASC")
     .all() as InsightsData["tags"];
@@ -2358,9 +2335,9 @@ export function getInsightsData(sinceMs: number, gatewayHost = ""): InsightsData
        WHERE resolved_model IS NOT NULL AND resolved_model != '' AND updated_at >= ?`
     )
     .all(sinceMs) as InsightsData["models"];
-  // `gatewayHost` is "" when no gateway is configured. `provider` is ALSO ""
+  // `gatewayHost` is "" when no gateway is configured. `provider` is also ""
   // for a row billed to the agent's own cloud (see addUsage), so an empty host
-  // has to short-circuit here rather than reach the query — `provider = ''`
+  // must short-circuit here instead of reaching the query: `provider = ''`
   // would otherwise match every ordinary cloud turn on the instance.
   const gatewayCache = gatewayHost
     ? (db
@@ -2393,7 +2370,7 @@ export function projectLastActivity(projectId: string): number {
   return row.ts ?? 0;
 }
 
-// Whether the project has ever opened a session — i.e. there is anything to recap.
+// Whether the project has ever opened a session, i.e. there is anything to recap.
 export function projectHasHistory(projectId: string): boolean {
   const row = getDb().prepare("SELECT COUNT(*) AS n FROM sessions WHERE project_id = ?").get(projectId) as { n: number };
   return row.n > 0;
