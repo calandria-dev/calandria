@@ -8,6 +8,59 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.8.0](https://github.com/calandria-dev/calandria/compare/v0.7.1...v0.8.0) (2026-09-04)
+
+Calandria 0.8.0 puts a LiteLLM gateway on the model-provider seam. Set one base URL and a
+project can route its Claude Code, Codex or Antigravity turns through the proxy, billed to a
+gateway key or forwarded to the CLI's own login, with every turn tagged by project, task and
+agent so LiteLLM's spend views break down by task on their own. The gateway's model catalog
+feeds the pickers, context gauges and price estimates. Opt in to per-task virtual keys and each
+task mints its own budget-capped key, deleted when the task finishes, with the proxy's ledger
+replacing the spend estimate. The gateway's hosted MCP servers mount on any task through the
+permission gate, and a turn that exceeds its budget parks its queue and offers Retry the way a
+dead login does. The desktop shell attaches to a remote instance by URL or through an SSH port
+forward, sums its badge across instances and gains a right-click menu. Claude Code can take
+Calandria's tools over the stdio bridge, every tool call is journaled with a named message when
+the CLI cuts one off, and a PR a session opened by hand is linked back to its task. Codex reads
+its context window and default model from `~/.codex` and offers GPT-6 Astra; the pickers show
+what a Claude alias resolves to, hide agents nobody is signed in to, and each titlebar usage
+tracker can be switched off.
+
+
+### Features
+
+* **agents:** route Claude Code through a LiteLLM gateway preset ([#181](https://github.com/calandria-dev/calandria/issues/181)) ([731a760](https://github.com/calandria-dev/calandria/commit/731a760512b58ce7af3fe22c3d7c1132d5069927))
+* **agents:** route Codex through the LiteLLM gateway ([#187](https://github.com/calandria-dev/calandria/issues/187)) ([63af6d1](https://github.com/calandria-dev/calandria/commit/63af6d18566393054f4f685dc0ba36d7dac1dfe1))
+* **agents:** serve the LiteLLM gateway's model catalog for picker options, context windows and price estimates ([#186](https://github.com/calandria-dev/calandria/issues/186)) ([ee5d26f](https://github.com/calandria-dev/calandria/commit/ee5d26fcbfca0057c999606c47f2f3f7b0b4e233))
+* **claude:** serve Calandria's tools over the stdio bridge on request ([#214](https://github.com/calandria-dev/calandria/issues/214)) ([4b18109](https://github.com/calandria-dev/calandria/commit/4b18109b1cd2394c489f4bfa7e9ba0fe945d5c22))
+* **codex:** offer GPT-6 Astra and price it at its own rates ([#198](https://github.com/calandria-dev/calandria/issues/198)) ([7afc6d5](https://github.com/calandria-dev/calandria/commit/7afc6d5cba62ad43a8313b0dc850073a207d25dc))
+* **codex:** read the context window and default model from ~/.codex ([#208](https://github.com/calandria-dev/calandria/issues/208)) ([65ce186](https://github.com/calandria-dev/calandria/commit/65ce18669ca62fefb522bd6f196294c964844f46))
+* **desktop:** attach the shell through an SSH port forward ([#180](https://github.com/calandria-dev/calandria/issues/180)) ([17833af](https://github.com/calandria-dev/calandria/commit/17833afb6d7ff7871319f1b4e5cdbc75044a8a8e))
+* **desktop:** attach the shell to remote instances by URL ([#178](https://github.com/calandria-dev/calandria/issues/178)) ([49783aa](https://github.com/calandria-dev/calandria/commit/49783aa2f23b412eeac0bf7a2c85c4dacc9e068d))
+* **desktop:** sum the badge across instances and let a server name itself ([#185](https://github.com/calandria-dev/calandria/issues/185)) ([d3a230c](https://github.com/calandria-dev/calandria/commit/d3a230c8e2101d0a850e3ac54ba59c44eb9fc352))
+* **diff:** move the PR status chip into the diff toolbar ([#199](https://github.com/calandria-dev/calandria/issues/199)) ([dcd5a89](https://github.com/calandria-dev/calandria/commit/dcd5a89dc77ebbbf1c63ba0773e2b6b1a79de3ec))
+* **github:** link a PR a session opened by hand to its task ([#212](https://github.com/calandria-dev/calandria/issues/212)) ([128079c](https://github.com/calandria-dev/calandria/commit/128079c6ec3b8c930d336fe1d07f896ec36ce12c))
+* **litellm:** per-task virtual keys, budget failures, hosted MCP servers and Antigravity routing ([#215](https://github.com/calandria-dev/calandria/issues/215)) ([e987365](https://github.com/calandria-dev/calandria/commit/e98736515fef849ed8b0783485e0c881c5a6df42))
+* **models:** show the id a Claude family alias resolves to ([#176](https://github.com/calandria-dev/calandria/issues/176)) ([74aca30](https://github.com/calandria-dev/calandria/commit/74aca300f6ac6207a21f946e734a27c02ea87e41))
+* **ui:** let each agent's titlebar usage tracker be switched off ([#202](https://github.com/calandria-dev/calandria/issues/202)) ([90e0c57](https://github.com/calandria-dev/calandria/commit/90e0c570ff6dea914d54ba59b9fdd263a45cc72c))
+* **usage:** record the model each internal job actually ran on ([#175](https://github.com/calandria-dev/calandria/issues/175)) ([52e7727](https://github.com/calandria-dev/calandria/commit/52e7727486fbd43ca335bc4fc059354dfc71a434))
+
+
+### Bug Fixes
+
+* **agents:** record every Calandria tool call, and say what to do when the CLI cuts one off ([#206](https://github.com/calandria-dev/calandria/issues/206)) ([96bad9d](https://github.com/calandria-dev/calandria/commit/96bad9d4b9ab401bd38ff65ad6d26daac9a3ae59))
+* **codex:** mark the resolved default in the model picker ([#213](https://github.com/calandria-dev/calandria/issues/213)) ([38b1a0e](https://github.com/calandria-dev/calandria/commit/38b1a0e5fc63dcaee668a920d4832bbd2df92787))
+* **desktop:** add a right-click menu so copy and paste work from the mouse ([#188](https://github.com/calandria-dev/calandria/issues/188)) ([97a69d2](https://github.com/calandria-dev/calandria/commit/97a69d2d6b017b483cc4428b22f9a501f4eb8e08))
+* **diff:** resolve a task's diff base through the base branch's remote-tracking ref ([#190](https://github.com/calandria-dev/calandria/issues/190)) ([dde26d4](https://github.com/calandria-dev/calandria/commit/dde26d48768ef12ecc0c527237e57c004145db35))
+* **docker:** bump the pinned Antigravity CLI to 1.1.25 ([#183](https://github.com/calandria-dev/calandria/issues/183)) ([7c67f78](https://github.com/calandria-dev/calandria/commit/7c67f783bea501edd7c4fd8f60f276f4404e4cd2))
+* **docker:** move the Antigravity CLI pin to 1.1.26 ([#216](https://github.com/calandria-dev/calandria/issues/216)) ([9d97d43](https://github.com/calandria-dev/calandria/commit/9d97d43d451402004ac0159d87578491d51765f3))
+* **docker:** move the Claude Code CLI pin to 2.1.260 ([#210](https://github.com/calandria-dev/calandria/issues/210)) ([a001c36](https://github.com/calandria-dev/calandria/commit/a001c36407ff0e32f0355a75db855081ea5584d4))
+* **suggestions:** withhold Start on a blocked suggestion ([#177](https://github.com/calandria-dev/calandria/issues/177)) ([c01c829](https://github.com/calandria-dev/calandria/commit/c01c82939d4c5ed6f680ff2ced17102d095c8111))
+* **tags:** offer Create for a base branch nothing has made yet ([#189](https://github.com/calandria-dev/calandria/issues/189)) ([3f92e7d](https://github.com/calandria-dev/calandria/commit/3f92e7dbfecf241231c18ea1a5bdc5e710742b1f))
+* **tags:** offer Create for a base branch nothing has made, and count remote-only ones as existing ([3f92e7d](https://github.com/calandria-dev/calandria/commit/3f92e7dbfecf241231c18ea1a5bdc5e710742b1f))
+* **ui:** filter unconnected agents out of the Schedules and Runbooks pickers ([#211](https://github.com/calandria-dev/calandria/issues/211)) ([632b4fd](https://github.com/calandria-dev/calandria/commit/632b4fd3b517edd235409d1dbd87eb1337de2c49))
+* **ui:** stop offering agents nobody is signed in to in the task dialogs ([#200](https://github.com/calandria-dev/calandria/issues/200)) ([bac37ad](https://github.com/calandria-dev/calandria/commit/bac37adf2c394063274b4b59d5fc1179cd668e25))
+
 ## [0.7.1](https://github.com/calandria-dev/calandria/compare/v0.7.0...v0.7.1) (2026-09-03)
 
 
