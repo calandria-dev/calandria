@@ -12,6 +12,11 @@
  * session: the model literally cannot do it itself. The server already owns the
  * network git (lib/git.ts, plus createTaskPr's push), so this fits that seam.
  *
+ * `adoptExistingPr` is the repair for the case where neither of them ran: a
+ * session whose `create_pr` call was cut off falls back to `git push` +
+ * `gh pr create`, which opens a real PR that this row knows nothing about. It
+ * lives here because linking a PR to a task is this module's job either way.
+ *
  * There is deliberately no merge_pr. Opening a PR is proposing; merging is
  * deciding, and .github/CLAUDE.md reserves that for a recorded human answer.
  *
@@ -27,10 +32,14 @@
  * the two route entries their own kick, the driver `TurnHooks.onPrOpened`.
  */
 import { getProject, getTask, listSummaries, updateTask } from "./store";
-import { commitWorktree, taskCommitMessage } from "./git";
+import { commitWorktree, remoteBranchExists, taskCommitMessage } from "./git";
 import { resolveBaseBranch } from "./baseBranch";
-import { buildPrBody, createTaskPr, parsePrNumber, type CreatePrResult } from "./github";
+import { buildPrBody, createTaskPr, findOpenPrForBranch, parsePrNumber, type CreatePrResult } from "./github";
+import { publishGlobal } from "./events";
+import { createLogger } from "./log.mjs";
 import type { Project, Task } from "./types";
+
+const log = createLogger("pr");
 
 /**
  * Commit, push and open (or update) the task's PR, then record it on the row.
@@ -151,4 +160,80 @@ export async function createPrForAgent(
       : `Pushed ${task.work_branch} and opened ${named} against ${resolveBaseBranch(task, project)}: ${result.url}\n\n` +
         `It is now waiting on review. Merging is the user's call — you cannot merge it, and there is no tool that can.`,
   };
+}
+
+/**
+ * Link a pull request the SESSION opened by hand.
+ *
+ * `create_pr` is the supported path, but it can be cut off before it reaches
+ * Calandria at all (lib/agents/CLAUDE.md, "Tool results the CLI answers on its
+ * own behalf"), and a session that sees that failure falls back to `git push` +
+ * `gh pr create`. That works — the PR is real and CI runs on it — but the task
+ * row never hears about it: pr_url and pr_number stay empty, the session header
+ * shows no PR, lib/prState.ts never watches it, and auto-reclaim can never fire,
+ * so the user relinks it by hand. This closes that gap by asking GitHub the one
+ * question that settles it: does an open PR exist whose head is this task's
+ * branch?
+ *
+ * Called at the end of every turn (lib/runner.ts), which is where the fallback
+ * has just happened. Three screens keep that cheap and safe, in the order they
+ * bite:
+ *
+ *   1. THE ROW. A task that already has a pr_url, has no work branch, or whose
+ *      project lands by merging is answered without touching git — a merge
+ *      project's branch is not supposed to become a PR, and adopting one there
+ *      would put a chip on a task whose work lands another way.
+ *   2. THE LOCAL REF. `refs/remotes/origin/<branch>` is a rev-parse of a ref the
+ *      repo already has. Nobody pushed the branch means nobody opened a PR for
+ *      it, and that is the common case: without this gate every turn of every
+ *      un-pushed task would fork gh and call github.com for a "no".
+ *   3. THE EXACT HEAD. findOpenPrForBranch re-checks headRefName itself.
+ *
+ * Best-effort throughout, like the network git in lib/git.ts: bounded by gh's
+ * own 30s timeout, never prompting, and every failure is silence rather than a
+ * throw — this runs in a turn's finally, where the turn is already over and
+ * there is nobody to tell.
+ */
+export async function adoptExistingPr(
+  taskId: string,
+  onOpened?: (taskId: string) => void
+): Promise<{ url: string; number: number } | null> {
+  // Re-read rather than trusting a caller's snapshot: a turn's task row is
+  // minutes old by the time its finally runs, and pr_url is exactly the field
+  // create_pr may have filled in while it ran.
+  const task = getTask(taskId);
+  if (!task || task.pr_url || !task.work_branch) return null;
+  const project = getProject(task.project_id);
+  if (!project || project.landing_mode !== "pr") return null;
+
+  // The project's repo, with the worktree as the fallback, for the reason
+  // lib/prState.ts gives: gh resolves the repo from origin, and refs/remotes is
+  // in the common git dir, so either checkout answers both questions.
+  const cwd = project.repo_path || task.worktree_path;
+  if (!cwd) return null;
+
+  try {
+    if (!(await remoteBranchExists(cwd, task.work_branch))) return null;
+    const found = await findOpenPrForBranch(cwd, task.work_branch);
+    if (!found) return null;
+
+    // Somebody may have raced us (create_pr landing late, the user pasting the
+    // URL in). Re-read before writing so the adopt can't overwrite a link that
+    // arrived while gh was talking to github.com.
+    const fresh = getTask(taskId);
+    if (!fresh || fresh.pr_url) return null;
+
+    updateTask(taskId, { pr_url: found.url, pr_number: found.number });
+    log.info(`linked task ${taskId} to PR #${found.number} (${found.url}), opened outside Calandria on ${task.work_branch}`);
+    // Same wire event a background PR refresh publishes: the payload can't carry
+    // a PR, so listeners are told to re-read the row.
+    publishGlobal(taskId, { type: "task_edited" });
+    // And the same kick create_pr's own success does — first state read, and it
+    // restarts the sweep that stopped itself when the last open PR landed.
+    onOpened?.(taskId);
+    return found;
+  } catch (e) {
+    log.warn(`could not check task ${taskId} for a pull request opened outside Calandria: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }

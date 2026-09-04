@@ -19,6 +19,7 @@ import { publish, subscribeGlobal, publishGlobal } from "@/lib/events";
 import { forgetTurnActivity, markTurnActivity } from "@/lib/turnActivity";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, SHUTDOWN_GRACE_MS } from "@/lib/config";
 import { worktreeSyncStatus, fastForwardWorktree, ensureWorktree } from "@/lib/git";
+import { adoptExistingPr } from "@/lib/prTools";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { recordBaseCut } from "@/lib/baseDrift";
 import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
@@ -1436,6 +1437,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // follow-up or a successor turn is taking over — that turn will emit its
       // own turn_end.
       publish(id, { type: "turn_end" });
+      // A PR this session opened by hand, because create_pr was cut off before
+      // it reached us (lib/agents/CLAUDE.md), is linked here. Detached and after
+      // turn_end on purpose: it may spend a gh subprocess on github.com, and the
+      // turn is over — the chip arrives on the task_edited it publishes, the way
+      // every other background PR read reaches the client. Screened down to
+      // almost nothing on the ordinary task (see adoptExistingPr).
+      void adoptExistingPr(id, (taskId) => hooks?.onPrOpened(taskId)).catch((e) => {
+        log.warn(`pr adoption for task ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
     }
   }
 }

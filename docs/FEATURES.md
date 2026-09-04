@@ -249,6 +249,19 @@ in git and landing was entirely a human click. It is registered only on a `pr` p
 present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
 merging is deciding, and that stays yours.
 
+A PR that a session opened **by hand** is linked to its task anyway. `create_pr` can be cut
+off by the CLI before it reaches Calandria, and a session that sees that failure falls back to
+`git push` plus `gh pr create` in a terminal. That opens a real PR, but nothing on the task
+row knows about it: no chip in the session header, no state polling, no auto-reclaim when it
+lands, and you relink it by hand. So at the end of every turn, a task on a `pr` project that
+has a work branch and no PR yet is checked: if the branch was pushed, one `gh pr list --head
+<branch> --state open` asks whether a PR for it exists, and an open one whose head is exactly
+that branch is recorded the way `create_pr` records its own. The branch check is local, so a
+task that never pushed costs nothing, and a PR whose head is any other branch is never
+adopted. It is best-effort like the rest of the network git: bounded, never prompting, and a
+`gh` that is missing, logged out or offline leaves the task exactly as it was. The link is
+logged as one line.
+
 **Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
 `pull_request` rule, and classic branch protection, neither of which reports the other. It
 runs on its own when you open the settings dialog and when you point a new project at a

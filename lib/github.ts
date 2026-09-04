@@ -586,6 +586,44 @@ export async function createTaskPr(input: {
   }
 }
 
+/**
+ * The open PR whose head branch is EXACTLY `branch`, or null.
+ *
+ * This is the read half of createTaskPr's "already an open PR?" probe, split out
+ * for the case where Calandria did not open the PR at all: a session that fell
+ * back to `git push` + `gh pr create` by hand leaves a real PR with nothing in
+ * tasks.pr_url (lib/prTools.ts's adoptExistingPr).
+ *
+ * `--head` is a filter, not a guarantee — a PR from a fork reports
+ * `owner:branch` — so the exact `headRefName` match is re-checked here. Adopting
+ * a PR whose head is some other branch would point the task at somebody else's
+ * work, so a near miss is treated as no answer at all.
+ *
+ * Never throws and never prompts: gh missing, logged out, no network, no remote
+ * or unparseable output all come back as null, which reads as "no PR" — the
+ * state the caller was already in.
+ */
+export async function findOpenPrForBranch(cwd: string, branch: string): Promise<{ url: string; number: number } | null> {
+  if (!cwd || !branch) return null;
+  try {
+    const { stdout } = await run(
+      resolveGhBin(),
+      ["pr", "list", "--head", branch, "--state", "open", "--json", "number,url,headRefName", "--limit", "10"],
+      {
+        cwd,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+      }
+    );
+    const rows = JSON.parse(stdout || "[]") as { number?: number; url?: string; headRefName?: string }[];
+    const hit = rows.find((r) => r.headRefName === branch && !!r.url && !!r.number);
+    return hit ? { url: hit.url!, number: hit.number! } : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------- pull-request state ----------
 
 /**
