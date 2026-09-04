@@ -173,18 +173,3 @@ export function startSsoStub(token = `the-access-token-${crypto.randomBytes(4).t
   });
 }
 
-/**
- * The `xdg-open` shim that stands in for the system browser (RFC 8252 §7.3
- * expects one to exist). It follows the authorize redirect the way a real
- * browser does — straight to the app's loopback receiver — and logs both the
- * URL it was asked to open and where following it landed, which is what lets
- * the spec assert on the PKCE challenge and the callback shape without a real
- * browser under a headless display.
- */
-export function xdgOpenScript(logFile: string): string {
-  return (
-    `#!/usr/bin/env bash\n` +
-    `echo "OPENED $1" >> ${logFile}\n` +
-    `curl -sSL -o /dev/null -w 'FOLLOWED %{http_code} %{url_effective}\\n' "$1" >> ${logFile} 2>&1\n`
-  );
-}
