@@ -7,7 +7,8 @@
 import type { AgentCapabilities } from "../types";
 import { CODEX_INHERIT_MCP } from "../../config";
 import { codexApiKey } from "./auth";
-import { codexContextWindow } from "./catalog";
+import { codexContextWindow, codexDefaultModel } from "./catalog";
+import { DEFAULT_CODEX_MODEL } from "./pricing";
 
 // The window when ~/.codex can't answer: no catalog on disk (a fresh install, a
 // container with nothing mounted) or a shape we don't recognise. It is the
@@ -26,6 +27,22 @@ const CTX_FALLBACK = 272_000;
 // frozen at module load would be the same hardcoded number under a new name.
 // claudeCapabilities() is the same shape for the same reason.
 const ctx = (slug: string) => codexContextWindow(slug, CTX_FALLBACK);
+
+// Which entry the picker marks "(default)". The word used to be typed into one
+// model's `sub`, which was only ever true for the account the line was written
+// on: the default is per account, ranked by the catalog's `priority` and
+// overridden outright by config.toml's top-level `model`, so an account whose
+// catalog ranks a different model first was told Sol was the default while
+// every model-less turn ran the other one. ./catalog.ts already resolves it —
+// cached, fail-soft, and the same answer resolveCodexModel() gives a real turn.
+//
+// A slug outside this list marks NOTHING. config.toml can name any model and a
+// catalog can rank one this picker doesn't offer; falling back to marking a
+// listed entry would restate the bug in a slower way.
+const markDefault = (models: AgentCapabilities["models"]): AgentCapabilities["models"] => {
+  const resolved = codexDefaultModel(DEFAULT_CODEX_MODEL);
+  return models.map((m) => (m.value === resolved ? { ...m, sub: `${m.sub} (default)` } : m));
+};
 
 export function codexCapabilities(): AgentCapabilities {
   return {
@@ -67,15 +84,15 @@ export function codexCapabilities(): AgentCapabilities {
     // locally — and if it needs a newer one, move `@openai/codex-sdk` in
     // package.json and CODEX_VERSION in the Dockerfile together, since the SDK
     // exact-pins the CLI it speaks JSONL to.
-    models: [
+    models: markDefault([
       { value: "gpt-6-astra", label: "GPT-6 Astra", sub: "most capable model for complex, demanding work", contextWindow: ctx("gpt-6-astra"), group: "Latest" },
-      { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "latest frontier agentic coding model (default)", contextWindow: ctx("gpt-5.6-sol"), group: "Latest" },
+      { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "latest frontier agentic coding model", contextWindow: ctx("gpt-5.6-sol"), group: "Latest" },
       { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", sub: "balanced agentic coding for everyday work", contextWindow: ctx("gpt-5.6-terra"), group: "Latest" },
       { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", sub: "fast and affordable agentic coding", contextWindow: ctx("gpt-5.6-luna"), group: "Latest" },
       { value: "gpt-5.5", label: "GPT-5.5", sub: "previous frontier coding and research model", contextWindow: ctx("gpt-5.5"), group: "Previous versions" },
       { value: "gpt-5.4", label: "GPT-5.4", sub: "strong model for everyday coding", contextWindow: ctx("gpt-5.4"), group: "Previous versions" },
       { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", sub: "small, fast, and cost-efficient", contextWindow: ctx("gpt-5.4-mini"), group: "Previous versions" },
-    ],
+    ]),
     // Labeled with codex's own model_reasoning_effort scale (low/medium/high/
     // xhigh — exactly what EFFORT in ./driver.ts sends), not Claude's think/
     // think hard/ultrathink vocabulary: a Codex user knows these names from
