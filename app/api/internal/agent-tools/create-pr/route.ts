@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { createPrForAgent } from "@/lib/prTools";
 import { schedulePrRefresh, startPrPolling } from "@/lib/prState";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 // Push + `gh pr create` against github.com, with createTaskPr's own 120s
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("create_pr", "bridge", body.taskId);
 
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });

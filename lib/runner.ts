@@ -559,6 +559,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // sum over the others, so this is what stops the lifecycle line logging a
   // confident "cost_usd: 0" for a turn that may well have cost real money.
   let unpricedTurns = 0;
+  // Calandria tool calls the agent CLI answered itself this turn (the
+  // `cutOff` tool_result flag, lib/agentToolGuard.mjs). On the turn line so a
+  // turn whose tool calls all failed is one grep away, not one per call.
+  let toolCutoffs = 0;
   // What the driver has actually reported running, for pricing a gateway turn
   // (lib/gatewayPricing.ts prices by model id, and the gateway's own catalog
   // is the only place that id's rate lives). Seeded from the task's pick and
@@ -788,6 +792,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         if (isSuggestTaskTool(ev.name)) pendingSuggestCalls.push(ev.id);
         publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
+        if (ev.cutOff) toolCutoffs++;
         const t = toolMsgs[ev.id];
         if (t) {
           // A suggest_task row can have been given its card OUT OF BAND while
@@ -1214,6 +1219,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // logged 0 would be read as a measurement, and there isn't one.
       cost_usd: unpricedTurns && !spent.cost_usd ? undefined : Math.round(spent.cost_usd * 10000) / 10000,
       unpriced_turns: unpricedTurns || undefined,
+      tool_cutoffs: toolCutoffs || undefined,
       // Only when they say something: `superseded` means a Stop released this
       // turn's slot and a successor claimed it, so this line describes a turn
       // that settled nothing; `error` is the whole reason the line is at error

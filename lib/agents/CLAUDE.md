@@ -96,13 +96,36 @@ Nothing landed in that session. `tasks.pr_url` stayed empty and no branch was pu
 so `toolInterruptedMessage()` says the call may or may not have taken effect rather than promising
 it did nothing.
 
-It does not reproduce from `resume` alone. Four spikes (fresh, two resumes, and a mid-turn
-injection, with and without the real `settingSources`) all returned their results. So the driver
-does the only thing available to it. The stream pump classifies the CLI's sentence for calls it
-recorded as Calandria's, replaces it with one that names the tool and says whose answer it is, and
-logs `agent tool call cut off before Calandria answered`. Without that line a turn whose Calandria
-calls all failed still logs `turn ok`, with nothing in the journal to find it by. The stdio bridge
-cannot do the same, being a separate process that never learns its answer was discarded.
+Measured again 2026-09-03 over the 14 days of journal and transcripts on the same instance (486
+calls, 336 turns, `tests/` has nothing to add to a number this size). It is a resumed-session
+failure: 1 of 363 calls made in a task's first session came back this way, against 31 of 123 in
+turns the driver started with `resume`, and every one of the 31 is on CLI 2.1.257 (160 calls on
+2.1.240 had none; 2.1.246's changelog says the same abort used to be reported as "completed with no
+output", the blank result the guard was written for on 2026-08-24 and 08-30). Once a session has
+failed one call, every later Calandria call in it fails, in a new CLI process resuming the same
+session id as much as in the process that failed first, while Bash, Read, Edit and ToolSearch keep
+working. In `bypassPermissions` the answer arrives 3–5 ms after the call; in `auto` it arrives after
+~1.3 s, which is the classifier stage running first, so the classifier is not the cause. The CLI's
+own transcript tags each one `toolDenialKind: "interrupted"`, which is the tag `aFn()` gives an
+`AbortError` thrown while the turn's own controller is NOT aborted, so the signal the MCP call was
+given is not the turn's, and what aborted it is not visible from outside the CLI. Upstream
+`anthropics/claude-agent-sdk-typescript#436` reports the same signature from Task subagents.
+
+It does not reproduce on demand. Seven spikes against the SDK directly — fresh, resumed twice, a
+background Bash then a wake, a foreground subagent, a message injected mid-turn, a background Bash
+and a background subagent each in flight at the moment of the call — all returned their results.
+So the driver does what is available to it. The stream pump classifies the CLI's sentence for calls
+it recorded as Calandria's, replaces it with one that names the tool and says whose answer it is,
+flags the event `cutOff` (the runner counts it onto the `turn ok` line as `tool_cutoffs`), logs
+`agent tool call cut off before Calandria answered` per call, and on the first one in a turn posts
+a transcript notice telling the user that `/clear` starts the fresh session measured to work. Two
+records that did not exist before now do: every Calandria tool call that ARRIVES logs
+`[agent-tools] agent tool call received` and `… settled` (in-process through the guard's hooks,
+the bridge through its endpoints), so a call with a `cut off` line and no `received` line is the
+CLI's; and `CALANDRIA_CLAUDE_DEBUG_DIR` makes the CLI write its own per-turn debug log, MCP traffic
+included, the one place the next occurrence's cause can be read. The CLI's stderr is captured with
+the task on it. The stdio bridge cannot see any of this, being a separate process that never learns
+its answer was discarded.
 
 ### Model catalog and Vertex corrections
 
