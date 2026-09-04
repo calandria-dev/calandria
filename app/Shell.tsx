@@ -649,7 +649,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
         )}
 
         <div className="tb-right">
-          <PlanUsagePill agents={o.agents} />
+          <PlanUsagePill agents={o.agents} appDefaults={o.appDefaults} />
           {o.needsYouTotal > 0 && (
             <div style={{ position: "relative" }}>
               <button
