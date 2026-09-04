@@ -8,6 +8,18 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.9.0](https://github.com/calandria-dev/calandria/compare/v0.8.0...v0.9.0) (2026-09-04)
+
+
+### Features
+
+* **desktop:** sign in to an instance through the system browser ([#224](https://github.com/calandria-dev/calandria/issues/224)) ([e448dac](https://github.com/calandria-dev/calandria/commit/e448dac13f6c019546f2b69b3cb5f412b2460321))
+
+
+### Bug Fixes
+
+* **codex:** inert transport on disabled MCP overrides, inherit user servers by default ([#221](https://github.com/calandria-dev/calandria/issues/221)) ([c3a7131](https://github.com/calandria-dev/calandria/commit/c3a713127e47a8f6c5c0dc100907abb90a6f5878))
+
 ## [0.8.0](https://github.com/calandria-dev/calandria/compare/v0.7.1...v0.8.0) (2026-09-04)
 
 Calandria 0.8.0 puts a LiteLLM gateway on the model-provider seam. Set one base URL and a
