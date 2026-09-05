@@ -1,30 +1,19 @@
-/* Calandria — custom Next.js server.
+/* Calandria: custom Next.js server.
  *
- * Why this exists: the integrated terminal is a WebSocket to the node-pty
- * sidecar (pty-server.js, bound to 127.0.0.1). Behind a Cloudflare Tunnel only
- * ONE hostname/origin is exposed, so the browser cannot reach a second port.
- * This server fronts Next.js on a single port and proxies WebSocket upgrades on
- * `/pty` to the local sidecar — so one origin carries both the app and the
- * terminal, and the terminal works from a remote device over https/wss.
- *
- * HMR/Fast-Refresh upgrades (dev) are forwarded to Next via getUpgradeHandler();
- * everything else on the socket layer is the /pty proxy.
- *
- * `next({ dev })` uses Turbopack by default, matching the old `next dev
- * --turbopack` behaviour. server.js itself is plain Node (not bundled), so keep
- * it CommonJS and compatible with the running Node version.
+ * Proxies WebSocket upgrades on `/pty` to the node-pty sidecar (pty-server.js,
+ * loopback-only), so the app and terminal share one origin behind a tunnel
+ * that exposes only one hostname. Dev HMR upgrades go to Next instead; in
+ * production `/pty` is the only upgrade. Next middleware never sees upgrades,
+ * so this file is the auth boundary for them: rules in the upgrade handler
+ * below. Plain Node, not bundled, so it stays CommonJS.
  */
 const http = require("node:http");
 const nextImport = require("next");
 const { resolveHostname, hostnameMigrationWarning } = require("./lib/resolveHostname");
 
-// Structured logging (lib/log.mjs), dynamic-imported like every other lib/*.mjs
-// this CommonJS entrypoint needs. `log` is reassigned once that resolves — a
-// microtask or two into boot — so until then it is a console shim printing
-// exactly what the module's default text format would. The only call that can
-// land in that window is numEnv's parse warning below, and losing the
-// CALANDRIA_LOG_FORMAT=json shape for one bad-PORT line is a better trade than
-// blocking the whole boot on an import.
+// Structured logging (lib/log.mjs), dynamic-imported like the other lib/*.mjs
+// modules this CommonJS entrypoint needs. Until the import resolves, `log` is
+// a console shim; only numEnv's parse warning below can run in that window.
 let log = {
   info: (msg) => console.log(`[server] ${msg}`),
   warn: (msg) => console.warn(`[server] ${msg}`),
@@ -35,10 +24,10 @@ const logImport = import("./lib/log.mjs").then((m) => {
   return m;
 });
 
-// Mirrors num() in lib/config.ts — duplicated because this plain-Node
-// entrypoint can't import TS. Falls back to `def` and warns once when the
-// var is set but not a number, so a typo'd PORT fails loud at boot instead
-// of a NaN deep inside http.listen() (issue #18 item 1).
+// Mirrors num() in lib/config.ts, duplicated because this plain-Node
+// entrypoint can't import TS. Falls back to `def` and warns once if the var
+// is set but not a number, so a bad PORT fails at boot instead of producing
+// NaN inside http.listen().
 function numEnv(name, raw, def) {
   if (raw === undefined) return def;
   const n = Number(raw);
@@ -49,16 +38,11 @@ function numEnv(name, raw, def) {
   return n;
 }
 
-// Last-resort process guards. Turns run detached (lib/runner.ts), owned by this
-// process and not awaited by any request — so a stray rejection or throw from a
-// background turn would, under Node's default policy, terminate the server and
-// take down EVERY other tenant's in-flight turn plus all terminal/SSE sockets.
-// (The concrete trigger we hardened for: deleting a project mid-turn leaves the
-// runner writing to now-deleted task rows, hitting FOREIGN KEY errors.) The
-// individual call sites are fixed to degrade gracefully; these are the backstop
-// for the whole class. We log LOUDLY rather than exit — a single bad turn must
-// not be able to kill the shared process. This can mask real bugs, so the noise
-// is deliberate: every occurrence is a bug to chase, not a state to live in.
+// Last-resort process guards. Turns run detached and unawaited (lib/runner.ts),
+// so an uncaught rejection or throw from one would otherwise terminate the
+// process and take down every other task's turn and all terminal/SSE sockets.
+// Log loudly and keep running instead of exiting; each occurrence is still a
+// bug to fix at its call site.
 process.on("unhandledRejection", (reason) => {
   log.error("UNHANDLED REJECTION (kept alive — investigate)", { err: reason });
 });
@@ -66,82 +50,72 @@ process.on("uncaughtException", (err) => {
   log.error("UNCAUGHT EXCEPTION (kept alive — investigate)", { err });
 });
 
-// Origin auth enforcement (lib/auth/origin.mjs selects the provider: open local
-// mode by default, or Cloudflare Access when configured). middleware.ts
-// covers the HTTP routes; WebSocket upgrades never reach Next middleware, so
-// THIS file is the auth boundary for the terminal — an unverified /pty upgrade
-// would hand out a shell. jose v6 is ESM-only, hence the dynamic import from
-// this CommonJS file.
+// Origin auth provider (lib/auth/origin.mjs): open local mode by default, or
+// Cloudflare Access when configured. middleware.ts covers HTTP routes; this
+// file gates WebSocket upgrades, since an unverified /pty upgrade hands out a
+// shell. jose v6 is ESM-only, so the import is dynamic from this CommonJS file.
 const cfAccessImport = import("./lib/auth/origin.mjs");
 const localOriginImport = import("./lib/auth/local-origin.mjs");
 
-// Host-header router for public service hostnames (<slug>--<appHost>, e.g.
-// calc--myhost.example.com). Opt-in via CALANDRIA_SERVICE_HOSTS (the services
-// feature flag alone exposes nothing); no-ops entirely (returns false,
-// requests fall through to Next) when that, the feature flag, or
-// PUBLIC_BASE_URL says no. Service hostnames carry their OWN per-service auth
-// (visibility: private/shared/public — see lib/service-router.mjs), so they
-// bypass the app-session origin gate below on purpose.
+// Host-header router for public service hostnames (<slug>--<appHost>). Opt-in
+// via CALANDRIA_SERVICE_HOSTS; a no-op (requests fall through to Next) when
+// that, the services feature flag, or PUBLIC_BASE_URL is unset. Rule: service
+// hostnames carry their own visibility-based auth (private/shared/public, see
+// lib/service-router.mjs) and bypass the app-session origin gate below.
 const serviceRouterImport = import("./lib/service-router.mjs");
 
-// Inherited-credential guard (issue #4): an ANTHROPIC_API_KEY that leaked in
-// from the launch environment would make every SDK turn bill per-token while
-// the UI reports the subscription login. Strip such keys before we serve a
-// single request (persisted keys are re-applied from their 0600 files at db
-// init; CALANDRIA_ALLOW_API_KEY_ENV=1 opts in to keeping env-provided keys).
+// Strips an inherited ANTHROPIC_API_KEY before serving any request: left set,
+// it would bill every SDK turn per-token while the UI still shows the
+// subscription login. Persisted keys are re-applied from their 0600 files at
+// db init; CALANDRIA_ALLOW_API_KEY_ENV=1 opts in to keeping an env-provided key.
 const envKeysImport = import("./lib/env-keys.mjs");
 
-// CALANDRIA_*/ORCH_* alias reader (lib/env.mjs) — dynamic-imported for the same
-// reason as the other lib/*.mjs files above: this entrypoint is plain CommonJS
-// and can't `require()` an ES module. Needed before listen() (SHUTDOWN_GRACE_MS,
-// SCHEDULER) and for the one-line deprecation notice printed below.
+// CALANDRIA_*/ORCH_* alias reader (lib/env.mjs), dynamic-imported like the
+// other lib/*.mjs modules above. Needed before listen() (SHUTDOWN_GRACE_MS,
+// SCHEDULER) and for the deprecation notice printed below.
 const envImport = import("./lib/env.mjs");
 
-// Where the database and the per-task worktrees actually live — including the
-// pre-rename fallback, which is why this is a shared module and not an inline
-// `env || default` here (lib/config.ts and lib/db-lock.mjs read the same one).
-// Dynamic-imported like its siblings: plain CommonJS entrypoint, ES module.
+// Where the database and per-task worktrees live, including the pre-rename
+// fallback (lib/config.ts and lib/db-lock.mjs read the same module rather
+// than inlining `env || default`). Dynamic-imported: plain CommonJS
+// entrypoint, ES module.
 const storageImport = import("./lib/storage.mjs");
 
-// One app process per database. Two processes against one database
-// silently corrupt each other — the loser of the race is whichever one is
-// mid-turn when the other boots and runs its crash-recovery pass. Claimed HERE,
-// before app.prepare(), so nothing can open a turn, a service or a schedule
-// against a database we don't own; and only from this entrypoint, so `next
-// build` and the test suite never contend for a lock they shouldn't hold.
-// See lib/db-lock.mjs.
+// One app process per database: two processes against the same database
+// corrupt each other if the loser is mid-turn when the other's crash-recovery
+// pass runs. Claimed here, before app.prepare(), so nothing opens a turn,
+// service or schedule against a database this process doesn't own; only this
+// entrypoint claims it, so `next build` and the test suite never contend for
+// the lock. See lib/db-lock.mjs.
 const dbLockImport = import("./lib/db-lock.mjs");
 
-// Per-instance overrides (see docs/SELF_HOSTING.md "Configuration"). PTY_HOST/PTY_PORT must
-// match what pty-server.js binds — the sidecar is loopback-only by default and
-// is reached exclusively through this proxy.
+// PTY_HOST/PTY_PORT must match what pty-server.js binds: the sidecar is
+// loopback-only by default and reached only through this proxy.
 const dev = process.env.NODE_ENV !== "production";
 const port = numEnv("PORT", process.env.PORT, 3000);
-// CALANDRIA_HOSTNAME only, defaulting to loopback — bare HOSTNAME is ignored
-// because shells and container runtimes inject it, and the default must not
-// publish an unauthenticated shell to the network. See lib/resolveHostname.js.
+// CALANDRIA_HOSTNAME only, defaulting to loopback. Bare HOSTNAME is ignored
+// because shells and container runtimes inject it; the default must not
+// expose an unauthenticated shell to the network. See lib/resolveHostname.js.
 const hostname = resolveHostname();
 const ptyHost = process.env.PTY_HOST || "127.0.0.1";
 const ptyPort = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
-// Mirrors lib/config.ts's SHUTDOWN_GRACE_MS — kept in sync per this file's own
-// env-var convention (see numEnv above). Used below by the SIGTERM/SIGINT
-// graceful-shutdown handler. Assigned once envImport resolves (below) since it
-// reads CALANDRIA_SHUTDOWN_GRACE_MS via lib/env.mjs's readEnv.
+// Mirrors lib/config.ts's SHUTDOWN_GRACE_MS via this file's own numEnv
+// convention. Used by the SIGTERM/SIGINT handler below; assigned once
+// envImport resolves, since it reads CALANDRIA_SHUTDOWN_GRACE_MS through
+// lib/env.mjs's readEnv.
 let shutdownGraceMs;
 
 const next = typeof nextImport === "function" ? nextImport : nextImport.default;
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// Last-request timestamp. Not read by anything today (the /api/instance/idle
-// consumer was removed in issue #20) — kept solely because tests/schedulerBoot
-// pins countsAsActivity's exclusion list; see issue #22 discussion before
-// deleting further.
+// Last-request timestamp. Not read by anything today; kept because
+// tests/schedulerBoot pins countsAsActivity's exclusion list below.
 const bootAt = Date.now();
 const activity = (globalThis.__calandriaActivity ??= { lastRequestAt: bootAt });
-// Health/metadata probes (version, usage) never count as user activity —
-// otherwise a monitor's own loopback polling would keep lastRequestAt pinned
-// to "just now" forever. Mirrors the service-token path list in middleware.ts.
+// Health/metadata probes (version, usage) never count as user activity, or a
+// monitor's own loopback polling would keep lastRequestAt pinned to "just
+// now" forever. Mirrors the service-token path list in middleware.ts.
 const countsAsActivity = (url) => {
   const p = String(url || "").split("?")[0];
   return (
@@ -152,10 +126,9 @@ const countsAsActivity = (url) => {
   );
 };
 
-// Loopback boot pings: work the SERVER must start on its own, without waiting
-// for a browser. The service token clears the origin gate the same way the
-// health probes do; retries paper over Next's route compilation on a cold dev
-// boot.
+// Loopback boot pings: work the server starts on its own, without waiting for
+// a browser. The service token clears the origin gate like the health probes
+// do; retries cover Next's route compilation on a cold dev boot.
 function bootPing(label, path) {
   const url = `http://127.0.0.1:${port}${path}`;
   const headers = process.env.SERVICE_TOKEN
@@ -176,9 +149,9 @@ function bootPing(label, path) {
   ping();
 }
 
-// Forward a WebSocket upgrade on /pty to the node-pty sidecar. The sidecar reads
-// cwd/cols/rows from the query string, so strip only the `/pty` prefix and keep
-// the rest of the path + query intact.
+// Forwards a WebSocket upgrade on /pty to the node-pty sidecar. The sidecar
+// reads cwd/cols/rows from the query string, so only the `/pty` prefix is
+// stripped; the rest of the path and query pass through.
 function proxyPtyUpgrade(req, socket, head) {
   const rest = req.url.slice("/pty".length);
   const upstreamPath = rest.startsWith("/") ? rest : "/" + rest; // "" -> "/", "?q" -> "/?q"
@@ -215,9 +188,9 @@ function proxyPtyUpgrade(req, socket, head) {
   proxyReq.end();
 }
 
-// Claim the database, THEN prepare Next — sequenced, not raced: preparing Next
-// warms route modules that can reach getDb(), and a process about to be told it
-// may not run must not have touched the database first.
+// Claim the database, then prepare Next: preparing Next warms route modules
+// that can reach getDb(), so a process that has not been granted the lock
+// must not touch the database first.
 let dbDir; // resolved by acquireDbLock() below; reused for the boot summary line
 const prepared = dbLockImport
   .then(async (dbLock) => {
@@ -230,32 +203,30 @@ const prepared = dbLockImport
           "each other's running tasks, queued follow-ups and open permission prompts.",
       );
     }
-    // This process owns the database now, and Next hasn't warmed a route that
-    // could open it yet: refuse a file stamped by a NEWER build. Rolling an
-    // image tag back has to fail HERE, with a message an operator reads in
-    // `docker compose logs`, rather than boot and quietly write to a schema
+    // This process owns the database now, before Next has warmed a route
+    // that could open it: refuse a file stamped by a newer build here, with
+    // a message in `docker compose logs`, instead of writing to a schema
     // this build has never seen. See lib/schema-version.mjs.
     const schemaVersion = await import("./lib/schema-version.mjs");
     schemaVersion.assertSchemaVersionAtBoot(held.dir);
   })
   .catch((err) => {
-    // Not a crash — a refusal. The only useful thing to say is who has it.
+    // Not a crash: a refusal. The only useful thing to say is who holds it.
     log.error(err.message);
     process.exit(1);
   })
   .then(() => app.prepare());
 
 Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport, logImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage, logMod]) => {
-  // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still relied
-  // on — the old spellings keep working, but this is the only heads-up an
+  // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still in
+  // use: the old spellings keep working, and this is the only heads-up an
   // operator gets, so print it before the app starts serving.
   const deprecation = env.deprecatedEnvWarning();
   if (deprecation) log.warn("WARN: " + deprecation);
 
-  // Same deal for the on-disk locations: an install that predates the rename
-  // keeps running on ~/.zen-orchestrator / ~/.agent-orchestrator, because
-  // moving a live instance's data is the operator's call and never ours. This
-  // line is the only place that says so. See lib/storage.mjs.
+  // Same for the on-disk locations: an install that predates the rename keeps
+  // running on ~/.zen-orchestrator / ~/.agent-orchestrator, since moving a
+  // live instance's data is the operator's call. See lib/storage.mjs.
   const legacyStorage = storage.legacyStorageWarning();
   if (legacyStorage) log.warn(legacyStorage);
 
@@ -263,9 +234,9 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   // through lib/env.mjs's readEnv, which needs envImport settled.
   shutdownGraceMs = numEnv("CALANDRIA_SHUTDOWN_GRACE_MS", env.readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000);
 
-  // Before listen (= before any request can read env): drop inherited billing
-  // keys so turns can't silently switch from the subscription login to
-  // per-token API billing. See lib/env-keys.mjs.
+  // Before listen, so no request can read env first: drop inherited billing
+  // keys so a turn can't switch from the subscription login to per-token API
+  // billing. See lib/env-keys.mjs.
   for (const name of envKeys.stripInheritedAgentKeys()) {
     log.warn(
       `WARN: ${name} was set in the environment — unsetting it. ` +
@@ -305,9 +276,9 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       socket.destroy();
     };
     if (!cfAccess.originAuthEnabled()) {
-      // WebSockets are not protected by the browser's same-origin policy. In
-      // local mode, validate both Host (DNS-rebinding defense) and Origin before
-      // proxying /pty to a full shell or handing an upgrade to Next dev HMR.
+      // WebSockets bypass the browser's same-origin policy. Local mode rule:
+      // validate both Host (DNS-rebinding defense) and Origin before proxying
+      // /pty to a shell or handing the upgrade to Next dev HMR.
       if (localOrigin.localWebSocketRequestAllowed({
         host: req.headers.host,
         origin: req.headers.origin,
@@ -316,12 +287,11 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       }
       return deny();
     }
-    // Authenticated mode still needs an origin check, for a different reason
-    // than local mode does. The Access cookie is SameSite=None by default, so a
-    // hostile page can open wss://<your tunnel>/pty in the victim's browser and
-    // the edge will hand us a genuinely valid assertion for the real user —
-    // identity proven, intent not. Same-origin is what proves intent. (See
-    // lib/auth/local-origin.mjs; the sidecar repeats both checks.)
+    // Access mode rule: still check origin, for a different reason than local
+    // mode. The Access cookie is SameSite=None, so a hostile page can open
+    // wss://<tunnel>/pty in the victim's browser and get a valid assertion for
+    // the real user: identity proven, intent not. Same-origin proves intent.
+    // See lib/auth/local-origin.mjs; the sidecar repeats both checks.
     if (!localOrigin.sameOriginWebSocketRequestAllowed({
       host: req.headers.host,
       origin: req.headers.origin,
@@ -331,28 +301,19 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     cfAccess.verifyOriginNodeRequest(req).then(route).catch(deny);
   });
 
-  // Graceful shutdown (issue #14 item 1). docker/entrypoint.sh's trap forwards
-  // SIGTERM/SIGINT straight to THIS process's pid, not to its descendants —
-  // the claude/codex CLI children the Agent SDKs spawn per turn are not
-  // detached, so a plain `docker stop` never reaches them directly either.
-  // A bare process.exit(0) here used to cut every in-flight turn off mid-write
-  // with nothing durable recorded. Instead, ping POST /api/instance/drain
-  // (loopback, same pattern as the boot pings above) so lib/runner.ts's
-  // drainActiveTurns() can abort every live turn — the same abortTurn() a
-  // Stop-button press calls — and give each one's finally a bounded window to
-  // persist its interrupted state (DENIED_INTERRUPTED permission cards,
-  // running/awaiting_input settled, turn_end published) before we exit.
+  // Graceful shutdown. docker/entrypoint.sh's trap forwards SIGTERM/SIGINT to
+  // this process's pid only, not its descendants, so ping POST
+  // /api/instance/drain (loopback, like the boot pings above) so
+  // lib/runner.ts's drainActiveTurns() can abort every live turn (the same
+  // abortTurn() a Stop-button press calls) and give each one's finally a
+  // bounded window to persist interrupted state before exit.
   //
-  // The route's own wait is bounded by CALANDRIA_SHUTDOWN_GRACE_MS
-  // (lib/config.ts's SHUTDOWN_GRACE_MS); the hardTimeout here is that plus
-  // headroom for the HTTP round trip, so a hung fetch — or a drain route that
-  // never becomes reachable — still exits instead of hanging until the
-  // container runtime's own SIGKILL deadline. Managed services (killed by
-  // lib/services.ts's 'exit' hook) and the db lock (released by lib/db-lock.mjs's
-  // 'exit' hook) are untouched by any of this: both fire from process.exit(0)
-  // exactly as before, just AFTER the drain instead of immediately. Register a
-  // fallback only when nothing else handles the signal, to avoid preempting
-  // Next's own shutdown in dev.
+  // The route's own wait is bounded by CALANDRIA_SHUTDOWN_GRACE_MS; hardTimeout
+  // here adds headroom for the HTTP round trip, so a hung fetch or unreachable
+  // drain route still exits instead of waiting for SIGKILL. Managed services
+  // and the db lock release from their own 'exit' hooks after the drain.
+  // Register a fallback signal handler only when nothing else handles it, so
+  // dev's own Next shutdown isn't preempted.
   let shuttingDown = false;
   function gracefulShutdown() {
     if (shuttingDown) return; // second signal mid-drain: let the first attempt finish
@@ -386,15 +347,15 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       ? `origin auth ON — Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`
       : "origin auth OFF — set CF_ACCESS_*" +
         (dev ? " (fine for local dev)" : "; DO NOT expose this origin unauthenticated");
-    // Prose on purpose: this is the line a human looks for, and splitting it
-    // into fields would quote the auth sentence into noise. The machine-readable
-    // version of the same facts is the config line right below.
+    // Kept as prose, since splitting this into fields would turn the auth
+    // sentence into noise; the config line below is the machine-readable
+    // version of the same facts.
     log.info(
       `calandria ready on http://${hostname}:${port} ` +
         `(${dev ? "dev" : "production"}); /pty -> ws://${ptyHost}:${ptyPort}; ${auth}`,
     );
-    // One-line boot summary (issue #18 item 4): "is it configured the way I
-    // think" as a log-grep instead of a source read, alongside the warnings below.
+    // One-line boot summary: "is it configured the way I think" as a
+    // log-grep instead of a source read, alongside the warnings below.
     const schedulerOn = !["0", "off", "false", "no"].includes(String(env.readEnv("CALANDRIA_SCHEDULER") || "").toLowerCase());
     log.info("config", {
       bind: `${hostname}:${port}`,
@@ -405,24 +366,23 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       logFormat: logMod.resolveLogFormat(),
       db: dbDir,
     });
-    // An older deployment that set HOSTNAME deliberately just became
-    // loopback-only; say so rather than letting remote access vanish silently.
+    // An older deployment that set HOSTNAME just became loopback-only; warn
+    // instead of letting remote access disappear with no explanation.
     const migration = hostnameMigrationWarning();
     if (migration) log.warn(`WARN: ${migration}`);
-    // Binding past loopback publishes the app AND the terminal. The origin gate
-    // stops hostile web pages, not a peer with a socket that can forge a Host
-    // header, so that combination needs real auth.
+    // Binding past loopback publishes the app and the terminal. The origin
+    // gate stops hostile web pages, not a peer that can forge a Host header,
+    // so that combination needs real auth.
     if (!cfAccess.originAuthEnabled() && !/^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i.test(hostname)) {
       log.warn(
         `WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
           `this port gets the app and a shell. Set CF_ACCESS_*, or unset CALANDRIA_HOSTNAME.`,
       );
     }
-    // Half-configured Access is the dangerous shape: enforcement is ON iff BOTH
-    // variables are set, so setting one and typo'ing the other leaves the origin
-    // wide open while the operator believes it is gated. The generic warning
-    // above only fires past loopback, and the container binds 0.0.0.0 either
-    // way, so say this explicitly.
+    // Rule: Access enforcement is on only if BOTH CF_ACCESS_* vars are set, so
+    // one set and the other typo'd leaves the origin open while it looks
+    // gated. The warning above only fires past loopback, and the container
+    // binds 0.0.0.0 either way, so this needs its own check.
     const cfSet = ["CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"].filter((k) => (process.env[k] || "").trim());
     if (cfSet.length === 1) {
       log.warn(
@@ -430,12 +390,11 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
           `Cloudflare Access enforcement needs BOTH and is currently OFF.`,
       );
     }
-    // SERVICE_TOKEN is documented as optional, and it is — except in Access
-    // mode, where it is the only credential the non-browser callers inside the
-    // box can present. Without it the Docker HEALTHCHECK 403s (container never
-    // reports healthy), boot restore of managed services 403s, and the stdio MCP
-    // bridge the non-Claude agents use 403s. docker/entrypoint.sh generates one
-    // so a container never lands here; a bare-node deploy has to be told.
+    // SERVICE_TOKEN is optional except in Access mode, where it is the only
+    // credential non-browser callers inside the box can present. Without it
+    // the Docker HEALTHCHECK, boot restore of managed services, and the stdio
+    // MCP bridge all 403. docker/entrypoint.sh generates one automatically;
+    // a bare-node deploy has to be told.
     if (cfAccess.originAuthEnabled() && !(process.env.SERVICE_TOKEN || "").trim()) {
       log.warn(
         `WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset — health probes, ` +
@@ -444,9 +403,8 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       );
     }
     if (dev) {
-      // One-time heads-up: dev mode compiles each route on first hit (Turbopack +
-      // React dev build) and is MUCH slower than the production build. Users who
-      // just want to USE the app should not be running it this way.
+      // Dev mode compiles each route on first hit and is much slower than
+      // the production build; not for anyone who just wants to use the app.
       log.warn(
         "============================================================\n" +
           "  DEV MODE — routes compile on demand; everything is slower.\n" +

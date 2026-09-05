@@ -1,28 +1,24 @@
-/* The desktop app's SSH transport — a local port forwarded to a remote Calandria.
+/* The desktop app's SSH transport: a local port forwarded to a remote
+ * Calandria. See docs/DESKTOP_APP.md.
  *
- * Phase 2 of docs/superpowers/specs/2026-09-02-remote-instances-design.md. An
- * `ssh` instance is a `url` instance whose origin does not exist yet: this file
- * makes `http://127.0.0.1:<localPort>` real by running
+ * An `ssh` instance is a `url` instance whose origin does not exist yet.
+ * This file makes `http://127.0.0.1:<localPort>` real by running
  *
  *   ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes \
  *       -L 127.0.0.1:<localPort>:127.0.0.1:<remotePort> <host>
  *
- * and waiting for that port to accept a connection. From there main.js proceeds
- * exactly as it does for a `url` instance, which is the whole point of the
- * shape: there is one attach path, and this is a way of producing an origin for
- * it rather than a second kind of client.
+ * and waiting for that port to accept a connection; main.js then proceeds as
+ * it does for any `url` instance.
  *
- * WHY THE USER'S OWN `ssh`, rather than an embedded SSH library. Their config,
- * agent, jump hosts, `ControlMaster` sockets and hardware keys already work
- * there, and none of that survives being reimplemented. `BatchMode=yes` follows
- * from the same decision in the other direction: a GUI has no terminal to type
- * a password or a 2FA code into, so a host that wants one has to be told to set
- * up a key or a ControlMaster session instead of being left at an invisible
- * prompt (see `sshFailureMessage`).
+ * Uses the user's own `ssh` binary, so their config, agent, jump hosts,
+ * ControlMaster sockets and hardware keys work unchanged. `BatchMode=yes`
+ * follows: a GUI has no terminal for a password or 2FA code, so a host that
+ * wants one must be told to set up a key or a ControlMaster session instead
+ * of hanging at an invisible prompt (see `sshFailureMessage`).
  *
- * No `electron` require, for supervisor.js's and instances.js's reason: the
- * risky half has to be verifiable from `node desktop/test-supervisor.js` on a
- * box with no display. main.js holds the Electron half.
+ * No `electron` require, so the risky half is verifiable from
+ * `node desktop/test-supervisor.js` with no display; main.js holds the
+ * Electron half.
  */
 "use strict";
 
@@ -32,11 +28,11 @@ const { spawn } = require("node:child_process");
 /**
  * Where a forwarded port is looked for first.
  *
- * Scanning from a fixed base rather than binding :0 is deliberate. The window's
- * origin IS `http://127.0.0.1:<localPort>`, and the web UI keeps per-origin
- * state in localStorage, so a port that moves on every launch quietly resets
- * the user's theme and selection every time they attach. Same base every time
- * means the same origin every time in the ordinary case.
+ * Scans from a fixed base instead of binding :0. The window's origin is
+ * `http://127.0.0.1:<localPort>`, and the web UI keeps per-origin state in
+ * localStorage, so a port that moves on every launch resets the user's
+ * theme and selection on every attach. The same base keeps the same origin
+ * in the ordinary case.
  */
 const LOCAL_PORT_BASE = 3100;
 
@@ -50,7 +46,7 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 15_000;
 
-/** How much of ssh's complaint is worth showing. */
+/** How many lines of ssh's stderr are worth showing. */
 const STDERR_LINES = 12;
 
 /** The ssh binary. Overridable so a test (or an odd install) can point elsewhere. */
@@ -59,17 +55,17 @@ function sshBinary(env = process.env) {
 }
 
 /**
- * The argument vector, exactly as the spec writes it.
+ * The argument vector. See docs/DESKTOP_APP.md.
  *
- * `-N` because there is no command to run, only the forward. Both ends of `-L`
- * are pinned to `127.0.0.1`: the local half so the forward is not offered to
- * the LAN, and the remote half because the server there is bound to loopback in
- * local mode, which is what makes SSH the credential rather than an added
- * origin allowlist entry.
+ * `-N` because there is no command to run, only the forward. Both ends of
+ * `-L` are pinned to `127.0.0.1`: the local half so the forward is not
+ * offered to the LAN, and the remote half because the server there is bound
+ * to loopback in local mode, making SSH itself the credential instead of an
+ * added origin allowlist entry.
  *
- * `ExitOnForwardFailure=yes` is what makes the wait below terminate: without it
- * an ssh whose local port is already taken stays up forever with no forward,
- * and "connected" would mean nothing.
+ * `ExitOnForwardFailure=yes` is what makes the wait below terminate: without
+ * it, an ssh whose local port is already taken stays up forever with no
+ * forward, and "connected" would mean nothing.
  */
 function sshArgs({ host, localPort, remotePort }) {
   return [
@@ -116,11 +112,11 @@ function portAccepts(port, { host = "127.0.0.1", timeoutMs = 1_000 } = {}) {
 /**
  * Wait for the forwarded port to accept a connection.
  *
- * Accepting is not proof the far end is a Calandria — ssh accepts locally and
- * only then opens the channel — but it is proof the forward exists, and the
- * `/api/version` handshake main.js runs next is the check for the rest. The
- * signal is how a child that dies mid-wait cuts this short instead of leaving
- * the user watching a spinner for the whole timeout.
+ * Accepting a connection is not proof the far end is a Calandria (ssh
+ * accepts locally, then opens the channel), but it is proof the forward
+ * exists; the `/api/version` handshake main.js runs next checks the rest.
+ * The abort signal lets a child that dies mid-wait cut this short instead of
+ * leaving the user watching a spinner for the whole timeout.
  */
 async function waitForPort(port, { host = "127.0.0.1", timeoutMs = CONNECT_TIMEOUT_MS, intervalMs = 100, signal = null } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -138,9 +134,9 @@ async function waitForPort(port, { host = "127.0.0.1", timeoutMs = CONNECT_TIMEO
 /**
  * Choose the local end of the forward.
  *
- * A port the user configured is honoured or refused, never stepped past: they
- * wrote it down for a reason, and silently forwarding somewhere else is worse
- * than saying the port is busy. An unconfigured one scans from LOCAL_PORT_BASE.
+ * A port the user configured is honoured or refused, never stepped past:
+ * forwarding somewhere else without telling them is worse than reporting the
+ * port as busy. An unconfigured port scans from LOCAL_PORT_BASE.
  */
 async function pickLocalPort(preferred = 0, { base = LOCAL_PORT_BASE, probes = 40 } = {}) {
   if (preferred) {
@@ -158,10 +154,9 @@ async function pickLocalPort(preferred = 0, { base = LOCAL_PORT_BASE, probes = 4
 /**
  * What to tell someone whose forward did not come up.
  *
- * The BatchMode sentence is the important half and is on every case that is not
- * a missing binary: the single most likely reason a working `ssh host` in a
- * terminal fails here is that it asked for something, and the one thing this
- * app cannot do is let them answer.
+ * The BatchMode sentence appears on every case except a missing binary: the
+ * most likely reason a working `ssh host` in a terminal fails here is that
+ * it asked for something, and this app has no way to let the user answer.
  */
 function sshFailureMessage({
   host,
@@ -197,15 +192,15 @@ function sshFailureMessage({
 /**
  * One forward, kept alive.
  *
- * `start()` makes exactly one attempt, because the FIRST failure is the one the
- * user has to see and answer — it lands on the boot screen's failure state with
- * Retry and Switch, the same place an unreachable `url` instance lands. Only a
- * forward that was once up reconnects on its own, with backoff, because there
- * the app already knows the host works and the thing that changed is a laptop
- * lid or a network.
+ * `start()` makes exactly one attempt: the first failure is the one the user
+ * must see and answer, landing on the boot screen's failure state with
+ * Retry and Switch, the same place an unreachable `url` instance lands. Only
+ * a forward that was once up reconnects on its own, with backoff, since by
+ * then the app knows the host works and what changed is a laptop lid or a
+ * network.
  *
  * The local port is chosen once and kept for the life of the tunnel, so a
- * reconnect returns to the same origin the window is already on rather than
+ * reconnect returns to the same origin the window is already on instead of
  * making the page's session state disappear.
  */
 class SshTunnel {
@@ -260,8 +255,8 @@ class SshTunnel {
 
   /**
    * Bring the forward up once. Resolves `{ ok: true, url }` or
-   * `{ ok: false, error, stderr }` — it never throws, because every caller of
-   * this is a UI path that has to show the reason rather than a stack.
+   * `{ ok: false, error, stderr }`. Never throws: every caller is a UI path
+   * that displays the reason as a message.
    */
   async start() {
     try {
@@ -277,11 +272,11 @@ class SshTunnel {
   /**
    * Spawn ssh and race the port against the child.
    *
-   * Three outcomes, and all three are decided here rather than by a timer that
-   * fires later: the port accepts (up), ssh exits first (its stderr is the
-   * explanation), or neither happens before the deadline (the forward is wedged
-   * — kill it, since a live ssh with no forward is indistinguishable from a
-   * working one from the outside).
+   * Three outcomes, all decided here instead of by a timer firing later: the
+   * port accepts (up), ssh exits first (its stderr is the explanation), or
+   * neither happens before the deadline, meaning the forward is wedged and
+   * gets killed, since a live ssh with no forward looks the same from
+   * outside as a working one.
    */
   async attempt() {
     this.attempts += 1;

@@ -1,27 +1,27 @@
 /* Assemble the server payload a packaged desktop app carries.
  *
  * The shell in desktop/ is only half an app: main.js + supervisor.js know how
- * to *run* `node server.js`, but until now the thing they ran had to be a
- * checkout the user already had (CALANDRIA_REPO_ROOT). This script builds the
- * other half — a self-contained production tree, staged at desktop/payload,
- * which electron-builder ships as extraResources and main.js points REPO_ROOT at.
+ * to run `node server.js`, but the thing they run has to be a self-contained
+ * production tree, staged at desktop/payload, which electron-builder ships as
+ * extraResources and main.js points REPO_ROOT at.
  *
  * Output layout inside the packaged app:
  *
  *   resources/app.asar        the Electron shell (main.js, supervisor.js, …)
- *   resources/app-payload/    THIS — .next, node_modules, server.js, the .mjs set
+ *   resources/app-payload/    this: .next, node_modules, server.js, the .mjs set
  *   resources/node/bin/node   the runtime the sidecars are spawned under
  *
- * The payload is extraResources and NOT inside the asar on purpose: it holds
- * native addons (better-sqlite3, node-pty) that dlopen from a real path, and it
- * is spawned as a child process, which cannot see into an archive at all.
+ * The payload is extraResources, not inside the asar: it holds native addons
+ * (better-sqlite3, node-pty) that dlopen from a real path, and it is spawned
+ * as a child process, which cannot see into an archive at all.
  *
- * One electron-builder trap is worth knowing before you edit the config: a
- * single `{from: "payload", to: "app-payload"}` entry copies everything EXCEPT
- * node_modules, silently — electron-builder manages app dependencies itself and
- * filters that name out of extraResources. The packaged app then looks complete
- * and dies at first boot on an unresolved `next`. The second, explicit
- * `payload/node_modules` entry in package.json is what actually carries it.
+ * One electron-builder trap to know before editing the config: a single
+ * `{from: "payload", to: "app-payload"}` entry copies everything except
+ * node_modules, with no warning, since electron-builder manages app
+ * dependencies itself and filters that name out of extraResources. The
+ * packaged app then looks complete and dies at first boot on an unresolved
+ * `next`. The second, explicit `payload/node_modules` entry in package.json
+ * is what actually carries it.
  *
  * Usage: node scripts/build-payload.js [--no-build] [--platform=…] [--arch=…] [--libc=…]
  */
@@ -49,12 +49,12 @@ function run(cmd, cmdArgs, cwd) {
     cwd,
     stdio: "inherit",
     // On Windows `npm` is a `.cmd` shim and `CreateProcess` cannot execute one,
-    // so a bare execFileSync dies `spawnSync npm ENOENT` — the same difference
-    // lib/binPath.ts exists for on the app side. Naming `npm.cmd` explicitly is
+    // so a bare execFileSync dies `spawnSync npm ENOENT` (the same problem
+    // lib/binPath.ts handles on the app side). Naming `npm.cmd` explicitly is
     // not the fix either: Node's CVE-2024-27980 patch refuses to spawn .cmd or
     // .bat without a shell, so that path fails EINVAL instead. Going through
-    // cmd.exe is what is left, and it is safe here because every argument this
-    // helper is ever passed is a fixed literal — there is nothing to quote.
+    // cmd.exe is what remains, and it is safe here because every argument this
+    // helper is ever passed is a fixed literal, so there is nothing to quote.
     shell: process.platform === "win32",
     env: { ...process.env, NODE_ENV: "production" },
   });
@@ -82,8 +82,8 @@ const mb = (n) => `${(n / 1024 / 1024).toFixed(0)} MB`;
  * npm's own `libc` matching rules, applied to one package's declaration.
  *
  * Same shape as `os`/`cpu`: a list of allowed values, where a leading `!` is a
- * negation. An empty or absent list means "any libc" — the overwhelmingly
- * common case, and the reason this sweep is a no-op for almost every package.
+ * negation. An empty or absent list means "any libc", the overwhelmingly
+ * common case and the reason this sweep is a no-op for almost every package.
  */
 function libcAllows(list, target) {
   if (!Array.isArray(list) || list.length === 0) return true;
@@ -93,19 +93,18 @@ function libcAllows(list, target) {
 }
 
 /**
- * Drop `@next/swc`, which is a compiler the payload never compiles anything with.
+ * Drop `@next/swc`, a compiler the payload never compiles anything with.
  *
  * The payload is a finished `next build` served by `next start`; the only place
  * outside `next/dist/build`, `next/dist/cli` and the dev bundler that reaches
- * for the native bindings at all is `next/dist/server/config.js`, and it does
- * so behind `experimental.useLightningcss`. Measured rather than reasoned about:
- * with `@next/swc-linux-x64-gnu` deleted from a staged payload, `node server.js`
- * came up on the vendored Node and served `/` (23,454 bytes), `/api/projects`
- * and a `_next/static` chunk, all 200, with a log identical to the run that had
- * it — see `docs/DESKTOP_APP.md` §2.
+ * for the native bindings at all is `next/dist/server/config.js`, behind
+ * `experimental.useLightningcss`. Confirmed by deleting
+ * `@next/swc-linux-x64-gnu` from a staged payload and checking that
+ * `node server.js` still came up on the vendored Node and served `/`,
+ * `/api/projects` and a `_next/static` chunk, all 200.
  *
  * `npm ci --omit=optional` would drop this too, along with `better-sqlite3`'s
- * and `sharp`'s platform binaries, so the sweep is here rather than there.
+ * and `sharp`'s platform binaries, so the sweep lives here instead.
  *
  * The one config that would make this wrong names itself, so check for it
  * instead of shipping an artifact that dies at first boot. Skipping is the
@@ -137,26 +136,24 @@ function pruneBuildOnlySwc(stage) {
 /**
  * Drop the staged packages built for a libc the target system does not have.
  *
- * npm scoped the platform-specific optional dependencies to the target os/cpu
- * for us, but NOT to a libc, and the reason is mechanical: `package-lock.json`
- * records `os` and `cpu` for each of those packages and records `libc` for
- * none of them, while `npm ci` filters on what the lockfile says rather than
- * re-reading the registry. So a glibc host installs
+ * npm scopes the platform-specific optional dependencies to the target os/cpu,
+ * but not to a libc, because `package-lock.json` records `os` and `cpu` for
+ * each of those packages but no `libc`, and `npm ci` filters on what the
+ * lockfile says instead of re-reading the registry. So a glibc host installs
  * `@anthropic-ai/claude-agent-sdk-linux-x64-musl` and two musl `sharp`
- * packages right beside their glibc twins — code that cannot execute on the
+ * packages right beside their glibc twins: code that cannot execute on the
  * system a `.deb` or an AppImage targets. (`@next/swc`'s pair would be here
- * too; the sweep above has already taken both halves of it.)
+ * too, but the sweep above has already taken both halves of it.)
  *
- * This is a sweep of the staged tree rather than a change to the `npm ci`
- * invocation above, for three reasons. `--omit=optional` drops the variant we
- * NEED along with the one we don't. `--libc=glibc` cannot help either, because
- * the lockfile it reads has no libc to compare against. And the remaining
- * option — regenerating the app's root lockfile so it carries `libc` — would
- * change what every install produces (Docker, CI, contributors) in order to
- * shrink one desktop artifact, and would do it invisibly.
+ * A sweep of the staged tree, not a change to the `npm ci` invocation above:
+ * `--omit=optional` drops the variant we need along with the one we don't,
+ * `--libc=glibc` cannot help either since the lockfile it reads has no libc to
+ * compare against, and regenerating the app's root lockfile to carry `libc`
+ * would change what every install produces (Docker, CI, contributors) just to
+ * shrink one desktop artifact.
  *
- * Keyed off each package's OWN declaration rather than a `-musl` name suffix,
- * so a newly added dependency is covered without anyone remembering to list it.
+ * Keyed off each package's own declaration, not a `-musl` name suffix, so a
+ * newly added dependency is covered without anyone remembering to list it.
  */
 function pruneForeignLibc(root, targetLibc) {
   const dropped = [];
@@ -204,7 +201,7 @@ async function main() {
   // `process.platform` directly.
   const targetPlatform = opt("platform", process.platform);
   const targetArch = opt("arch", process.arch);
-  // Both Linux targets electron-builder produces here — `.deb` and AppImage —
+  // Both Linux targets electron-builder produces here (`.deb` and AppImage)
   // are glibc artifacts. `--libc=musl` is for an Alpine-targeted build; on
   // macOS and Windows there is no libc axis and nothing declares one.
   const targetLibc = targetPlatform === "linux" ? opt("libc", "glibc") : null;
@@ -227,7 +224,7 @@ async function main() {
   fs.rmSync(STAGE, { recursive: true, force: true });
   fs.mkdirSync(STAGE, { recursive: true });
 
-  // 3. Production dependencies, installed rather than copied — the checkout's
+  // 3. Production dependencies, installed instead of copied: the checkout's
   //    node_modules has the whole dev toolchain (Next, vitest, Playwright) in it.
   for (const rel of BUILD_ONLY) {
     fs.mkdirSync(path.dirname(path.join(STAGE, rel)), { recursive: true });
@@ -241,15 +238,15 @@ async function main() {
   run("npm", ["ci", "--omit=dev", "--no-audit", "--fund=false"], STAGE);
 
   // BUILD_ONLY earns its name here: these existed to make `npm ci` work and
-  // are not runtime files. package-lock.json in particular is not inert —
+  // are not runtime files. package-lock.json in particular is not inert:
   // Next walks up looking for lockfiles to infer a workspace root and warns
-  // (loudly, on every boot) when it finds more than one.
+  // on every boot when it finds more than one.
   for (const rel of BUILD_ONLY) fs.rmSync(path.join(STAGE, rel), { force: true });
 
   // 3b. Two sweeps of the tree `npm ci` just produced, both naming what they
   //     delete for the same reason the `.next/cache` drop below does: a build
-  //     that silently shrinks its own artifact is a build nobody can audit,
-  //     and these delete whole dependencies.
+  //     that shrinks its own artifact with no record of it is a build nobody
+  //     can audit, and these delete whole dependencies.
   const swc = pruneBuildOnlySwc(STAGE);
   if (swc?.skipped) {
     log(`[payload] keeping @next/swc — ${swc.skipped}`);
@@ -270,7 +267,7 @@ async function main() {
     }
   }
 
-  // 4. The runtime files. Same inventory as the Dockerfile's runtime stage —
+  // 4. The runtime files: same inventory as the Dockerfile's runtime stage,
   //    see payload-manifest.js.
   for (const rel of COPY_FILES) {
     fs.mkdirSync(path.dirname(path.join(STAGE, rel)), { recursive: true });
@@ -283,8 +280,8 @@ async function main() {
   // `.next/cache` is `next build`'s incremental-compilation scratch: nothing
   // reads it at runtime, and it is routinely larger than the build output it
   // sits beside. The Dockerfile keeps it because its layer is thrown away by
-  // the runtime stage's own COPY boundary; here it would be shipped. Say what
-  // was dropped rather than silently shrinking the artifact.
+  // the runtime stage's own COPY boundary; here it would be shipped. Log the
+  // drop instead of shrinking the artifact with no record of it.
   const cache = path.join(STAGE, ".next", "cache");
   if (fs.existsSync(cache)) {
     const dropped = bytes(cache);

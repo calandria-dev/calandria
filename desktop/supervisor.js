@@ -1,25 +1,21 @@
-/* Calandria desktop shell — sidecar supervisor.
+/* Calandria desktop shell: sidecar supervisor.
  *
- * SPIKE CODE. See ./README.md and docs/DESKTOP_APP.md.
+ * SPIKE CODE.
  *
- * This file deliberately contains NO `require("electron")`. Everything that is
- * hard about wrapping Calandria — finding a Node that can load better-sqlite3,
- * picking ports that don't fight a `npm run dev` the user already has, waiting
- * for readiness, and draining in-flight turns on quit — is process management,
- * not window management. Keeping it Electron-free means (a) it can be tested
- * with plain `node` (test-supervisor.js does exactly that, no GUI, no display)
- * and (b) if the shell is later swapped for Tauri/Wails, this survives intact.
+ * Contains no `require("electron")`: finding a Node that can load
+ * better-sqlite3, picking ports that don't fight a `npm run dev` the user
+ * already has, waiting for readiness, and draining in-flight turns on quit
+ * is process management, not window management. Staying Electron-free keeps
+ * it testable with plain `node` (test-supervisor.js) and lets the shell be
+ * swapped later without rewriting this.
  *
- * The one non-obvious rule, measured rather than assumed: the sidecars must run
- * under a REAL node binary, never under Electron's (`ELECTRON_RUN_AS_NODE`).
- * Two reasons, both in docs/DESKTOP_APP.md:
- *   - better-sqlite3 is a V8-ABI addon; the npm prebuild for Node 22 (ABI 127)
- *     will not load into Electron 44 (ABI 149) without @electron/rebuild.
- *   - lib/agents/codex/driver.ts spawns the MCP bridge as `process.execPath
- *     scripts/calandria-mcp.mjs` with a CLOSED four-key env map. Under an
- *     Electron-hosted server that execPath is the Electron binary and the child
- *     inherits no ELECTRON_RUN_AS_NODE, so every Codex turn would launch a
- *     silent GUI process instead of the tool bridge.
+ * The sidecars must run under a real node binary, never under Electron's
+ * (`ELECTRON_RUN_AS_NODE`): better-sqlite3 is a V8-ABI addon and the npm
+ * prebuild for Node 22 (ABI 127) will not load into Electron 44 (ABI 149)
+ * without @electron/rebuild, and lib/agents/codex/driver.ts spawns the MCP
+ * bridge via `process.execPath`, which under Electron is the Electron
+ * binary, so a Codex turn would launch a GUI process instead of the tool
+ * bridge.
  */
 "use strict";
 
@@ -42,15 +38,15 @@ function portFree(port) {
 }
 
 /**
- * `PORT`/`PTY_PORT` off an environment, as the Supervisor's `port`/`ptyPort`
- * options. A *preference*, not a demand — `pickPorts` still steps past a busy
- * one, which is what makes a second Calandria on a dev box survivable.
+ * Reads `PORT`/`PTY_PORT` off an environment, as the Supervisor's
+ * `port`/`ptyPort` options. A preference, not a demand: `pickPorts` still
+ * steps past a busy one, so a second Calandria on a dev box still starts.
  *
- * Lives here rather than in `main.js` so it can be tested without a display,
- * and so the shell's one line of wiring stays a spread with nothing to get
- * subtly wrong. Junk (non-numeric, 0, out of range) is dropped rather than
- * passed on: `pickPorts` would probe from it and `sidecarEnv` treats 0 as
- * "unset", so a typo'd PORT would silently land the app back on 3000.
+ * Lives here, not in `main.js`, so it can be tested without a display and
+ * the shell's own wiring stays a plain spread. Junk values (non-numeric, 0,
+ * out of range) are dropped: `pickPorts` would probe from a bad value and
+ * `sidecarEnv` treats 0 as unset, so a typo'd PORT would land the app back
+ * on 3000 with no warning.
  */
 function preferredPorts(env = process.env) {
   const out = {};
@@ -66,16 +62,17 @@ function preferredPorts(env = process.env) {
 }
 
 /**
- * Prefer the documented defaults (3000/3001) so a user's bookmarks, their
- * `PUBLIC_BASE_URL`, and any project's managed services keep working — but
- * never fail to launch because something else holds them. A developer running
- * `npm run dev` from a terminal is the expected collision, not an error.
+ * Prefers the documented defaults (3000/3001) so a user's bookmarks, their
+ * `PUBLIC_BASE_URL`, and any project's managed services keep working, but
+ * never fails to launch just because something else holds those ports. A
+ * `npm run dev` already running in a terminal is an expected collision, not
+ * an error.
  */
 async function pickPorts({ port = 3000, ptyPort = 3001, probes = 20 } = {}) {
-  // `claimed` is why this isn't two independent searches: with 3000 and 3001
-  // both busy, both searches converge on 3002 and the second sidecar to bind
-  // loses with EADDRINUSE — while the app's readiness probe cheerfully talks to
-  // whichever one won. (Measured, on a box already running an instance.)
+  // `claimed` keeps this from being two independent searches: with 3000 and
+  // 3001 both busy, both would converge on 3002, and the second sidecar to
+  // bind would lose with EADDRINUSE while the readiness probe talks to
+  // whichever one won.
   const claimed = new Set();
   const pick = async (preferred) => {
     for (let i = 0; i < probes; i++) {
@@ -92,23 +89,22 @@ async function pickPorts({ port = 3000, ptyPort = 3001, probes = 20 } = {}) {
 }
 
 /**
- * Find a Node the sidecars can run under, in order of how much we trust it:
- *   1. CALANDRIA_NODE — explicit override, always wins.
+ * Finds a Node the sidecars can run under, in order of preference:
+ *   1. CALANDRIA_NODE: explicit override, always wins.
  *   2. A node bundled into the packaged app's resources (extraResources).
- *   3. The current process's execPath, but ONLY when we are already plain Node
- *      (under Electron this is the Electron binary — see the file header).
+ *   3. The current process's execPath, only when it is already plain Node
+ *      (under Electron this is the Electron binary; see the file header).
  *   4. `node` on PATH.
  * Returns { path, version, source } or throws with an actionable message.
  *
- * `execPath`/`isElectron` are injectable for the same reason the env is: the
- * interesting case (running under Electron, where execPath must be rejected) is
- * otherwise only reachable by running the test suite inside Electron.
+ * `execPath`/`isElectron` are injectable so the Electron case, where
+ * execPath must be rejected, can be tested without running inside Electron.
  */
 function resolveNode({
   env = process.env,
   resourcesPath = null,
   execPath = process.execPath,
-  // Set even under ELECTRON_RUN_AS_NODE, which is precisely the case to reject.
+  // Set even under ELECTRON_RUN_AS_NODE, the case this must reject.
   isElectron = !!process.versions.electron,
 } = {}) {
   const candidates = [];
@@ -130,8 +126,8 @@ function resolveNode({
       tried.push(`${c.source}: ${c.path} — is Electron, not Node`);
       continue;
     }
-    // Probe with the SAME env the sidecars will get — otherwise a bare `node`
-    // resolves against the supervisor's own PATH and we'd report a runtime the
+    // Probe with the same env the sidecars will get: otherwise a bare `node`
+    // resolves against the supervisor's own PATH and reports a runtime the
     // child can't actually find.
     const version = nodeVersion(c.path, env);
     tried.push(`${c.source}: ${c.path}${version ? ` (${version})` : " — not runnable"}`);
@@ -159,40 +155,27 @@ function nodeVersion(bin, env = process.env) {
 }
 
 /**
- * The env the sidecars run with. Two classes of edit, both load-bearing:
+ * The env the sidecars run with.
  *
- * STRIP — every ELECTRON_* var. The server spawns agent CLIs, MCP bridges and
- * (through pty-server) the user's login shell; all of them inherit this env.
- * A leaked ELECTRON_RUN_AS_NODE turns any `electron` a task's build happens to
- * invoke into a headless node, and ELECTRON_IS_DEV / _RUN_AS_NODE showing up in
- * a user's terminal is confusing at best.
+ * Strips every ELECTRON_* var: the server spawns agent CLIs, MCP bridges,
+ * and (through pty-server) the user's login shell, and all of them inherit
+ * this env, so a leaked ELECTRON_RUN_AS_NODE would turn any `electron` a
+ * task's build invokes into a headless node, and ELECTRON_IS_DEV or
+ * _RUN_AS_NODE showing up in a user's terminal would be confusing.
  *
- * SET — ports, PTY_HOST, and (optionally) NODE_ENV. There used to be a win32
- * SHELL fallback here, from when pty-server.js's unset-$SHELL default was
- * "/bin/zsh"; the Windows-support work replaced that with a real probe
+ * Sets ports, PTY_HOST, and optionally NODE_ENV. An inherited SHELL passes
+ * through untouched; win32 shell selection goes through its own probe
  * (CALANDRIA_PTY_SHELL -> $SHELL -> pwsh.exe -> powershell.exe -> COMSPEC,
- * docs/WINDOWS.md), which turned the mitigation into a DOWNGRADE: $SHELL is
- * checked before the probe, so injecting COMSPEC handed every desktop terminal
- * tab cmd.exe on a box where the server on its own would have picked
- * PowerShell. Measured on Windows 11 with pwsh 7 installed. An inherited SHELL
- * is still passed through untouched, which is the case the removal does not
- * change.
+ * docs/WINDOWS.md).
  *
- * NODE_ENV is now the CALLER's choice (`nodeEnv`), not unconditionally
- * "production", because one env object used to feed both sidecars and
- * pty-server.js has nothing to do with Next: it handed NODE_ENV=production to
- * every terminal tab and, through the app sidecar, to every agent turn spawned
- * from it — where it makes `npm install` in a user's project skip
- * devDependencies and still exit 0 (issue #102 §2). The app-sidecar half of
- * that is still required, not a bug: the sidecar ships a prebuilt `.next` and
- * server.js:118 keys `dev` off NODE_ENV, so the app sidecar still gets
- * `nodeEnv: "production"` from its caller below. What is NOT fixed here is the
- * agent-TURN half — a turn is a child of the app sidecar, which legitimately
- * keeps NODE_ENV=production for Next's sake, so a turn inheriting it is a
- * separate leak with a separate fix: lib/agentEnv.ts strips it back out of the
- * env each turn's own subprocess gets. Getting that cross-reference right
- * matters, because the issue's own suggested fix (drop NODE_ENV here) would
- * have broken the app sidecar instead of fixing the turn.
+ * NODE_ENV is the caller's choice (`nodeEnv`), not unconditionally
+ * "production": the app sidecar still gets `nodeEnv: "production"` below,
+ * since it ships a prebuilt `.next` and server.js:118 keys `dev` off
+ * NODE_ENV. A turn spawned from that sidecar must not inherit
+ * NODE_ENV=production for its own subprocess, since that makes `npm
+ * install` in a user's project skip devDependencies and still exit 0;
+ * lib/agentEnv.ts strips it back out of the env each turn's subprocess
+ * gets.
  */
 function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, nodeEnv = null, extra = {} } = {}) {
   const out = {};
@@ -209,17 +192,17 @@ function sidecarEnv({ env = process.env, port, ptyPort, dbDir = null, nodeEnv = 
   return { ...out, ...extra };
 }
 
-// The PATH launchd hands a macOS .app opened from Finder/Spotlight. A GUI app
-// inherits THIS, not the user's shell PATH — so `codex`, `gh`, a Homebrew git,
-// and an nvm-managed node are all invisible to a double-clicked Calandria while
-// working perfectly in the same user's terminal.
+// The PATH launchd hands a macOS .app opened from Finder or Spotlight. A GUI
+// app inherits this PATH, so `codex`, `gh`, a Homebrew git, and an
+// nvm-managed node can be invisible to a double-clicked Calandria even
+// though they resolve fine in the same user's terminal.
 const LAUNCHD_PATH_DIRS = new Set(["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"]);
 
 /**
- * Does this PATH look like the stub launchd gives GUI apps? Only then is it
- * worth paying for a login shell: the repair costs a shell startup (rc files,
- * version managers — hundreds of ms) and would be a surprising thing to do on
- * every launch when the PATH is already the user's real one.
+ * Does this PATH look like the stub launchd gives GUI apps? Only then is a
+ * login-shell probe worth its cost: shell startup (rc files, version
+ * managers) can take hundreds of ms, so it should not run on every launch
+ * when the PATH is already the user's real one.
  */
 function needsPathRepair(env = process.env) {
   if (process.platform === "win32") return false;
@@ -229,11 +212,11 @@ function needsPathRepair(env = process.env) {
 }
 
 /**
- * Ask the user's login shell what PATH it has. The sentinel is not decoration:
- * an interactive login shell prints motd, version-manager banners and whatever
- * else lives in the rc files, so the value has to be fenced to be found.
- * Returns null on any failure — a wrapper that refuses to launch because a
- * shell probe timed out is worse than one that runs with a short PATH.
+ * Asks the user's login shell what PATH it has. The sentinel fences the
+ * value: an interactive login shell also prints motd text, version-manager
+ * banners, and whatever else lives in the rc files.
+ * Returns null on any failure: a wrapper that refuses to launch over a
+ * timed-out shell probe is worse than one that runs with a short PATH.
  */
 function loginShellPath({ env = process.env, timeoutMs = 5000 } = {}) {
   if (process.platform === "win32") return null;
@@ -255,13 +238,12 @@ function loginShellPath({ env = process.env, timeoutMs = 5000 } = {}) {
 }
 
 /**
- * Poll GET /api/version until it answers 200, or give up.
+ * Polls GET /api/version until it answers 200, or gives up.
  *
- * `env` is the env the SIDECARS were given, not this process's, for the same
- * reason drainApp() reads it that way: SERVICE_TOKEN can now arrive from the
- * desktop env file (desktop/env-file.js), which Electron's own process.env
- * never sees. Reading process.env here would poll an authenticated instance
- * with no token and time the boot out on a 401.
+ * `env` is the env the sidecars were given, matching drainApp(): SERVICE_TOKEN
+ * can arrive from the desktop env file (desktop/env-file.js), which
+ * Electron's own process.env never sees. Reading process.env here would poll
+ * an authenticated instance with no token and time the boot out on a 401.
  */
 async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal = null, env = process.env } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -271,15 +253,14 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
         headers: env.SERVICE_TOKEN ? { "x-service-token": env.SERVICE_TOKEN } : {},
-        // Also on the fetch, not just the loop head: an abort arriving while a
-        // probe is in flight should end the wait now rather than after this
-        // request and the next sleep.
+        // Passed to the fetch too: an abort arriving mid-probe ends the wait
+        // immediately, without waiting on this request and the next sleep.
         signal,
       });
       if (res.ok) {
-        // Insist on the shape, not just a 200: pty-server.js answers every path
-        // with its own banner, so a port mix-up would otherwise read as "ready"
-        // and the window would load the sidecar instead of the app.
+        // Checks the response shape as well as the status: pty-server.js
+        // answers every path with its own banner, so a port mismatch would
+        // otherwise read as ready and load the pty sidecar into the window.
         const body = await res.json().catch(() => null);
         if (body && typeof body.version === "string") return body;
         lastErr = new Error(`port ${port} answered, but not as the app`);
@@ -295,20 +276,19 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
 }
 
 /**
- * The rejection `start()` owes its caller when a sidecar dies before the app
- * answers.
+ * Builds the rejection `start()` gives its caller when a sidecar dies before
+ * the app answers.
  *
- * `waitForReady` polls a port and knows nothing about the process it is waiting
- * for, so on its own a sidecar that exited one second in still costs the whole
- * CALANDRIA_READY_TIMEOUT_MS (90s) and then reports the timeout — "server did
- * not become ready … (fetch failed)" — which names the symptom and hides the
- * cause. The child already said why it left; this puts THAT on the error.
+ * `waitForReady` only polls a port. A sidecar that exited early still costs
+ * the full CALANDRIA_READY_TIMEOUT_MS (90s) and then reports a generic
+ * timeout that hides the real cause, so this reads the cause from the
+ * exiting child's own log output.
  *
- * The reason is lifted out of the tail rather than re-derived, because the log
- * is where a sidecar's own words are: `[app] [server] another Calandria process
- * already holds this database (pid 4242 on devBox)`. Only lines from the child
- * that died are eligible — the other sidecar's boot chatter is the last thing
- * printed about half the time and would read as the explanation.
+ * The reason is read straight from the log tail, where a sidecar's own
+ * message lives, e.g. `[app] [server] another Calandria process already
+ * holds this database (pid 4242 on devBox)`. Only lines from the child that
+ * died are used: the other sidecar's boot chatter is often the last thing
+ * printed and could otherwise be mistaken for the explanation.
  */
 function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
   const prefix = `[${name}] `;
@@ -328,10 +308,9 @@ function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
 /**
  * Supervises the two sidecars for one desktop session.
  *
- * Not an EventEmitter on purpose: the shell wants exactly three callbacks
- * (log line, unexpected exit, ready) and a promise-shaped start/stop, and a
- * spike is a bad place to invent an event vocabulary the shell then has to
- * mirror.
+ * Not an EventEmitter: the shell needs exactly three callbacks (log line,
+ * unexpected exit, ready) plus a promise-shaped start/stop, and a spike is
+ * a bad place to invent an event vocabulary the shell would have to mirror.
  */
 class Supervisor {
   constructor(opts = {}) {
@@ -345,8 +324,8 @@ class Supervisor {
     this.dbDir = opts.dbDir || null;
     this.preferredPort = opts.port || 3000;
     this.preferredPtyPort = opts.ptyPort || 3001;
-    // Mirrors lib/env.mjs's CALANDRIA_X-falls-back-to-ORCH_X alias by hand — this
-    // file is CommonJS and can't import the ESM reader.
+    // Mirrors lib/env.mjs's CALANDRIA_X-falls-back-to-ORCH_X alias by hand:
+    // this file is CommonJS and can't import the ESM reader.
     this.shutdownGraceMs = Number(this.env.CALANDRIA_SHUTDOWN_GRACE_MS || this.env.ORCH_SHUTDOWN_GRACE_MS || 5000);
     this.children = [];
     this.port = null;
@@ -372,13 +351,12 @@ class Supervisor {
   }
 
   async start() {
-    // Which tree the sidecars are about to run out of. Packaged that is
-    // resources/app-payload, unpackaged the checkout, and CALANDRIA_REPO_ROOT
-    // overrides both — one line that distinguishes a self-contained install
-    // from one still leaning on somebody's working copy, which is exactly the
-    // thing a packaged test run has to be able to see (desktop/e2e/06-packaged
-    // .spec.ts). It goes to the boot screen too, so a launch that dies below
-    // says where it looked rather than only what it did not find.
+    // Which tree the sidecars run out of: packaged is resources/app-payload,
+    // unpackaged is the checkout, and CALANDRIA_REPO_ROOT overrides both.
+    // This is what lets a packaged test run tell a self-contained install
+    // from one still leaning on a working copy (desktop/e2e/06-packaged
+    // .spec.ts). It also goes to the boot screen, so a failed launch below
+    // shows where it looked as well as what it did not find.
     this.log(`[shell] payload: ${this.repoRoot}`);
     if (!fs.existsSync(this.serverScript)) {
       throw new Error(`server entrypoint not found: ${this.serverScript}`);
@@ -391,25 +369,24 @@ class Supervisor {
     }
     this.effectiveEnv = this.env;
 
-    // The desktop app is the one Calandria launch path with no wrapper script
-    // in front of it. `npm start`/`npm run dev` inherit whatever exported the
-    // shell that ran them, and a self-hosted deployment is expected to write a
-    // launcher that sources a file and `exec npm start`s (docs/SELF_HOSTING.md)
-    // — but a Finder double-click, a Dock click or a Login Item hands main.js
-    // launchd's own minimal environment, with nothing sourced and nothing
-    // exported. This is the desktop replacement for that launcher (issue #102
-    // §1): a small, predictable file (desktop/env-file.js) read before either
-    // sidecar spawns. It deliberately does NOT strip ANTHROPIC_API_KEY and
-    // friends here — both sidecars already call stripInheritedAgentKeys() on
-    // their own process.env at boot (pty-server.js:237, server.js), and doing
-    // it here first would break the CALANDRIA_ALLOW_API_KEY_ENV opt-in that the
-    // env file itself is allowed to set.
+    // The desktop app is the only Calandria launch path with no wrapper
+    // script in front of it. `npm start`/`npm run dev` inherit whatever
+    // exported the shell that ran them, but a Finder double-click, a Dock
+    // click, or a Login Item hands main.js launchd's own minimal
+    // environment, with nothing sourced and nothing exported.
+    // desktop/env-file.js is the desktop replacement for that launcher: a
+    // small, predictable file read before either sidecar spawns. It does not
+    // strip ANTHROPIC_API_KEY and friends here: both sidecars already call
+    // stripInheritedAgentKeys() on their own process.env at boot
+    // (pty-server.js:237, server.js), and stripping here first would break
+    // the CALANDRIA_ALLOW_API_KEY_ENV opt-in that the env file itself can
+    // set.
     const loaded = loadEnvFile({ env: this.env });
     if (loaded.found) {
       const names = Object.keys(loaded.vars);
       if (names.length) this.effectiveEnv = { ...this.effectiveEnv, ...loaded.vars };
       // Names only, never values: this log is shown verbatim on the failure
-      // screen, and this is the one file people put tokens in.
+      // screen, and this file is where people put tokens.
       this.log(`[env] ${loaded.path}: ${names.length} variable(s) — ${names.join(", ")}`);
       for (const s of loaded.skipped) this.log(`[env] WARN: ${loaded.path}:${s.line} ignored (${s.reason})`);
     } else {
@@ -417,18 +394,17 @@ class Supervisor {
     }
 
     // PATH repair comes next: it decides whether `node`, `git`, `gh` and
-    // `codex` are findable at all, and resolveNode below is one of its readers.
-    // Both reads now go through effectiveEnv rather than this.env, so an env
-    // file that sets SHELL or PATH is honoured by the probe itself.
+    // `codex` are findable at all, and resolveNode below reads its result.
+    // Both reads go through effectiveEnv, so an env file that sets SHELL or
+    // PATH is honored by the probe itself.
     //
-    // CALANDRIA_DESKTOP_PATH_PROBE is the escape hatch for the smaller trap
-    // needsPathRepair() has on its own: it fires only when EVERY PATH entry is
-    // in the launchd stub set, so a machine whose GUI PATH happens to carry one
-    // extra plausible directory gets no repair AND no warning (issue #102 §1,
-    // "a second, smaller trap"). Unconditional probing does not become the
-    // default, because the repair costs a full login-shell startup (rc files,
-    // version managers) on every launch, and "auto" already covers the
-    // documented failure mode.
+    // CALANDRIA_DESKTOP_PATH_PROBE is the escape hatch for a smaller trap in
+    // needsPathRepair(): it fires only when every PATH entry is in the
+    // launchd stub set, so a machine whose GUI PATH carries one extra
+    // plausible directory gets no repair and no warning. Probing is not
+    // unconditional by default: the repair costs a full login-shell startup
+    // (rc files, version managers) on every launch, and "auto" already covers
+    // the documented failure mode.
     const probeMode = String(this.effectiveEnv.CALANDRIA_DESKTOP_PATH_PROBE || "auto").toLowerCase();
     let wantProbe;
     if (probeMode === "off") wantProbe = false;
@@ -436,9 +412,9 @@ class Supervisor {
     else wantProbe = needsPathRepair(this.effectiveEnv);
 
     if (Object.prototype.hasOwnProperty.call(loaded.vars, "PATH")) {
-      // An operator who wrote PATH into the env file means it — probing over
-      // the top of an explicit value would silently overwrite what they asked
-      // for with the login shell's PATH instead.
+      // An operator who wrote PATH into the env file means it: probing over
+      // the top of an explicit value would overwrite what they asked for
+      // with the login shell's PATH.
       this.log(`[env] PATH supplied by ${loaded.path} — skipping the launchd-stub probe`);
     } else if (wantProbe) {
       const repaired = loginShellPath({ env: this.effectiveEnv });
@@ -449,11 +425,10 @@ class Supervisor {
         this.log(`[shell] WARN: PATH looks minimal and the login-shell probe failed; git/gh/codex may not resolve`);
       }
     } else {
-      // The quiet branch used to log nothing at all, which made "the app can't
-      // find codex" undiagnosable from a log — and left
-      // desktop/e2e/08-macos-launchd.spec.ts unable to tell "the repair is
-      // broken" from "this machine was never handed the stub". One line, on the
-      // branch that is about to decide whether every agent CLI resolves.
+      // Logs even on the branch that decides whether every agent CLI
+      // resolves, so "the app can't find codex" is diagnosable from a log,
+      // and desktop/e2e/08-macos-launchd.spec.ts can tell a broken repair
+      // from a machine that was never handed the launchd stub.
       this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.effectiveEnv.PATH}`);
     }
 
@@ -470,14 +445,14 @@ class Supervisor {
     const ptyEnv = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
     // The app sidecar alone keeps NODE_ENV=production: it ships a prebuilt
     // `.next` and server.js:118 keys its own dev/prod branch off it. The pty
-    // sidecar (and, through it, every terminal tab and agent turn) gets none —
-    // see the NODE_ENV paragraph on sidecarEnv above.
+    // sidecar, and through it every terminal tab and agent turn, gets none.
+    // See the NODE_ENV paragraph on sidecarEnv above.
     const appEnv = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir, nodeEnv: "production" });
 
     // The readiness wait races against this: it resolves the moment either
-    // sidecar exits, which is a boot that has already failed no matter how long
-    // the deadline still had to run. Live only for the duration of start() —
-    // afterwards an exit is the shell's business (`onExit`), not the launch's.
+    // sidecar exits, which is a boot failure regardless of how much of the
+    // deadline remained. Live only for the duration of start(); after that
+    // an exit is the shell's business (`onExit`).
     const bootExit = new Promise((resolve) => {
       this.notifyBootExit = resolve;
     });
@@ -487,10 +462,10 @@ class Supervisor {
     this.spawnChild("pty", this.ptyScript, ptyEnv);
     this.spawnChild("app", this.serverScript, appEnv);
 
-    // The timeout stays the backstop for the OTHER failure — a sidecar that is
-    // alive and simply never answers (a wedged Next build, a half-migrated db).
+    // The timeout is the backstop for the other failure: a sidecar that is
+    // alive but never answers (a wedged Next build, a half-migrated db).
     // Nothing about that case can be learned from a process that is still
-    // running, so there the deadline is the only evidence there is.
+    // running, so the deadline is the only evidence available.
     const abort = new AbortController();
     const ready = waitForReady(this.port, {
       timeoutMs: Number(this.effectiveEnv.CALANDRIA_READY_TIMEOUT_MS || 90_000),
@@ -527,8 +502,8 @@ class Supervisor {
       cwd: this.repoRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-      // No `detached` — these must die with the shell, and on Windows
-      // `detached` means "new console window", which is exactly wrong here.
+      // No `detached`: these must die with the shell, and on Windows
+      // `detached` means "new console window", which is wrong here.
       windowsHide: true,
     });
     child.stdout.on("data", (d) => this.log(`[${name}] ${d}`));
@@ -543,11 +518,11 @@ class Supervisor {
         // lets the shell say "another Calandria is already running" instead of
         // "the app crashed".
         const rec = { name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) };
-        // Before `onExit`, which is somebody else's callback: main.js's ends in
-        // `app.exit(1)` and never returns. Resolving here only queues a
-        // microtask, so the shell's handler still runs first either way — this
-        // ordering just means a start() in flight can't be stranded on the 90s
-        // timeout by a host callback that throws or never comes back.
+        // Before `onExit`, which is somebody else's callback: main.js's ends
+        // in `app.exit(1)` and never returns. Resolving here only queues a
+        // microtask, so the shell's handler still runs first either way. This
+        // ordering keeps a start() in flight from being stranded on the 90s
+        // timeout by a host callback that throws or never returns.
         this.notifyBootExit?.(rec);
         this.onExit(rec);
       }
@@ -557,18 +532,19 @@ class Supervisor {
   }
 
   /**
-   * POST /api/instance/drain and wait for it, bounded.
+   * POSTs /api/instance/drain and waits for it, bounded.
    *
    * Best-effort by contract, like the boot pings on the other side of the
-   * lifecycle: a refused connection (the app died before we got here), a 404
-   * (an older build without the route) and a hang are all "stop anyway" — a
+   * lifecycle: a refused connection (the app died before this ran), a 404
+   * (an older build without the route), and a hang are all "stop anyway": a
    * quit that never completes is worse than one that skipped a settlement.
-   * The bound mirrors server.js's own: CALANDRIA_SHUTDOWN_GRACE_MS, which is
-   * what the route waits for server-side, plus headroom for the round trip, so
-   * we never abandon a drain we asked for a moment before it finishes.
+   * The bound mirrors server.js's own CALANDRIA_SHUTDOWN_GRACE_MS, which is
+   * what the route waits for server-side, plus headroom for the round trip,
+   * so a drain already requested is not abandoned moments before it
+   * finishes.
    *
-   * Reads SERVICE_TOKEN off the env the SIDECARS were given rather than this
-   * process's, since that is the one the server is checking against.
+   * Reads SERVICE_TOKEN off the env the sidecars were given, since that is
+   * what the server checks against.
    */
   async drainApp(drainMs) {
     const app = this.children.find((c) => c.name === "app");
@@ -591,18 +567,16 @@ class Supervisor {
   }
 
   /**
-   * Drain, then SIGTERM, then wait, with SIGKILL as the backstop.
+   * Drains, then sends SIGTERM, then waits, with SIGKILL as the backstop.
    *
-   * The drain is an HTTP POST THIS process makes rather than a signal
-   * server.js catches, because Windows has no deliverable SIGTERM: there
-   * `child.kill("SIGTERM")` is a TerminateProcess, server.js's own handler
-   * never runs, and quitting mid-turn cut the turn off with nothing durable
-   * recorded. Asking over loopback works the same on every platform, and
-   * leaves the signal path as the backstop rather than the mechanism — on
-   * POSIX server.js still POSTs the same route on SIGTERM, which by then finds
-   * nothing in flight and returns immediately. The same order is what a
-   * systemd/service wrapper would want, which is why it lives here and not in
-   * main.js.
+   * The drain is an HTTP POST this process makes over loopback: Windows has
+   * no deliverable SIGTERM, so `child.kill("SIGTERM")` there is a
+   * TerminateProcess that server.js's own handler never runs, which would
+   * cut a turn in flight off with nothing durable recorded. Asking over
+   * loopback works the same on every platform and leaves the signal path as
+   * a pure backstop: on POSIX, server.js still POSTs the same route on
+   * SIGTERM, which by then finds nothing in flight and returns immediately.
+   * This lives here, matching what a systemd/service wrapper would do.
    */
   async stop({ graceMs, drainMs } = {}) {
     if (this.stopping) return;

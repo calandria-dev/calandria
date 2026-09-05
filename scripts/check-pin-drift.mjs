@@ -1,60 +1,13 @@
 #!/usr/bin/env node
-// Advance notice for the Dockerfile's pinned CLIs, in two classes: the pin
-// that is GONE, and the pin that is merely BEHIND.
+// Checks the Dockerfile's pinned CLI versions against upstream. A pin that's
+// GONE (`gh=`, `AGY_VERSION`: their upstreams serve only the newest build)
+// fails the image build outright; a pin that's merely BEHIND
+// (CLAUDE_CODE_VERSION, CODEX_VERSION) still builds but can ship a model the
+// CLI is too old to run, so it's reported on staleness instead. Run daily by
+// .github/workflows/pin-drift.yml, which files or updates one labeled issue.
 //
-// CLASS ONE, GONE. Most pins in the Dockerfile are safe to leave stale: npm
-// keeps every published version, and Debian's own repos keep several, so a pin
-// that has fallen behind still builds. Two do not have that property, and both
-// have already broken the image build with no warning:
-//
-//   - `gh=<version>` — cli.github.com's apt repo carries ONLY its newest
-//     release. Once gh publishes, the pinned version is not merely old, it is
-//     gone, and `apt-get install gh=<old>` fails outright. This is the worse
-//     of the two: publish-image.yml's `type=gha` layer cache means CI keeps
-//     reusing the layer that installed the old version, so `Publish image`
-//     stays green while every uncached build fails. Found only because PR #183
-//     verified with a cold local build.
-//   - `AGY_VERSION` — the Antigravity auto-updater manifest names exactly one
-//     build. The Dockerfile fails loudly on a stale pin by design (it compares
-//     the manifest URL to the ARG), so this one at least breaks visibly, but
-//     it still breaks. Issue #182 was the second time it fired.
-//
-// The pins stay (issue #21, and the comments at both sites explain why); what
-// this adds is the warning. Run by .github/workflows/pin-drift.yml on a daily
-// cron, which files or updates one labeled issue when either upstream moves,
-// and closes it once the Dockerfile catches up.
-//
-// CLASS TWO, BEHIND: CLAUDE_CODE_VERSION and CODEX_VERSION. Both are on npm,
-// which keeps old versions, so a stale pin still BUILDS. What it breaks is
-// behaviour, and the reasonable-sounding assumption that a model line is purely
-// server-side — the CLI fetches its catalog per account at startup — is wrong.
-// On 2026-09-03 `@openai/codex` was pinned at 0.146.0 while upstream was at
-// 0.153.1, seven minors back, and GPT-6 Astra could not run on it at all: the
-// CLI warned "Defaulting to fallback metadata; this can degrade performance and
-// cause issues" and then failed outright with "model requires a newer version
-// of codex". A new model can require a CLI bump, so a stale pin here is a
-// shipped feature that does not work.
-//
-// The first version of this check skipped both, for a real reason:
-// @anthropic-ai/claude-code published 25 releases in the 23 days to 2026-09-03,
-// so "something newer exists" would file a notice every single day, which is
-// exactly the noise .github/dependabot.yml excludes it for. These two are
-// therefore reported on STALENESS rather than on difference — see
-// MAX_PIN_AGE_DAYS and MAX_MINORS_BEHIND. Both triggers would have fired on
-// 0.146.0 about two weeks before Astra shipped.
-//
-// The half no job can do is exercising the agent, which needs a real Claude or
-// ChatGPT login. That stays a human step, spelled out in the issue body this
-// writes (`BUMP_CHECKLIST`) rather than in a doc nobody opens at bump time.
-//
-// Usage:
-//   node scripts/check-pin-drift.mjs [--dockerfile <path>] [--report <path>]
-//
-// Exit codes are the workflow's control flow, so keep them distinct:
-//   0  every pin matches upstream
-//   1  at least one pin has aged out (report written, if asked for)
-//   2  the check itself could not run (bad args, unparseable Dockerfile,
-//      upstream unreachable) — a red job rather than a wrong all-clear
+// Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>] [--report <path>]
+// Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -77,20 +30,19 @@ const NPM_PINS = [
   { pkg: "@openai/codex", pin: "codexVersion", arg: "CODEX_VERSION" },
 ];
 
-// A class-two pin is reported once it is this OLD, not once something newer
-// exists. Age is the only metric that survives claude-code's release rate (25
-// in 23 days, all on one minor line): at three weeks each package can produce
-// at most one notice per three weeks, and the issue closes itself on the bump.
+// A class-two pin is reported once it reaches this age, regardless of
+// whether something newer exists. Age is the only metric that stays quiet
+// under a fast release cadence on one minor line: each package can produce
+// at most one notice per window, and the issue closes itself on the bump.
 const MAX_PIN_AGE_DAYS = 21;
 
-// Second trigger, for a 0.x CLI where the wire protocol moves on the MINOR.
-// @openai/codex went 0.146 → 0.153 in five weeks; a pin several minors back is
-// a broken feature well before it is an old pin, so this fires independently of
-// age. Counted as DISTINCT newer minors, since a package that ships four
-// patches of one minor has not moved anywhere.
+// Second trigger, for a 0.x CLI where the wire protocol moves on the minor.
+// A pin several minors back can be a broken feature well before it's an old
+// pin, so this fires independently of age. Counted as distinct newer minors,
+// since a package that ships several patches of one minor hasn't moved.
 const MAX_MINORS_BEHIND = 3;
 
-// Both arches are checked rather than just amd64: the image is built for both
+// Both arches are checked, not just amd64: the image is built for both
 // (publish-image.yml's matrix), each has its own apt index and its own agy
 // tarball with its own SHA-512, and a pin only has to be missing on one of
 // them to fail half the build.
@@ -136,8 +88,8 @@ export function extractPins(source, dockerfilePath) {
       amd64: find(/^ARG AGY_SHA512_AMD64=(\S+)/m, "`ARG AGY_SHA512_AMD64`"),
       arm64: find(/^ARG AGY_SHA512_ARM64=(\S+)/m, "`ARG AGY_SHA512_ARM64`"),
     },
-    // Matches the `gh=2.99.0` inside the apt-get install line. Anchored on the
-    // word boundary so it cannot pick up a longer package name ending in "gh".
+    // Matches the `gh=<version>` inside the apt-get install line. Anchored
+    // on the word boundary so it can't pick up a longer package name ending in "gh".
     gh: find(/\bgh=(\d[^\s\\]*)/, "the `gh=` apt pin"),
     claudeCode: find(
       /^ARG CLAUDE_CODE_VERSION=(\S+)/m,
@@ -170,9 +122,9 @@ async function fetchText(url) {
 }
 
 /**
- * Newest `gh` in the apt repo, per architecture. The index is a Debian control
- * file: stanzas separated by blank lines, one field per line. It currently
- * holds a single stanza, but parse it as the format rather than the instance.
+ * Newest `gh` in the apt repo, per architecture. The index is a Debian
+ * control file: stanzas separated by blank lines, one field per line.
+ * Parsed as the general format, even though it currently holds one stanza.
  */
 async function upstreamGh(arch) {
   const text = await fetchText(`${GH_PACKAGES_BASE}/binary-${arch}/Packages`);
@@ -202,10 +154,9 @@ async function upstreamAgy(arch) {
 }
 
 /**
- * The full registry packument, which is the only document carrying publish
- * TIMES — the abbreviated (`application/vnd.npm.install-v1+json`) form drops
- * `time`, and there is no lighter endpoint for it. Costs ~1.3 MiB gzipped for
- * @openai/codex, which is nothing on a daily cron.
+ * The full registry packument, the only document carrying publish times: the
+ * abbreviated (`application/vnd.npm.install-v1+json`) form drops `time`, and
+ * there is no lighter endpoint for it.
  */
 async function upstreamNpm(pkg) {
   const text = await fetchText(`${NPM_REGISTRY}/${pkg.replace("/", "%2f")}`);
@@ -240,11 +191,11 @@ function compareVersions(a, b) {
 
 /**
  * Whether a class-two (npm) pin has gone stale, and which trigger says so.
- * Pure, and exported, so tests/pinDrift.test.ts can pin both thresholds and the
- * prerelease handling without reaching the registry.
+ * Pure and exported, so tests/pinDrift.test.ts can pin both thresholds and
+ * the prerelease handling without reaching the registry.
  *
- * Returns null when the pin is current enough to stay quiet — being merely
- * behind is the normal state of these two and is not worth an issue.
+ * Returns null when the pin is current enough to stay quiet: being merely
+ * behind is the normal state of these two and doesn't warrant an issue.
  */
 export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
   if (pinned === latest) return null;
@@ -252,10 +203,10 @@ export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
   const ageDays = Number.isNaN(at)
     ? null
     : Math.floor(((now ?? Date.now()) - at) / 86_400_000);
-  // Distinct minor lines published ABOVE the pinned one. Two exclusions, both
+  // Distinct minor lines published above the pinned one. Two exclusions, both
   // so the number means what its label says: prereleases are never what the
-  // Dockerfile installs, and later patches of the pin's OWN minor are not a
-  // newer minor (0.146.1 would otherwise make 0.146 count as one).
+  // Dockerfile installs, and later patches of the pin's own minor don't count
+  // as a newer minor (0.146.1 would otherwise make 0.146 count as one).
   const pinnedMinor = minorKey(pinned);
   const minorsAhead = new Set(
     versions
@@ -390,9 +341,8 @@ async function collectFindings(pins) {
 }
 
 // The step no job can take. Exercising an agent CLI needs a real Claude or
-// ChatGPT login, which CI does not have and should not be handed. So the honest
-// answer to "exercise the agent" is a documented manual step, and it is carried
-// in the issue body — read at the moment somebody acts on it — rather than in a
+// ChatGPT login, which CI does not have and should not be handed. So this is
+// a documented manual step, carried in the issue body itself instead of a
 // doc that would go stale unopened.
 const BUMP_CHECKLIST = [
   "### Before merging a bump",

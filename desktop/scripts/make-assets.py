@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Regenerates desktop/assets/*.png. Run by hand:  python3 scripts/make-assets.py
 
-The PNGs are committed, so a clean checkout — and every CI lane — needs neither
+The PNGs are committed, so a clean checkout, and every CI lane, needs neither
 ImageMagick nor a font. This exists so the next person can change the mark
 without reverse-engineering a binary.
 
 The mark is the app's own icon reduced to its single foreground rod + resting
 ellipse (docs/design/handoff/assets/favicon-small.svg): the full ten-rod logo
-turns to mush at 16 px, which is the size a tray actually gets. Drawn from
-primitives rather than rasterized from the SVG because ImageMagick 6 has no
-rsvg delegate on most boxes and its own SVG renderer is not reproducible —
-these coordinates ARE the SVG's, transposed into a square.
+turns to mush at 16 px, which is the size a tray actually gets. It is drawn
+from primitives instead of rasterized from the SVG because ImageMagick 6 has
+no rsvg delegate on most boxes and its own SVG renderer is not reproducible;
+these coordinates are the SVG's, transposed into a square.
 
 Requires ImageMagick 6 (`convert`) and DejaVu Sans Bold.
 """
@@ -34,7 +34,7 @@ def mark(size: int, colour: str, out: pathlib.Path) -> None:
     s = size * SS
     # favicon-small.svg's viewBox is 4.05 x 14.23 and a tray icon is square, so
     # the content is centred in a 14.23-unit square (x offset 5.09) with 5%
-    # padding — menu bars and system trays clip to their own inset otherwise.
+    # padding; menu bars and system trays clip to their own inset otherwise.
     pad = 0.05
     k = s * (1 - 2 * pad) / 14.23
     o = pad * s
@@ -73,9 +73,9 @@ def main() -> int:
     mark(32, "black", OUT / "trayTemplate@2x.png")
     # Windows and Linux draw the tray icon as-is, so it carries the brand colour.
     mark(32, TEAL, OUT / "tray.png")
-    # Windows has no numeric badge API — the taskbar overlay is a 16x16 image —
-    # so the digits are pre-rendered. Ten ~500-byte files, against shipping a
-    # PNG encoder and a bitmap font inside main.js to draw them at runtime.
+    # Windows has no numeric badge API; the taskbar overlay is a 16x16 image,
+    # so the digits are pre-rendered. Ten ~500-byte files, instead of shipping
+    # a PNG encoder and a bitmap font inside main.js to draw them at runtime.
     for n in range(1, 10):
         badge(str(n), OUT / f"badge-{n}.png")
     badge("9+", OUT / "badge-9plus.png")
