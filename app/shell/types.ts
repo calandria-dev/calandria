@@ -393,7 +393,7 @@ export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo:
 // feature flags) served by GET /api/agents. The client renders every picker from
 // this data, so a task's controls always match the agent it runs under.
 export interface AgentModelOption { value: string; label: string; sub: string; contextWindow: number; group?: string }
-export interface AgentPickerOption { value: string; label: string; sub: string }
+export interface AgentPickerOption { value: string; label: string; sub: string; unattended?: boolean }
 export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];

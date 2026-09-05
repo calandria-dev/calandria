@@ -1,0 +1,124 @@
+import { describe, it, expect } from "vitest";
+import { mapNotification, newAppServerTurnState, toSdkItem, diffLinesOf, unwrapShellCommand } from "@/lib/agents/codex/appServerEvents";
+import { flattenConfigOverrides } from "@/lib/agents/codex/appServerClient";
+
+// The app-server → exec-shape adapter (lib/agents/codex/appServerEvents.ts),
+// unit-tested where the transport test can't reach: status spellings, the
+// turn-id filter, usage accounting, and the config flattener that has to
+// match the SDK's byte for byte.
+
+describe("app-server item respelling", () => {
+  it("maps command, patch and MCP statuses onto the exec protocol's", () => {
+    expect(toSdkItem({ type: "commandExecution", id: "c", command: "ls", status: "declined", aggregatedOutput: "no", exitCode: 1 })).toEqual({
+      id: "c",
+      type: "command_execution",
+      command: "ls",
+      aggregated_output: "no",
+      exit_code: 1,
+      status: "failed",
+    });
+    expect(toSdkItem({ type: "commandExecution", id: "c", command: "ls", status: "inProgress", aggregatedOutput: null, exitCode: null })).toMatchObject({ status: "in_progress" });
+    expect(toSdkItem({ type: "fileChange", id: "f", status: "declined", changes: [{ path: "a", kind: "add", diff: "" }] })).toMatchObject({ type: "file_change", status: "failed", changes: [{ path: "a", kind: "add" }] });
+    expect(toSdkItem({ type: "mcpToolCall", id: "m", server: "calandria", tool: "list_tasks", status: "completed", arguments: {}, result: { content: [{ type: "text", text: "ok" }], structuredContent: null } })).toMatchObject({
+      type: "mcp_tool_call",
+      server: "calandria",
+      tool: "list_tasks",
+      status: "completed",
+      result: { content: [{ type: "text", text: "ok" }] },
+    });
+    expect(toSdkItem({ type: "reasoning", id: "r", summary: ["a", "b"], content: [] })).toEqual({ id: "r", type: "reasoning", text: "a\nb" });
+    expect(toSdkItem({ type: "webSearch", id: "w", query: "q" })).toEqual({ id: "w", type: "web_search", query: "q" });
+    expect(toSdkItem({ type: "userMessage", id: "u" })).toBeNull();
+  });
+
+  it("ignores notifications for another turn, and buffers nothing before the turn is known", () => {
+    const st = newAppServerTurnState();
+    const item = { type: "agentMessage", id: "a", text: "hi" };
+    expect(mapNotification("item/completed", { turnId: "other", item }, st).events).toEqual([]);
+    st.turnId = "t1";
+    expect(mapNotification("item/completed", { turnId: "other", item }, st).events).toEqual([]);
+    expect(mapNotification("item/completed", { turnId: "t1", item }, st).events).toEqual([{ type: "item.completed", item: { id: "a", type: "agent_message", text: "hi" } }]);
+  });
+
+  it("reports usage once, on turn end, from the latest total; context from the last request", () => {
+    const st = newAppServerTurnState();
+    st.turnId = "t1";
+    const u1 = mapNotification("thread/tokenUsage/updated", { turnId: "t1", tokenUsage: { total: { inputTokens: 100, outputTokens: 5 }, last: { inputTokens: 80, cachedInputTokens: 20 } } }, st);
+    expect(u1.events).toEqual([]);
+    expect(u1.contextTokens).toBe(100);
+    mapNotification("thread/tokenUsage/updated", { turnId: "t1", tokenUsage: { total: { inputTokens: 300, cachedInputTokens: 50, outputTokens: 9, reasoningOutputTokens: 2 } } }, st);
+    const end = mapNotification("turn/completed", { threadId: "x", turn: { id: "t1", status: "completed" } }, st);
+    expect(end.turnEnded).toBe("completed");
+    expect(end.events).toEqual([
+      { type: "turn.completed", usage: { input_tokens: 300, cached_input_tokens: 50, cache_write_input_tokens: 0, output_tokens: 9, reasoning_output_tokens: 2 } },
+    ]);
+  });
+
+  it("turns a failed turn into usage plus turn.failed, and skips retried errors", () => {
+    const st = newAppServerTurnState();
+    st.turnId = "t1";
+    expect(mapNotification("error", { turnId: "t1", willRetry: true, error: { message: "429" } }, st).events).toEqual([]);
+    expect(mapNotification("error", { turnId: "t1", willRetry: false, error: { message: "boom" } }, st).events).toEqual([{ type: "error", message: "boom" }]);
+    const end = mapNotification("turn/completed", { turn: { id: "t1", status: "failed", error: { message: "model failed" } } }, st);
+    expect(end.turnEnded).toBe("failed");
+    expect(end.events).toEqual([{ type: "turn.failed", error: { message: "model failed" } }]);
+  });
+
+  it("surfaces a config warning once per turn and hands every warning to the classifier", () => {
+    const st = newAppServerTurnState();
+    const a = mapNotification("configWarning", { summary: "approval_policy is disallowed by requirements" }, st);
+    expect(a.notice).toContain("disallowed");
+    expect(a.warning).toContain("disallowed");
+    const b = mapNotification("configWarning", { summary: "approval_policy is disallowed by requirements" }, st);
+    expect(b.notice).toBeUndefined();
+    expect(b.warning).toContain("disallowed");
+    expect(mapNotification("warning", { message: "w" }, st)).toMatchObject({ warning: "w" });
+  });
+
+  it("renders the running plan as the exec protocol's todo list", () => {
+    const st = newAppServerTurnState();
+    st.turnId = "t1";
+    const m = mapNotification("turn/plan/updated", { turnId: "t1", plan: [{ step: "a", status: "completed" }, { step: "b", status: "pending" }] }, st);
+    expect(m.events).toEqual([{ type: "item.updated", item: { id: "plan:t1", type: "todo_list", items: [{ text: "a", completed: true }, { text: "b", completed: false }] } }]);
+  });
+});
+
+describe("diff and config helpers", () => {
+  it("unwraps the CLI's shell wrapper so rules match the command a human typed", () => {
+    // Captured from a live 0.153.0 approval request.
+    expect(unwrapShellCommand("/bin/zsh -lc 'cat /etc/hostname'")).toBe("cat /etc/hostname");
+    expect(unwrapShellCommand(`bash -c "git commit -m 'x'"`)).toBe("git commit -m 'x'");
+    expect(unwrapShellCommand(String.raw`/bin/sh -lc 'echo '\''hi'\'''`)).toBe("echo 'hi'");
+    expect(unwrapShellCommand("npm test")).toBe("npm test");
+    expect(unwrapShellCommand("zsh -lc ''")).toBe("zsh -lc ''");
+  });
+
+  it("keeps hunk lines and drops headers", () => {
+    expect(diffLinesOf("diff --git a/x b/x\nindex 1..2\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n")).toEqual([
+      { sign: " ", text: "@@ -1,2 +1,2 @@" },
+      { sign: " ", text: "ctx" },
+      { sign: "-", text: "old" },
+      { sign: "+", text: "new" },
+    ]);
+  });
+
+  it("flattens nested config into the SDK's dotted TOML overrides", () => {
+    expect(
+      flattenConfigOverrides({
+        mcp_servers: { calandria: { command: "/usr/bin/node", args: ["x.mjs"], tool_timeout_sec: 86400, env: { A: "1" } } },
+        model_provider: "calandria-local",
+        sandbox_workspace_write: { writable_roots: ["/a", "/b"], network_access: true },
+        empty: {},
+      }),
+    ).toEqual([
+      'mcp_servers.calandria.command="/usr/bin/node"',
+      'mcp_servers.calandria.args=["x.mjs"]',
+      "mcp_servers.calandria.tool_timeout_sec=86400",
+      'mcp_servers.calandria.env.A="1"',
+      'model_provider="calandria-local"',
+      'sandbox_workspace_write.writable_roots=["/a", "/b"]',
+      "sandbox_workspace_write.network_access=true",
+      "empty={}",
+    ]);
+  });
+});

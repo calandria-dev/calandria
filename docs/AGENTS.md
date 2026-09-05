@@ -190,23 +190,38 @@ Three upstream differences are visible:
 
 - ChatGPT-plan authentication reports tokens but not dollar cost, so Calandria estimates
   the API-price equivalent and marks it with `~`.
-- The context-window gauge is an estimate, marked `≈`. Claude's stream reports each model
-  request's usage, so a Claude task's gauge shows the window's actual contents as of the
-  latest request. `codex exec` reports only the thread's running totals on
-  `turn.completed`, so a Codex task's gauge is derived from its last turn's usage report,
-  and a turn spans many requests (every tool call re-reads the whole context), so a
-  tool-heavy turn over-reads. The per-request figure exists in the Codex binary
-  (`last_token_usage`) but only on the app-server protocol, which the SDK doesn't use.
-- The non-interactive CLI can't pause an active turn for a command-approval prompt.
-  Calandria offers Codex's own **workspace-write** (writable sandbox, never asks) and
-  **read-only** (plan) modes instead of a mid-turn approval mode, and asks Codex not to
-  require approvals (`approval_policy=never`). If an enterprise-managed Codex configuration
-  disallows that, Calandria detects the CLI's downgrade warning on the first affected turn
-  and switches to the compatible `on-request` policy automatically; the failed turn gets a
-  one-click Retry. `CODEX_APPROVAL_POLICY` remains the manual override. Claude's permission
-  cards have no Codex equivalent yet: the MCP bridge that carries `ask_user` could carry
-  approvals the same way, but the CLI would first need to route an approval request to a
-  tool call instead of a terminal prompt.
+- The context-window gauge reads the last request's prompt size on the default transport
+  (`codex app-server` reports it on every usage update), the same figure Claude's gauge
+  shows. On the `exec` transport the CLI reports only the thread's running totals on
+  `turn.completed`, so the gauge is derived from the last turn's usage report, marked `≈`.
+- Task turns run on `codex app-server`, the CLI's IDE protocol (`CODEX_TRANSPORT`, default
+  `app-server`). Its approval requests come back to Calandria over JSON-RPC and park on the
+  same permission card a Claude prompt uses, with Allow once / Always allow / Decline and the
+  same remembered rules per project. The previous `codex exec` transport auto-rejects every
+  approval inside the CLI and is kept as `CODEX_TRANSPORT=exec`, where the asking modes run
+  like acceptEdits.
+- The five permission modes map onto Codex's sandbox and approval policy
+  (`lib/agents/codex/policy.ts`); the picker labels each with Codex's own words:
+
+  | Mode | Codex label | Sandbox | Approvals |
+  |-|-|-|-|
+  | **auto** *(default)* | auto-review | workspace-write | on request, decided by Codex's own reviewer (`approvals_reviewer=auto_review`) |
+  | **default** | on-request | workspace-write | on request, decided by you on a permission card |
+  | **acceptEdits** | workspace-write | workspace-write | never: what the sandbox refuses fails and the model works around it |
+  | **bypassPermissions** | danger-full-access | none | never |
+  | **plan** | read-only | read-only | never |
+
+  A workspace-write turn can commit from its worktree. Codex protects a checkout's `.git`
+  and, for a linked worktree, the real gitdir the `.git` file points at, while the repo's
+  common `.git` sits outside every writable root, so `git add` and `git commit` would fail
+  in every sandboxed mode. Calandria grants what a commit writes, the task's private gitdir
+  plus the repo's `.git/objects`, `refs` and `logs`, and nothing else: `hooks/`, `config`
+  and `info/` keep Codex's protection. `CODEX_WRITABLE_ROOTS` adds more directories.
+- If an enterprise-managed Codex configuration disallows `approval_policy=never`, Calandria
+  detects the CLI's downgrade warning on the first affected turn and sends `on-request` for
+  the never-asking modes from then on, which parks escalations on a card instead of failing
+  them; that first turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` is the manual
+  override for those modes.
 - Codex tasks get Calandria's own tools and, like Claude tasks, the MCP servers from your
   `~/.codex/config.toml`. Set `CODEX_INHERIT_MCP=0` to keep your servers off task sessions.
   Calandria then overrides each one with `enabled = false` plus an inert transport, since
@@ -561,11 +576,11 @@ check reads the response body for the real reason rather than trusting the statu
 **Codex and Antigravity mount the same selection too**, each with a driver-specific wrinkle
 (`docs/design/litellm.md`, "Hosted MCP servers").
 
-Codex has no approver at all — `codex exec` cannot service an interactive approval — so every
-mounted server also carries `default_tools_approval_mode: "approve"`, which auto-approves every one
-of its tools for the task the moment it mounts. That is only offered under the bypass-equivalent
-permission mode; a task set to `plan` mounts none of them, the same reason `codex/mcp.ts` unmounts
-the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
+Codex gates MCP calls with its own per-server approval mode, which the turn's approval policy
+doesn't reach, so every mounted server also carries `default_tools_approval_mode: "approve"`, which
+auto-approves every one of its tools for the task the moment it mounts. That is offered under every
+permission mode but `plan`, which runs read-only and mounts none of them, the same reason
+`codex/mcp.ts` unmounts the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
 the gate on Codex's card. Before relying on this in production, test `gpt-5-codex` plus a mounted
 MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
 completions for exactly that combination.

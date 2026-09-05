@@ -1,11 +1,11 @@
 // Detection + recovery constants for the "Codex's approval policy blocked the
 // turn" failure mode.
 //
-// Calandria runs Codex through `codex exec` (via @openai/codex-sdk), which is
-// non-interactive: nobody can answer a command-approval prompt mid-turn. So the
-// driver asks for `approval_policy=never` (the auto-run analog of Claude's
-// bypassPermissions). Two configurations defeat that and produce the same
-// baffling failure:
+// For the permission modes that never ask (acceptEdits, bypassPermissions,
+// plan) the driver asks for `approval_policy=never`. Two configurations defeat
+// that and produce the same baffling failure — on the `exec` transport
+// (CODEX_TRANSPORT=exec, or the one-shot helpers), which is non-interactive and
+// auto-rejects every approval inside the CLI:
 //
 //   1. Enterprise-managed Codex requirements disallow `never`. The CLI warns
 //      ("Configured value for `approval_policy` is disallowed by requirements;
@@ -20,8 +20,9 @@
 // The downgrade warning arrives as an error item on the very first affected
 // turn (lib/agents/codex/events.ts maps it to a StreamEvent error), so the
 // Codex driver matches it there and flips an instance-wide flag that makes it
-// request the exec-compatible "on-request" policy from the next turn on
-// (self-healing, no user action). This module classifies the failure for
+// request the "on-request" policy for those modes from the next turn on
+// (self-healing, no user action) — which on the app-server transport parks
+// escalations on a permission card rather than failing them. This module classifies the failure for
 // lib/runner.ts — same pattern as lib/promptLimits.ts / lib/authFailure.ts —
 // which appends APPROVAL_BLOCKED_NOTICE so the UI can render a one-click Retry.
 // Kept dependency-free so both server and client bundles can import it.

@@ -5,7 +5,7 @@
 // built-in default (see DEFAULT_CODEX_MODEL in ./pricing).
 
 import type { AgentCapabilities } from "../types";
-import { CODEX_INHERIT_MCP } from "../../config";
+import { CODEX_INHERIT_MCP, CODEX_TRANSPORT } from "../../config";
 import { codexApiKey } from "./auth";
 import { codexContextWindow, codexDefaultModel } from "./catalog";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
@@ -109,30 +109,22 @@ export function codexCapabilities(): AgentCapabilities {
       { value: "think_hard", label: "high", sub: "deeper reasoning" },
       { value: "ultrathink", label: "xhigh", sub: "extra-high, the most this picker can send" },
     ],
-    // Only the modes with a real codex analog are declared. bypassPermissions maps
-    // to workspace-write + approvals-never (auto-run); plan maps to a read-only
-    // sandbox. acceptEdits has no distinct codex analog (writes already auto-apply)
-    // and on-request approvals can't be answered non-interactively, so neither is
-    // offered — both fall back to bypassPermissions.
+    // The five cross-agent keys, each mapped to its nearest Codex analog in
+    // ./policy.ts (the sandbox, the approval policy, who answers, and the
+    // writable roots). Labels are Codex's own words for the sandbox and the
+    // approval policy — a Codex user knows them from ~/.codex/config.toml —
+    // and the values stay the keys tasks, runbooks and schedules persist.
     //
-    // Claude's prompted modes now park on a real permission card (lib/permissions.ts,
-    // reached through canUseTool). Codex has no equivalent hook: `codex exec` decides
-    // approvals inside the CLI process and the SDK gives the host no callback to
-    // intercept them with, so raising CODEX_APPROVAL_POLICY above "never" would
-    // stall turns invisibly. The ask_user MCP bridge is the plausible route if that
-    // changes — it already carries an interactive question out to the same card UI
-    // and /answer route, and a permission prompt is the same park-and-resume shape.
-    // What's missing is the CLI side: something that routes an approval request to
-    // an MCP tool call instead of a terminal prompt. Until then, leave this alone.
-    //
-    // Labels are codex's own sandbox-mode names (sandbox_mode in
-    // ~/.codex/config.toml): what distinguishes the two offered modes IS the
-    // sandbox, and the approval-policy half is named in the sub with OpenAI's
-    // spelling ("never" — on-request/on-failure/untrusted are the unreachable
-    // ones per the note above). The values stay the cross-agent keys tasks and
-    // schedules persist.
+    // The asking modes are real on the app-server transport (CODEX_TRANSPORT,
+    // the default): the server's approval requests come back over JSON-RPC and
+    // park on the same permission card Claude's canUseTool gate uses. The old
+    // exec transport auto-rejects them inside the CLI, so under it they run
+    // like acceptEdits; ./policy.ts is where that is decided.
     permissionModes: [
-      { value: "bypassPermissions", label: "workspace-write", sub: "writable sandbox, approval policy never: runs without asking (default)" },
+      { value: "auto", label: "auto-review", sub: "workspace-write sandbox, escalations decided by Codex's own reviewer (default)", unattended: true },
+      { value: "default", label: "on-request", sub: "workspace-write sandbox, escalations ask you on a permission card" },
+      { value: "acceptEdits", label: "workspace-write", sub: "writable sandbox, never asks: what the sandbox refuses just fails" },
+      { value: "bypassPermissions", label: "danger-full-access", sub: "no sandbox, never asks" },
       { value: "plan", label: "read-only", sub: "read-only sandbox: propose without editing" },
     ],
     // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
@@ -153,33 +145,35 @@ export function codexCapabilities(): AgentCapabilities {
       ? "The MCP servers in your ~/.codex/config.toml are mounted alongside Calandria's bridge. Set CODEX_INHERIT_MCP=0 to keep them off task sessions."
       : "Unmounted because CODEX_INHERIT_MCP is off: each server in your ~/.codex/config.toml is overridden with enabled = false for task sessions.",
     // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
-    // from the flag above, and needs its own caveat for the same reason: codex
-    // exec has no approver. It's mounted, with every one of its tools
-    // auto-approved for the task, only under the bypass-equivalent permission
-    // mode — "plan" runs read-only and would offer tools no approver can grant
+    // from the flag above, and needs its own caveat: MCP tool calls are gated
+    // by Codex's own per-server approval mode, not by approval_policy, and the
+    // mount auto-approves them. It's mounted under every mode but "plan", which
+    // runs read-only and would offer tools that contradict it
     // (lib/agents/codex/driver.ts).
     gatewayMcpNote:
-      "Hosted LiteLLM-gateway MCP servers mount only under the workspace-write permission mode, " +
-      "never plan, and every tool they offer is auto-approved for the task the moment it mounts — " +
-      "codex exec has nobody to ask.",
+      "Hosted LiteLLM-gateway MCP servers mount under every permission mode but plan, " +
+      "and every tool they offer is auto-approved for the task the moment it mounts.",
     // ChatGPT-plan auth reports tokens only — no billed dollar figure — so the
     // cost the driver emits is an estimate (tokens × published API prices for
     // the resolved model). The descriptor stays honest: reportsCostUsd=false,
-    // Each turn is a `codex exec` process with no held-open input channel and no
-    // task-notification wake, so backgrounded shell commands die with it —
+    // Each turn is one codex process (app-server or exec) with no held-open
+    // input channel and no task-notification wake, so backgrounded shell
+    // commands die with it —
     // buildProjectContext warns Codex turns off them (lib/agents/shared.ts).
     backgroundTasksLinger: false,
-    // `codex exec` has no subagent verb — a turn is one model loop — so the
+    // A codex turn has no subagent verb we dispatch — a turn is one model loop — so the
     // delegation block buildProjectContext appends for Claude is omitted rather
     // than pointing a Codex turn at a tool that isn't there.
     dispatchesSubagents: false,
     // and costIsEstimated=true has the UI show the figure with an ~.
     reportsCostUsd: false,
     costIsEstimated: true,
-    // turn.completed reports the THREAD's running totals and nothing per
-    // request (see lib/agents/types.ts), so the context gauge is the usage
-    // heuristic, labelled as such.
-    reportsContext: false,
+    // The app-server transport reports the last request's prompt size on every
+    // usage update (lib/agents/codex/appServerEvents.ts), so the gauge is real
+    // there; exec's turn.completed reports the THREAD's running totals and
+    // nothing per request, so under it the gauge is the usage heuristic,
+    // labelled as such.
+    reportsContext: CODEX_TRANSPORT === "app-server",
     supportsResume: true,
     apiKeyHint: codexApiKey.hint,
     loginStyle: "device_code",

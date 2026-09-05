@@ -72,8 +72,8 @@ function isEmptyUsage(u: TurnUsage): boolean {
 // job half done" — this is that sentence arriving on the run it happened to,
 // instead of a green "ran". Phrased without naming a mode: this text is
 // agent-agnostic while the mode labels are provider-native (Claude's
-// "bypassPermissions", Codex's "workspace-write"), so any one name would be
-// wrong for somebody's schedule.
+// "bypassPermissions", Codex's "danger-full-access" or "workspace-write"), so
+// any one name would be wrong for somebody's schedule.
 export const SCHEDULE_UNATTENDED_DETAIL =
   "the agent needed approval and nobody was watching, so it was declined automatically. " +
   "The run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";

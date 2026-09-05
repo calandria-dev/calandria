@@ -30,6 +30,13 @@ export interface AgentPickerOption {
   value: string;
   label: string;
   sub: string;
+  /**
+   * For a permission mode: safe for a run nobody watches. The schedule editor
+   * drops "auto" and "default" as the modes that ask or inherit, unless the
+   * driver marks its entry this way — Codex's "auto" is decided by the CLI's
+   * own reviewer and never parks on a human.
+   */
+  unattended?: boolean;
 }
 
 /**
@@ -54,9 +61,9 @@ export interface AgentCapabilities {
    * This is a REAL functional difference between the agents, not a config
    * detail, so it's modeled here rather than left implicit: a Claude task can
    * call the user's own MCP tools and an otherwise-identical Codex task cannot.
-   * Codex is false because `codex exec` has no approver, so inherited tools are
-   * visible but every call is cancelled — the driver unmounts them instead of
-   * offering tools that can't work (lib/agents/codex/mcp.ts).
+   * Codex's tracks CODEX_INHERIT_MCP (default on): the user's servers stay
+   * mounted unless the instance opts out, in which case the driver overrides
+   * each with an inert disabled entry (lib/agents/codex/mcp.ts).
    */
   inheritsUserMcpServers: boolean;
   /**
@@ -72,8 +79,8 @@ export interface AgentCapabilities {
    * servers (projects.gateway_mcp / tasks.gateway_mcp, lib/gatewayMcp.ts) mount
    * for THIS driver, alongside the verdict `inheritsUserMcpServers` states for
    * the user's own CLI-configured servers — a separate selection with its own
-   * per-driver caveat. Codex's names the bypass-only mount and the
-   * per-server auto-approval `codex exec` needs; Antigravity's names the
+   * per-driver caveat. Codex's names the every-mode-but-plan mount and the
+   * per-server auto-approval its MCP gate needs; Antigravity's names the
    * alias-to-hyphen slugging its policy engine forces. null = nothing special
    * to say — the server mounts exactly like Calandria's own tools (Claude).
    */
@@ -109,10 +116,10 @@ export interface AgentCapabilities {
    * many tokens the window currently holds (StreamEvent in lib/types.ts).
    * False = the gauge is derived from the last usage report instead, which
    * on a tool-heavy turn sums many requests and over-reads; the UI labels
-   * that figure an estimate. Codex is false: `codex exec`'s JSONL carries
-   * only the thread's running totals on turn.completed (the per-request
-   * `last_token_usage` exists in the binary, but only on the app-server
-   * protocol the SDK doesn't speak).
+   * that figure an estimate. Codex is true on the app-server transport, where
+   * `thread/tokenUsage/updated` carries the last request's prompt size, and
+   * false on the exec transport, whose JSONL carries only the thread's running
+   * totals on turn.completed.
    */
   reportsContext: boolean;
   /** Turns can resume a prior session/thread id (tasks.session_id). */

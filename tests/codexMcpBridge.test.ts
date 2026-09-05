@@ -126,7 +126,7 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
   it("states the hosted-gateway mount's own caveat separately from the flag above", () => {
     // A different mount from projects.gateway_mcp, with its own per-driver
     // note — Claude has nothing special to say, Codex's is the approval gate.
-    expect(getCapabilities("codex").gatewayMcpNote).toContain("workspace-write");
+    expect(getCapabilities("codex").gatewayMcpNote).toContain("plan");
     expect(getCapabilities("codex").gatewayMcpNote).toContain("auto-approved");
     expect(getCapabilities("claude").gatewayMcpNote).toBeNull();
   });

@@ -1275,6 +1275,26 @@ export function migrate(db: Database.Database) {
     GROUP BY m.task_id, m.generation;
   `);
 
+  // Codex permission modes, 2026-09: the Codex picker used to offer two
+  // entries, "bypassPermissions" (its default, meaning a workspace-write
+  // sandbox that never asks) and "plan". "bypassPermissions" now means what it
+  // says — danger-full-access, no sandbox — and the old meaning lives under
+  // "acceptEdits" (lib/agents/codex/policy.ts). Every Codex row that chose the
+  // old entry is moved to the key that carries its old meaning, since a stored
+  // "sandboxed" silently becoming "no sandbox" is not an upgrade anyone asked
+  // for, and neither is the reverse on a schedule that runs unattended. Once,
+  // recorded in settings so a later instance never re-runs it over a row that
+  // has since chosen full access deliberately.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'codex_modes_migrated'").get()) {
+    db.exec(`
+      UPDATE tasks     SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE runbooks  SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE schedules SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE settings  SET value = 'acceptEdits' WHERE key = 'default_permission_mode:codex' AND value = 'bypassPermissions';
+      INSERT INTO settings (key, value) VALUES ('codex_modes_migrated', '1');
+    `);
+  }
+
   // Last, and only once everything above has actually run: stamp what this
   // build made of the file, so a LATER build that is OLDER than this one
   // refuses to open it instead of writing to a schema it doesn't know

@@ -657,10 +657,12 @@ due, the new slot is recorded `skipped_overlap` instead of piling a second turn 
 first.
 
 **Permission mode is a required, explicit choice**, because a scheduled run can't answer a
-permission prompt. Any mode other than the agent's never-asks mode (Claude's
-**bypassPermissions**, Codex's **workspace-write**) declines every prompt automatically
-instead of parking, so the turn can stop early with the job half done. Only the never-asks
-mode runs a schedule all the way through unattended.
+permission prompt. Any mode that would ask you (Claude's **auto**, **acceptEdits**,
+**default** and **plan**; Codex's **default**) declines every prompt automatically instead
+of parking, so the turn can stop early with the job half done. Only a mode that never asks
+you runs a schedule all the way through unattended: **bypassPermissions** on either agent,
+and on Codex also **acceptEdits** (the sandbox refuses instead of asking) and **auto**
+(Codex's own reviewer decides escalations).
 
 When a prompt gets declined, the run is recorded **failed**, with a note that the agent
 needed approval and nobody was watching. The same goes for a question: if the agent asks one

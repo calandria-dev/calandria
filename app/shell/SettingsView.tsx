@@ -804,7 +804,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
   // What the agent being edited calls its never-asks mode — the labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
-  // "workspace-write"), so the help copy resolves the name per agent instead of
+  // "danger-full-access"), so the help copy resolves the name per agent instead of
   // hardcoding one.
   const bypassLabel = caps?.permissionModes.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // Every picker's head is the same word ("Inherit") everywhere, but what it
