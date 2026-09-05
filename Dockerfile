@@ -126,7 +126,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # the one step no job can take, exercising the agent against a real login.
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
-ARG AGY_VERSION=1.1.26
+ARG AGY_VERSION=1.1.27
 
 # The `claude` CLI (Agent SDK spawns it; login state lives in ~/.claude on the
 # volume). Pinned location via CLAUDE_CLI_PATH; updates ship as image rebuilds,
@@ -172,8 +172,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would silently
 # replace this pin mid-turn — AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second belt.
-ARG AGY_SHA512_AMD64=80f2e7bf1fe0833487975b320b07176b82dd2cc2043b8acb4201b37b86d604af50718400b58af0f41adc68b389640f6ff95362da87a9ef1682b34258e83110b2
-ARG AGY_SHA512_ARM64=332dddb06ab4d901a44cfd4b9b358848230e64a64515a8e79b03822348adac9ce92d54cb4fc5119ef075edfba922820c926dfddf82d3a49f4ecdb6e6704dfc75
+ARG AGY_SHA512_AMD64=793d4b9ea2c08d9a7e50bafa02cfc8c19424bd60d6e83f91408d45f9c6d4ce79a5d576fede5bef164d823abf84f81359a14b4ca665952c47b0a7cfd743bb69c0
+ARG AGY_SHA512_ARM64=ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
