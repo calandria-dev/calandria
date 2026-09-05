@@ -28,7 +28,10 @@ afterEach(() => {
 });
 
 function worktreeFixture(): { repo: string; wt: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-policy-"));
+  // Canonical form, because git writes the LONG path into the worktree's
+  // `.git` pointer while os.tmpdir() on a Windows runner is the 8.3 short one
+  // (C:\Users\RUNNER~1\…), and the roots are compared as strings.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "codex-policy-")));
   tmp.push(root);
   const repo = path.join(root, "repo");
   const git = (args: string[], cwd = repo) => execFileSync("git", args, { cwd, stdio: "pipe" });

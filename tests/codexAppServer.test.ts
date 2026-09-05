@@ -13,8 +13,10 @@ import path from "node:path";
 
 vi.hoisted(() => {
   process.env.CODEX_TRANSPORT = "app-server";
-  // No imports are live inside vi.hoisted; the fixture path is spelled out.
-  process.env.CODEX_CLI_PATH = `${__dirname}/fixtures/codex/${process.platform === "win32" ? "fake-app-server.cmd" : "fake-app-server.mjs"}`;
+  // No imports are live inside vi.hoisted; the fixture path is spelled out,
+  // with the platform separator so cmd.exe gets a path it will open.
+  const sep = process.platform === "win32" ? "\\" : "/";
+  process.env.CODEX_CLI_PATH = [__dirname, "fixtures", "codex", process.platform === "win32" ? "fake-app-server.cmd" : "fake-app-server.mjs"].join(sep);
   // Unattended grace short enough to test, long enough that an attended card
   // (a subscriber is registered below) never trips it.
   process.env.CALANDRIA_PERMISSION_UNATTENDED_MS = "400";
@@ -52,7 +54,10 @@ afterEach(() => {
 });
 
 function worktree(): { repo: string; wt: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-as-"));
+  // Canonical form, because git writes the LONG path into the worktree's
+  // `.git` pointer while os.tmpdir() on a Windows runner is the 8.3 short one
+  // (C:\Users\RUNNER~1\…), and the roots are compared as strings.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "codex-as-")));
   tmp.push(root);
   const repo = path.join(root, "repo");
   fs.mkdirSync(repo);

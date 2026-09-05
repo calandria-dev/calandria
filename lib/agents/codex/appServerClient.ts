@@ -26,7 +26,8 @@
 // treated as a protocol error.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { codexSpawn } from "./bin";
+import { resolveCodexBin } from "./bin";
+import { spawnSpec } from "../../binPath";
 
 // Only echoed back inside the server's `userAgent` string.
 const CLIENT_INFO = { name: "calandria", title: "Calandria", version: "1" };
@@ -49,7 +50,13 @@ export interface AppServerSpawnOptions {
   env: Record<string, string | undefined>;
   /** Already-flattened `key=value` config overrides, one `-c` flag each. */
   configOverrides?: string[];
-  /** Override the binary (tests point this at a fake). Default: CODEX_CLI_PATH / PATH. */
+  /**
+   * Override the binary (tests point this at a fake). Default: CODEX_CLI_PATH,
+   * else `codex` on PATH. Either way it goes through spawnSpec: on win32 an
+   * npm-installed codex — and the test fake — is a `.cmd` shim, which Node
+   * refuses to spawn without a shell (`spawn EINVAL`), so lib/binPath wraps
+   * it in cmd.exe with the argv quoted piece by piece.
+   */
   bin?: string;
 }
 
@@ -90,7 +97,7 @@ export class AppServerClient {
   async start(opts: AppServerSpawnOptions): Promise<unknown> {
     const args = ["app-server"];
     for (const o of opts.configOverrides ?? []) args.push("-c", o);
-    const spec = opts.bin ? { command: opts.bin, args, windowsVerbatimArguments: undefined } : codexSpawn(args);
+    const spec = spawnSpec(opts.bin ?? resolveCodexBin(), args);
     const child = spawn(spec.command, spec.args, {
       cwd: opts.cwd,
       env: opts.env as NodeJS.ProcessEnv,
